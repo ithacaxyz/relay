@@ -1,0 +1,29 @@
+[package]
+name = "relay"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-network = "0.8"
+alloy-primitives = "0.8"
+alloy-provider = "0.8"
+alloy-rpc-client = "0.8"
+alloy-rpc-types = "0.8"
+alloy-signer-local = { version = "0.8", features = ["mnemonic"] }
+alloy-transport = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+eyre = "0.6.12"
+jsonrpsee = { version = "0.24", features = ["server", "macros"] }
+metrics = "0.23.0"
+metrics-derive = "0.1.0"
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth.git", rev = "320a0b9" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "320a0b9" }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "320a0b9" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth.git", rev = "320a0b9" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
+tower = "0.4"
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1.0"
+url = "2.5"
