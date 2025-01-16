@@ -340,7 +340,7 @@ struct WalletMetrics {
 
 #[cfg(test)]
 mod tests {
-    use crate::{validate_tx_request, OdysseyWalletError};
+    use super::{validate_tx_request, OdysseyWalletError};
     use alloy_primitives::{Address, U256};
     use alloy_rpc_types::TransactionRequest;
 

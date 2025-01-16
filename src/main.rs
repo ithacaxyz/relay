@@ -5,13 +5,13 @@
 
 mod rpc;
 
+use crate::rpc::{AlloyUpstream, OdysseyWallet, OdysseyWalletApiServer};
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use alloy_rpc_client::RpcClient;
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Context;
 use jsonrpsee::server::Server;
-use rpc::{AlloyUpstream, OdysseyWallet, OdysseyWalletApiServer};
 use std::net::{IpAddr, Ipv4Addr};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
