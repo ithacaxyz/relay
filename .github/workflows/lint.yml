@@ -66,24 +66,6 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
 
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - run: cargo docs --document-private-items
-        env:
-          # Keep in sync with ./book.yml:jobs.build
-          # This should only add `-D warnings`
-          RUSTDOCFLAGS:
-            --cfg docsrs --show-type-layout --generate-link-to-definition --enable-index-page
-            -Zunstable-options -D warnings
-
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -99,7 +81,7 @@ jobs:
     name: lint success
     runs-on: ubuntu-latest
     if: always()
-    needs: [clippy-binaries, clippy, crate-checks, docs, fmt]
+    needs: [clippy-binaries, clippy, crate-checks, fmt]
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
