@@ -12,7 +12,7 @@ alloy-signer-local = { version = "0.8", features = ["mnemonic"] }
 alloy-transport = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6.12"
-jsonrpsee = { version = "0.24", features = ["server", "macros"] }
+jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.23.0"
 metrics-derive = "0.1.0"
 serde = { version = "1", features = ["derive"] }
