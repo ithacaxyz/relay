@@ -14,14 +14,9 @@
 //! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
-use alloy_network::{
-    eip2718::Encodable2718, Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder,
-};
 use alloy_primitives::{Address, Bytes, ChainId, TxHash, TxKind, U256};
 use alloy_provider::{utils::Eip1559Estimation, Provider, WalletProvider};
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -30,13 +25,10 @@ use jsonrpsee::{
 use metrics::Counter;
 use metrics_derive::Metrics;
 
-use reth_rpc_eth_api::helpers::{EthCall, EthTransactions, FullEthApi, LoadFee, LoadState};
-use reth_storage_api::StateProviderFactory;
 use serde::{Deserialize, Serialize};
 use std::{marker::PhantomData, sync::Arc};
 use tracing::{trace, warn};
 
-use reth_optimism_rpc as _;
 use tokio::sync::Mutex;
 
 /// An upstream is capable of estimating, signing, and propagating signed transactions for a
@@ -109,97 +101,6 @@ where
             .await
             .map_err(|err| OdysseyWalletError::InternalError(err.into()))
             .map(|pending| *pending.tx_hash())
-    }
-}
-
-/// A handle to a Reth upstream that signs transactions and injects them directly into the
-/// transaction pool.
-#[derive(Debug)]
-pub struct RethUpstream<Provider, Eth> {
-    provider: Provider,
-    eth_api: Eth,
-    wallet: EthereumWallet,
-}
-
-impl<Provider, Eth> RethUpstream<Provider, Eth> {
-    /// Create a new [`RethUpstream`].
-    pub const fn new(provider: Provider, eth_api: Eth, wallet: EthereumWallet) -> Self {
-        Self { provider, eth_api, wallet }
-    }
-}
-
-#[async_trait]
-impl<Provider, Eth> Upstream for RethUpstream<Provider, Eth>
-where
-    Provider: StateProviderFactory + Send + Sync,
-    Eth: FullEthApi + Send + Sync,
-{
-    fn default_signer_address(&self) -> Address {
-        NetworkWallet::<Ethereum>::default_signer_address(&self.wallet)
-    }
-
-    async fn get_code(&self, address: Address) -> Result<Bytes, OdysseyWalletError> {
-        let state =
-            self.provider.latest().map_err(|err| OdysseyWalletError::InternalError(err.into()))?;
-
-        Ok(state
-            .account_code(address)
-            .ok()
-            .flatten()
-            .map(|code| code.0.bytes())
-            .unwrap_or_default())
-    }
-
-    async fn estimate(
-        &self,
-        tx: &TransactionRequest,
-    ) -> Result<(u64, Eip1559Estimation), OdysseyWalletError> {
-        let (estimate, fee_estimate) = tokio::join!(
-            EthCall::estimate_gas_at(&self.eth_api, tx.clone(), BlockId::latest(), None),
-            LoadFee::eip1559_fees(&self.eth_api, None, None)
-        );
-
-        Ok((
-            estimate
-                .map(|estimate| estimate.to())
-                .map_err(|err| OdysseyWalletError::InternalError(eyre::Report::new(err)))?,
-            fee_estimate
-                .map(|(base, prio)| Eip1559Estimation {
-                    max_fee_per_gas: (base + prio).to(),
-                    max_priority_fee_per_gas: prio.to(),
-                })
-                .map_err(|err| OdysseyWalletError::InternalError(eyre::Report::new(err)))?,
-        ))
-    }
-
-    async fn sign_and_send(
-        &self,
-        mut tx: TransactionRequest,
-    ) -> Result<TxHash, OdysseyWalletError> {
-        let next_nonce = LoadState::next_available_nonce(
-            &self.eth_api,
-            NetworkWallet::<Ethereum>::default_signer_address(&self.wallet),
-        )
-        .await
-        .map_err(|err| OdysseyWalletError::InternalError(eyre::Report::new(err)))?;
-        tx.nonce = Some(next_nonce);
-
-        // build and sign
-        let envelope =
-            <TransactionRequest as TransactionBuilder<Ethereum>>::build::<EthereumWallet>(
-                tx,
-                &self.wallet,
-            )
-            .await
-            .map_err(|err| OdysseyWalletError::InternalError(err.into()))?;
-
-        // this uses the internal `OpEthApi` to either forward the tx to the sequencer, or add it to
-        // the txpool
-        //
-        // see: https://github.com/paradigmxyz/reth/blob/b67f004fbe8e1b7c05f84f314c4c9f2ed9be1891/crates/optimism/rpc/src/eth/transaction.rs#L35-L57
-        EthTransactions::send_raw_transaction(&self.eth_api, envelope.encoded_2718().into())
-            .await
-            .map_err(|err| OdysseyWalletError::InternalError(eyre::Report::new(err)))
     }
 }
 

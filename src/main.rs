@@ -1,6 +1,7 @@
 //! # Odyssey Relay
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod rpc;
 
@@ -10,7 +11,6 @@ use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Context;
 use jsonrpsee::server::Server;
-use reth_tracing::Tracer;
 use rpc::{AlloyUpstream, OdysseyWallet, OdysseyWalletApiServer};
 use std::net::{IpAddr, Ipv4Addr};
 use tower::ServiceBuilder;
@@ -40,7 +40,7 @@ struct Args {
 impl Args {
     /// Run the relayer service.
     async fn run(self) -> eyre::Result<()> {
-        let _guard = reth_tracing::RethTracer::new().init()?;
+        // let _guard = reth_tracing::RethTracer::new().init()?;
 
         // construct provider
         let signer: PrivateKeySigner = self.secret_key.parse().wrap_err("Invalid signing key")?;
