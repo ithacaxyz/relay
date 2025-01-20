@@ -31,42 +31,21 @@ use tracing::{trace, warn};
 
 use tokio::sync::Mutex;
 
-/// An upstream is capable of estimating, signing, and propagating signed transactions for a
-/// specific chain.
-#[async_trait]
-pub trait Upstream {
-    /// Get the address of the account that sponsors transactions.
-    fn default_signer_address(&self) -> Address;
-
-    /// Get the code at a specific address.
-    async fn get_code(&self, address: Address) -> Result<Bytes, OdysseyWalletError>;
-
-    /// Estimate the transaction request's gas usage and fees.
-    async fn estimate(
-        &self,
-        tx: &TransactionRequest,
-    ) -> Result<(u64, Eip1559Estimation), OdysseyWalletError>;
-
-    /// Sign the transaction request and send it to the upstream.
-    async fn sign_and_send(&self, tx: TransactionRequest) -> Result<TxHash, OdysseyWalletError>;
-}
-
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Debug)]
-pub struct AlloyUpstream<P, T> {
+pub struct Upstream<P, T> {
     provider: P,
     _transport: PhantomData<T>,
 }
 
-impl<P, T> AlloyUpstream<P, T> {
-    /// Create a new [`AlloyUpstream`]
+impl<P, T> Upstream<P, T> {
+    /// Create a new [`Upstream`]
     pub const fn new(provider: P) -> Self {
         Self { provider, _transport: PhantomData }
     }
 }
 
-#[async_trait]
-impl<P, T> Upstream for AlloyUpstream<P, T>
+impl<P, T> Upstream<P, T>
 where
     P: Provider<T> + WalletProvider,
     T: Transport + Clone,
@@ -195,13 +174,13 @@ impl From<OdysseyWalletError> for jsonrpsee::types::error::ErrorObject<'static> 
 
 /// Implementation of the Odyssey `wallet_` namespace.
 #[derive(Debug)]
-pub struct OdysseyWallet<T> {
-    inner: Arc<OdysseyWalletInner<T>>,
+pub struct OdysseyWallet<P, T> {
+    inner: Arc<OdysseyWalletInner<P, T>>,
 }
 
-impl<T> OdysseyWallet<T> {
+impl<P, T> OdysseyWallet<P, T> {
     /// Create a new Odyssey wallet module.
-    pub fn new(upstream: T, chain_id: ChainId) -> Self {
+    pub fn new(upstream: Upstream<P, T>, chain_id: ChainId) -> Self {
         let inner = OdysseyWalletInner {
             upstream,
             chain_id,
@@ -217,9 +196,10 @@ impl<T> OdysseyWallet<T> {
 }
 
 #[async_trait]
-impl<T> OdysseyWalletApiServer for OdysseyWallet<T>
+impl<P, T> OdysseyWalletApiServer for OdysseyWallet<P, T>
 where
-    T: Upstream + Sync + Send + 'static,
+    P: Provider<T> + WalletProvider + 'static,
+    T: Transport + Clone,
 {
     async fn send_transaction(&self, mut request: TransactionRequest) -> RpcResult<TxHash> {
         trace!(target: "rpc::wallet", ?request, "Serving odyssey_sendTransaction");
@@ -300,8 +280,8 @@ where
 
 /// Implementation of the Odyssey `wallet_` namespace.
 #[derive(Debug)]
-struct OdysseyWalletInner<T> {
-    upstream: T,
+struct OdysseyWalletInner<P, T> {
+    upstream: Upstream<P, T>,
     chain_id: ChainId,
     /// Used to guard tx signing
     permit: Mutex<()>,
