@@ -16,6 +16,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use url::Url;
 
 /// The Odyssey relayer service sponsors transactions for EIP-7702 accounts.
@@ -40,7 +41,10 @@ struct Args {
 impl Args {
     /// Run the relayer service.
     async fn run(self) -> eyre::Result<()> {
-        // let _guard = reth_tracing::RethTracer::new().init()?;
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
 
         // construct provider
         let signer: PrivateKeySigner = self.secret_key.parse().wrap_err("Invalid signing key")?;
