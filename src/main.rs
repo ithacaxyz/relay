@@ -15,7 +15,7 @@ use jsonrpsee::server::Server;
 use std::net::{IpAddr, Ipv4Addr};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use url::Url;
 
@@ -43,7 +43,11 @@ impl Args {
     async fn run(self) -> eyre::Result<()> {
         tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
+            .with(
+                EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .from_env_lossy(),
+            )
             .init();
 
         // construct provider
