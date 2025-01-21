@@ -25,4 +25,9 @@ tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.0"
+tracing-subscriber = { version = "0.3.19", features = [
+    "fmt",
+    "std",
+    "env-filter",
+] }
 url = "2.5"
