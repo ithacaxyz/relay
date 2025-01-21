@@ -5,7 +5,7 @@
 
 mod rpc;
 
-use crate::rpc::{AlloyUpstream, OdysseyWallet, OdysseyWalletApiServer};
+use crate::rpc::{OdysseyWallet, OdysseyWalletApiServer, Upstream};
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use alloy_rpc_client::RpcClient;
 use alloy_signer_local::PrivateKeySigner;
@@ -53,7 +53,7 @@ impl Args {
         let chain_id = provider.get_chain_id().await?;
 
         // construct rpc module
-        let rpc = OdysseyWallet::new(AlloyUpstream::new(provider), chain_id).into_rpc();
+        let rpc = OdysseyWallet::new(Upstream::new(provider), chain_id).into_rpc();
 
         // start server
         let server = Server::builder()
