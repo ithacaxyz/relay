@@ -3,6 +3,10 @@ name = "relay"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+path = "src/main.rs"
+name = "relay"
+
 [dependencies]
 alloy-primitives = "0.8"
 alloy-provider = "0.8"
