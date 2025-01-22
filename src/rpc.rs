@@ -258,7 +258,7 @@ where
             .estimate(&request)
             .await
             .inspect_err(|_| self.inner.metrics.invalid_send_transaction_calls.increment(1))?;
-        if estimate >= 350_000 {
+        if estimate >= 1_000_000 {
             self.inner.metrics.invalid_send_transaction_calls.increment(1);
             return Err(OdysseyWalletError::GasEstimateTooHigh { estimate }.into());
         }
