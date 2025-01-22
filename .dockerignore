@@ -4,6 +4,7 @@
 # include source files
 !/bin
 !/crates
+!/src
 !Cargo.lock
 !Cargo.toml
 !Cross.toml
@@ -18,10 +19,6 @@
 
 # include dist directory, where the reth binary is located after compilation
 !/dist
-
-# include L2 genesis files
-!/etc/odyssey-genesis.json
-!/etc/dev-genesis.json
 
 # include example files
 !/examples
