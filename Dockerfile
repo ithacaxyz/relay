@@ -37,6 +37,9 @@ RUN cp /app/target/$BUILD_PROFILE/relay /app/relay
 FROM ubuntu AS runtime
 WORKDIR /app
 
+# Install runtime dependencies
+RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates && update-ca-certificates
+
 # Copy relay over from the build stage
 COPY --from=builder /app/relay /usr/local/bin
 
