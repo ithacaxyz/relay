@@ -25,7 +25,6 @@ use jsonrpsee::{
 use metrics::Counter;
 use metrics_derive::Metrics;
 
-use serde::{Deserialize, Serialize};
 use std::{marker::PhantomData, sync::Arc};
 use tracing::{trace, warn};
 
@@ -81,18 +80,6 @@ where
             .map_err(|err| OdysseyWalletError::InternalError(err.into()))
             .map(|pending| *pending.tx_hash())
     }
-}
-
-/// The capability to perform [EIP-7702][eip-7702] delegations, sponsored by the service.
-///
-/// The service will only perform delegations, and act on behalf of delegated accounts, if the
-/// account delegates to one of the addresses specified within this capability.
-///
-/// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-pub struct DelegationCapability {
-    /// A list of valid delegation contracts.
-    pub addresses: Vec<Address>,
 }
 
 /// Odyssey `wallet_` RPC namespace.
