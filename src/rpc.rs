@@ -14,73 +14,19 @@
 //! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use alloy_primitives::{Address, Bytes, ChainId, TxHash, TxKind, U256};
-use alloy_provider::{utils::Eip1559Estimation, Provider, WalletProvider};
+use alloy_primitives::{Address, ChainId, TxHash, TxKind, U256};
+use alloy_provider::{Provider, WalletProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_transport::Transport;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use metrics::Counter;
-use metrics_derive::Metrics;
-
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{trace, warn};
 
-use tokio::sync::Mutex;
-
-/// A wrapper around an Alloy provider for signing and sending sponsored transactions.
-#[derive(Debug)]
-pub struct Upstream<P, T> {
-    provider: P,
-    _transport: PhantomData<T>,
-}
-
-impl<P, T> Upstream<P, T> {
-    /// Create a new [`Upstream`]
-    pub const fn new(provider: P) -> Self {
-        Self { provider, _transport: PhantomData }
-    }
-}
-
-impl<P, T> Upstream<P, T>
-where
-    P: Provider<T> + WalletProvider,
-    T: Transport + Clone,
-{
-    fn default_signer_address(&self) -> Address {
-        self.provider.default_signer_address()
-    }
-
-    async fn get_code(&self, address: Address) -> Result<Bytes, OdysseyWalletError> {
-        self.provider
-            .get_code_at(address)
-            .await
-            .map_err(|err| OdysseyWalletError::InternalError(err.into()))
-    }
-
-    async fn estimate(
-        &self,
-        tx: &TransactionRequest,
-    ) -> Result<(u64, Eip1559Estimation), OdysseyWalletError> {
-        let (estimate, fee_estimate) =
-            tokio::join!(self.provider.estimate_gas(tx), self.provider.estimate_eip1559_fees(None));
-
-        Ok((
-            estimate.map_err(|err| OdysseyWalletError::InternalError(err.into()))?,
-            fee_estimate.map_err(|err| OdysseyWalletError::InternalError(err.into()))?,
-        ))
-    }
-
-    async fn sign_and_send(&self, tx: TransactionRequest) -> Result<TxHash, OdysseyWalletError> {
-        self.provider
-            .send_transaction(tx)
-            .await
-            .map_err(|err| OdysseyWalletError::InternalError(err.into()))
-            .map(|pending| *pending.tx_hash())
-    }
-}
+use crate::{error::OdysseyWalletError, metrics::WalletMetrics, upstream::Upstream};
 
 /// Odyssey `wallet_` RPC namespace.
 #[cfg_attr(not(test), rpc(server, namespace = "wallet"))]
@@ -102,61 +48,6 @@ pub trait OdysseyWalletApi {
     /// [eip-1559]: https://eips.ethereum.org/EIPS/eip-1559
     #[method(name = "sendTransaction", aliases = ["odyssey_sendTransaction"])]
     async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<TxHash>;
-}
-
-/// Errors returned by the wallet API.
-#[derive(Debug, thiserror::Error)]
-pub enum OdysseyWalletError {
-    /// The transaction value is not 0.
-    ///
-    /// The value should be 0 to prevent draining the service.
-    #[error("tx value not zero")]
-    ValueNotZero,
-    /// The from field is set on the transaction.
-    ///
-    /// Requests with the from field are rejected, since it is implied that it will always be the
-    /// service.
-    #[error("tx from field is set")]
-    FromSet,
-    /// The nonce field is set on the transaction.
-    ///
-    /// Requests with the nonce field set are rejected, as this is managed by the service.
-    #[error("tx nonce is set")]
-    NonceSet,
-    /// The to field of the transaction was invalid.
-    ///
-    /// The destination is invalid if:
-    ///
-    /// - There is no bytecode at the destination, or
-    /// - The bytecode is not an EIP-7702 delegation designator
-    #[error("the destination of the transaction is not a delegated account")]
-    IllegalDestination,
-    /// The transaction request was invalid.
-    ///
-    /// This is likely an internal error, as most of the request is built by the service.
-    #[error("invalid tx request")]
-    InvalidTransactionRequest,
-    /// The request was estimated to consume too much gas.
-    ///
-    /// The gas usage by each request is limited to counteract draining the services funds.
-    #[error("request would use too much gas: estimated {estimate}")]
-    GasEstimateTooHigh {
-        /// The amount of gas the request was estimated to consume.
-        estimate: u64,
-    },
-    /// An internal error occurred.
-    #[error(transparent)]
-    InternalError(#[from] eyre::Error),
-}
-
-impl From<OdysseyWalletError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(error: OdysseyWalletError) -> Self {
-        jsonrpsee::types::error::ErrorObject::owned::<()>(
-            jsonrpsee::types::error::INVALID_PARAMS_CODE,
-            error.to_string(),
-            None,
-        )
-    }
 }
 
 /// Implementation of the Odyssey `wallet_` namespace.
@@ -293,16 +184,6 @@ fn validate_tx_request(request: &TransactionRequest) -> Result<(), OdysseyWallet
     }
 
     Ok(())
-}
-
-/// Metrics for the `wallet_` RPC namespace.
-#[derive(Metrics)]
-#[metrics(scope = "wallet")]
-struct WalletMetrics {
-    /// Number of invalid calls to `odyssey_sendTransaction`
-    invalid_send_transaction_calls: Counter,
-    /// Number of valid calls to `odyssey_sendTransaction`
-    valid_send_transaction_calls: Counter,
 }
 
 #[cfg(test)]
