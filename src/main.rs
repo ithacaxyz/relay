@@ -3,9 +3,12 @@
 //! A relay service that sponsors transactions for EIP-7702 accounts.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod error;
+mod metrics;
 mod rpc;
+mod upstream;
 
-use crate::rpc::{OdysseyWallet, OdysseyWalletApiServer, Upstream};
+use crate::rpc::{OdysseyWallet, OdysseyWalletApiServer};
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use alloy_rpc_client::RpcClient;
 use alloy_signer_local::PrivateKeySigner;
@@ -17,6 +20,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use upstream::Upstream;
 use url::Url;
 
 /// The Odyssey relayer service sponsors transactions for EIP-7702 accounts.

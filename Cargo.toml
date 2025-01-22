@@ -19,7 +19,6 @@ eyre = "0.6.12"
 jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.23.0"
 metrics-derive = "0.1.0"
-serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"
