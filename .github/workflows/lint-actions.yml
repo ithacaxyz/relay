@@ -1,4 +1,4 @@
-name: Lint GitHub Actions workflows
+name: lint github workflows
 on:
   pull_request:
   merge_group:
