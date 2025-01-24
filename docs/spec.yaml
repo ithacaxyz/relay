@@ -1,0 +1,180 @@
+openrpc: 1.0.0-rc1
+info:
+  title: Ithaca Relay
+  version: 1.0.0
+servers:
+  - name: Ithaca Relay
+    summary: Staging environment for Ithaca Relay
+    url: https://relay-staging.ithaca.xyz
+methods:
+  - name: relay_sendAction
+    summary: Returns the chain ID of the current network.
+    params:
+      - name: Action
+        required: true
+        schema:
+          $ref: "#/components/schemas/Action" # todo
+      - name: Signed quote
+        required: true
+        schema:
+          $ref: "#/components/schemas/SignedQuote"
+      - name: Authorization item
+        required: false
+        schema:
+          $ref: "#/components/schemas/AuthorizationItem" # todo
+    result:
+      name: Transaction hash
+      schema:
+        $ref: "#/components/schemas/TransactionHash" # todo
+
+  - name: relay_estimateFee
+    summary: Estimates the fee for a given UserOp.
+    params:
+      - name: Action
+        required: true
+        schema:
+          $ref: "#/components/schemas/PartialAction"
+      - name: Fee token address
+        required: true
+        schema:
+          $ref: "#/components/schemas/address"
+      - name: Authorization address
+        required: false
+        schema:
+          $ref: "#/components/schemas/address"
+      - name: Key type hint
+        required: false
+        schema:
+          $ref: "#/components/schemas/KeyType"
+    result:
+      name: Quote
+      schema:
+        $ref: "#/components/schemas/SignedQuote"
+    examples:
+      - name: eth_chainId example
+        params: []
+        result:
+          name: Chain ID
+          value: "0x1"
+  - name: relay_feeTokens
+    summary: Returns a list of fee tokens supported by the relay.
+    description: todo
+    params: []
+    result:
+      name: Success
+      schema:
+        type: object
+        patternProperties:
+          "^0x(0|[1-9a-f][0-9a-f]*)$":
+            $ref: "#/components/schemas/Tokens"
+        additionalProperties: false
+
+components:
+  schemas:
+    address:
+      title: hex encoded address
+      type: string
+      pattern: ^0x[0-9a-fA-F]{40}$
+    addresses:
+      title: hex encoded addresses
+      type: array
+      items:
+        $ref: "#/components/schemas/address"
+    byte:
+      title: hex encoded byte
+      type: string
+      pattern: ^0x([0-9a-fA-F]?){1,2}$
+    bytes:
+      title: hex encoded bytes
+      type: string
+      pattern: ^0x[0-9a-f]*$
+    uint:
+      title: hex encoded unsigned integer
+      type: string
+      pattern: ^0x(0|[1-9a-f][0-9a-f]*)$
+    Token:
+      title: a token
+      type: object
+      properties:
+        address:
+          $ref: "#/components/schemas/address"
+        decimals:
+          type: number # todo add coin property
+      required:
+        - address
+        - decimals
+      additionalProperties: false
+    Tokens:
+      title: a list of tokens
+      type: array
+      items:
+        $ref: "#/components/schemas/Token"
+    PartialUserOp:
+      title: a partial userop
+      type: object
+      properties:
+        eoa:
+          $ref: "#/components/schemas/address"
+        executionData:
+          $ref: "#/components/schemas/bytes"
+        nonce:
+          $ref: "#/components/schemas/uint"
+      required:
+        - eoa
+        - executionData
+        - nonce
+      additionalProperties: false
+    PartialAction:
+      title: a partial action
+      type: object
+      properties:
+        op:
+          $ref: "#/components/schemas/PartialUserOp"
+        chainId:
+          $ref: "#/components/schemas/uint"
+      required:
+        - op
+        - chainId
+      additionalProperties: false
+    KeyType:
+      title: key type
+      type: string
+      enum:
+        - secp256k1
+        - p256
+        - webauthnp256
+    Quote: # todo: native fee estimate
+      title: a quote
+      type: object
+      properties:
+        token:
+          $ref: "#/components/schemas/address"
+        amount:
+          $ref: "#/components/schemas/uint"
+        gasEstimate:
+          $ref: "#/components/schemas/uint" # u64
+        digest:
+          $ref: "#/components/schemas/bytes" # bytes32
+        ttl:
+          $ref: "#/components/schemas/uint" # u64
+        authorizationAddress:
+          $ref: "#/components/schemas/address" # optional
+      required:
+        - token
+        - amount
+        - gasEstimate
+        - digest
+        - ttl
+      additionalProperties: false
+    SignedQuote: # todo: extends Quote with vrs fields
+      title: a signed quote
+      type: object
+      properties:
+        quote:
+          $ref: "#/components/schemas/Quote"
+        signature:
+          $ref: "#/components/schemas/bytes"
+      required:
+        - quote
+        - signature
+      additionalProperties: false
