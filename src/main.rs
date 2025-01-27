@@ -6,21 +6,30 @@
 mod error;
 mod metrics;
 mod rpc;
+mod serde;
+mod signer;
+mod types;
 mod upstream;
 
-use crate::rpc::{OdysseyWallet, OdysseyWalletApiServer};
+use crate::rpc::Relay;
 use alloy::{
-    providers::{network::EthereumWallet, Provider, ProviderBuilder},
+    primitives::Address,
+    providers::{network::EthereumWallet, ProviderBuilder},
     rpc::client::RpcClient,
     signers::local::PrivateKeySigner,
 };
 use clap::Parser;
 use eyre::Context;
+use http::HeaderName;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
 use metrics::{build_exporter, MetricsService, RpcMetricsService};
-use std::net::{IpAddr, Ipv4Addr};
+use rpc::RelayApiServer;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 use tower::{layer::layer_fn, ServiceBuilder};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use upstream::Upstream;
@@ -40,7 +49,19 @@ struct Args {
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
     #[arg(long, value_name = "RPC_ENDPOINT")]
     upstream: Url,
-    /// The secret key to sponsor transactions with.
+    /// The address of the entrypoint contract.
+    #[arg(long, value_name = "ADDRESS")]
+    entrypoint: Address,
+    /// The lifetime of a fee quote.
+    #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
+    quote_ttl: Duration,
+    /// The secret key to sign fee quotes with.
+    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_FEE_SK")]
+    quote_secret_key: String,
+    /// A fee token the relay accepts.
+    #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
+    fee_tokens: Vec<Address>,
+    /// The secret key to sign transactions with.
     #[arg(long, value_name = "SECRET_KEY", env = "RELAY_SK")]
     secret_key: String,
 }
@@ -61,41 +82,52 @@ impl Args {
         let handle = build_exporter();
 
         // construct provider
-        let signer: PrivateKeySigner = self.secret_key.parse().wrap_err("Invalid signing key")?;
+        let signer: PrivateKeySigner =
+            self.secret_key.parse().wrap_err("invalid tx signing key")?;
         let wallet = EthereumWallet::from(signer);
         let rpc_client = RpcClient::new_http(self.upstream.clone()).boxed();
         let provider =
             ProviderBuilder::new().with_recommended_fillers().wallet(wallet).on_client(rpc_client);
 
-        // get chain id
-        let chain_id = provider.get_chain_id().await?;
+        // construct quote signer
+        let quote_signer: PrivateKeySigner =
+            self.quote_secret_key.parse().wrap_err("invalid quote signing key")?;
 
         // construct rpc module
-        let upstream = Upstream::new(provider);
+        let upstream = Upstream::new(provider, self.entrypoint);
         let address = upstream.default_signer_address();
-        let rpc = OdysseyWallet::new(upstream, chain_id).into_rpc();
+        let rpc = Relay::new(upstream, quote_signer, self.fee_tokens).into_rpc();
 
         // launch period metric collectors
         metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
 
+        // http layers
+        let cors = CorsLayer::new()
+            .allow_methods(AllowMethods::any())
+            .allow_origin(AllowOrigin::any())
+            .allow_headers([HeaderName::from_static("content-type")]);
+        let metrics = layer_fn(move |service| MetricsService::new(service, handle.clone()));
+
         // start server
         let server = Server::builder()
             .http_only()
-            .set_http_middleware(
-                ServiceBuilder::new()
-                    .layer(CorsLayer::permissive())
-                    .layer(layer_fn(move |service| MetricsService::new(service, handle.clone()))),
-            )
+            .set_http_middleware(ServiceBuilder::new().layer(cors).layer(metrics))
             .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
             .build((self.address, self.port))
             .await?;
-        info!(addr = ?server.local_addr().unwrap(), "Started relay service");
+        info!(addr = %server.local_addr().unwrap(), "Started relay service");
 
         let handle = server.start(rpc);
         handle.stopped().await;
 
         Ok(())
     }
+}
+
+/// Parses a string representing seconds to a [`Duration`].
+fn parse_duration_secs(arg: &str) -> Result<std::time::Duration, std::num::ParseIntError> {
+    let seconds = arg.parse()?;
+    Ok(std::time::Duration::from_secs(seconds))
 }
 
 #[doc(hidden)]
