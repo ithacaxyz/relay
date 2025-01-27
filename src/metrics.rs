@@ -57,7 +57,7 @@ where
     S::Response: 'static,
     S::Error: Into<BoxError> + 'static,
     S::Future: Send + 'static,
-    B: http_body::Body<Data = alloy_primitives::bytes::Bytes> + Send + 'static,
+    B: http_body::Body<Data = alloy::primitives::bytes::Bytes> + Send + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
