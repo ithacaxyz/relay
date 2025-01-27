@@ -1,4 +1,4 @@
-# Porto Relay
+# Ithaca Relay
 
 A transparent cross-chain transaction router for EIP-7702 accounts, specifically built for [Porto](https://github.com/ithacaxyz/porto).
 
