@@ -9,7 +9,7 @@ on:
       - v*
 
 env:
-  CARGO_TERM_COLOR: always
+  GHCR_REPO: ghcr.io/ithacaxyz/relay
 
 jobs:
   build:
@@ -32,14 +32,23 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push the image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: odyssey/relay
-          IMAGE_TAG: ${{ github.ref_name }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/odyssey/relay:latest
+            ${{ steps.login-ecr.outputs.registry }}/odyssey/relay:${{ github.ref_name }}
+            ${{ env.GHCR_REPO }}:latest
+            ${{ env.GHCR_REPO }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
