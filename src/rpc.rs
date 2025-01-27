@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{trace, warn};
 
-use crate::{error::OdysseyWalletError, metrics::WalletMetrics, upstream::Upstream};
+use crate::{error::OdysseyWalletError, upstream::Upstream};
 
 /// Odyssey `wallet_` RPC namespace.
 #[cfg_attr(not(test), rpc(server, namespace = "wallet"))]
@@ -59,12 +59,7 @@ pub struct OdysseyWallet<P, T> {
 impl<P, T> OdysseyWallet<P, T> {
     /// Create a new Odyssey wallet module.
     pub fn new(upstream: Upstream<P, T>, chain_id: ChainId) -> Self {
-        let inner = OdysseyWalletInner {
-            upstream,
-            chain_id,
-            permit: Default::default(),
-            metrics: WalletMetrics::default(),
-        };
+        let inner = OdysseyWalletInner { upstream, chain_id, permit: Default::default() };
         Self { inner: Arc::new(inner) }
     }
 
@@ -83,10 +78,7 @@ where
         trace!(target: "rpc::wallet", ?request, "Serving odyssey_sendTransaction");
 
         // validate fields common to eip-7702 and eip-1559
-        if let Err(err) = validate_tx_request(&request) {
-            self.inner.metrics.invalid_send_transaction_calls.increment(1);
-            return Err(err.into());
-        }
+        validate_tx_request(&request)?;
 
         // validate destination
         match (request.authorization_list.is_some(), request.to) {
@@ -100,13 +92,11 @@ where
                         let addr = Address::from_slice(address);
                         // the delegation was cleared
                         if addr.is_zero() {
-                            self.inner.metrics.invalid_send_transaction_calls.increment(1);
                             return Err(OdysseyWalletError::IllegalDestination.into());
                         }
                     }
                     // Not an EIP-7702 delegation, or an empty (cleared) delegation
                     _ => {
-                        self.inner.metrics.invalid_send_transaction_calls.increment(1);
                         return Err(OdysseyWalletError::IllegalDestination.into());
                     }
                 }
@@ -115,7 +105,6 @@ where
             (true, _) => (),
             // create tx's disallowed
             _ => {
-                self.inner.metrics.invalid_send_transaction_calls.increment(1);
                 return Err(OdysseyWalletError::IllegalDestination.into());
             }
         }
@@ -130,14 +119,8 @@ where
         // note: we also set the `from` field here to correctly estimate for contracts that use e.g.
         // `tx.origin`
         request.from = Some(self.inner.upstream.default_signer_address());
-        let (estimate, fee_estimate) = self
-            .inner
-            .upstream
-            .estimate(&request)
-            .await
-            .inspect_err(|_| self.inner.metrics.invalid_send_transaction_calls.increment(1))?;
+        let (estimate, fee_estimate) = self.inner.upstream.estimate(&request).await?;
         if estimate >= 1_000_000 {
-            self.inner.metrics.invalid_send_transaction_calls.increment(1);
             return Err(OdysseyWalletError::GasEstimateTooHigh { estimate }.into());
         }
         request.gas = Some(estimate);
@@ -146,9 +129,6 @@ where
         request.max_fee_per_gas = Some(fee_estimate.max_fee_per_gas);
         request.max_priority_fee_per_gas = Some(fee_estimate.max_priority_fee_per_gas);
         request.gas_price = None;
-
-        // all checks passed, increment the valid calls counter
-        self.inner.metrics.valid_send_transaction_calls.increment(1);
 
         Ok(self.inner.upstream.sign_and_send(request).await.inspect_err(
             |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),
@@ -163,8 +143,6 @@ struct OdysseyWalletInner<P, T> {
     chain_id: ChainId,
     /// Used to guard tx signing
     permit: Mutex<()>,
-    /// Metrics for the `wallet_` RPC namespace.
-    metrics: WalletMetrics,
 }
 
 fn validate_tx_request(request: &TransactionRequest) -> Result<(), OdysseyWalletError> {
