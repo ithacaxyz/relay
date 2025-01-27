@@ -14,9 +14,10 @@ use alloy_rpc_client::RpcClient;
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Context;
-use jsonrpsee::server::Server;
+use jsonrpsee::server::{RpcServiceBuilder, Server};
+use metrics::{build_exporter, MetricsService, RpcMetricsService};
 use std::net::{IpAddr, Ipv4Addr};
-use tower::ServiceBuilder;
+use tower::{layer::layer_fn, ServiceBuilder};
 use tower_http::cors::CorsLayer;
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -54,6 +55,9 @@ impl Args {
             )
             .init();
 
+        // setup metrics
+        let handle = build_exporter();
+
         // construct provider
         let signer: PrivateKeySigner = self.secret_key.parse().wrap_err("Invalid signing key")?;
         let wallet = EthereumWallet::from(signer);
@@ -70,7 +74,12 @@ impl Args {
         // start server
         let server = Server::builder()
             .http_only()
-            .set_http_middleware(ServiceBuilder::new().layer(CorsLayer::permissive()))
+            .set_http_middleware(
+                ServiceBuilder::new()
+                    .layer(CorsLayer::permissive())
+                    .layer(layer_fn(move |service| MetricsService::new(service, handle.clone()))),
+            )
+            .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
             .build((self.address, self.port))
             .await?;
         info!(addr = ?server.local_addr().unwrap(), "Started relay service");

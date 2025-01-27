@@ -16,9 +16,12 @@ alloy-signer-local = { version = "0.8", features = ["mnemonic"] }
 alloy-transport = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6.12"
+futures-util = "0.3"
+http-body = "1"
 jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.23.0"
 metrics-derive = "0.1.0"
+metrics-exporter-prometheus = "0.15"
 thiserror = "2"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"
