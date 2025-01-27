@@ -9,9 +9,11 @@ mod rpc;
 mod upstream;
 
 use crate::rpc::{OdysseyWallet, OdysseyWalletApiServer};
-use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
-use alloy_rpc_client::RpcClient;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::{
+    providers::{network::EthereumWallet, Provider, ProviderBuilder},
+    rpc::client::RpcClient,
+    signers::local::PrivateKeySigner,
+};
 use clap::Parser;
 use eyre::Context;
 use jsonrpsee::server::{RpcServiceBuilder, Server};

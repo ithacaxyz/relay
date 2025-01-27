@@ -8,12 +8,14 @@ path = "src/main.rs"
 name = "relay"
 
 [dependencies]
-alloy-primitives = "0.8"
-alloy-provider = "0.8"
-alloy-rpc-client = "0.8"
-alloy-rpc-types = "0.8"
-alloy-signer-local = { version = "0.8", features = ["mnemonic"] }
-alloy-transport = "0.8"
+alloy = { version = "0.8", features = [
+    "signers",
+    "signer-local",
+    "providers",
+    "rpc",
+    "rpc-types",
+    "transports",
+] }
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6.12"
 futures-util = "0.3"

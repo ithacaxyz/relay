@@ -1,9 +1,11 @@
 use std::marker::PhantomData;
 
-use alloy_primitives::{Address, Bytes, TxHash};
-use alloy_provider::{utils::Eip1559Estimation, Provider, WalletProvider};
-use alloy_rpc_types::TransactionRequest;
-use alloy_transport::Transport;
+use alloy::{
+    primitives::{Address, Bytes, TxHash},
+    providers::{utils::Eip1559Estimation, Provider, WalletProvider},
+    rpc::types::TransactionRequest,
+    transports::Transport,
+};
 
 use crate::error::OdysseyWalletError;
 

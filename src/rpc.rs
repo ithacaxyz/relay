@@ -14,10 +14,12 @@
 //! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use alloy_primitives::{Address, ChainId, TxHash, TxKind, U256};
-use alloy_provider::{Provider, WalletProvider};
-use alloy_rpc_types::TransactionRequest;
-use alloy_transport::Transport;
+use alloy::{
+    primitives::{Address, ChainId, TxHash, TxKind, U256},
+    providers::{Provider, WalletProvider},
+    rpc::types::TransactionRequest,
+    transports::Transport,
+};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -167,8 +169,10 @@ fn validate_tx_request(request: &TransactionRequest) -> Result<(), OdysseyWallet
 #[cfg(test)]
 mod tests {
     use super::{validate_tx_request, OdysseyWalletError};
-    use alloy_primitives::{Address, U256};
-    use alloy_rpc_types::TransactionRequest;
+    use alloy::{
+        primitives::{Address, U256},
+        rpc::types::TransactionRequest,
+    };
 
     #[test]
     fn no_value_allowed() {
