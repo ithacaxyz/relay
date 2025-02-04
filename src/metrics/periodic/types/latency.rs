@@ -12,6 +12,7 @@ use url::Url;
 // This collector measures the latency of each HTTP endpoint.
 #[derive(Debug)]
 pub struct LatencyCollector {
+    /// Chains endpoints.
     pub endpoints: Vec<Url>,
 }
 

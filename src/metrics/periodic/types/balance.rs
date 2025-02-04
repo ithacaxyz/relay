@@ -11,7 +11,9 @@ use url::Url;
 // This collector queries a chain endpoint for balance of the signer.
 #[derive(Debug)]
 pub struct BalanceCollector {
+    /// Address to be queried.
     pub address: Address,
+    /// Chains endpoints.
     pub endpoints: Vec<Url>,
 }
 
