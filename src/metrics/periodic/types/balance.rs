@@ -4,7 +4,6 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     rpc::client::RpcClient,
 };
-use jsonrpsee::core::async_trait;
 use metrics::gauge;
 use url::Url;
 
@@ -17,7 +16,6 @@ pub struct BalanceCollector {
     pub endpoints: Vec<Url>,
 }
 
-#[async_trait]
 impl MetricCollector for BalanceCollector {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
         for endpoint in &self.endpoints {

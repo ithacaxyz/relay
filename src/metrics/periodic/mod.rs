@@ -5,8 +5,7 @@ mod job;
 use job::PeriodicJob;
 
 use alloy::primitives::Address;
-use jsonrpsee::core::async_trait;
-use std::{fmt::Debug, time::Duration};
+use std::{fmt::Debug, future::Future, time::Duration};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,10 +16,9 @@ pub enum MetricCollectorError {
 }
 
 // Trait for a collector that records its own metric.
-#[async_trait]
 pub trait MetricCollector: Debug + Sync + 'static {
     /// Collects metrics and records them.
-    async fn collect(&self) -> Result<(), MetricCollectorError>;
+    fn collect(&self) -> impl Future<Output = Result<(), MetricCollectorError>> + Send;
 }
 
 /// Spawns all available periodic metric collectors available.

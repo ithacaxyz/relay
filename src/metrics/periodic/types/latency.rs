@@ -5,7 +5,6 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     rpc::client::RpcClient,
 };
-use jsonrpsee::core::async_trait;
 use metrics::histogram;
 use url::Url;
 
@@ -16,7 +15,6 @@ pub struct LatencyCollector {
     pub endpoints: Vec<Url>,
 }
 
-#[async_trait]
 impl MetricCollector for LatencyCollector {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
         for endpoint in &self.endpoints {
