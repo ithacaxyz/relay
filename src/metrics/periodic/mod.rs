@@ -16,7 +16,7 @@ pub enum MetricCollectorError {
 }
 
 // Trait for a collector that records its own metric.
-pub trait MetricCollector: Debug + Sync + 'static {
+pub trait MetricCollector: Debug {
     /// Collects metrics and records them.
     fn collect(&self) -> impl Future<Output = Result<(), MetricCollectorError>> + Send;
 }

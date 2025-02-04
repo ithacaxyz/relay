@@ -18,7 +18,7 @@ impl<T> PeriodicJob<T> {
     }
 }
 
-impl<T: MetricCollector> PeriodicJob<T> {
+impl<T: MetricCollector + 'static> PeriodicJob<T> {
     /// Launches a tokio task with a created [PeriodicJob].
     pub fn launch_task(collector: T, interval: Interval)
     where
