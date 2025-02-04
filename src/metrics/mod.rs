@@ -1,4 +1,5 @@
-use std::{future::Future, pin::Pin, time::Duration};
+mod periodic;
+pub use periodic::spawn_periodic_collectors;
 
 use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
 use jsonrpsee::{
@@ -9,6 +10,7 @@ use jsonrpsee::{
 use metrics::Counter;
 use metrics_derive::Metrics;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use std::{future::Future, pin::Pin, time::Duration};
 use tower::Service;
 use tower_http::BoxError;
 
