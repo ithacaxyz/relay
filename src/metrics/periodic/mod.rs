@@ -21,7 +21,7 @@ pub trait MetricCollector: Debug + Sync + 'static {
     fn collect(&self) -> impl Future<Output = Result<(), MetricCollectorError>> + Send;
 }
 
-/// Spawns all available periodic metric collectors available.
+/// Spawns all available periodic metric collectors.
 pub fn spawn_periodic_collectors(signer: Address, endpoints: Vec<Url>) {
     PeriodicJob::launch_task(
         BalanceCollector { address: signer, endpoints: endpoints.clone() },
