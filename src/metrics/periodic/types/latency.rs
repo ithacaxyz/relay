@@ -8,7 +8,7 @@ use alloy::{
 use metrics::histogram;
 use url::Url;
 
-// This collector measures the latency of each HTTP endpoint.
+/// This collector measures the latency of each HTTP endpoint.
 #[derive(Debug)]
 pub struct LatencyCollector {
     /// Chains endpoints.

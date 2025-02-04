@@ -7,7 +7,7 @@ use alloy::{
 use metrics::gauge;
 use url::Url;
 
-// This collector queries a chain endpoint for balance of the signer.
+/// This collector queries a chain endpoint for balance of the signer.
 #[derive(Debug)]
 pub struct BalanceCollector {
     /// Address to be queried.
