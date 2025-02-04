@@ -63,7 +63,7 @@ impl Args {
         // construct provider
         let signer: PrivateKeySigner = self.secret_key.parse().wrap_err("Invalid signing key")?;
         let wallet = EthereumWallet::from(signer);
-        let rpc_client = RpcClient::new_http(self.upstream).boxed();
+        let rpc_client = RpcClient::new_http(self.upstream.clone()).boxed();
         let provider =
             ProviderBuilder::new().with_recommended_fillers().wallet(wallet).on_client(rpc_client);
 
@@ -71,7 +71,12 @@ impl Args {
         let chain_id = provider.get_chain_id().await?;
 
         // construct rpc module
-        let rpc = OdysseyWallet::new(Upstream::new(provider), chain_id).into_rpc();
+        let upstream = Upstream::new(provider);
+        let address = upstream.default_signer_address();
+        let rpc = OdysseyWallet::new(upstream, chain_id).into_rpc();
+
+        // launch period metric collectors
+        metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
 
         // start server
         let server = Server::builder()
