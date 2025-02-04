@@ -30,7 +30,7 @@ pub fn spawn_periodic_collectors(signer: Address, endpoints: Vec<Url>) {
 
     PeriodicJob::launch_task(
         LatencyCollector { endpoints },
-        tokio::time::interval(Duration::from_secs(5)),
+        tokio::time::interval(Duration::from_secs(3)),
     );
 }
 
