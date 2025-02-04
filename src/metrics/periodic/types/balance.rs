@@ -1,39 +1,54 @@
+use std::{fmt::Debug, marker::PhantomData};
+
 use crate::metrics::periodic::{MetricCollector, MetricCollectorError};
 use alloy::{
-    primitives::Address,
-    providers::{Provider, ProviderBuilder},
-    rpc::client::RpcClient,
+    primitives::{Address, ChainId},
+    providers::Provider,
+    transports::Transport,
 };
 use metrics::gauge;
-use url::Url;
 
 /// This collector queries a chain endpoint for balance of the signer.
-#[derive(Debug)]
-pub struct BalanceCollector {
+pub struct BalanceCollector<P, T> {
     /// Address to be queried.
-    pub address: Address,
+    address: Address,
     /// Chains endpoints.
-    pub endpoints: Vec<Url>,
+    providers_with_chain: Vec<(ChainId, P)>,
+    _transport: PhantomData<T>,
 }
 
-impl MetricCollector for BalanceCollector {
-    async fn collect(&self) -> Result<(), MetricCollectorError> {
-        for endpoint in &self.endpoints {
-            let provider = ProviderBuilder::new()
-                .with_recommended_fillers()
-                .on_client(RpcClient::new_http(endpoint.clone()).boxed());
+impl<P: Debug, T> BalanceCollector<P, T> {
+    pub fn new(address: Address, providers_with_chain: Vec<(ChainId, P)>) -> Self {
+        Self { address, providers_with_chain, _transport: Default::default() }
+    }
+}
 
-            let (chain_id, balance) =
-                tokio::join!(provider.get_chain_id(), provider.get_balance(self.address));
-            let chain_id = chain_id?;
+impl<P, T> MetricCollector for BalanceCollector<P, T>
+where
+    P: Provider<T>,
+    T: Transport + Clone,
+{
+    async fn collect(&self) -> Result<(), MetricCollectorError> {
+        for (chain_id, provider) in &self.providers_with_chain {
+            let balance = provider.get_balance(self.address).await?;
 
             gauge!(
                 "balance",
-                "address"  => self.address.to_checksum(Some(chain_id)),
+                "address"  => self.address.to_checksum(Some(*chain_id)),
                 "chain_id" => format!("{chain_id}")
             )
-            .set::<f64>(balance?.into());
+            .set::<f64>(balance.into());
         }
         Ok(())
+    }
+}
+
+impl<P, T> Debug for BalanceCollector<P, T>
+where
+    P: Provider<T>,
+    T: Transport + Clone,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BalanceCollector").field("address", &self.address).finish()
     }
 }

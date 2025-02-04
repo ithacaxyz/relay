@@ -76,7 +76,7 @@ impl Args {
         let rpc = OdysseyWallet::new(upstream, chain_id).into_rpc();
 
         // launch period metric collectors
-        metrics::spawn_periodic_collectors(address, vec![self.upstream]);
+        metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
 
         // start server
         let server = Server::builder()
