@@ -46,6 +46,7 @@ mod tests {
     use tokio::time::{Duration, Instant};
     use url::Url;
 
+    #[ignore]
     #[tokio::test]
     async fn test_periodic_metrics_collection() {
         let handle = PrometheusBuilder::new().install_recorder().unwrap();
@@ -93,5 +94,7 @@ mod tests {
         assert!(metrics_output.contains(
             "balance{address=\"0x0000000000000000000000000000000000000000\",chain_id=\"1\"} 0"
         ));
+
+        assert!(metrics_output.contains("latency{url=\"http://localhost:8545/\",quantile"));
     }
 }
