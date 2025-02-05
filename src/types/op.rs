@@ -1,7 +1,7 @@
 use super::CallArray;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{b256, keccak256, ChainId, Keccak256, B256, U256},
+    primitives::{b256, keccak256, Address, ChainId, Keccak256, B256, U256},
     sol,
 };
 use serde::{Deserialize, Serialize};
@@ -74,38 +74,37 @@ sol! {
 impl UserOp {
     pub fn eip712_digest(
         &self,
+        domain_name: String,
+        domain_version: String,
+        domain_verifying_contract: Address,
         chain_id: ChainId,
         nonce_salt: B256,
     ) -> Result<B256, alloy::sol_types::Error> {
         let is_odd_nonce = self.nonce.bit(0);
 
-        // Calculate OP digest
         let mut hasher = Keccak256::new();
         hasher.update(USER_OP_TYPEHASH);
         hasher.update(is_odd_nonce.then_some(ODD_NONCE).unwrap_or_default());
-        hasher.update(self.eoa);
+        hasher.update(B256::left_padding_from(self.eoa.as_ref()));
         hasher.update(CallArray::abi_decode(&self.executionData)?.eip712_digest());
         hasher.update(self.nonce.to_be_bytes::<32>());
         hasher.update(nonce_salt);
-        hasher.update(self.payer);
-        hasher.update(self.paymentToken);
+        hasher.update(B256::left_padding_from(self.payer.as_ref()));
+        hasher.update(B256::left_padding_from(self.paymentToken.as_ref()));
         hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.paymentPerGas.to_be_bytes::<32>());
         hasher.update(self.combinedGas.to_be_bytes::<32>());
         let op = hasher.finalize();
 
-        let domain_separator = keccak256(
-            &Eip712Domain::new(
-                None,
-                None,
-                (!is_odd_nonce).then(|| U256::from(chain_id)),
-                None,
-                None,
-            )
-            .encode_data(),
+        let domain = Eip712Domain::new(
+            Some(domain_name.into()),
+            Some(domain_version.into()),
+            (!is_odd_nonce).then(|| U256::from(chain_id)),
+            Some(domain_verifying_contract),
+            None,
         );
 
-        Ok(keccak256([&[0x19, 0x01], &domain_separator[..], &op[..]].concat()))
+        Ok(keccak256([&[0x19, 0x01], &domain.hash_struct()[..], &op[..]].concat()))
     }
 }
 
@@ -116,5 +115,61 @@ impl PartialUserOp {
         hasher.update(&self.executionData);
         hasher.update(self.nonce.to_be_bytes::<32>());
         hasher.finalize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy::primitives::{address, bytes, Address};
+
+    use super::*;
+
+    #[test]
+    fn key_hash() {
+        let mut userOp = UserOp {
+            eoa: address!("7b9fc63d6d9e8f94e90d1b0abfc3f611de2638d0"),
+            executionData: bytes!(
+                "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e149600000000000000000000000000000000000000000000000000000000628c3be0000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000e32c67f61a578060c3776c5384f017e2f74184e2aeb81b3679c6d44b6db88522eeffffffff000000000000000000000000000000000000000000000000000000000000002c3d3d3d3d363d3d37363d73f62849f9a0b5bf2913b396098f7c7019b51a820a5af43d3d93803e602a57fd5bf300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            ),
+            nonce: U256::from(31338),
+            payer: Address::ZERO,
+            paymentToken: address!("c7183455a4c133ae270771860664b6b7ec320bb1"),
+            paymentRecipient: Address::ZERO,
+            paymentAmount: U256::from(3822601006u64),
+            paymentMaxAmount: U256::from(3822601006u64),
+            paymentPerGas: U256::ZERO,
+            combinedGas: U256::from(10_000_000u64),
+            signature: bytes!(""),
+        };
+
+        // Even nonce (with chain id)
+        userOp.nonce = U256::from(31338);
+        assert_eq!(
+            userOp
+                .eip712_digest(
+                    "EntryPoint".to_string(),
+                    "0.0.1".to_string(),
+                    address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
+                    31337,
+                    B256::ZERO
+                )
+                .unwrap(),
+            b256!("0x61b486d7713e2524feea197c603d8f8a59192bb7fc3c3c232536d8e18b35fde6")
+        );
+
+        // Odd nonce (no chain id)
+        userOp.nonce = U256::from(31337);
+        assert_eq!(
+            userOp
+                .eip712_digest(
+                    "EntryPoint".to_string(),
+                    "0.0.1".to_string(),
+                    address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
+                    31337,
+                    B256::ZERO
+                )
+                .unwrap(),
+            b256!("0xaada23e8e365c4e46e9f3ab907a46d149d13e4cfc0355a708093ad93b157448c")
+        );
     }
 }
