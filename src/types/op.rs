@@ -69,6 +69,16 @@ sol! {
         /// Per delegated EOA.
         uint256 nonce;
     }
+
+    /// The signature of a [`UserOp`].
+    struct Signature {
+        bytes innerSignature;
+        bytes32 keyHash;
+        bool prehash;
+    }
+
+    /// Returns the nonce salt.
+    function nonceSalt() public view virtual returns (uint256);
 }
 
 impl UserOp {

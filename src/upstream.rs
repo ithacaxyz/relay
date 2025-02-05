@@ -2,6 +2,7 @@ use alloy::{
     primitives::{map::AddressMap, Address, Bytes, ChainId, TxHash},
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
+    sol_types::SolCall,
 };
 
 use crate::error::SendActionError;
@@ -41,6 +42,20 @@ where
             .get_code_at(address)
             .await
             .map_err(|err| SendActionError::InternalError(err.into()))
+    }
+
+    pub async fn call<C: SolCall>(
+        &self,
+        tx: &TransactionRequest,
+    ) -> Result<C::Return, SendActionError> {
+        self.provider
+            .call(tx)
+            .await
+            .map_err(|err| SendActionError::InternalError(err.into()))
+            .and_then(|r| {
+                C::abi_decode_returns(&r[..], false)
+                    .map_err(|err| SendActionError::InternalError(err.into()))
+            })
     }
 
     pub async fn estimate(

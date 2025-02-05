@@ -16,7 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
-    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, U256},
+    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, B256, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
@@ -33,7 +33,10 @@ use tracing::warn;
 use crate::{
     error::{EstimateFeeError, SendActionError},
     signer::QuoteSigner,
-    types::{executeCall, Action, Key, KeyType, PartialAction, SignedQuote, UserOp, U40},
+    types::{
+        executeCall, nonceSaltCall, nonceSaltReturn, Action, Key, KeyType, PartialAction,
+        Signature, SignedQuote, UserOp, U40,
+    },
     upstream::Upstream,
 };
 
@@ -107,7 +110,7 @@ where
         };
 
         // fill userop
-        let op = UserOp {
+        let mut op = UserOp {
             eoa: request.op.eoa,
             executionData: request.op.executionData,
             nonce: request.op.nonce,
@@ -124,6 +127,37 @@ where
         };
 
         // sign userop
+        let nonce_salt = self
+            .inner
+            .upstream
+            .call::<nonceSaltCall>(&TransactionRequest {
+                to: Some(request.op.eoa.into()),
+                input: nonceSaltCall {}.abi_encode().into(),
+                ..Default::default()
+            })
+            .await
+            .map_err(|err| EstimateFeeError::InternalError(err.into()))?
+            ._0;
+        let inner_signature = self
+            .inner
+            .quote_signer
+            .sign_hash(
+                &op.eip712_digest(
+                    self.inner.upstream.entrypoint(),
+                    self.inner.upstream.chain_id().await?,
+                    nonce_salt.into(),
+                )
+                .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+            )
+            .await
+            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+        op.signature = Signature {
+            innerSignature: inner_signature.as_bytes().into(),
+            keyHash: key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
 
         // estimate gas, mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -139,7 +173,6 @@ where
                 AccountOverride { state_diff: Some(key.storage_slots()), ..Default::default() },
             ),
         ]);
-
         let estimate = self
             .inner
             .upstream
