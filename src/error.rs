@@ -1,52 +1,56 @@
-/// Errors returned by the wallet API.
+use alloy::primitives::Address;
+
+/// Errors returned by `relay_estimateFee`
 #[derive(Debug, thiserror::Error)]
-pub enum OdysseyWalletError {
-    /// The transaction value is not 0.
-    ///
-    /// The value should be 0 to prevent draining the service.
-    #[error("tx value not zero")]
-    ValueNotZero,
-    /// The from field is set on the transaction.
-    ///
-    /// Requests with the from field are rejected, since it is implied that it will always be the
-    /// service.
-    #[error("tx from field is set")]
-    FromSet,
-    /// The nonce field is set on the transaction.
-    ///
-    /// Requests with the nonce field set are rejected, as this is managed by the service.
-    #[error("tx nonce is set")]
-    NonceSet,
-    /// The to field of the transaction was invalid.
-    ///
-    /// The destination is invalid if:
-    ///
-    /// - There is no bytecode at the destination, or
-    /// - The bytecode is not an EIP-7702 delegation designator
-    #[error("the destination of the transaction is not a delegated account")]
-    IllegalDestination,
-    /// The transaction request was invalid.
-    ///
-    /// This is likely an internal error, as most of the request is built by the service.
-    #[error("invalid tx request")]
-    InvalidTransactionRequest,
-    /// The request was estimated to consume too much gas.
-    ///
-    /// The gas usage by each request is limited to counteract draining the services funds.
-    #[error("request would use too much gas: estimated {estimate}")]
-    GasEstimateTooHigh {
-        /// The amount of gas the request was estimated to consume.
-        estimate: u64,
-    },
+pub enum EstimateFeeError {
+    /// The provided fee token is not supported.
+    #[error("fee token not supported: {0}")]
+    UnsupportedFeeToken(Address),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
 }
 
-impl From<OdysseyWalletError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(error: OdysseyWalletError) -> Self {
+impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(error: EstimateFeeError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
-            jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            match error {
+                EstimateFeeError::InternalError(_) => jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            },
+            error.to_string(),
+            None,
+        )
+    }
+}
+
+/// Errors returned by `relay_sendAction`
+#[derive(Debug, thiserror::Error)]
+pub enum SendActionError {
+    /// The provided EIP-7702 auth item is not chain agnostic.
+    #[error("the auth item is not chain agnostic")]
+    AuthItemNotChainAgnostic,
+    /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
+    #[error("eoa not delegated: {0}")]
+    EoaNotDelegated(Address),
+    /// The quote expired.
+    #[error("quote expired")]
+    QuoteExpired,
+    /// The provided quote was not signed by the relay.
+    #[error("invalid quote signer")]
+    InvalidQuoteSignature,
+    /// An internal error occurred.
+    #[error(transparent)]
+    InternalError(#[from] eyre::Error),
+}
+
+impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(error: SendActionError) -> Self {
+        jsonrpsee::types::error::ErrorObject::owned::<()>(
+            match error {
+                SendActionError::InternalError(_) => jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            },
             error.to_string(),
             None,
         )
