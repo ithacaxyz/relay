@@ -40,8 +40,8 @@ pub struct CallArray(pub Vec<Call>);
 
 impl CallArray {
     /// Decodes ABI‑encoded data into a `CallArray`.
-    pub fn abi_decode(data: &[u8], validate: bool) -> Result<Self, Error> {
-        Ok(Self(Call::decode_array(data, validate)?))
+    pub fn abi_decode(data: &[u8]) -> Result<Self, Error> {
+        Ok(Self(Call::decode_array(data, false)?))
     }
 
     /// Computes a eip712 digest for the [`CallArray`].
