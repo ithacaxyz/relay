@@ -9,21 +9,26 @@ name = "relay"
 
 [dependencies]
 alloy = { version = "0.11", features = [
-    "signers",
-    "signer-local",
+    "dyn-abi",
     "providers",
     "rpc",
     "rpc-types",
+    "serde",
+    "signers",
+    "signer-local",
+    "sol-types",
     "transports",
 ] }
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6.12"
 futures-util = "0.3"
+http = "1"
 http-body = "1"
-jsonrpsee = { version = "0.24.8", features = ["server", "client", "macros"] }
+jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.23.0"
 metrics-derive = "0.1.0"
 metrics-exporter-prometheus = "0.15"
+serde = "1"
 thiserror = "2"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"

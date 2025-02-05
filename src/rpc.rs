@@ -1,6 +1,6 @@
 //! # Odyssey wallet.
 //!
-//! Implementations of a custom `wallet_` namespace for Odyssey experiment 1.
+//! Implementations of a custom `relay_` namespace for Odyssey experiment 1.
 //!
 //! - `odyssey_sendTransaction` that can perform service-sponsored [EIP-7702][eip-7702] delegations
 //!   and send other service-sponsored transactions on behalf of EOAs with delegated code.
@@ -13,26 +13,40 @@
 //!
 //! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
+// todo: rewrite module docs
 
 use alloy::{
-    primitives::{Address, ChainId, TxHash, TxKind, U256},
+    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, U256},
     providers::{Provider, WalletProvider},
-    rpc::types::TransactionRequest,
+    rpc::types::{state::AccountOverride, TransactionRequest},
+    signers::Signer,
+    sol_types::{SolCall, SolValue},
+    transports::Transport,
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
-use tracing::{trace, warn};
+use tracing::warn;
 
-use crate::{error::OdysseyWalletError, upstream::Upstream};
+use crate::{
+    error::{EstimateFeeError, SendActionError},
+    signer::QuoteSigner,
+    types::{executeCall, Action, Key, KeyType, PartialAction, SignedQuote, UserOp, U40},
+    upstream::Upstream,
+};
 
-/// Odyssey `wallet_` RPC namespace.
-#[cfg_attr(not(test), rpc(server, namespace = "wallet"))]
-#[cfg_attr(test, rpc(server, client, namespace = "wallet"))]
-pub trait OdysseyWalletApi {
+/// Ithaca `relay_` RPC namespace.
+#[cfg_attr(not(test), rpc(server, namespace = "relay"))]
+#[cfg_attr(test, rpc(server, client, namespace = "relay"))]
+pub trait RelayApi {
+    /// Estimates the fee a user would have to pay for the given action in the given fee token.
+    #[method(name = "estimateFee", aliases = ["wallet_estimateFee"])]
+    async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote>;
+
+    // todo: rewrite
     /// Send a sponsored transaction.
     ///
     /// The transaction will only be processed if:
@@ -47,161 +61,175 @@ pub trait OdysseyWalletApi {
     ///
     /// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
     /// [eip-1559]: https://eips.ethereum.org/EIPS/eip-1559
-    #[method(name = "sendTransaction", aliases = ["odyssey_sendTransaction"])]
-    async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<TxHash>;
+    #[method(name = "sendAction", aliases = ["wallet_sendAction"])]
+    async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash>;
 }
 
-/// Implementation of the Odyssey `wallet_` namespace.
+/// Implementation of the Odyssey `relay_` namespace.
 #[derive(Debug)]
-pub struct OdysseyWallet<P> {
-    inner: Arc<OdysseyWalletInner<P>>,
+pub struct Relay<P, T, Q> {
+    inner: Arc<RelayInner<P, T, Q>>,
 }
 
-impl<P> OdysseyWallet<P> {
+impl<P, T, Q> Relay<P, T, Q> {
     /// Create a new Odyssey wallet module.
-    pub fn new(upstream: Upstream<P>, chain_id: ChainId) -> Self {
-        let inner = OdysseyWalletInner { upstream, chain_id, permit: Default::default() };
+    pub fn new(upstream: Upstream<P, T>, quote_signer: Q, fee_tokens: Vec<Address>) -> Self {
+        let inner = RelayInner { upstream, fee_tokens, quote_signer, permit: Default::default() };
         Self { inner: Arc::new(inner) }
     }
-
-    fn chain_id(&self) -> ChainId {
-        self.inner.chain_id
-    }
 }
 
+/// The EIP-7702 delegation designator.
+const EIP7702_DELEGATION_DESIGNATOR: [u8; 3] = [0xef, 0x01, 0x00];
+
+/// The EIP-7702 delegation designator for a cleared delegation.
+const EIP7702_CLEARED_DELEGATION: [u8; 23] = [
+    0xef, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 #[async_trait]
-impl<P> OdysseyWalletApiServer for OdysseyWallet<P>
+impl<P, T, Q> RelayApiServer for Relay<P, T, Q>
 where
-    P: Provider + WalletProvider + 'static,
+    P: Provider<T> + WalletProvider + 'static,
+    T: Transport + Clone,
+    Q: Signer + QuoteSigner<PrimitiveSignature> + Send + Sync + 'static,
 {
-    async fn send_transaction(&self, mut request: TransactionRequest) -> RpcResult<TxHash> {
-        trace!(target: "rpc::wallet", ?request, "Serving odyssey_sendTransaction");
+    async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
+        if !self.inner.fee_tokens.contains(&token) {
+            return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
+        }
 
-        // validate fields common to eip-7702 and eip-1559
-        validate_tx_request(&request)?;
+        // create key
+        let key = Key {
+            expiry: U40::from(0),
+            keyType: KeyType::Secp256k1,
+            isSuperAdmin: true,
+            publicKey: self.inner.quote_signer.address().into_array().into(),
+        };
 
-        // validate destination
-        match (request.authorization_list.is_some(), request.to) {
-            // if this is an eip-1559 tx, ensure that it is an account that delegates to a
-            // whitelisted address
-            (false, Some(TxKind::Call(addr))) => {
-                let code = self.inner.upstream.get_code(addr).await?;
-                match code.as_ref() {
-                    // A valid EIP-7702 delegation
-                    [0xef, 0x01, 0x00, address @ ..] => {
-                        let addr = Address::from_slice(address);
-                        // the delegation was cleared
-                        if addr.is_zero() {
-                            return Err(OdysseyWalletError::IllegalDestination.into());
-                        }
-                    }
-                    // Not an EIP-7702 delegation, or an empty (cleared) delegation
-                    _ => {
-                        return Err(OdysseyWalletError::IllegalDestination.into());
-                    }
-                }
+        // fill userop
+        let op = UserOp {
+            eoa: request.op.eoa,
+            executionData: request.op.executionData,
+            nonce: request.op.nonce,
+            payer: Address::ZERO,
+            paymentToken: token,
+            paymentRecipient: Address::ZERO,
+            paymentAmount: U256::ZERO,
+            paymentMaxAmount: U256::ZERO,
+            paymentPerGas: U256::ZERO,
+            // we intentionally do not use the maximum amount of gas since the contracts add a small
+            // overhead when checking if there is sufficient gas for the op
+            combinedGas: U256::MAX.div_ceil(2.try_into().unwrap()),
+            signature: Bytes::default(),
+        };
+
+        // sign userop
+
+        // estimate gas, mocking key storage for the eoa, and the balance for the mock signer
+        let overrides = AddressMap::from_iter([
+            (
+                self.inner.quote_signer.address(),
+                AccountOverride {
+                    balance: Some(U256::MAX.div_ceil(2.try_into().unwrap())),
+                    ..Default::default()
+                },
+            ),
+            (
+                request.op.eoa,
+                AccountOverride { state_diff: Some(key.storage_slots()), ..Default::default() },
+            ),
+        ]);
+
+        let estimate = self
+            .inner
+            .upstream
+            .estimate(
+                &TransactionRequest {
+                    from: Some(self.inner.quote_signer.address()),
+                    to: Some(self.inner.upstream.entrypoint().into()),
+                    authorization_list: request.auth.map(|auth| vec![auth]),
+                    input: executeCall { encodedUserOp: op.abi_encode().into() }
+                        .abi_encode()
+                        .into(),
+                    ..Default::default()
+                },
+                &overrides,
+            )
+            .await
+            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+        println!("estimate: {estimate:#?}");
+
+        // convert prices
+        todo!()
+    }
+
+    // todo: chain ids
+    // todo: should we just make quote optional? for Action::Delegate
+    async fn send_action(&self, action: Action, quote: SignedQuote) -> RpcResult<TxHash> {
+        let mut request = TransactionRequest {
+            input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
+            to: Some(self.inner.upstream.entrypoint().into()),
+            // note: we also set the `from` field here to correctly estimate for contracts that use
+            // e.g. `tx.origin`
+            from: Some(self.inner.upstream.default_signer_address()),
+            chain_id: Some(self.inner.upstream.chain_id().await?),
+            gas: Some(quote.ty().gas_estimate),
+            max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
+            max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
+            ..Default::default()
+        };
+
+        if let Some(auth) = action.auth {
+            // todo: persist auth
+            if !auth.inner().chain_id().is_zero() {
+                return Err(SendActionError::AuthItemNotChainAgnostic.into());
             }
-            // if it's an eip-7702 tx, let it through
-            (true, _) => (),
-            // create tx's disallowed
-            _ => {
-                return Err(OdysseyWalletError::IllegalDestination.into());
+            request.authorization_list = Some(vec![auth]);
+        } else {
+            let code = self.inner.upstream.get_code(action.op.eoa).await?;
+
+            if code[0..3] != EIP7702_DELEGATION_DESIGNATOR || code[..] == EIP7702_CLEARED_DELEGATION
+            {
+                return Err(SendActionError::EoaNotDelegated(action.op.eoa).into());
             }
+        }
+
+        // todo: validate paymentToken & paymentAmount & paymentRecipient
+        // todo: validate userop hash matches quote
+        // this can be done by just verifying the signature & userop hash against the rfq
+        // ticket from `relay_estimateFee`'
+        if !quote
+            .recover_address()
+            .map_or(false, |address| address == self.inner.quote_signer.address())
+        {
+            return Err(SendActionError::InvalidQuoteSignature.into());
+        }
+
+        // if we do **not** get an error here, then the quote ttl must be in the past, which means
+        // it is expired
+        if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
+            return Err(SendActionError::QuoteExpired.into());
         }
 
         // we acquire the permit here so that all following operations are performed exclusively
         let _permit = self.inner.permit.lock().await;
-
-        // set chain id
-        request.chain_id = Some(self.chain_id());
-
-        // set gas limit
-        // note: we also set the `from` field here to correctly estimate for contracts that use e.g.
-        // `tx.origin`
-        request.from = Some(self.inner.upstream.default_signer_address());
-        let (estimate, fee_estimate) = self.inner.upstream.estimate(&request).await?;
-        if estimate >= 1_000_000 {
-            return Err(OdysseyWalletError::GasEstimateTooHigh { estimate }.into());
-        }
-        request.gas = Some(estimate);
-
-        // set gas price
-        request.max_fee_per_gas = Some(fee_estimate.max_fee_per_gas);
-        request.max_priority_fee_per_gas = Some(fee_estimate.max_priority_fee_per_gas);
-        request.gas_price = None;
-
         Ok(self.inner.upstream.sign_and_send(request).await.inspect_err(
             |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),
         )?)
     }
 }
 
-/// Implementation of the Odyssey `wallet_` namespace.
+/// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct OdysseyWalletInner<P> {
-    upstream: Upstream<P>,
-    chain_id: ChainId,
+struct RelayInner<P, T, Q> {
+    /// The upstream RPC of the relay.
+    upstream: Upstream<P, T>,
+    /// Supported fee tokens.
+    fee_tokens: Vec<Address>,
+    /// The signer used to sign quotes.
+    quote_signer: Q,
     /// Used to guard tx signing
     permit: Mutex<()>,
-}
-
-fn validate_tx_request(request: &TransactionRequest) -> Result<(), OdysseyWalletError> {
-    // reject transactions that have a non-zero value to prevent draining the service.
-    if request.value.is_some_and(|val| val > U256::ZERO) {
-        return Err(OdysseyWalletError::ValueNotZero);
-    }
-
-    // reject transactions that have from set, as this will be the service.
-    if request.from.is_some() {
-        return Err(OdysseyWalletError::FromSet);
-    }
-
-    // reject transaction requests that have nonce set, as this is managed by the service.
-    if request.nonce.is_some() {
-        return Err(OdysseyWalletError::NonceSet);
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{validate_tx_request, OdysseyWalletError};
-    use alloy::{
-        primitives::{Address, U256},
-        rpc::types::TransactionRequest,
-    };
-
-    #[test]
-    fn no_value_allowed() {
-        assert!(matches!(
-            validate_tx_request(&TransactionRequest::default().value(U256::from(1))),
-            Err(OdysseyWalletError::ValueNotZero)
-        ));
-
-        assert!(matches!(
-            validate_tx_request(&TransactionRequest::default().value(U256::from(0))),
-            Ok(())
-        ));
-    }
-
-    #[test]
-    fn no_from_allowed() {
-        assert!(matches!(
-            validate_tx_request(&TransactionRequest::default().from(Address::ZERO)),
-            Err(OdysseyWalletError::FromSet)
-        ));
-
-        assert!(matches!(validate_tx_request(&TransactionRequest::default()), Ok(())));
-    }
-
-    #[test]
-    fn no_nonce_allowed() {
-        assert!(matches!(
-            validate_tx_request(&TransactionRequest::default().nonce(1)),
-            Err(OdysseyWalletError::NonceSet)
-        ));
-
-        assert!(matches!(validate_tx_request(&TransactionRequest::default()), Ok(())));
-    }
 }
