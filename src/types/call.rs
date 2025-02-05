@@ -1,7 +1,7 @@
 //! Call type used on ERC-7579.
 
 use alloy::{
-    primitives::{b256, Keccak256, B256},
+    primitives::{b256, keccak256, Keccak256, B256},
     sol,
     sol_types::{Error, SolValue},
 };
@@ -57,7 +57,7 @@ impl CallArray {
             call_hasher.update(&B256::left_padding_from(call.target.as_ref()));
 
             call_hasher.update(&call.value.to_be_bytes::<32>());
-            call_hasher.update(&call.data);
+            call_hasher.update(keccak256(&call.data));
         }
         hasher.finalize()
     }

@@ -1,8 +1,21 @@
+use super::CallArray;
 use alloy::{
-    primitives::{Keccak256, B256},
+    dyn_abi::Eip712Domain,
+    primitives::{b256, keccak256, ChainId, Keccak256, B256, U256},
     sol,
 };
 use serde::{Deserialize, Serialize};
+
+/// For EIP712 signature digest calculation for the `execute` function.
+///
+/// ```solidity
+/// bytes32 public constant USER_OP_TYPEHASH = keccak256("UserOp(bool multichain,address eoa,Call[] calls,uint256 nonce,uint256 nonceSalt,address payer,address paymentToken,uint256 paymentMaxAmount,uint256 paymentPerGas,uint256 combinedGas)Call(address target,uint256 value,bytes data)");
+/// ```
+const USER_OP_TYPEHASH: B256 =
+    b256!("0xc3607e2f6b50396b4728b4863949155412094a746596309e725db1d2d315053b");
+
+/// For EIP712 signature digest of an odd nonce.
+const ODD_NONCE: B256 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
 
 sol! {
     /// A struct to hold the user operation fields.
@@ -59,12 +72,40 @@ sol! {
 }
 
 impl UserOp {
-    pub fn digest(&self) -> B256 {
+    pub fn eip712_digest(
+        &self,
+        chain_id: ChainId,
+        nonce_salt: B256,
+    ) -> Result<B256, alloy::sol_types::Error> {
+        let is_odd_nonce = self.nonce.bit(0);
+
+        // Calculate OP digest
         let mut hasher = Keccak256::new();
+        hasher.update(USER_OP_TYPEHASH);
+        hasher.update(is_odd_nonce.then_some(ODD_NONCE).unwrap_or_default());
         hasher.update(self.eoa);
-        hasher.update(&self.executionData);
+        hasher.update(CallArray::abi_decode(&self.executionData)?.eip712_digest());
         hasher.update(self.nonce.to_be_bytes::<32>());
-        hasher.finalize()
+        hasher.update(nonce_salt);
+        hasher.update(self.payer);
+        hasher.update(self.paymentToken);
+        hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
+        hasher.update(self.paymentPerGas.to_be_bytes::<32>());
+        hasher.update(self.combinedGas.to_be_bytes::<32>());
+        let op = hasher.finalize();
+
+        let domain_separator = keccak256(
+            &Eip712Domain::new(
+                None,
+                None,
+                (!is_odd_nonce).then(|| U256::from(chain_id)),
+                None,
+                None,
+            )
+            .encode_data(),
+        );
+
+        Ok(keccak256([&[0x19, 0x01], &domain_separator[..], &op[..]].concat()))
     }
 }
 
