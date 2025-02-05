@@ -21,7 +21,6 @@ use alloy::{
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
     sol_types::{SolCall, SolValue},
-    transports::Transport,
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -67,13 +66,13 @@ pub trait RelayApi {
 
 /// Implementation of the Odyssey `relay_` namespace.
 #[derive(Debug)]
-pub struct Relay<P, T, Q> {
-    inner: Arc<RelayInner<P, T, Q>>,
+pub struct Relay<P, Q> {
+    inner: Arc<RelayInner<P, Q>>,
 }
 
-impl<P, T, Q> Relay<P, T, Q> {
+impl<P, Q> Relay<P, Q> {
     /// Create a new Odyssey wallet module.
-    pub fn new(upstream: Upstream<P, T>, quote_signer: Q, fee_tokens: Vec<Address>) -> Self {
+    pub fn new(upstream: Upstream<P>, quote_signer: Q, fee_tokens: Vec<Address>) -> Self {
         let inner = RelayInner { upstream, fee_tokens, quote_signer, permit: Default::default() };
         Self { inner: Arc::new(inner) }
     }
@@ -89,10 +88,9 @@ const EIP7702_CLEARED_DELEGATION: [u8; 23] = [
 ];
 
 #[async_trait]
-impl<P, T, Q> RelayApiServer for Relay<P, T, Q>
+impl<P, Q> RelayApiServer for Relay<P, Q>
 where
-    P: Provider<T> + WalletProvider + 'static,
-    T: Transport + Clone,
+    P: Provider + WalletProvider + 'static,
     Q: Signer + QuoteSigner<PrimitiveSignature> + Send + Sync + 'static,
 {
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
@@ -223,9 +221,9 @@ where
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner<P, T, Q> {
+struct RelayInner<P, Q> {
     /// The upstream RPC of the relay.
-    upstream: Upstream<P, T>,
+    upstream: Upstream<P>,
     /// Supported fee tokens.
     fee_tokens: Vec<Address>,
     /// The signer used to sign quotes.

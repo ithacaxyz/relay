@@ -1,28 +1,26 @@
-use std::{marker::PhantomData, time::Instant};
+use std::time::Instant;
 
 use crate::metrics::periodic::{MetricCollector, MetricCollectorError};
-use alloy::{providers::Provider, transports::Transport};
+use alloy::providers::Provider;
 use metrics::histogram;
 use std::fmt::Debug;
 use url::Url;
 
 /// This collector measures the latency of each HTTP endpoint.
-pub struct LatencyCollector<P, T> {
+pub struct LatencyCollector<P> {
     /// Chains endpoints.
     providers_with_url: Vec<(Url, P)>,
-    _transport: PhantomData<T>,
 }
 
-impl<P: Debug, T> LatencyCollector<P, T> {
+impl<P> LatencyCollector<P> {
     pub fn new(providers_with_url: Vec<(Url, P)>) -> Self {
-        Self { providers_with_url, _transport: Default::default() }
+        Self { providers_with_url }
     }
 }
 
-impl<P, T> MetricCollector for LatencyCollector<P, T>
+impl<P> MetricCollector for LatencyCollector<P>
 where
-    P: Provider<T> + Debug,
-    T: Transport + Clone,
+    P: Provider + Debug,
 {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
         for (url, provider) in &self.providers_with_url {
@@ -41,10 +39,9 @@ where
     }
 }
 
-impl<P, T> Debug for LatencyCollector<P, T>
+impl<P> Debug for LatencyCollector<P>
 where
-    P: Provider<T>,
-    T: Transport + Clone,
+    P: Provider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let urls: Vec<&Url> = self.providers_with_url.iter().map(|(url, _)| url).collect();

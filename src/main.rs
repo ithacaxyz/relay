@@ -85,9 +85,8 @@ impl Args {
         let signer: PrivateKeySigner =
             self.secret_key.parse().wrap_err("invalid tx signing key")?;
         let wallet = EthereumWallet::from(signer);
-        let rpc_client = RpcClient::new_http(self.upstream.clone()).boxed();
-        let provider =
-            ProviderBuilder::new().with_recommended_fillers().wallet(wallet).on_client(rpc_client);
+        let rpc_client = RpcClient::new_http(self.upstream.clone());
+        let provider = ProviderBuilder::new().wallet(wallet).on_client(rpc_client);
 
         // construct quote signer
         let quote_signer: PrivateKeySigner =
