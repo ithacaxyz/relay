@@ -28,7 +28,7 @@ where
         for (url, provider) in &self.providers_with_url {
             let start = Instant::now();
             provider.get_client_version().await?;
-            let elapsed = start.elapsed().as_micros() as f64;
+            let elapsed = start.elapsed().as_millis() as f64;
 
             histogram!(
                 "latency",
