@@ -74,8 +74,6 @@ sol! {
 impl UserOp {
     pub fn eip712_digest(
         &self,
-        domain_name: String,
-        domain_version: String,
         domain_verifying_contract: Address,
         chain_id: ChainId,
         nonce_salt: B256,
@@ -97,8 +95,8 @@ impl UserOp {
         let op = hasher.finalize();
 
         let domain = Eip712Domain::new(
-            Some(domain_name.into()),
-            Some(domain_version.into()),
+            Some("EntryPoint".into()),
+            Some("0.0.1".into()),
             (!is_odd_nonce).then(|| U256::from(chain_id)),
             Some(domain_verifying_contract),
             None,
@@ -125,7 +123,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn key_hash() {
+    fn user_op_eip712_digest() {
         let mut user_op = UserOp {
             eoa: address!("7b9fc63d6d9e8f94e90d1b0abfc3f611de2638d0"),
             executionData: bytes!(
@@ -147,8 +145,6 @@ mod tests {
         assert_eq!(
             user_op
                 .eip712_digest(
-                    "EntryPoint".to_string(),
-                    "0.0.1".to_string(),
                     address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
                     31337,
                     B256::ZERO
@@ -162,8 +158,6 @@ mod tests {
         assert_eq!(
             user_op
                 .eip712_digest(
-                    "EntryPoint".to_string(),
-                    "0.0.1".to_string(),
                     address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
                     31337,
                     B256::ZERO
