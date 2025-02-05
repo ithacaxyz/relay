@@ -51,13 +51,12 @@ impl CallArray {
         for call in &self.0 {
             let mut call_hasher = Keccak256::new();
 
-            hasher.update(CALL_TYPEHASH);
-
-            // bytes32(uint256(uint160(target))
+            call_hasher.update(CALL_TYPEHASH);
             call_hasher.update(&B256::left_padding_from(call.target.as_ref()));
-
             call_hasher.update(&call.value.to_be_bytes::<32>());
             call_hasher.update(keccak256(&call.data));
+
+            hasher.update(call_hasher.finalize())
         }
         hasher.finalize()
     }
