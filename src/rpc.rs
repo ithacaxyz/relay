@@ -18,7 +18,6 @@ use alloy::{
     primitives::{Address, ChainId, TxHash, TxKind, U256},
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
-    transports::Transport,
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -54,13 +53,13 @@ pub trait OdysseyWalletApi {
 
 /// Implementation of the Odyssey `wallet_` namespace.
 #[derive(Debug)]
-pub struct OdysseyWallet<P, T> {
-    inner: Arc<OdysseyWalletInner<P, T>>,
+pub struct OdysseyWallet<P> {
+    inner: Arc<OdysseyWalletInner<P>>,
 }
 
-impl<P, T> OdysseyWallet<P, T> {
+impl<P> OdysseyWallet<P> {
     /// Create a new Odyssey wallet module.
-    pub fn new(upstream: Upstream<P, T>, chain_id: ChainId) -> Self {
+    pub fn new(upstream: Upstream<P>, chain_id: ChainId) -> Self {
         let inner = OdysseyWalletInner { upstream, chain_id, permit: Default::default() };
         Self { inner: Arc::new(inner) }
     }
@@ -71,10 +70,9 @@ impl<P, T> OdysseyWallet<P, T> {
 }
 
 #[async_trait]
-impl<P, T> OdysseyWalletApiServer for OdysseyWallet<P, T>
+impl<P> OdysseyWalletApiServer for OdysseyWallet<P>
 where
-    P: Provider<T> + WalletProvider + 'static,
-    T: Transport + Clone,
+    P: Provider + WalletProvider + 'static,
 {
     async fn send_transaction(&self, mut request: TransactionRequest) -> RpcResult<TxHash> {
         trace!(target: "rpc::wallet", ?request, "Serving odyssey_sendTransaction");
@@ -140,8 +138,8 @@ where
 
 /// Implementation of the Odyssey `wallet_` namespace.
 #[derive(Debug)]
-struct OdysseyWalletInner<P, T> {
-    upstream: Upstream<P, T>,
+struct OdysseyWalletInner<P> {
+    upstream: Upstream<P>,
     chain_id: ChainId,
     /// Used to guard tx signing
     permit: Mutex<()>,

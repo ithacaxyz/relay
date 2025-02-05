@@ -1,32 +1,27 @@
-use std::marker::PhantomData;
-
 use alloy::{
     primitives::{Address, Bytes, TxHash},
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::TransactionRequest,
-    transports::Transport,
 };
 
 use crate::error::OdysseyWalletError;
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
-#[derive(Debug)]
-pub struct Upstream<P, T> {
+#[derive(Debug, Clone)]
+pub struct Upstream<P> {
     provider: P,
-    _transport: PhantomData<T>,
 }
 
-impl<P, T> Upstream<P, T> {
+impl<P> Upstream<P> {
     /// Create a new [`Upstream`]
     pub const fn new(provider: P) -> Self {
-        Self { provider, _transport: PhantomData }
+        Self { provider }
     }
 }
 
-impl<P, T> Upstream<P, T>
+impl<P> Upstream<P>
 where
-    P: Provider<T> + WalletProvider,
-    T: Transport + Clone,
+    P: Provider + WalletProvider,
 {
     pub fn default_signer_address(&self) -> Address {
         self.provider.default_signer_address()
