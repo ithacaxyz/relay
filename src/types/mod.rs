@@ -17,4 +17,7 @@ pub use signed::*;
 mod quote;
 pub use quote::*;
 
+mod call;
+pub use call::*;
+
 pub type U40 = Uint<40, 1>;
