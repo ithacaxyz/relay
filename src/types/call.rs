@@ -47,7 +47,6 @@ impl CallArray {
     /// Computes a eip712 digest for the [`CallArray`].
     pub fn eip712_digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
-        let mut buf = [0u8; 32];
 
         for call in &self.0 {
             let mut call_hasher = Keccak256::new();
@@ -55,8 +54,7 @@ impl CallArray {
             hasher.update(CALL_TYPEHASH);
 
             // bytes32(uint256(uint160(target))
-            buf[..20].copy_from_slice(call.target.as_ref());
-            call_hasher.update(&buf);
+            call_hasher.update(&B256::left_padding_from(call.target.as_ref()));
 
             call_hasher.update(&call.value.to_be_bytes::<32>());
             call_hasher.update(&call.data);
