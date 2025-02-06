@@ -16,7 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
-    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, B256, U256},
+    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
@@ -32,10 +32,9 @@ use tracing::warn;
 
 use crate::{
     error::{EstimateFeeError, SendActionError},
-    signer::QuoteSigner,
     types::{
-        executeCall, nonceSaltCall, nonceSaltReturn, Action, Key, KeyType, PartialAction,
-        Signature, SignedQuote, UserOp, U40,
+        executeCall, nonceSaltCall, Action, Key, KeyType, PartialAction, Signature, SignedQuote,
+        UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -94,7 +93,7 @@ const EIP7702_CLEARED_DELEGATION: [u8; 23] = [
 impl<P, Q> RelayApiServer for Relay<P, Q>
 where
     P: Provider + WalletProvider + 'static,
-    Q: Signer + QuoteSigner<PrimitiveSignature> + Send + Sync + 'static,
+    Q: Signer + Send + Sync + 'static,
 {
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
         if !self.inner.fee_tokens.contains(&token) {
