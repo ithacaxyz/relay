@@ -113,7 +113,7 @@ impl Key {
         slots.insert(
             bytes_seed_slot,
             if encoded.len() <= 31 {
-                let value = FixedBytes::<31>::right_padding_from(&encoded[..])
+                let value = FixedBytes::<31>::right_padding_from(encoded)
                     .concat_const(FixedBytes::<1>::with_last_byte(encoded.len() as u8));
                 encoded.advance(encoded.len());
                 value
@@ -180,10 +180,7 @@ fn seed_slot_for_key(key_storage_slot: B256, key_type: KeyType, public_key: &Byt
 mod tests {
     use super::{Key, KeyType};
     use crate::types::U40;
-    use alloy::{
-        hex,
-        primitives::{b256, Bytes},
-    };
+    use alloy::{hex, primitives::b256};
 
     #[test]
     fn key_hash() {

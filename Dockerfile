@@ -11,8 +11,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
-# Build profile, release by default
-ARG BUILD_PROFILE=release
+# Build profile, maxperf by default
+ARG BUILD_PROFILE=maxperf
 ENV BUILD_PROFILE $BUILD_PROFILE
 
 # Extra Cargo features

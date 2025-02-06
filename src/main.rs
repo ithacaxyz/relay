@@ -2,6 +2,7 @@
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![allow(dead_code)]
 
 mod error;
 mod metrics;

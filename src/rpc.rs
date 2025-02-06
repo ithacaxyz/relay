@@ -16,7 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
-    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, U256},
+    primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
@@ -232,7 +232,7 @@ where
         // ticket from `relay_estimateFee`'
         if !quote
             .recover_address()
-            .map_or(false, |address| address == self.inner.quote_signer.address())
+            .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
             return Err(SendActionError::InvalidQuoteSignature.into());
         }
