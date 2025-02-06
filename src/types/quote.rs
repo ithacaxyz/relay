@@ -1,6 +1,9 @@
 use std::time::SystemTime;
 
-use alloy::primitives::{PrimitiveSignature, B256};
+use alloy::{
+    primitives::{Keccak256, PrimitiveSignature, B256},
+    providers::utils::Eip1559Estimation as AlloyEip1559Estimation,
+};
 use serde::{Deserialize, Serialize};
 
 use super::Signed;
@@ -29,10 +32,21 @@ pub struct Quote {
 
 impl Quote {
     pub fn into_signed(self, signature: PrimitiveSignature) -> SignedQuote {
-        SignedQuote::new_unchecked(self, signature, B256::ZERO)
+        let digest = self.digest();
+        SignedQuote::new_unchecked(self, signature, digest)
+    }
+
+    pub fn digest(&self) -> B256 {
+        let mut hasher = Keccak256::new();
+        hasher.update(self.amount.to_be_bytes());
+        hasher.update(self.gas_estimate.to_be_bytes());
+        hasher.update(self.digest);
+        // todo: hash ttl somehow
+        hasher.finalize()
     }
 }
 
+// todo: this is temporary and should be replaced once https://github.com/alloy-rs/alloy/pull/2012 is released
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Eip1559Estimation {
     /// The base fee per gas.
@@ -41,4 +55,12 @@ pub struct Eip1559Estimation {
     /// The max priority fee per gas.
     #[serde(with = "alloy::serde::quantity")]
     pub max_priority_fee_per_gas: u128,
+}
+
+impl From<AlloyEip1559Estimation> for Eip1559Estimation {
+    fn from(
+        AlloyEip1559Estimation { max_fee_per_gas, max_priority_fee_per_gas}: AlloyEip1559Estimation,
+    ) -> Self {
+        Self { max_fee_per_gas, max_priority_fee_per_gas }
+    }
 }
