@@ -95,7 +95,7 @@ impl Args {
         // construct rpc module
         let upstream = Upstream::new(provider, self.entrypoint);
         let address = upstream.default_signer_address();
-        let rpc = Relay::new(upstream, quote_signer, self.fee_tokens).into_rpc();
+        let rpc = Relay::new(upstream, quote_signer, self.quote_ttl, self.fee_tokens).into_rpc();
 
         // launch period metric collectors
         metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;

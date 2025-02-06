@@ -27,7 +27,10 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
@@ -75,8 +78,19 @@ pub struct Relay<P, Q> {
 
 impl<P, Q> Relay<P, Q> {
     /// Create a new Odyssey wallet module.
-    pub fn new(upstream: Upstream<P>, quote_signer: Q, fee_tokens: Vec<Address>) -> Self {
-        let inner = RelayInner { upstream, fee_tokens, quote_signer, permit: Default::default() };
+    pub fn new(
+        upstream: Upstream<P>,
+        quote_signer: Q,
+        quote_ttl: Duration,
+        fee_tokens: Vec<Address>,
+    ) -> Self {
+        let inner = RelayInner {
+            upstream,
+            fee_tokens,
+            quote_signer,
+            quote_ttl,
+            permit: Default::default(),
+        };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -197,7 +211,9 @@ where
             gas_estimate,
             native_fee_estimate: native_fee_estimate.into(),
             digest: request.op.digest(),
-            ttl: SystemTime::now(),
+            ttl: SystemTime::now()
+                .checked_add(self.inner.quote_ttl)
+                .expect("should never overflow"),
         };
         let sig = self
             .inner
@@ -281,6 +297,8 @@ struct RelayInner<P, Q> {
     fee_tokens: Vec<Address>,
     /// The signer used to sign quotes.
     quote_signer: Q,
+    /// The TTL of a quote.
+    quote_ttl: Duration,
     /// Used to guard tx signing
     permit: Mutex<()>,
 }
