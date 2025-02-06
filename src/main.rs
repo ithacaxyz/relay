@@ -7,7 +7,6 @@ mod error;
 mod metrics;
 mod rpc;
 mod serde;
-mod signer;
 mod types;
 mod upstream;
 
