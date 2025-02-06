@@ -12,14 +12,14 @@ pub struct PeriodicJob<T> {
 }
 
 impl<T> PeriodicJob<T> {
-    /// Creates a [PeriodicJob].
+    /// Creates a [`PeriodicJob`].
     pub fn new(collector: T, interval: Interval) -> Self {
         Self { collector, interval }
     }
 }
 
 impl<T: MetricCollector + 'static> PeriodicJob<T> {
-    /// Launches a tokio task with a created [PeriodicJob].
+    /// Launches a tokio task with a created [`PeriodicJob`].
     pub fn launch_task(collector: T, interval: Interval)
     where
         T: Send,

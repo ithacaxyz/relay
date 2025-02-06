@@ -113,7 +113,7 @@ impl Key {
         slots.insert(
             bytes_seed_slot,
             if encoded.len() <= 31 {
-                let value = FixedBytes::<31>::right_padding_from(&encoded[..])
+                let value = FixedBytes::<31>::right_padding_from(encoded)
                     .concat_const(FixedBytes::<1>::with_last_byte(encoded.len() as u8));
                 encoded.advance(encoded.len());
                 value

@@ -31,7 +31,7 @@ sol! {
 impl Call {
     /// Helper method to decode an array of `Call[]` into `Vec<Call>`.
     pub fn decode_array(data: &[u8], validate: bool) -> Result<Vec<Self>, Error> {
-        <Vec<Call>>::abi_decode(data, validate)
+        <Vec<Self>>::abi_decode(data, validate)
     }
 }
 
