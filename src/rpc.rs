@@ -16,6 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
+    hex,
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
@@ -81,13 +82,11 @@ impl<P, Q> Relay<P, Q> {
 }
 
 /// The EIP-7702 delegation designator.
-const EIP7702_DELEGATION_DESIGNATOR: [u8; 3] = [0xef, 0x01, 0x00];
+const EIP7702_DELEGATION_DESIGNATOR: [u8; 3] = hex!("0xef0100");
 
 /// The EIP-7702 delegation designator for a cleared delegation.
-const EIP7702_CLEARED_DELEGATION: [u8; 23] = [
-    0xef, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
+const EIP7702_CLEARED_DELEGATION: [u8; 23] =
+    hex!("0xef01000000000000000000000000000000000000000000");
 
 #[async_trait]
 impl<P, Q> RelayApiServer for Relay<P, Q>
