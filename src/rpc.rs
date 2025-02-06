@@ -16,7 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
-    primitives::{map::AddressMap, Address, Bytes, PrimitiveSignature, TxHash, U256},
+    primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,

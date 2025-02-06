@@ -180,10 +180,7 @@ fn seed_slot_for_key(key_storage_slot: B256, key_type: KeyType, public_key: &Byt
 mod tests {
     use super::{Key, KeyType};
     use crate::types::U40;
-    use alloy::{
-        hex,
-        primitives::{b256, Bytes},
-    };
+    use alloy::{hex, primitives::b256};
 
     #[test]
     fn key_hash() {
