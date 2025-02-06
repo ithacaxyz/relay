@@ -12,6 +12,7 @@ use super::Signed;
 pub type SignedQuote = Signed<Quote>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Quote {
     /// The amount of the fee token to pay for the call.
     #[serde(with = "alloy::serde::quantity")]
@@ -48,6 +49,7 @@ impl Quote {
 
 // todo: this is temporary and should be replaced once https://github.com/alloy-rs/alloy/pull/2012 is released
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Eip1559Estimation {
     /// The base fee per gas.
     #[serde(with = "alloy::serde::quantity")]

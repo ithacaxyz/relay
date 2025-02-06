@@ -23,6 +23,7 @@ sol! {
     /// Since L2s already include calldata compression with savings forwarded to users,
     /// we don't need to be too concerned about calldata overhead.
     #[derive(Debug, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct UserOp {
         /// The user's address.
         address eoa;
@@ -59,6 +60,7 @@ sol! {
 
     /// A partial [`UserOp`] used for fee estimation.
     #[derive(Debug, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct PartialUserOp {
         /// The user's address.
         address eoa;

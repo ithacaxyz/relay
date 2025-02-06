@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// A type that has been signed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Signed<T> {
     #[serde(flatten)]
     ty: T,
