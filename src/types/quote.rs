@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use alloy::{
-    primitives::{Keccak256, PrimitiveSignature, B256},
+    primitives::{Address, Keccak256, PrimitiveSignature, B256, U256},
     providers::utils::Eip1559Estimation as AlloyEip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
@@ -14,9 +14,10 @@ pub type SignedQuote = Signed<Quote>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
+    /// The fee token address.
+    pub token: Address,
     /// The amount of the fee token to pay for the call.
-    #[serde(with = "alloy::serde::quantity")]
-    pub amount: u128,
+    pub amount: U256,
     /// The estimated amount of gas the action will consume.
     #[serde(with = "alloy::serde::quantity")]
     pub gas_estimate: u64,
@@ -39,7 +40,7 @@ impl Quote {
 
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
-        hasher.update(self.amount.to_be_bytes());
+        hasher.update(self.amount.to_be_bytes::<32>());
         hasher.update(self.gas_estimate.to_be_bytes());
         hasher.update(self.digest);
         // todo: hash ttl somehow
