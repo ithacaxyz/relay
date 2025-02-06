@@ -29,7 +29,7 @@ use jsonrpsee::{
 };
 use std::{sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     error::{EstimateFeeError, SendActionError},
@@ -120,11 +120,12 @@ where
             paymentPerGas: U256::ZERO,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
-            combinedGas: U256::MAX.div_ceil(2.try_into().unwrap()),
+            combinedGas: U256::from(20_000_000),
             signature: Bytes::default(),
         };
 
         // sign userop
+        debug!(eoa = %request.op.eoa, "Retrieving nonce salt");
         let nonce_salt = self
             .inner
             .upstream
@@ -135,6 +136,7 @@ where
             })
             .await?
             ._0;
+        debug!(eoa = %request.op.eoa, "Got nonce salt {nonce_salt}");
         let inner_signature = self
             .inner
             .quote_signer
@@ -187,7 +189,7 @@ where
             )
             .await
             .map_err(EstimateFeeError::from)?;
-        println!("estimate: {gas_estimate:#?} gas, fees {native_fee_estimate:#?}");
+        debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
