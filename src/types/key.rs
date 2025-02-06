@@ -1,5 +1,5 @@
 use alloy::{
-    primitives::{bytes::Buf, keccak256, map::B256Map, Bytes, FixedBytes, Keccak256, B256, U256},
+    primitives::{bytes::Buf, keccak256, map::B256Map, FixedBytes, Keccak256, B256, U256},
     sol,
     sol_types::SolValue,
 };
@@ -62,6 +62,23 @@ impl Key {
         hasher.finalize()
     }
 
+    /// Get the seed slot for the given key.
+    ///
+    /// This is given by:
+    ///
+    /// ```ignore
+    /// keyBytesSlot = keccak256(abi.encode(
+    ///     keccak256(abi.encode(uint256(keyType), keccak256(publicKey))),
+    ///     uint256(keyStorageMappingSlot),
+    /// ))
+    /// ```
+    fn seed_slot_for_key(&self, key_storage_slot: B256) -> B256 {
+        let mut hasher = Keccak256::new();
+        hasher.update(self.key_hash());
+        hasher.update(key_storage_slot);
+        hasher.finalize()
+    }
+
     /// Get the storage slots and storage values for this key as it would be encoded in the
     /// delegation contract.
     ///
@@ -106,8 +123,8 @@ impl Key {
         let key_storage_slot = B256::left_padding_from(
             &(PORTO_DELEGATION_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
         );
-        let bytes_seed_slot = seed_slot_for_key(key_storage_slot, self.keyType, &self.publicKey);
-        let mut encoded = &PackedKey::from(self.clone()).abi_encode()[..];
+        let bytes_seed_slot = self.seed_slot_for_key(key_storage_slot);
+        let mut encoded = &PackedKey::from(self.clone()).abi_encode_packed()[..];
 
         let mut slots = B256Map::default();
         slots.insert(
@@ -127,7 +144,7 @@ impl Key {
             } else {
                 // the key is 255 bytes or more, so the first slot is encoded as
                 // `abi.encodePacked(uint248(encoded.length), 0xff)`
-                FixedBytes::<31>::right_padding_from(&encoded.len().to_be_bytes())
+                FixedBytes::<31>::left_padding_from(&encoded.len().to_be_bytes())
                     .concat_const(FixedBytes::<1>::with_last_byte(0xff))
             },
         );
@@ -154,33 +171,14 @@ pub const PORTO_DELEGATION_STORAGE_SLOT: u128 = 2015112712752093870099;
 /// contract.
 pub const PORTO_KEY_STORAGE_SLOT_OFFSET: u128 = 4;
 
-/// Get the seed slot for the given key.
-///
-/// This is given by:
-///
-/// ```ignore
-/// keyBytesSlot = keccak256(abi.encode(
-///     uint256(keyStorageMappingSlot),
-///     keccak256(abi.encode(uint256(keyType), keccak256(publicKey))),
-/// ))
-/// ```
-fn seed_slot_for_key(key_storage_slot: B256, key_type: KeyType, public_key: &Bytes) -> B256 {
-    let mut hasher = Keccak256::new();
-    hasher.update(B256::with_last_byte(key_type as u8));
-    hasher.update(keccak256(public_key));
-    let subkey = hasher.finalize();
-
-    let mut hasher = Keccak256::new();
-    hasher.update(key_storage_slot);
-    hasher.update(subkey);
-    hasher.finalize()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Key, KeyType};
     use crate::types::U40;
-    use alloy::{hex, primitives::b256};
+    use alloy::{
+        hex,
+        primitives::{b256, map::HashMap, B256},
+    };
 
     #[test]
     fn key_hash() {
@@ -211,13 +209,13 @@ mod tests {
             )
             .into(),
         };
-        let slots = key.storage_slots();
 
-        assert_eq!(slots.len(), 1);
-        // todo this should be packed
         assert_eq!(
-            slots[&b256!("605fde1c52dbae8aaeafbff03828efbad65bf9f6e5fc303a738f314f8a93c677")],
-            b256!("0000000000000000000000000000000000000000deadbeef000000000002010b")
+            key.storage_slots(),
+            HashMap::from_iter([(
+                b256!("0x1e260793a6006dc7ff4e003f7855f86b42eafb769191a50456b8eef0a9fbec8d"),
+                b256!("0xdeadbeef0000000000020100000000000000000000000000000000000000000b")
+            ),])
         );
     }
 
@@ -232,17 +230,19 @@ mod tests {
             )
             .into(),
         };
-        let slots = key.storage_slots();
 
-        assert_eq!(slots.len(), 2);
-        // todo this should be packed
         assert_eq!(
-            slots[&b256!("a9919a9d198a69368df813d4ace48b06d5f01e02b1ecb122cecb090a7969f9c7")],
-            b256!("0000000000020100000000000000000000000000000000000000000000000000")
-        );
-        assert_eq!(
-            slots[&b256!("1f31a7e9332a6aee0653f4e62f01461643310d7aabbb39e494a18c309ddbe00d")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
+            key.storage_slots(),
+            HashMap::from_iter([
+                (
+                    b256!("66660046373aa54db720a1e783350b8b72164124dec4ac0f440c8280fa5cab06"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
+                ),
+                (
+                    b256!("f8ae8897de7599677a07b826c5e75519342a40c2478792c35966af4e7ac921eb"),
+                    b256!("0000000000020100000000000000000000000000000000000000000000000000")
+                ),
+            ])
         );
     }
 
@@ -264,49 +264,51 @@ mod tests {
             )
             .into(),
         };
-        let slots = key.storage_slots();
 
-        assert_eq!(slots.len(), 10);
-        // todo this should be packed
         assert_eq!(
-            slots[&b256!("92240ffab5baf5ca6d8e63c3703089ab0ada064a2a2db6be7e97b53ab29a8a0e")],
-            b256!("00000000000001070000000000000000000000000000000000000000000000ff")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630a")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630b")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630c")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630d")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630e")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f1630f")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f16310")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f16311")],
-            b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        );
-        assert_eq!(
-            slots[&b256!("4b6c783599a2273db37a37a7fa31a88f03b1debf725bf3f1e123557e08f16312")],
-            b256!("0000000000020100000000000000000000000000000000000000000000000000")
+            key.storage_slots(),
+            HashMap::from_iter([
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a18"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("68a02f4387b8eb2b560b17dd43f66a22b7800a81babf3c2b943967ae533a7cdd"),
+                    B256::left_padding_from(&67583u64.to_be_bytes())
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1d"),
+                    b256!("0000000000020100000000000000000000000000000000000000000000000000")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a19"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1a"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1c"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a17"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1b"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a16"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a15"),
+                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                )
+            ])
         );
     }
 }
