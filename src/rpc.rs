@@ -207,7 +207,8 @@ where
 
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
-            amount: 0,
+            token,
+            amount: U256::ZERO,
             gas_estimate,
             native_fee_estimate: native_fee_estimate.into(),
             digest: request.op.digest(),
@@ -226,8 +227,14 @@ where
     }
 
     // todo: chain ids
-    // todo: should we just make quote optional? for Action::Delegate
     async fn send_action(&self, action: Action, quote: SignedQuote) -> RpcResult<TxHash> {
+        // verify payment recipient is entrypoint or us
+        if action.op.paymentRecipient != Address::ZERO
+            && action.op.paymentRecipient != self.inner.upstream.default_signer_address()
+        {
+            return Err(SendActionError::WrongPaymentRecipient.into());
+        }
+
         let mut request = TransactionRequest {
             input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
             to: Some(self.inner.upstream.entrypoint().into()),
@@ -257,8 +264,33 @@ where
             }
         }
 
-        // todo: validate paymentToken & paymentAmount & paymentRecipient
-        // todo: validate userop hash matches quote
+        // check that payment token matches whats in the quote
+        if quote.ty().token != action.op.paymentToken {
+            return Err(SendActionError::InvalidFeeToken {
+                expected: quote.ty().token,
+                got: action.op.paymentToken,
+            }
+            .into());
+        }
+
+        // check that the payment amount matches whats in the quote
+        if quote.ty().amount != action.op.paymentAmount {
+            return Err(SendActionError::InvalidFeeAmount {
+                expected: quote.ty().amount,
+                got: action.op.paymentAmount,
+            }
+            .into());
+        }
+
+        // check that digest of the userop is the same as in the quote
+        if quote.ty().digest != action.op.digest() {
+            return Err(SendActionError::InvalidOpDigest {
+                expected: quote.ty().digest,
+                got: action.op.digest(),
+            }
+            .into());
+        }
+
         // this can be done by just verifying the signature & userop hash against the rfq
         // ticket from `relay_estimateFee`'
         if !quote

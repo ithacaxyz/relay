@@ -116,6 +116,14 @@ impl UserOp {
 
         Ok(keccak256([&[0x19, 0x01], &domain.hash_struct()[..], &op[..]].concat()))
     }
+
+    pub fn digest(&self) -> B256 {
+        let mut hasher = Keccak256::new();
+        hasher.update(self.eoa);
+        hasher.update(&self.executionData);
+        hasher.update(self.nonce.to_be_bytes::<32>());
+        hasher.finalize()
+    }
 }
 
 impl PartialUserOp {
