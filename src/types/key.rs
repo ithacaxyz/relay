@@ -167,7 +167,7 @@ pub const PORTO_KEY_STORAGE_SLOT_OFFSET: u128 = 4;
 fn seed_slot_for_key(key_storage_slot: B256, key_type: KeyType, public_key: &Bytes) -> B256 {
     let mut hasher = Keccak256::new();
     hasher.update(B256::with_last_byte(key_type as u8));
-    hasher.update(public_key);
+    hasher.update(keccak256(public_key));
     let subkey = hasher.finalize();
 
     let mut hasher = Keccak256::new();
@@ -188,15 +188,18 @@ mod tests {
     #[test]
     fn key_hash() {
         let key = Key {
-            expiry: U40::from(0),
-            keyType: KeyType::P256,
-            isSuperAdmin: false,
-            publicKey: Bytes::new(),
+            expiry: U40::ZERO,
+            keyType: KeyType::Secp256k1,
+            isSuperAdmin: true,
+            publicKey: hex!(
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe" // 31 bytes
+            )
+            .into(),
         };
 
         assert_eq!(
             key.key_hash(),
-            b256!("88d4843af302c2093286898cd34cba7a471c3cdce4c78514fc971c3c6a53891e")
+            b256!("0xee2e71f3d36446d9154925a4d494f827bf48cb0e6badea1b2ca5620e523ad03a")
         )
     }
 
