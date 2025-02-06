@@ -34,8 +34,8 @@ use tracing::warn;
 use crate::{
     error::{EstimateFeeError, SendActionError},
     types::{
-        executeCall, nonceSaltCall, Action, Key, KeyType, PartialAction, Signature, SignedQuote,
-        UserOp, U40,
+        executeCall, nonceSaltCall, Action, Key, KeyType, PartialAction, Quote, Signature,
+        SignedQuote, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -110,7 +110,7 @@ where
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
-            executionData: request.op.executionData,
+            executionData: request.op.executionData.clone(),
             nonce: request.op.nonce,
             payer: Address::ZERO,
             paymentToken: token,
@@ -170,7 +170,7 @@ where
                 AccountOverride { state_diff: Some(key.storage_slots()), ..Default::default() },
             ),
         ]);
-        let estimate = self
+        let (gas_estimate, native_fee_estimate) = self
             .inner
             .upstream
             .estimate(
@@ -187,10 +187,24 @@ where
             )
             .await
             .map_err(EstimateFeeError::from)?;
-        println!("estimate: {estimate:#?}");
+        println!("estimate: {gas_estimate:#?} gas, fees {native_fee_estimate:#?}");
 
-        // convert prices
-        todo!()
+        // todo: this is just a mock, we should add actual amounts
+        let quote = Quote {
+            amount: 0,
+            gas_estimate,
+            native_fee_estimate: native_fee_estimate.into(),
+            digest: request.op.digest(),
+            ttl: SystemTime::now(),
+        };
+        let sig = self
+            .inner
+            .quote_signer
+            .sign_hash(&quote.digest())
+            .await
+            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+
+        Ok(quote.into_signed(sig))
     }
 
     // todo: chain ids
@@ -231,7 +245,7 @@ where
         // ticket from `relay_estimateFee`'
         if !quote
             .recover_address()
-            .map_or(false, |address| address == self.inner.quote_signer.address())
+            .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
             return Err(SendActionError::InvalidQuoteSignature.into());
         }

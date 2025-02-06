@@ -32,16 +32,6 @@ impl<T> Signed<T> {
         &self.hash
     }
 
-    /// Splits the signed type into parts.
-    pub fn into_parts(self) -> (T, PrimitiveSignature, B256) {
-        (self.ty, self.signature, self.hash)
-    }
-
-    /// Returns the type without signature.
-    pub fn strip_signature(self) -> T {
-        self.ty
-    }
-
     /// Recover the address of the signer.
     pub fn recover_address(&self) -> Result<Address, SignatureError> {
         self.signature().recover_address_from_prehash(self.hash())
