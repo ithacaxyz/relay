@@ -134,8 +134,7 @@ where
                 input: nonceSaltCall {}.abi_encode().into(),
                 ..Default::default()
             })
-            .await
-            .map_err(|err| EstimateFeeError::InternalError(err.into()))?
+            .await?
             ._0;
         let inner_signature = self
             .inner
@@ -143,7 +142,7 @@ where
             .sign_hash(
                 &op.eip712_digest(
                     self.inner.upstream.entrypoint(),
-                    self.inner.upstream.chain_id().await?,
+                    self.inner.upstream.chain_id().await.map_err(EstimateFeeError::from)?,
                     nonce_salt.into(),
                 )
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
@@ -188,7 +187,7 @@ where
                 &overrides,
             )
             .await
-            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+            .map_err(EstimateFeeError::from)?;
         println!("estimate: {estimate:#?}");
 
         // convert prices
@@ -204,7 +203,7 @@ where
             // note: we also set the `from` field here to correctly estimate for contracts that use
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),
-            chain_id: Some(self.inner.upstream.chain_id().await?),
+            chain_id: Some(self.inner.upstream.chain_id().await.map_err(SendActionError::from)?),
             gas: Some(quote.ty().gas_estimate),
             max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
             max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
@@ -218,7 +217,8 @@ where
             }
             request.authorization_list = Some(vec![auth]);
         } else {
-            let code = self.inner.upstream.get_code(action.op.eoa).await?;
+            let code =
+                self.inner.upstream.get_code(action.op.eoa).await.map_err(SendActionError::from)?;
 
             if code[0..3] != EIP7702_DELEGATION_DESIGNATOR || code[..] == EIP7702_CLEARED_DELEGATION
             {
@@ -245,9 +245,15 @@ where
 
         // we acquire the permit here so that all following operations are performed exclusively
         let _permit = self.inner.permit.lock().await;
-        Ok(self.inner.upstream.sign_and_send(request).await.inspect_err(
-            |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),
-        )?)
+        Ok(self
+            .inner
+            .upstream
+            .sign_and_send(request)
+            .await
+            .inspect_err(
+                |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),
+            )
+            .map_err(SendActionError::from)?)
     }
 }
 
