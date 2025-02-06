@@ -3,6 +3,7 @@ use alloy::{
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
+    transports::RpcResult,
 };
 
 use crate::error::SendActionError;
@@ -29,19 +30,19 @@ where
         self.provider.default_signer_address()
     }
 
-    pub async fn chain_id(&self) -> Result<ChainId, SendActionError> {
-        self.provider.get_chain_id().await.map_err(|err| SendActionError::InternalError(err.into()))
+    pub async fn chain_id(&self) -> RpcResult<ChainId, alloy::transports::TransportErrorKind> {
+        self.provider.get_chain_id().await
     }
 
     pub fn entrypoint(&self) -> Address {
         self.entrypoint
     }
 
-    pub async fn get_code(&self, address: Address) -> Result<Bytes, SendActionError> {
-        self.provider
-            .get_code_at(address)
-            .await
-            .map_err(|err| SendActionError::InternalError(err.into()))
+    pub async fn get_code(
+        &self,
+        address: Address,
+    ) -> RpcResult<Bytes, alloy::transports::TransportErrorKind> {
+        self.provider.get_code_at(address).await
     }
 
     pub async fn call<C: SolCall>(
@@ -62,23 +63,19 @@ where
         &self,
         tx: &TransactionRequest,
         overrides: &AddressMap<AccountOverride>,
-    ) -> Result<(u64, Eip1559Estimation), SendActionError> {
+    ) -> RpcResult<(u64, Eip1559Estimation), alloy::transports::TransportErrorKind> {
         let (estimate, fee_estimate) = tokio::join!(
             self.provider.estimate_gas(tx).overrides(overrides),
             self.provider.estimate_eip1559_fees(None)
         );
 
-        Ok((
-            estimate.map_err(|err| SendActionError::InternalError(err.into()))?,
-            fee_estimate.map_err(|err| SendActionError::InternalError(err.into()))?,
-        ))
+        Ok((estimate?, fee_estimate?))
     }
 
-    pub async fn sign_and_send(&self, tx: TransactionRequest) -> Result<TxHash, SendActionError> {
-        self.provider
-            .send_transaction(tx)
-            .await
-            .map_err(|err| SendActionError::InternalError(err.into()))
-            .map(|pending| *pending.tx_hash())
+    pub async fn sign_and_send(
+        &self,
+        tx: TransactionRequest,
+    ) -> RpcResult<TxHash, alloy::transports::TransportErrorKind> {
+        self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())
     }
 }

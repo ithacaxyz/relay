@@ -6,6 +6,9 @@ pub enum EstimateFeeError {
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -15,7 +18,9 @@ impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: EstimateFeeError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
-                EstimateFeeError::InternalError(_) => jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                EstimateFeeError::InternalError(_) | EstimateFeeError::RpcError(_) => {
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
+                }
                 _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
             },
             error.to_string(),
@@ -39,6 +44,9 @@ pub enum SendActionError {
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -48,7 +56,9 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: SendActionError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
-                SendActionError::InternalError(_) => jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                SendActionError::InternalError(_) | SendActionError::RpcError(_) => {
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
+                }
                 _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
             },
             error.to_string(),
