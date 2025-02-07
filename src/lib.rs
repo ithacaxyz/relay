@@ -6,5 +6,6 @@ pub mod error;
 pub mod metrics;
 pub mod rpc;
 pub mod serde;
+pub mod signer;
 pub mod types;
 pub mod upstream;
