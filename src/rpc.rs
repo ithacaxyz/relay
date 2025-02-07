@@ -234,6 +234,8 @@ where
                 native_fee_estimate.max_fee_per_gas + native_fee_estimate.max_priority_fee_per_gas,
             )
             .await?;
+        op.paymentAmount = op.paymentPerGas * op.combinedGas;
+        op.paymentMaxAmount = op.paymentAmount;
 
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {

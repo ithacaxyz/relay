@@ -51,7 +51,7 @@ impl CoinGecko {
         Self { token_prices: rx_map }
     }
 
-    /// Returns token price in ETH(wei).
+    /// Updates inner token prices.
     async fn update_prices(
         tokens_split_by_comma: &str,
         tokens_price_feed: &HashMap<String, watch::Sender<Option<u128>>>,
