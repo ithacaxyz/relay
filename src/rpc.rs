@@ -155,8 +155,8 @@ where
                 input: nonceSaltCall {}.abi_encode().into(),
                 ..Default::default()
             })
-            .await?
-            ._0;
+            .await
+            .map_or(U256::ZERO, |ret| ret._0);
         debug!(eoa = %request.op.eoa, "Got nonce salt {nonce_salt}");
         let inner_signature = self
             .inner
