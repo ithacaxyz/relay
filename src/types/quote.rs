@@ -33,11 +33,13 @@ pub struct Quote {
 }
 
 impl Quote {
+    /// Add a signature turning the quote into a [`SignedQuote`].
     pub fn into_signed(self, signature: PrimitiveSignature) -> SignedQuote {
         let digest = self.digest();
         SignedQuote::new_unchecked(self, signature, digest)
     }
 
+    /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
         hasher.update(self.amount.to_be_bytes::<32>());

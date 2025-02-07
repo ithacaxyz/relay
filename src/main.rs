@@ -94,7 +94,7 @@ impl Args {
             self.quote_secret_key.parse().wrap_err("invalid quote signing key")?;
 
         // construct rpc module
-        let upstream = Upstream::new(provider, self.entrypoint);
+        let upstream = Upstream::new(provider, self.entrypoint).await?;
         let address = upstream.default_signer_address();
         let rpc = Relay::new(upstream, quote_signer, self.quote_ttl, self.fee_tokens).into_rpc();
 

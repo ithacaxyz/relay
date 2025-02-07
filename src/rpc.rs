@@ -157,7 +157,7 @@ where
             .sign_hash(
                 &op.eip712_digest(
                     self.inner.upstream.entrypoint(),
-                    self.inner.upstream.chain_id().await.map_err(EstimateFeeError::from)?,
+                    self.inner.upstream.chain_id(),
                     nonce_salt.into(),
                 )
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
@@ -241,7 +241,7 @@ where
             // note: we also set the `from` field here to correctly estimate for contracts that use
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),
-            chain_id: Some(self.inner.upstream.chain_id().await.map_err(SendActionError::from)?),
+            chain_id: Some(self.inner.upstream.chain_id()),
             gas: Some(quote.ty().gas_estimate),
             max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
             max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
