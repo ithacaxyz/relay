@@ -1,7 +1,7 @@
-use alloy::primitives::Address;
-
 use super::CostEstimate;
 use crate::error::EstimateFeeError;
+use alloy::primitives::Address;
+use jsonrpsee::core::async_trait;
 
 /// A cost estimator that applies a constant rate.
 #[derive(Debug, Default)]
@@ -19,6 +19,7 @@ impl ConstantRateCost {
     }
 }
 
+#[async_trait]
 impl CostEstimate for ConstantRateCost {
     /// It returns the token rate conversion to ETH(wei).
     async fn eth_price(&self, _: &Address) -> Result<u128, EstimateFeeError> {

@@ -1,14 +1,11 @@
-#![allow(unused)]
-use crate::{error::EstimateFeeError, types::Token};
-use alloy::{
-    primitives::{Address, U256},
-    providers::utils::Eip1559Estimation,
-};
+use crate::{cost::CostEstimate, error::EstimateFeeError};
+use alloy::primitives::Address;
+use jsonrpsee::core::async_trait;
 use reqwest::get;
 use serde_json::Value;
 use std::{collections::HashMap, time::Duration};
 use tokio::{sync::watch, time::interval};
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 
 /// Cost estimator that uses `CoinGecko` for a price feed.
 #[derive(Debug, Default, Clone)]
@@ -89,7 +86,8 @@ impl CoinGecko {
     }
 }
 
-impl super::CostEstimate for CoinGecko {
+#[async_trait]
+impl CostEstimate for CoinGecko {
     async fn eth_price(&self, payment_token: &Address) -> Result<u128, EstimateFeeError> {
         // SAFETY: borrow should not deadlock since the value is sent from a dedicated thread.
         if let Some(token_price_in_wei) =
@@ -107,7 +105,7 @@ impl super::CostEstimate for CoinGecko {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cost::CostEstimate;
+    use crate::{cost::CostEstimate, types::Token};
     use alloy::primitives::address;
     use tokio::time::sleep;
 

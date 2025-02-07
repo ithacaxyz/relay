@@ -96,7 +96,7 @@ impl Args {
             upstream,
             quote_signer,
             self.quote_ttl,
-            ConstantRateCost::in_eth(0.0003666f64),
+            Box::new(ConstantRateCost::in_eth(0.0003666f64)),
             fee_tokens,
         )
         .into_rpc();
