@@ -11,23 +11,28 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::Signed;
+use super::{Signed, Token};
 
 /// A container of supported fee tokens per chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeTokens(
-    #[serde(with = "alloy::serde::quantity::hashmap")] HashMap<ChainId, Vec<Address>>,
+    #[serde(with = "alloy::serde::quantity::hashmap")] HashMap<ChainId, Vec<Token>>,
 );
 
 impl FeeTokens {
     /// Check if the fee token is supported on the given chain.
     pub fn contains(&self, chain_id: ChainId, fee_token: &Address) -> bool {
-        self.0.get(&chain_id).is_some_and(|tokens| tokens.contains(fee_token))
+        self.0.get(&chain_id).is_some_and(|tokens| tokens.iter().any(|t| t.address == *fee_token))
+    }
+
+    /// Return a reference to a fee [Token] if supported on the given chain.
+    pub fn find(&self, chain_id: ChainId, fee_token: &Address) -> Option<&Token> {
+        self.0.get(&chain_id).and_then(|tokens| tokens.iter().find(|t| t.address == *fee_token))
     }
 }
 
-impl FromIterator<(ChainId, Vec<Address>)> for FeeTokens {
-    fn from_iter<T: IntoIterator<Item = (ChainId, Vec<Address>)>>(iter: T) -> Self {
+impl FromIterator<(ChainId, Vec<Token>)> for FeeTokens {
+    fn from_iter<T: IntoIterator<Item = (ChainId, Vec<Token>)>>(iter: T) -> Self {
         Self(HashMap::from_iter(iter))
     }
 }

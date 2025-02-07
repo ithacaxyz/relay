@@ -38,7 +38,7 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     types::{
         executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, U40,
+        Signature, SignedQuote, Token, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -87,7 +87,7 @@ impl<P, Q, S> Relay<P, Q, S> {
         quote_signer: Q,
         quote_ttl: Duration,
         quote_cost: S,
-        fee_tokens: Vec<Address>,
+        fee_tokens: Vec<Token>,
     ) -> Self {
         let chain_id = upstream.chain_id();
         let inner = RelayInner {
@@ -120,9 +120,9 @@ where
     }
 
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
-        if !self.inner.fee_tokens.contains(self.inner.upstream.chain_id(), &token) {
+        let Some(token) = self.inner.fee_tokens.find(self.inner.upstream.chain_id(), &token) else {
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
-        }
+        };
 
         // validate auth item chain id
         if request
@@ -147,7 +147,7 @@ where
             executionData: request.op.executionData.clone(),
             nonce: request.op.nonce,
             payer: Address::ZERO,
-            paymentToken: token,
+            paymentToken: token.address,
             paymentRecipient: Address::ZERO,
             paymentAmount: U256::ZERO,
             paymentMaxAmount: U256::ZERO,
@@ -225,14 +225,20 @@ where
             .map_err(EstimateFeeError::from)?;
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
+        // Get paymentPerGas
+        op.paymentPerGas = self
+            .inner
+            .quote_cost
+            .estimate(
+                token,
+                native_fee_estimate.max_fee_per_gas + native_fee_estimate.max_priority_fee_per_gas,
+            )
+            .await?;
+
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
-            token,
-            amount: self
-                .inner
-                .quote_cost
-                .estimate(gas_estimate, native_fee_estimate, Some(token))
-                .await?,
+            token: token.address,
+            amount: op.paymentPerGas * U256::from(gas_estimate),
             gas_estimate,
             native_fee_estimate: native_fee_estimate.into(),
             digest: op.digest(),

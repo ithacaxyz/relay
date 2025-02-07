@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::error::EstimateFeeError;
+use crate::{error::EstimateFeeError, types::Token};
 use alloy::{
     primitives::{Address, U256},
     providers::utils::Eip1559Estimation,
@@ -90,36 +90,17 @@ impl CoinGecko {
 }
 
 impl super::CostEstimate for CoinGecko {
-    async fn estimate(
-        &self,
-        gas_estimate: u64,
-        native_fee_estimate: Eip1559Estimation,
-        payment_token: Option<Address>,
-    ) -> Result<U256, EstimateFeeError> {
-        // Effective gas price
-        let gas_price = U256::from(
-            native_fee_estimate.max_fee_per_gas + native_fee_estimate.max_priority_fee_per_gas,
-        );
-
-        let wei_cost = U256::from(gas_estimate) * U256::from(gas_price);
-        info!(eth=?wei_cost, "Cost.");
-
-        if let Some(payment_token) = payment_token {
-            // todo validate token_price_in_eth - eg. dont want to be 0
-
-            // SAFETY: borrow should not deadlock since the value is sent from a dedicated thread.
-            if let Some(token_price_in_wei) =
-                self.token_prices.get(&payment_token).and_then(|a| *a.borrow())
-            {
-                return Ok((wei_cost * U256::from(1e18)) / U256::from(token_price_in_wei));
-            }
-
-            return Err(EstimateFeeError::CostEstimateError(
-                "could not find token price.".to_string(),
-            ));
+    async fn eth_price(&self, payment_token: &Address) -> Result<u128, EstimateFeeError> {
+        // SAFETY: borrow should not deadlock since the value is sent from a dedicated thread.
+        if let Some(token_price_in_wei) =
+            self.token_prices.get(payment_token).and_then(|a| *a.borrow())
+        {
+            return Ok(token_price_in_wei);
         }
 
-        Ok(wei_cost)
+        Err(EstimateFeeError::CostEstimateError(
+            "could not find token price to calculate gas cost.".to_string(),
+        ))
     }
 }
 
@@ -133,16 +114,15 @@ mod tests {
     #[ignore] // requires GECKO_API
     #[tokio::test]
     async fn coingecko() {
-        let eip1559_fee =
-            Eip1559Estimation { max_fee_per_gas: 3_500_000_000u128, max_priority_fee_per_gas: 0 };
-        let usdt = address!("dac17f958d2ee523a2206206994597c13d831ec7");
-        let usdc = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-        let gecko = CoinGecko::new(&[usdt, usdc]);
+        let gas_price = 3_500_000_000u128;
+        let usdt = Token::new(address!("dac17f958d2ee523a2206206994597c13d831ec7"), 6);
+        let usdc = Token::new(address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"), 6);
+        let gecko = CoinGecko::new(&[usdt.address, usdc.address]);
 
         // Waits for coingecko calls to succeed.
         sleep(Duration::from_millis(500)).await;
 
-        gecko.estimate(50_000, eip1559_fee, Some(usdt)).await.unwrap();
-        gecko.estimate(50_000, eip1559_fee, Some(usdc)).await.unwrap();
+        gecko.estimate(&usdt, gas_price).await.unwrap();
+        gecko.estimate(&usdc, gas_price).await.unwrap();
     }
 }

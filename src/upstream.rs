@@ -1,6 +1,6 @@
 //! A container for chain-specific information and RPCs.
 use alloy::{
-    primitives::{map::AddressMap, Address, Bytes, ChainId, TxHash},
+    primitives::{bytes, map::AddressMap, Address, Bytes, ChainId, TxHash, U256},
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
@@ -47,6 +47,21 @@ where
     /// Get the code of the given account.
     pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
         self.provider.get_code_at(address).await
+    }
+
+    /// Get a token decimals from chain.
+    pub async fn get_token_decimals(&self, token: Address) -> TransportResult<u8> {
+        let tx = TransactionRequest {
+            to: Some(token.into()),
+            // decimals() selector
+            input: bytes!("313ce567").into(),
+            ..Default::default()
+        };
+
+        let resp = self.provider.call(&tx).await?;
+
+        // Response is in BE
+        Ok(resp[resp.len() - 1] as u8)
     }
 
     /// Perform an `eth_call`.
