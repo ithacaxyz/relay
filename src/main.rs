@@ -4,15 +4,15 @@
 use alloy::{
     primitives::Address,
     providers::{network::EthereumWallet, ProviderBuilder},
-    signers::local::PrivateKeySigner,
+    signers::Signer,
 };
 use clap::Parser;
-use eyre::Context;
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
 use relay::{
     metrics::{build_exporter, MetricsService, RpcMetricsService},
     rpc::{Relay, RelayApiServer},
+    signer::LocalOrAws,
     upstream::Upstream,
 };
 use std::{
@@ -72,15 +72,15 @@ impl Args {
         let handle = build_exporter();
 
         // construct provider
-        let signer: PrivateKeySigner =
-            self.secret_key.parse().wrap_err("invalid tx signing key")?;
+        let signer = LocalOrAws::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
+
         let wallet = EthereumWallet::from(signer);
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
-        let quote_signer: PrivateKeySigner =
-            self.quote_secret_key.parse().wrap_err("invalid quote signing key")?;
+
+        let quote_signer = LocalOrAws::load(&self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
