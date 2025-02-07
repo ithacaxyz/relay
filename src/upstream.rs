@@ -16,6 +16,12 @@ pub struct Upstream<P> {
     entrypoint: Address,
 }
 
+impl<P> Upstream<P> {
+    pub fn chain_id(&self) -> ChainId {
+        self.chain_id
+    }
+}
+
 impl<P> Upstream<P>
 where
     P: Provider + WalletProvider,
@@ -28,10 +34,6 @@ where
 
     pub fn default_signer_address(&self) -> Address {
         self.provider.default_signer_address()
-    }
-
-    pub fn chain_id(&self) -> ChainId {
-        self.chain_id
     }
 
     pub fn entrypoint(&self) -> Address {
