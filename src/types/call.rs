@@ -17,6 +17,7 @@ const CALL_TYPEHASH: B256 =
 
 sol! {
     /// ERC-7579 call struct.
+    #[derive(Debug)]
     struct Call {
         /// The call target.
         address target;
@@ -35,7 +36,8 @@ impl Call {
     }
 }
 
-/// An helper type representing a list of [`Call`] objects.
+/// A helper type representing a list of [`Call`] objects.
+#[derive(Debug)]
 pub struct CallArray(pub Vec<Call>);
 
 impl CallArray {

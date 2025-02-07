@@ -7,8 +7,11 @@ use alloy::{
 sol! {
     /// The type of key.
     enum KeyType {
+        /// A P256 key.
         P256,
+        /// A passkey.
         WebAuthnP256,
+        /// An Ethereum key.
         Secp256k1
     }
 

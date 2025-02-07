@@ -1,3 +1,5 @@
+//! Helpers for serializing and deserializing [`SystemTime`].
+
 use serde::{self, Deserialize, Deserializer, Serializer};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

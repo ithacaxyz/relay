@@ -1,8 +1,6 @@
 //! # Odyssey Relay
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
 use alloy::{
     primitives::Address,
     providers::{network::EthereumWallet, ProviderBuilder},
@@ -12,6 +10,11 @@ use clap::Parser;
 use eyre::Context;
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
+use relay::{
+    metrics::{build_exporter, MetricsService, RpcMetricsService},
+    rpc::{Relay, RelayApiServer},
+    upstream::Upstream,
+};
 use std::{
     net::{IpAddr, Ipv4Addr},
     time::Duration,
@@ -21,21 +24,6 @@ use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use url::Url;
-
-mod error;
-
-mod metrics;
-use metrics::{build_exporter, MetricsService, RpcMetricsService};
-
-mod rpc;
-use rpc::{Relay, RelayApiServer};
-
-mod serde;
-
-mod types;
-
-mod upstream;
-use upstream::Upstream;
 
 /// The Odyssey relayer service sponsors transactions for EIP-7702 accounts.
 #[derive(Debug, Parser)]
@@ -99,7 +87,7 @@ impl Args {
         let rpc = Relay::new(upstream, quote_signer, self.quote_ttl, self.fee_tokens).into_rpc();
 
         // launch period metric collectors
-        metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
+        relay::metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
 
         // http layers
         let cors = CorsLayer::new()

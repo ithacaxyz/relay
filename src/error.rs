@@ -1,3 +1,5 @@
+//! Relay error types.
+
 use alloy::primitives::{Address, B256, U256};
 
 /// Errors returned by `relay_estimateFee`
@@ -43,10 +45,20 @@ pub enum SendActionError {
     EoaNotDelegated(Address),
     /// The payment amount in the userop did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
-    InvalidFeeAmount { expected: U256, got: U256 },
+    InvalidFeeAmount {
+        /// The amount expected.
+        expected: U256,
+        /// The amount in the [`UserOp`].
+        got: U256,
+    },
     /// The quote was signed for a different userop.
     #[error("invalid op digest, expected {expected}, got {got}")]
-    InvalidOpDigest { expected: B256, got: B256 },
+    InvalidOpDigest {
+        /// The digest expected.
+        expected: B256,
+        /// The digest of the [`UserOp`].
+        got: B256,
+    },
     /// The quote expired.
     #[error("quote expired")]
     QuoteExpired,
