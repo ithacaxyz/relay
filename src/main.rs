@@ -11,8 +11,10 @@ use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
 use relay::{
     metrics::{build_exporter, MetricsService, RpcMetricsService},
+    price::PriceOracle,
     rpc::{Relay, RelayApiServer},
     signer::LocalOrAws,
+    types::FeeTokens,
     upstream::Upstream,
 };
 use std::{
@@ -86,7 +88,14 @@ impl Args {
         // construct rpc module
         let upstream = Upstream::new(provider, self.entrypoint).await?;
         let address = upstream.default_signer_address();
-        let rpc = Relay::new(upstream, quote_signer, self.quote_ttl, self.fee_tokens).into_rpc();
+        let rpc = Relay::new(
+            upstream.clone(),
+            quote_signer,
+            self.quote_ttl,
+            PriceOracle::new().with_constant_rate(0.0003666f64),
+            FeeTokens::new(&self.fee_tokens, upstream).await?,
+        )
+        .into_rpc();
 
         // launch period metric collectors
         relay::metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;

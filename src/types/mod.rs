@@ -2,8 +2,14 @@
 mod action;
 pub use action::*;
 
+mod coin;
+pub use coin::*;
+
 mod entrypoint;
 pub use entrypoint::*;
+
+mod erc20;
+pub use erc20::*;
 
 mod key;
 use alloy::primitives::Uint;
@@ -17,6 +23,9 @@ pub use signed::*;
 
 mod quote;
 pub use quote::*;
+
+mod token;
+pub use token::*;
 
 mod call;
 pub use call::*;

@@ -8,6 +8,9 @@ pub enum EstimateFeeError {
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
+    /// The price for fee token is not available.
+    #[error("fee token price not currently available: {0}")]
+    UnavailablePrice(Address),
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
@@ -89,4 +92,12 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
             None,
         )
     }
+}
+
+/// Price oracle related errors
+#[derive(Debug, thiserror::Error)]
+pub enum PriceOracleError {
+    /// An internal error occurred.
+    #[error(transparent)]
+    InternalError(#[from] eyre::Error),
 }

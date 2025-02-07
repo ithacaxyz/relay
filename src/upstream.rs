@@ -7,7 +7,7 @@ use alloy::{
     transports::TransportResult,
 };
 
-use crate::error::SendActionError;
+use crate::{error::SendActionError, types::IERC20};
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Clone, Debug)]
@@ -47,6 +47,11 @@ where
     /// Get the code of the given account.
     pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
         self.provider.get_code_at(address).await
+    }
+
+    /// Get token decimals from chain.
+    pub async fn get_token_decimals(&self, token: Address) -> Result<u8, eyre::Error> {
+        Ok(IERC20::new(token, &self.provider).decimals().call().await?._0)
     }
 
     /// Perform an `eth_call`.
