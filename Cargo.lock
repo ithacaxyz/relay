@@ -75,6 +75,7 @@ checksum = "5d0d6c784abf2e061139798d51299da278fc8f02d7b7546662b898d9b22ab5e9"
 dependencies = [
  "alloy-primitives",
  "num_enum",
+ "serde",
  "strum",
 ]
 
@@ -3570,6 +3571,7 @@ name = "relay"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "alloy-chains",
  "async-trait",
  "aws-config",
  "aws-sdk-kms",

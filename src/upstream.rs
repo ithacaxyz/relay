@@ -4,15 +4,10 @@ use alloy::{
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
+    transports::TransportResult,
 };
 
-use crate::{
-    error::{SendActionError, UpstreamError},
-    types::IERC20,
-};
-
-/// A transport result is a Result containing a UpstreamError.
-pub type UpstreamResult<T> = Result<T, UpstreamError>;
+use crate::{error::SendActionError, types::IERC20};
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Clone, Debug)]
@@ -34,7 +29,7 @@ where
     P: Provider + WalletProvider,
 {
     /// Create a new [`Upstream`]
-    pub async fn new(provider: P, entrypoint: Address) -> UpstreamResult<Self> {
+    pub async fn new(provider: P, entrypoint: Address) -> TransportResult<Self> {
         let chain_id = provider.get_chain_id().await?;
         Ok(Self { chain_id, provider, entrypoint })
     }
@@ -50,12 +45,12 @@ where
     }
 
     /// Get the code of the given account.
-    pub async fn get_code(&self, address: Address) -> UpstreamResult<Bytes> {
-        Ok(self.provider.get_code_at(address).await?)
+    pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
+        self.provider.get_code_at(address).await
     }
 
     /// Get token decimals from chain.
-    pub async fn get_token_decimals(&self, token: Address) -> UpstreamResult<u8> {
+    pub async fn get_token_decimals(&self, token: Address) -> Result<u8, eyre::Error> {
         Ok(IERC20::new(token, &self.provider).decimals().call().await?._0)
     }
 
@@ -79,7 +74,7 @@ where
         &self,
         tx: &TransactionRequest,
         overrides: &AddressMap<AccountOverride>,
-    ) -> UpstreamResult<(u64, Eip1559Estimation)> {
+    ) -> TransportResult<(u64, Eip1559Estimation)> {
         let (estimate, fee_estimate) = tokio::join!(
             self.provider.estimate_gas(tx).overrides(overrides),
             self.provider.estimate_eip1559_fees(None)
@@ -89,7 +84,7 @@ where
     }
 
     /// Sign and send the transaction request.
-    pub async fn sign_and_send(&self, tx: TransactionRequest) -> UpstreamResult<TxHash> {
-        Ok(self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())?)
+    pub async fn sign_and_send(&self, tx: TransactionRequest) -> TransportResult<TxHash> {
+        self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())
     }
 }

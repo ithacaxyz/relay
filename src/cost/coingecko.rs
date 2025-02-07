@@ -1,12 +1,12 @@
 use crate::{cost::CostEstimate, error::EstimateFeeError};
 use alloy::primitives::Address;
+use alloy_chains::Chain;
 use jsonrpsee::core::async_trait;
 use reqwest::get;
 use serde_json::Value;
 use std::{collections::HashMap, time::Duration};
 use tokio::{sync::watch, time::interval};
 use tracing::{error, trace};
-
 /// Cost estimator that uses `CoinGecko` for a price feed.
 #[derive(Debug, Default, Clone)]
 pub struct CoinGecko {
@@ -17,7 +17,7 @@ pub struct CoinGecko {
 impl CoinGecko {
     /// Creates an instance of [`CoinGecko`] that receives a price feed for all tokens from a
     /// spawned task every 10 seconds.
-    pub fn new(tokens: &[Address]) -> Self {
+    pub fn new(tokens: &[Address], chain: Chain) -> Self {
         let mut tx_map = HashMap::with_capacity(tokens.len());
         let mut rx_map = HashMap::with_capacity(tokens.len());
 
@@ -35,10 +35,14 @@ impl CoinGecko {
 
         // Launch task to fetch prices every 10 seconds
         tokio::spawn(async move {
+            let chain_identifier = Self::chain_identifier(chain);
             let mut clock = interval(Duration::from_secs(10));
+
             loop {
                 clock.tick().await;
-                if let Err(err) = Self::update_prices(&tokens_split_by_comma, &tx_map).await {
+                if let Err(err) =
+                    Self::update_prices(chain_identifier, &tokens_split_by_comma, &tx_map).await
+                {
                     error!(?err);
                 }
                 clock.reset();
@@ -48,13 +52,32 @@ impl CoinGecko {
         Self { token_prices: rx_map }
     }
 
+    /// Given a [`Chain`], it returns its coingecko identifier.
+    fn chain_identifier(chain: Chain) -> &'static str {
+        if chain == Chain::base_goerli()
+            || chain == Chain::base_sepolia()
+            || chain == Chain::base_mainnet()
+        {
+            "base"
+        } else if chain == Chain::optimism_goerli()
+            || chain == Chain::optimism_sepolia()
+            || chain == Chain::optimism_mainnet()
+        {
+            "optimistic-ethereum"
+        } else {
+            "ethereum"
+        }
+    }
+
     /// Updates inner token prices.
     async fn update_prices(
+        chain_identifier: &str,
         tokens_split_by_comma: &str,
         tokens_price_feed: &HashMap<String, watch::Sender<Option<u128>>>,
     ) -> Result<(), EstimateFeeError> {
         let url = format!(
-            "https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses={}&vs_currencies=eth&x_cg_demo_api_key={}",
+            "https://api.coingecko.com/api/v3/simple/token_price/{}?contract_addresses={}&vs_currencies=eth&x_cg_demo_api_key={}",
+            chain_identifier,
             tokens_split_by_comma,
             std::env::var("GECKO_API").unwrap_or_default()
         );
@@ -67,7 +90,7 @@ impl CoinGecko {
             .await
             .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
 
-        trace!(response=?resp);
+        trace!(response=?resp, "CoinGecko response.");
 
         let json_resp: Value = serde_json::from_str(&resp)
             .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
@@ -115,7 +138,7 @@ mod tests {
         let gas_price = 3_500_000_000u128;
         let usdt = Token::new(address!("dac17f958d2ee523a2206206994597c13d831ec7"), 6);
         let usdc = Token::new(address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"), 6);
-        let gecko = CoinGecko::new(&[usdt.address, usdc.address]);
+        let gecko = CoinGecko::new(&[usdt.address, usdc.address], Chain::mainnet());
 
         // Waits for coingecko calls to succeed.
         sleep(Duration::from_millis(500)).await;

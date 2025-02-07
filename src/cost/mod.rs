@@ -10,6 +10,7 @@ use crate::{error::EstimateFeeError, types::Token};
 use alloy::primitives::{Address, U256};
 use jsonrpsee::core::async_trait;
 use std::fmt::Debug;
+
 /// A trait for estimating the cost per smallest unit in various tokens.
 #[async_trait]
 pub trait CostEstimate: Debug + Sync + Send + 'static {
@@ -20,6 +21,6 @@ pub trait CostEstimate: Debug + Sync + Send + 'static {
             / U256::from(eth_wei_price))
     }
 
-    /// Returns the token rate conversion into ETH(wei).
+    /// Returns the conversion rate for the token to native tokens (in wei).
     async fn eth_price(&self, payment_token: &Address) -> Result<u128, EstimateFeeError>;
 }

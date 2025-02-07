@@ -38,7 +38,7 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     types::{
         executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, Token, UserOp, U40,
+        Signature, SignedQuote, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -87,16 +87,9 @@ impl<P, Q> Relay<P, Q> {
         quote_signer: Q,
         quote_ttl: Duration,
         quote_cost: Box<dyn CostEstimate>,
-        fee_tokens: Vec<Token>,
+        fee_tokens: FeeTokens,
     ) -> Self {
-        let chain_id = upstream.chain_id();
-        let inner = RelayInner {
-            upstream,
-            fee_tokens: FeeTokens::from_iter([(chain_id, fee_tokens)]),
-            quote_signer,
-            quote_ttl,
-            quote_cost,
-        };
+        let inner = RelayInner { upstream, fee_tokens, quote_signer, quote_ttl, quote_cost };
         Self { inner: Arc::new(inner) }
     }
 }

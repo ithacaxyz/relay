@@ -7,11 +7,14 @@ use std::{
 
 use alloy::{
     primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
-    providers::utils::Eip1559Estimation as AlloyEip1559Estimation,
+    providers::{utils::Eip1559Estimation as AlloyEip1559Estimation, Provider, WalletProvider},
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Signed, Token};
+use crate::{
+    types::{Signed, Token},
+    upstream::Upstream,
+};
 
 /// A container of supported fee tokens per chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,12 +23,26 @@ pub struct FeeTokens(
 );
 
 impl FeeTokens {
+    /// Create a new [`FeeTokens`]
+    pub async fn new<P>(tokens: &[Address], upstream: Upstream<P>) -> Result<Self, eyre::Error>
+    where
+        P: Provider + WalletProvider,
+    {
+        let mut fee_tokens = Vec::with_capacity(tokens.len());
+
+        for token in tokens {
+            fee_tokens.push(Token::new(*token, upstream.get_token_decimals(*token).await?))
+        }
+
+        Ok(Self(HashMap::from_iter([(upstream.chain_id(), fee_tokens)])))
+    }
+
     /// Check if the fee token is supported on the given chain.
     pub fn contains(&self, chain_id: ChainId, fee_token: &Address) -> bool {
         self.0.get(&chain_id).is_some_and(|tokens| tokens.iter().any(|t| t.address == *fee_token))
     }
 
-    /// Return a reference to a fee [Token] if supported on the given chain.
+    /// Return a reference to a fee [`Token`] if supported on the given chain.
     pub fn find(&self, chain_id: ChainId, fee_token: &Address) -> Option<&Token> {
         self.0.get(&chain_id).and_then(|tokens| tokens.iter().find(|t| t.address == *fee_token))
     }

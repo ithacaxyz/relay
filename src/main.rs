@@ -14,7 +14,7 @@ use relay::{
     metrics::{build_exporter, MetricsService, RpcMetricsService},
     rpc::{Relay, RelayApiServer},
     signer::LocalOrAws,
-    types::Token,
+    types::FeeTokens,
     upstream::Upstream,
 };
 use std::{
@@ -87,17 +87,13 @@ impl Args {
 
         // construct rpc module
         let upstream = Upstream::new(provider, self.entrypoint).await?;
-        let mut fee_tokens = Vec::with_capacity(self.fee_tokens.len());
-        for token in self.fee_tokens {
-            fee_tokens.push(Token::new(token, upstream.get_token_decimals(token).await?))
-        }
         let address = upstream.default_signer_address();
         let rpc = Relay::new(
-            upstream,
+            upstream.clone(),
             quote_signer,
             self.quote_ttl,
             Box::new(ConstantRateCost::in_eth(0.0003666f64)),
-            fee_tokens,
+            FeeTokens::new(&self.fee_tokens, upstream).await?,
         )
         .into_rpc();
 

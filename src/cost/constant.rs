@@ -21,7 +21,6 @@ impl ConstantRateCost {
 
 #[async_trait]
 impl CostEstimate for ConstantRateCost {
-    /// It returns the token rate conversion to ETH(wei).
     async fn eth_price(&self, _: &Address) -> Result<u128, EstimateFeeError> {
         Ok(self.0)
     }
