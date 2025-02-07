@@ -1,12 +1,34 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use alloy::{
-    primitives::{Address, Keccak256, PrimitiveSignature, B256, U256},
+    primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
     providers::utils::Eip1559Estimation as AlloyEip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
 
 use super::Signed;
+
+/// A container of supported fee tokens per chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeTokens(
+    #[serde(with = "alloy::serde::quantity::hashmap")] HashMap<ChainId, Vec<Address>>,
+);
+
+impl FeeTokens {
+    /// Check if the fee token is supported on the given chain.
+    pub fn contains(&self, chain_id: ChainId, fee_token: &Address) -> bool {
+        self.0.get(&chain_id).is_some_and(|tokens| tokens.contains(fee_token))
+    }
+}
+
+impl FromIterator<(ChainId, Vec<Address>)> for FeeTokens {
+    fn from_iter<T: IntoIterator<Item = (ChainId, Vec<Address>)>>(iter: T) -> Self {
+        Self(HashMap::from_iter(iter))
+    }
+}
 
 /// A relay-signed [`Quote`].
 pub type SignedQuote = Signed<Quote>;

@@ -37,8 +37,8 @@ use tracing::{debug, warn};
 use crate::{
     error::{EstimateFeeError, SendActionError},
     types::{
-        executeCall, nonceSaltCall, Action, Key, KeyType, PartialAction, Quote, Signature,
-        SignedQuote, UserOp, U40,
+        executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
+        Signature, SignedQuote, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -47,6 +47,10 @@ use crate::{
 #[cfg_attr(not(test), rpc(server, namespace = "relay"))]
 #[cfg_attr(test, rpc(server, client, namespace = "relay"))]
 pub trait RelayApi {
+    /// Get all supported fee tokens by chain.
+    #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
+    async fn fee_tokens(&self) -> RpcResult<FeeTokens>;
+
     /// Estimates the fee a user would have to pay for the given action in the given fee token.
     #[method(name = "estimateFee", aliases = ["wallet_estimateFee"])]
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote>;
@@ -84,9 +88,10 @@ impl<P, Q> Relay<P, Q> {
         quote_ttl: Duration,
         fee_tokens: Vec<Address>,
     ) -> Self {
+        let chain_id = upstream.chain_id();
         let inner = RelayInner {
             upstream,
-            fee_tokens,
+            fee_tokens: FeeTokens::from_iter([(chain_id, fee_tokens)]),
             quote_signer,
             quote_ttl,
             permit: Default::default(),
@@ -108,8 +113,12 @@ where
     P: Provider + WalletProvider + 'static,
     Q: Signer + Send + Sync + 'static,
 {
+    async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
+        Ok(self.inner.fee_tokens.clone())
+    }
+
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
-        if !self.inner.fee_tokens.contains(&token) {
+        if !self.inner.fee_tokens.contains(self.inner.upstream.chain_id(), &token) {
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
         }
 
@@ -318,7 +327,7 @@ struct RelayInner<P, Q> {
     /// The upstream RPC of the relay.
     upstream: Upstream<P>,
     /// Supported fee tokens.
-    fee_tokens: Vec<Address>,
+    fee_tokens: FeeTokens,
     /// The signer used to sign quotes.
     quote_signer: Q,
     /// The TTL of a quote.
