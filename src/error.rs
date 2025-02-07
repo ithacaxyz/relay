@@ -8,6 +8,9 @@ pub enum EstimateFeeError {
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
+    /// The provided EIP-7702 auth item is not chain agnostic.
+    #[error("the auth item is not chain agnostic")]
+    AuthItemNotChainAgnostic,
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),

@@ -120,6 +120,15 @@ where
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
         }
 
+        // validate auth item chain id
+        if request
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.chain_id != U256::from(self.inner.upstream.chain_id()))
+        {
+            return Err(EstimateFeeError::AuthItemNotChainAgnostic.into());
+        }
+
         // create key
         let key = Key {
             expiry: U40::from(0),
