@@ -1,3 +1,4 @@
+//! Shared primitive types.
 mod action;
 pub use action::*;
 
@@ -20,4 +21,5 @@ pub use quote::*;
 mod call;
 pub use call::*;
 
+/// A 40 bit integer.
 pub type U40 = Uint<40, 1>;

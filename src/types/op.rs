@@ -84,6 +84,8 @@ sol! {
 }
 
 impl UserOp {
+    /// Calculate the EIP-712 digest of the [`UserOp`], which is the digest signed for the
+    /// `signature` field of the [`UserOp`].
     pub fn eip712_digest(
         &self,
         domain_verifying_contract: Address,
@@ -117,6 +119,11 @@ impl UserOp {
         Ok(keccak256([&[0x19, 0x01], &domain.hash_struct()[..], &op[..]].concat()))
     }
 
+    /// Calculate a digest of the [`UserOp`], used for checksumming.
+    ///
+    /// # Note
+    ///
+    /// Only some fields are hashed.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
         hasher.update(self.eoa);

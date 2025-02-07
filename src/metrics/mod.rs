@@ -1,3 +1,5 @@
+//! Types for metrics.
+
 mod periodic;
 pub use periodic::spawn_periodic_collectors;
 
@@ -43,7 +45,7 @@ pub fn build_exporter() -> PrometheusHandle {
 }
 
 /// A Tower service that renders Prometheus metrics at `/metrics`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[must_use]
 pub struct MetricsService<S> {
     inner: S,
@@ -108,7 +110,7 @@ struct RpcMethodMetrics {
 }
 
 /// A [`jsonrpsee`] RPC middleware that records metrics for RPC methods.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RpcMetricsService<S> {
     service: S,
 }

@@ -1,3 +1,5 @@
+//! Quote types.
+
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -33,6 +35,7 @@ impl FromIterator<(ChainId, Vec<Address>)> for FeeTokens {
 /// A relay-signed [`Quote`].
 pub type SignedQuote = Signed<Quote>;
 
+/// A quote from a relay for a given [`UserOp`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
@@ -79,6 +82,7 @@ impl Quote {
 }
 
 // todo: this is temporary and should be replaced once https://github.com/alloy-rs/alloy/pull/2012 is released
+/// An EIP-1559 fee estimate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eip1559Estimation {

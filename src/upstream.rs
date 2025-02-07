@@ -1,3 +1,4 @@
+//! A container for chain-specific information and RPCs.
 use alloy::{
     primitives::{map::AddressMap, Address, Bytes, ChainId, TxHash},
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
@@ -17,6 +18,7 @@ pub struct Upstream<P> {
 }
 
 impl<P> Upstream<P> {
+    /// Get the chain ID of this upstream.
     pub fn chain_id(&self) -> ChainId {
         self.chain_id
     }
@@ -32,18 +34,22 @@ where
         Ok(Self { chain_id, provider, entrypoint })
     }
 
+    /// Get the address of this upstream's signer.
     pub fn default_signer_address(&self) -> Address {
         self.provider.default_signer_address()
     }
 
+    /// Get the entrypoint on this chain.
     pub fn entrypoint(&self) -> Address {
         self.entrypoint
     }
 
+    /// Get the code of the given account.
     pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
         self.provider.get_code_at(address).await
     }
 
+    /// Perform an `eth_call`.
     pub async fn call<C: SolCall>(
         &self,
         tx: &TransactionRequest,
@@ -58,6 +64,7 @@ where
             })
     }
 
+    /// Estimate gas and fees of the transaction request.
     pub async fn estimate(
         &self,
         tx: &TransactionRequest,
@@ -71,6 +78,7 @@ where
         Ok((estimate?, fee_estimate?))
     }
 
+    /// Sign and send the transaction request.
     pub async fn sign_and_send(&self, tx: TransactionRequest) -> TransportResult<TxHash> {
         self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())
     }
