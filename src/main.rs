@@ -79,7 +79,6 @@ impl Args {
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
-
         let quote_signer = LocalOrAws::load(&self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
