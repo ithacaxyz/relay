@@ -2,28 +2,16 @@
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![allow(dead_code)]
 
-mod error;
-mod metrics;
-mod rpc;
-mod serde;
-mod types;
-mod upstream;
-
-use crate::rpc::Relay;
 use alloy::{
     primitives::Address,
     providers::{network::EthereumWallet, ProviderBuilder},
-    rpc::client::RpcClient,
     signers::local::PrivateKeySigner,
 };
 use clap::Parser;
 use eyre::Context;
-use http::HeaderName;
+use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
-use metrics::{build_exporter, MetricsService, RpcMetricsService};
-use rpc::RelayApiServer;
 use std::{
     net::{IpAddr, Ipv4Addr},
     time::Duration,
@@ -32,8 +20,22 @@ use tower::{layer::layer_fn, ServiceBuilder};
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use upstream::Upstream;
 use url::Url;
+
+mod error;
+
+mod metrics;
+use metrics::{build_exporter, MetricsService, RpcMetricsService};
+
+mod rpc;
+use rpc::{Relay, RelayApiServer};
+
+mod serde;
+
+mod types;
+
+mod upstream;
+use upstream::Upstream;
 
 /// The Odyssey relayer service sponsors transactions for EIP-7702 accounts.
 #[derive(Debug, Parser)]
@@ -85,8 +87,7 @@ impl Args {
         let signer: PrivateKeySigner =
             self.secret_key.parse().wrap_err("invalid tx signing key")?;
         let wallet = EthereumWallet::from(signer);
-        let rpc_client = RpcClient::new_http(self.upstream.clone());
-        let provider = ProviderBuilder::new().wallet(wallet).on_client(rpc_client);
+        let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
         let quote_signer: PrivateKeySigner =
@@ -104,7 +105,7 @@ impl Args {
         let cors = CorsLayer::new()
             .allow_methods(AllowMethods::any())
             .allow_origin(AllowOrigin::any())
-            .allow_headers([HeaderName::from_static("content-type")]);
+            .allow_headers([header::CONTENT_TYPE]);
         let metrics = layer_fn(move |service| MetricsService::new(service, handle.clone()));
 
         // start server
@@ -129,7 +130,6 @@ fn parse_duration_secs(arg: &str) -> Result<std::time::Duration, std::num::Parse
     Ok(std::time::Duration::from_secs(seconds))
 }
 
-#[doc(hidden)]
 #[tokio::main]
 async fn main() {
     // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
