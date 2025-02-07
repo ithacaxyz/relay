@@ -31,7 +31,6 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::{
@@ -94,7 +93,6 @@ impl<P, Q> Relay<P, Q> {
             fee_tokens: FeeTokens::from_iter([(chain_id, fee_tokens)]),
             quote_signer,
             quote_ttl,
-            permit: Default::default(),
         };
         Self { inner: Arc::new(inner) }
     }
@@ -307,8 +305,7 @@ where
             return Err(SendActionError::QuoteExpired.into());
         }
 
-        // we acquire the permit here so that all following operations are performed exclusively
-        let _permit = self.inner.permit.lock().await;
+        // broadcast the tx
         Ok(self
             .inner
             .upstream
@@ -332,6 +329,4 @@ struct RelayInner<P, Q> {
     quote_signer: Q,
     /// The TTL of a quote.
     quote_ttl: Duration,
-    /// Used to guard tx signing
-    permit: Mutex<()>,
 }
