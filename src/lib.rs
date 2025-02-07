@@ -2,6 +2,7 @@
 //!
 //! Library for the implementation of the Ithaca Relay.
 
+pub mod cost;
 pub mod error;
 pub mod metrics;
 pub mod rpc;

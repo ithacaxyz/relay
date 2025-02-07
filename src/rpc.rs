@@ -34,6 +34,7 @@ use std::{
 use tracing::{debug, warn};
 
 use crate::{
+    cost::CostEstimate,
     error::{EstimateFeeError, SendActionError},
     types::{
         executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
@@ -75,16 +76,17 @@ pub trait RelayApi {
 
 /// Implementation of the Odyssey `relay_` namespace.
 #[derive(Debug)]
-pub struct Relay<P, Q> {
-    inner: Arc<RelayInner<P, Q>>,
+pub struct Relay<P, Q, S> {
+    inner: Arc<RelayInner<P, Q, S>>,
 }
 
-impl<P, Q> Relay<P, Q> {
+impl<P, Q, S> Relay<P, Q, S> {
     /// Create a new Odyssey wallet module.
     pub fn new(
         upstream: Upstream<P>,
         quote_signer: Q,
         quote_ttl: Duration,
+        quote_cost: S,
         fee_tokens: Vec<Address>,
     ) -> Self {
         let chain_id = upstream.chain_id();
@@ -93,6 +95,7 @@ impl<P, Q> Relay<P, Q> {
             fee_tokens: FeeTokens::from_iter([(chain_id, fee_tokens)]),
             quote_signer,
             quote_ttl,
+            quote_cost,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -106,10 +109,11 @@ const EIP7702_CLEARED_DELEGATION: [u8; 23] =
     hex!("0xef01000000000000000000000000000000000000000000");
 
 #[async_trait]
-impl<P, Q> RelayApiServer for Relay<P, Q>
+impl<P, Q, S> RelayApiServer for Relay<P, Q, S>
 where
     P: Provider + WalletProvider + 'static,
     Q: Signer + Send + Sync + 'static,
+    S: CostEstimate,
 {
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
@@ -224,7 +228,11 @@ where
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
             token,
-            amount: U256::ZERO,
+            amount: self
+                .inner
+                .quote_cost
+                .estimate(gas_estimate, native_fee_estimate, Some(token))
+                .await?,
             gas_estimate,
             native_fee_estimate: native_fee_estimate.into(),
             digest: op.digest(),
@@ -329,7 +337,7 @@ where
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner<P, Q> {
+struct RelayInner<P, Q, S> {
     /// The upstream RPC of the relay.
     upstream: Upstream<P>,
     /// Supported fee tokens.
@@ -338,4 +346,6 @@ struct RelayInner<P, Q> {
     quote_signer: Q,
     /// The TTL of a quote.
     quote_ttl: Duration,
+    /// Quote price estimate.
+    quote_cost: S,
 }

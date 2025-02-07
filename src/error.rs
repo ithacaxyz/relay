@@ -11,6 +11,9 @@ pub enum EstimateFeeError {
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
+    /// An error ocurred while estimating token costs.
+    #[error("{0}")]
+    CostEstimateError(String),
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
