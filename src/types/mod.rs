@@ -5,6 +5,9 @@ pub use action::*;
 mod entrypoint;
 pub use entrypoint::*;
 
+mod erc20;
+pub use erc20::*;
+
 mod key;
 use alloy::primitives::Uint;
 pub use key::*;

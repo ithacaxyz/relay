@@ -14,9 +14,9 @@ pub enum EstimateFeeError {
     /// An error ocurred while estimating token costs.
     #[error("{0}")]
     CostEstimateError(String),
-    /// An error occurred talking to RPC.
+    /// An error occurred talking to upstream.
     #[error(transparent)]
-    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    UpstreamError(#[from] UpstreamError),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -26,7 +26,7 @@ impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: EstimateFeeError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
-                EstimateFeeError::InternalError(_) | EstimateFeeError::RpcError(_) => {
+                EstimateFeeError::InternalError(_) | EstimateFeeError::UpstreamError(_) => {
                     jsonrpsee::types::error::INTERNAL_ERROR_CODE
                 }
                 _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
@@ -71,9 +71,9 @@ pub enum SendActionError {
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
-    /// An error occurred talking to RPC.
+    /// An error occurred talking to upstream.
     #[error(transparent)]
-    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    UpstreamError(#[from] UpstreamError),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -83,7 +83,7 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: SendActionError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
-                SendActionError::InternalError(_) | SendActionError::RpcError(_) => {
+                SendActionError::InternalError(_) | SendActionError::UpstreamError(_) => {
                     jsonrpsee::types::error::INTERNAL_ERROR_CODE
                 }
                 _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
@@ -92,4 +92,15 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
             None,
         )
     }
+}
+
+/// Errors returned by `Upstream`.
+#[derive(Debug, thiserror::Error)]
+pub enum UpstreamError {
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// An error occurred interacting to a contract.
+    #[error(transparent)]
+    ContractError(#[from] alloy::contract::Error),
 }

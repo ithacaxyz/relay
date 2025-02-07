@@ -1,13 +1,18 @@
 //! A container for chain-specific information and RPCs.
 use alloy::{
-    primitives::{bytes, map::AddressMap, Address, Bytes, ChainId, TxHash},
+    primitives::{map::AddressMap, Address, Bytes, ChainId, TxHash},
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
-    transports::TransportResult,
 };
 
-use crate::error::SendActionError;
+use crate::{
+    error::{SendActionError, UpstreamError},
+    types::IERC20,
+};
+
+/// A transport result is a Result containing a UpstreamError.
+pub type UpstreamResult<T> = Result<T, UpstreamError>;
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Clone, Debug)]
@@ -29,7 +34,7 @@ where
     P: Provider + WalletProvider,
 {
     /// Create a new [`Upstream`]
-    pub async fn new(provider: P, entrypoint: Address) -> TransportResult<Self> {
+    pub async fn new(provider: P, entrypoint: Address) -> UpstreamResult<Self> {
         let chain_id = provider.get_chain_id().await?;
         Ok(Self { chain_id, provider, entrypoint })
     }
@@ -45,23 +50,13 @@ where
     }
 
     /// Get the code of the given account.
-    pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
-        self.provider.get_code_at(address).await
+    pub async fn get_code(&self, address: Address) -> UpstreamResult<Bytes> {
+        Ok(self.provider.get_code_at(address).await?)
     }
 
     /// Get token decimals from chain.
-    pub async fn get_token_decimals(&self, token: Address) -> TransportResult<u8> {
-        let tx = TransactionRequest {
-            to: Some(token.into()),
-            // decimals() selector
-            input: bytes!("313ce567").into(),
-            ..Default::default()
-        };
-
-        let resp = self.provider.call(&tx).await?;
-
-        // Response is in BE
-        Ok(resp[resp.len() - 1])
+    pub async fn get_token_decimals(&self, token: Address) -> UpstreamResult<u8> {
+        Ok(IERC20::new(token, &self.provider).decimals().call().await?._0)
     }
 
     /// Perform an `eth_call`.
@@ -84,7 +79,7 @@ where
         &self,
         tx: &TransactionRequest,
         overrides: &AddressMap<AccountOverride>,
-    ) -> TransportResult<(u64, Eip1559Estimation)> {
+    ) -> UpstreamResult<(u64, Eip1559Estimation)> {
         let (estimate, fee_estimate) = tokio::join!(
             self.provider.estimate_gas(tx).overrides(overrides),
             self.provider.estimate_eip1559_fees(None)
@@ -94,7 +89,7 @@ where
     }
 
     /// Sign and send the transaction request.
-    pub async fn sign_and_send(&self, tx: TransactionRequest) -> TransportResult<TxHash> {
-        self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())
+    pub async fn sign_and_send(&self, tx: TransactionRequest) -> UpstreamResult<TxHash> {
+        Ok(self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())?)
     }
 }
