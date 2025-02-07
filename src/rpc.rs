@@ -258,7 +258,8 @@ where
             let code =
                 self.inner.upstream.get_code(action.op.eoa).await.map_err(SendActionError::from)?;
 
-            if code[0..3] != EIP7702_DELEGATION_DESIGNATOR || code[..] == EIP7702_CLEARED_DELEGATION
+            if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+                || code[..] == EIP7702_CLEARED_DELEGATION
             {
                 return Err(SendActionError::EoaNotDelegated(action.op.eoa).into());
             }
