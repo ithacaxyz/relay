@@ -74,12 +74,14 @@ impl Args {
         // construct provider
         let signer: PrivateKeySigner =
             self.secret_key.parse().wrap_err("invalid tx signing key")?;
+        let signer_addr = signer.address();
         let wallet = EthereumWallet::from(signer);
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
         let quote_signer: PrivateKeySigner =
             self.quote_secret_key.parse().wrap_err("invalid quote signing key")?;
+        let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
         let upstream = Upstream::new(provider, self.entrypoint).await?;
@@ -104,6 +106,8 @@ impl Args {
             .build((self.address, self.port))
             .await?;
         info!(addr = %server.local_addr().unwrap(), "Started relay service");
+        info!("Transaction signer key: {}", signer_addr);
+        info!("Quote signer key: {}", quote_signer_addr);
 
         let handle = server.start(rpc);
         handle.stopped().await;
