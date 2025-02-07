@@ -3,7 +3,7 @@ use alloy::{
     providers::{utils::Eip1559Estimation, Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
-    transports::RpcResult,
+    transports::TransportResult,
 };
 
 use crate::error::SendActionError;
@@ -12,36 +12,33 @@ use crate::error::SendActionError;
 #[derive(Clone, Debug)]
 pub struct Upstream<P> {
     provider: P,
+    chain_id: ChainId,
     entrypoint: Address,
-}
-
-impl<P> Upstream<P> {
-    /// Create a new [`Upstream`]
-    pub const fn new(provider: P, entrypoint: Address) -> Self {
-        Self { provider, entrypoint }
-    }
 }
 
 impl<P> Upstream<P>
 where
     P: Provider + WalletProvider,
 {
+    /// Create a new [`Upstream`]
+    pub async fn new(provider: P, entrypoint: Address) -> TransportResult<Self> {
+        let chain_id = provider.get_chain_id().await?;
+        Ok(Self { chain_id, provider, entrypoint })
+    }
+
     pub fn default_signer_address(&self) -> Address {
         self.provider.default_signer_address()
     }
 
-    pub async fn chain_id(&self) -> RpcResult<ChainId, alloy::transports::TransportErrorKind> {
-        self.provider.get_chain_id().await
+    pub fn chain_id(&self) -> ChainId {
+        self.chain_id
     }
 
     pub fn entrypoint(&self) -> Address {
         self.entrypoint
     }
 
-    pub async fn get_code(
-        &self,
-        address: Address,
-    ) -> RpcResult<Bytes, alloy::transports::TransportErrorKind> {
+    pub async fn get_code(&self, address: Address) -> TransportResult<Bytes> {
         self.provider.get_code_at(address).await
     }
 
@@ -63,7 +60,7 @@ where
         &self,
         tx: &TransactionRequest,
         overrides: &AddressMap<AccountOverride>,
-    ) -> RpcResult<(u64, Eip1559Estimation), alloy::transports::TransportErrorKind> {
+    ) -> TransportResult<(u64, Eip1559Estimation)> {
         let (estimate, fee_estimate) = tokio::join!(
             self.provider.estimate_gas(tx).overrides(overrides),
             self.provider.estimate_eip1559_fees(None)
@@ -72,10 +69,7 @@ where
         Ok((estimate?, fee_estimate?))
     }
 
-    pub async fn sign_and_send(
-        &self,
-        tx: TransactionRequest,
-    ) -> RpcResult<TxHash, alloy::transports::TransportErrorKind> {
+    pub async fn sign_and_send(&self, tx: TransactionRequest) -> TransportResult<TxHash> {
         self.provider.send_transaction(tx).await.map(|pending| *pending.tx_hash())
     }
 }
