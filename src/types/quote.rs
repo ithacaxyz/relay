@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy::{
     primitives::{Address, Keccak256, PrimitiveSignature, B256, U256},
@@ -43,7 +43,13 @@ impl Quote {
         hasher.update(self.amount.to_be_bytes::<32>());
         hasher.update(self.gas_estimate.to_be_bytes());
         hasher.update(self.digest);
-        // todo: hash ttl somehow
+        hasher.update(
+            self.ttl
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::from_secs(0))
+                .as_secs()
+                .to_be_bytes(),
+        );
         hasher.finalize()
     }
 }
