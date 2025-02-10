@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -9,6 +10,7 @@ use alloy::{
     primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
     providers::{utils::Eip1559Estimation as AlloyEip1559Estimation, Provider, WalletProvider},
 };
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -28,11 +30,14 @@ impl FeeTokens {
     where
         P: Provider + WalletProvider,
     {
-        let mut fee_tokens = Vec::with_capacity(tokens.len());
-
-        for token in tokens {
-            fee_tokens.push(Token::new(*token, upstream.get_token_decimals(*token).await?))
-        }
+        let upstream = Arc::new(upstream);
+        let fee_tokens = try_join_all(tokens.iter().copied().map(|token| {
+            let upstream = upstream.clone();
+            async move {
+                Ok::<_, eyre::Error>(Token::new(token, upstream.get_token_decimals(token).await?))
+            }
+        }))
+        .await?;
 
         Ok(Self(HashMap::from_iter([(upstream.chain_id(), fee_tokens)])))
     }
