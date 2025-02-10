@@ -3,6 +3,45 @@ use alloy_chains::Chain;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::LazyLock};
 
+/// Global map from ([`Chain`], Option<[`Address`]>) to [`CoinKind`].
+///
+/// A (chain, none) refers to native chain coins. eg. Ethereum.
+static COINS_CONFIG: LazyLock<HashMap<(Chain, Option<Address>), CoinKind>> = LazyLock::new(|| {
+    // todo: read from file
+    let mut coin_map = HashMap::new();
+
+    // ETH
+    {
+        coin_map.insert((Chain::mainnet(), None), CoinKind::ETH);
+        coin_map.insert((Chain::optimism_mainnet(), None), CoinKind::ETH);
+        coin_map.insert((Chain::base_mainnet(), None), CoinKind::ETH);
+    }
+
+    // USDT
+    {
+        let addresses = [
+            (Chain::mainnet(), address!("dAC17F958D2ee523a2206206994597C13D831ec7")),
+            (Chain::optimism_mainnet(), address!("0xdAC17F958D2ee523a2206206994597C13D831ec7")),
+        ];
+        for (chain, address) in addresses {
+            coin_map.insert((chain, Some(address)), CoinKind::USDT);
+        }
+    }
+
+    // USDC
+    {
+        let addresses = [
+            (Chain::mainnet(), address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")),
+            (Chain::base_mainnet(), address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")),
+        ];
+        for (chain, address) in addresses {
+            coin_map.insert((chain, Some(address)), CoinKind::USDC);
+        }
+    }
+
+    coin_map
+});
+
 /// A coin price pair.
 #[derive(Debug, Hash, Eq, PartialEq)]
 pub struct CoinPair {
@@ -66,42 +105,3 @@ impl CoinKind {
         COINS_CONFIG.get(&(chain, Some(address))).copied()
     }
 }
-
-/// Global map from ([`Chain`], Option<[`Address`]>) to [`CoinKind`].
-///
-/// A (chain, none) refers to native chain coins. eg. Ethereum.
-static COINS_CONFIG: LazyLock<HashMap<(Chain, Option<Address>), CoinKind>> = LazyLock::new(|| {
-    // todo: read from file
-    let mut coin_map = HashMap::new();
-
-    // ETH
-    {
-        coin_map.insert((Chain::mainnet(), None), CoinKind::ETH);
-        coin_map.insert((Chain::optimism_mainnet(), None), CoinKind::ETH);
-        coin_map.insert((Chain::base_mainnet(), None), CoinKind::ETH);
-    }
-
-    // USDT
-    {
-        let addresses = [
-            (Chain::mainnet(), address!("dAC17F958D2ee523a2206206994597C13D831ec7")),
-            (Chain::optimism_mainnet(), address!("0xdAC17F958D2ee523a2206206994597C13D831ec7")),
-        ];
-        for (chain, address) in addresses {
-            coin_map.insert((chain, Some(address)), CoinKind::USDT);
-        }
-    }
-
-    // USDC
-    {
-        let addresses = [
-            (Chain::mainnet(), address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")),
-            (Chain::base_mainnet(), address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")),
-        ];
-        for (chain, address) in addresses {
-            coin_map.insert((chain, Some(address)), CoinKind::USDC);
-        }
-    }
-
-    coin_map
-});

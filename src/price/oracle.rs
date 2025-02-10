@@ -75,7 +75,7 @@ impl PriceOracle {
         self
     }
 
-    /// Spawns a price fetcher with a [`CoinKind`] list.
+    /// Spawns a price fetcher with a [`CoinPair`] list.
     pub fn spawn_fetcher(&self, fetcher: PriceFetcher, pairs: &[CoinPair]) {
         match fetcher {
             PriceFetcher::CoinGecko => CoinGecko::launch(pairs, self.tx.clone()),
