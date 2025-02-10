@@ -16,6 +16,7 @@
 // todo: rewrite module docs
 
 use alloy::{
+    eips::eip7702::constants::PER_AUTH_BASE_COST,
     hex,
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
@@ -116,15 +117,6 @@ where
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
         };
 
-        // validate auth item chain id
-        if request
-            .auth
-            .as_ref()
-            .is_some_and(|auth| auth.chain_id != U256::from(self.inner.upstream.chain_id()))
-        {
-            return Err(EstimateFeeError::AuthItemNotChainAgnostic.into());
-        }
-
         // create key
         let key = Key {
             expiry: U40::from(0),
@@ -195,17 +187,23 @@ where
             ),
             (
                 request.op.eoa,
-                AccountOverride { state_diff: Some(key.storage_slots()), ..Default::default() },
+                AccountOverride {
+                    state_diff: Some(key.storage_slots()),
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    code: request.auth.map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    }),
+                    ..Default::default()
+                },
             ),
         ]);
-        let (gas_estimate, native_fee_estimate) = self
+        let (mut gas_estimate, native_fee_estimate) = self
             .inner
             .upstream
             .estimate(
                 &TransactionRequest {
                     from: Some(self.inner.quote_signer.address()),
                     to: Some(self.inner.upstream.entrypoint().into()),
-                    authorization_list: request.auth.map(|auth| vec![auth]),
                     input: executeCall { encodedUserOp: op.abi_encode().into() }
                         .abi_encode()
                         .into(),
@@ -215,6 +213,15 @@ where
             )
             .await
             .map_err(EstimateFeeError::from)?;
+
+        // for 7702 designations there is an additional gas charge
+        //
+        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
+        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
+        // need to charge for the account being presumed empty.
+        if request.auth.is_some() {
+            gas_estimate += PER_AUTH_BASE_COST + 25000;
+        }
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
