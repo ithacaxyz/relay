@@ -1,5 +1,5 @@
 use alloy::primitives::{address, Address};
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::LazyLock};
 
@@ -15,6 +15,7 @@ static COINS_CONFIG: LazyLock<HashMap<(Chain, Option<Address>), CoinKind>> = Laz
         coin_map.insert((Chain::mainnet(), None), CoinKind::ETH);
         coin_map.insert((Chain::optimism_mainnet(), None), CoinKind::ETH);
         coin_map.insert((Chain::base_mainnet(), None), CoinKind::ETH);
+        coin_map.insert((NamedChain::Odyssey.into(), None), CoinKind::ETH);
     }
 
     // USDT

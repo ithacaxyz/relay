@@ -26,7 +26,9 @@ impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: EstimateFeeError) -> Self {
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
-                EstimateFeeError::InternalError(_) | EstimateFeeError::RpcError(_) => {
+                EstimateFeeError::InternalError(_)
+                | EstimateFeeError::RpcError(_)
+                | EstimateFeeError::UnavailablePrice(_) => {
                     jsonrpsee::types::error::INTERNAL_ERROR_CODE
                 }
                 _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
