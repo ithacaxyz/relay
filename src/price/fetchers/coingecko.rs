@@ -12,7 +12,12 @@ use tracing::{error, trace, warn};
 
 /// CoinGecko price fetcher;
 #[derive(Debug)]
-pub struct CoinGecko;
+pub struct CoinGecko {
+    /// URLs used to fetch prices.
+    request_urls: Vec<(Chain, String)>,
+    /// Price oracle sender used to update the price.
+    update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+}
 
 impl CoinGecko {
     /// Creates an instance of [`CoinGecko`] that sends a price feed to [`PriceOracle`] for all
@@ -61,13 +66,15 @@ impl CoinGecko {
             request_urls.push((chain, url))
         }
 
+        let gecko = Self { request_urls, update_tx };
+
         // Launch task to fetch prices every 10 seconds
         tokio::spawn(async move {
             let mut clock = interval(Duration::from_secs(10));
 
             loop {
                 clock.tick().await;
-                if let Err(err) = Self::update_prices(&request_urls, &update_tx).await {
+                if let Err(err) = gecko.update_prices().await {
                     error!(?err);
                 }
                 clock.reset();
@@ -103,14 +110,11 @@ impl CoinGecko {
     }
 
     /// Updates inner token prices.
-    async fn update_prices(
-        request_urls: &[(Chain, String)],
-        update_tx: &mpsc::UnboundedSender<PriceOracleMessage>,
-    ) -> Result<(), PriceOracleError> {
+    async fn update_prices(&self) -> Result<(), PriceOracleError> {
         let timestamp =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
 
-        for (chain, url) in request_urls {
+        for (chain, url) in &self.request_urls {
             // Fetch token prices
             let resp = get(url)
                 .await
@@ -137,7 +141,7 @@ impl CoinGecko {
                 ))
             });
 
-            let _ = update_tx.send(PriceOracleMessage::Update {
+            let _ = self.update_tx.send(PriceOracleMessage::Update {
                 fetcher: PriceFetcher::CoinGecko,
                 prices: pairs.collect(),
                 timestamp,
