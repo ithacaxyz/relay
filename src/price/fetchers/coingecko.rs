@@ -125,27 +125,31 @@ impl CoinGecko {
 
             trace!(response=?resp, "CoinGecko response.");
 
-            let data: HashMap<String, HashMap<String, f64>> = serde_json::from_str(&resp).unwrap();
-            let pairs = data.into_iter().filter_map(|(addr, inner)| {
-                // We only query one currency
-                let (currency, price) = inner.into_iter().next()?;
+            if let Ok(data) = serde_json::from_str::<HashMap<String, HashMap<String, f64>>>(&resp) {
+                let pairs = data.into_iter().filter_map(|(addr, inner)| {
+                    // We only query one currency
+                    let (currency, price) = inner.into_iter().next()?;
 
-                // todo validate price
+                    // todo validate price
 
-                Some((
-                    CoinPair {
-                        from: CoinKind::get_token(*chain, Address::from_str(&addr).ok()?)?,
-                        to: Self::parse_currency(&currency)?,
-                    },
-                    price,
-                ))
-            });
+                    Some((
+                        CoinPair {
+                            from: CoinKind::get_token(*chain, Address::from_str(&addr).ok()?)?,
+                            to: Self::parse_currency(&currency)?,
+                        },
+                        price,
+                    ))
+                });
 
-            let _ = self.update_tx.send(PriceOracleMessage::Update {
-                fetcher: PriceFetcher::CoinGecko,
-                prices: pairs.collect(),
-                timestamp,
-            });
+                let _ = self.update_tx.send(PriceOracleMessage::Update {
+                    fetcher: PriceFetcher::CoinGecko,
+                    prices: pairs.collect(),
+                    timestamp,
+                });
+
+                continue;
+            }
+            error!(resp, "Not able to parse CoinGecko response.")
         }
 
         Ok(())

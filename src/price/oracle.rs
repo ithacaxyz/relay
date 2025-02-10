@@ -8,12 +8,12 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tracing::trace;
 
-/// Price taken a certain timestamp.
+/// Coin pair rate taken a certain timestamp.
 #[derive(Debug, Clone, Copy)]
-struct PriceTick {
-    /// Price
-    pub price: f64,
-    /// Timestamp when we received the price update
+struct RateTick {
+    /// Price rate.
+    pub rate: f64,
+    /// Timestamp when we received the rate update.
     #[allow(unused)]
     pub timestamp: u64,
 }
@@ -48,19 +48,19 @@ impl PriceOracle {
     pub fn new() -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            let mut registry: HashMap<CoinPair, PriceTick> = HashMap::new();
+            let mut registry: HashMap<CoinPair, RateTick> = HashMap::new();
             while let Some(message) = rx.recv().await {
                 match message {
                     PriceOracleMessage::Update { fetcher, prices, timestamp } => {
                         trace!(?fetcher, ?timestamp, "Received price updates.");
 
-                        for (pair, price) in prices {
-                            registry.insert(pair, PriceTick { price, timestamp });
+                        for (pair, rate) in prices {
+                            registry.insert(pair, RateTick { rate, timestamp });
                         }
                     }
                     PriceOracleMessage::Lookup { pair, tx } => {
                         trace!(?pair, "Received lookup request.");
-                        let _ = tx.send(registry.get(&pair).map(|t| t.price));
+                        let _ = tx.send(registry.get(&pair).map(|t| t.rate));
                     }
                 }
             }
