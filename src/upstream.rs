@@ -59,8 +59,18 @@ where
         &self,
         tx: &TransactionRequest,
     ) -> Result<C::Return, SendActionError> {
+        self.call_with_overrides::<C>(tx, &AddressMap::from_iter([])).await
+    }
+
+    /// Perform an `eth_call` with overrides.
+    pub async fn call_with_overrides<C: SolCall>(
+        &self,
+        tx: &TransactionRequest,
+        overrides: &AddressMap<AccountOverride>,
+    ) -> Result<C::Return, SendActionError> {
         self.provider
             .call(tx)
+            .overrides(overrides)
             .await
             .map_err(|err| SendActionError::InternalError(err.into()))
             .and_then(|r| {
