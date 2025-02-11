@@ -11,10 +11,10 @@ use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
 use relay::{
     metrics::{build_exporter, MetricsService, RpcMetricsService},
-    price::PriceOracle,
+    price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
     signer::LocalOrAws,
-    types::FeeTokens,
+    types::{CoinKind, CoinPair, FeeTokens},
     upstream::Upstream,
 };
 use std::{
@@ -87,11 +87,15 @@ impl Args {
         // construct rpc module
         let upstream = Upstream::new(provider, self.entrypoint).await?;
         let address = upstream.default_signer_address();
+        let price_oracle = PriceOracle::new();
+        price_oracle
+            .spawn_fetcher(PriceFetcher::CoinGecko, &CoinPair::ethereum_pairs(&[CoinKind::USDT]));
+
         let rpc = Relay::new(
             upstream.clone(),
             quote_signer,
             self.quote_ttl,
-            PriceOracle::new().with_constant_rate(0.0003666f64),
+            price_oracle,
             FeeTokens::new(&self.fee_tokens, upstream).await?,
         )
         .into_rpc();
