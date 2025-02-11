@@ -36,12 +36,19 @@ impl FeeTokens {
         let fee_tokens = try_join_all(tokens.iter().copied().map(|token| {
             let upstream = upstream.clone();
             async move {
-                Ok::<_, eyre::Error>(Token::new(
-                    token,
-                    upstream.get_token_decimals(token).await?,
-                    CoinKind::get_token(chain, token)
-                        .ok_or_else(|| eyre::eyre!("Token not supported: {token} @ {chain}."))?,
-                ))
+                let (decimals, coin_kind) = if token.is_zero() {
+                    // todo: native is ETH for now
+                    (18, CoinKind::ETH)
+                } else {
+                    (
+                        upstream.get_token_decimals(token).await?,
+                        CoinKind::get_token(chain, token).ok_or_else(|| {
+                            eyre::eyre!("Token not supported: {token} @ {chain}.")
+                        })?,
+                    )
+                };
+
+                Ok::<_, eyre::Error>(Token::new(token, decimals, coin_kind))
             }
         }))
         .await?;

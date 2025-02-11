@@ -23,6 +23,8 @@ static COINS_CONFIG: LazyLock<HashMap<(Chain, Option<Address>), CoinKind>> = Laz
         let addresses = [
             (Chain::mainnet(), address!("dAC17F958D2ee523a2206206994597C13D831ec7")),
             (Chain::optimism_mainnet(), address!("0xdAC17F958D2ee523a2206206994597C13D831ec7")),
+            (NamedChain::Odyssey.into(), address!("238c8CD93ee9F8c7Edf395548eF60c0d2e46665E")),
+            (NamedChain::Odyssey.into(), address!("706aa5c8e5cc2c67da21ee220718f6f6b154e75c")),
         ];
         for (chain, address) in addresses {
             coin_map.insert((chain, Some(address)), CoinKind::USDT);
