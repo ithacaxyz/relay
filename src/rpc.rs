@@ -134,7 +134,7 @@ where
             expiry: U40::from(0),
             keyType: KeyType::Secp256k1,
             isSuperAdmin: true,
-            publicKey: self.inner.quote_signer.address().into_array().into(),
+            publicKey: self.inner.quote_signer.address().abi_encode().into(),
         };
 
         // fill userop
