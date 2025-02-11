@@ -46,6 +46,14 @@ sol! {
         /// `authorize` and `revoke` via `execute`.
         bool isSuperAdmin;
     }
+
+    /// Delegation interface.
+    interface IDelegation {
+        /// Authorizes the key.
+        function authorize(Key memory key) public virtual returns (bytes32 keyHash);
+        /// (GuardedExecutor) Sets the ability of a key hash to execute a call with a function selector.
+        function setCanExecute(bytes32 keyHash, address target, bytes4 fnSel, bool can);
+    }
 }
 
 impl From<Key> for PackedKey {
