@@ -174,7 +174,7 @@ where
                 &op.eip712_digest(
                     self.inner.upstream.entrypoint(),
                     self.inner.upstream.chain_id(),
-                    nonce_salt.into(),
+                    nonce_salt,
                 )
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
             )
