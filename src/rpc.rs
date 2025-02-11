@@ -18,7 +18,7 @@
 use alloy::{
     eips::eip7702::constants::PER_AUTH_BASE_COST,
     hex,
-    primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
+    primitives::{fixed_bytes, map::AddressMap, Address, Bytes, FixedBytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
@@ -125,6 +125,28 @@ where
             publicKey: self.inner.quote_signer.address().abi_encode().into(),
         };
 
+        // mocking key storage for the eoa, and the balance for the mock signer
+        let overrides = AddressMap::from_iter([
+            (
+                self.inner.quote_signer.address(),
+                AccountOverride {
+                    balance: Some(U256::MAX.div_ceil(2.try_into().unwrap())),
+                    ..Default::default()
+                },
+            ),
+            (
+                request.op.eoa,
+                AccountOverride {
+                    state_diff: Some(key.storage_slots()),
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    code: request.auth.map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    }),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
@@ -147,11 +169,14 @@ where
         let nonce_salt = self
             .inner
             .upstream
-            .call::<nonceSaltCall>(&TransactionRequest {
-                to: Some(request.op.eoa.into()),
-                input: nonceSaltCall {}.abi_encode().into(),
-                ..Default::default()
-            })
+            .call_with_overrides::<nonceSaltCall>(
+                &TransactionRequest {
+                    to: Some(request.op.eoa.into()),
+                    input: nonceSaltCall {}.abi_encode().into(),
+                    ..Default::default()
+                },
+                &overrides,
+            )
             .await
             .map_or(U256::ZERO, |ret| ret._0);
         debug!(eoa = %request.op.eoa, "Got nonce salt {nonce_salt}");
@@ -182,27 +207,7 @@ where
         .abi_encode_packed()
         .into();
 
-        // estimate gas, mocking key storage for the eoa, and the balance for the mock signer
-        let overrides = AddressMap::from_iter([
-            (
-                self.inner.quote_signer.address(),
-                AccountOverride {
-                    balance: Some(U256::MAX.div_ceil(2.try_into().unwrap())),
-                    ..Default::default()
-                },
-            ),
-            (
-                request.op.eoa,
-                AccountOverride {
-                    state_diff: Some(key.storage_slots()),
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    code: request.auth.map(|addr| {
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    }),
-                    ..Default::default()
-                },
-            ),
-        ]);
+        // estimate gas
         let (mut gas_estimate, native_fee_estimate) = self
             .inner
             .upstream
@@ -219,6 +224,29 @@ where
             )
             .await
             .map_err(EstimateFeeError::from)?;
+        // perform an eth call to check if the call reverted
+        // todo: do this concurrently with estimating gas
+        let ret = self
+            .inner
+            .upstream
+            .call_with_overrides::<executeCall>(
+                &TransactionRequest {
+                    from: Some(self.inner.quote_signer.address()),
+                    to: Some(self.inner.upstream.entrypoint().into()),
+                    input: executeCall { encodedUserOp: op.abi_encode().into() }
+                        .abi_encode()
+                        .into(),
+                    ..Default::default()
+                },
+                &overrides,
+            )
+            .await
+            // todo default to err
+            .map_or(FixedBytes::<4>::default(), |ret| ret.err);
+        if ret != fixed_bytes!("00000000") {
+            debug!(eoa = %request.op.eoa, code = %ret, "Op reverted");
+            return Err(EstimateFeeError::OpRevert { revert_reason: ret }.into());
+        }
 
         // for 7702 designations there is an additional gas charge
         //

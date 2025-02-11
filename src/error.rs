@@ -1,6 +1,9 @@
 //! Relay error types.
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::{
+    primitives::{Address, FixedBytes, B256, U256},
+    rpc::types::error::EthRpcErrorCode,
+};
 
 /// Errors returned by `relay_estimateFee`
 #[derive(Debug, thiserror::Error)]
@@ -11,6 +14,12 @@ pub enum EstimateFeeError {
     /// The price for fee token is not available.
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
+    /// The userop reverted when estimating gas.
+    #[error("op reverted")]
+    OpRevert {
+        /// The 4 byte error code returned by the entrypoint.
+        revert_reason: FixedBytes<4>,
+    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
@@ -21,6 +30,14 @@ pub enum EstimateFeeError {
 
 impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: EstimateFeeError) -> Self {
+        if let EstimateFeeError::OpRevert { revert_reason } = error {
+            return jsonrpsee::types::error::ErrorObject::owned::<FixedBytes<4>>(
+                EthRpcErrorCode::ExecutionError.code(),
+                error.to_string(),
+                Some(revert_reason),
+            );
+        }
+
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
                 EstimateFeeError::InternalError(_)
