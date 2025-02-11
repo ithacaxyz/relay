@@ -79,13 +79,6 @@ sol! {
         bool prehash;
     }
 
-    /// A signature for a Secp256k1 key.
-    struct Secp256k1Signature {
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-    }
-
     /// Returns the nonce salt.
     function nonceSalt() public view virtual returns (uint256);
 }
