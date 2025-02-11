@@ -11,9 +11,6 @@ pub enum EstimateFeeError {
     /// The price for fee token is not available.
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
-    /// The provided EIP-7702 auth item is not chain agnostic.
-    #[error("the auth item is not chain agnostic")]
-    AuthItemNotChainAgnostic,
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
