@@ -39,7 +39,7 @@ use crate::{
     price::PriceOracle,
     types::{
         executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Secp256k1Signature, Signature, SignedQuote, UserOp, U40,
+        Signature, SignedQuote, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -194,13 +194,7 @@ where
             .await
             .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
         op.signature = Signature {
-            innerSignature: Secp256k1Signature {
-                r: inner_signature.r().into(),
-                s: inner_signature.s().into(),
-                v: inner_signature.v() as u8,
-            }
-            .abi_encode()
-            .into(),
+            innerSignature: inner_signature.as_bytes().into(), // (r, s, v + 27)
             keyHash: key.key_hash(),
             prehash: false,
         }
