@@ -20,6 +20,7 @@ alloy = { version = "0.11", features = [
     "sol-types",
     "transports",
 ] }
+alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.5"
 aws-sdk-kms = "1.59"
@@ -32,7 +33,9 @@ jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.24.0"
 metrics-derive = "0.1.0"
 metrics-exporter-prometheus = "0.16"
+reqwest = { version = "0.12", default-features = false }
 serde = "1"
+serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"

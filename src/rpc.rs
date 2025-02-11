@@ -35,6 +35,7 @@ use tracing::{debug, warn};
 
 use crate::{
     error::{EstimateFeeError, SendActionError},
+    price::PriceOracle,
     types::{
         executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
         Signature, SignedQuote, UserOp, U40,
@@ -85,15 +86,10 @@ impl<P, Q> Relay<P, Q> {
         upstream: Upstream<P>,
         quote_signer: Q,
         quote_ttl: Duration,
-        fee_tokens: Vec<Address>,
+        price_oracle: PriceOracle,
+        fee_tokens: FeeTokens,
     ) -> Self {
-        let chain_id = upstream.chain_id();
-        let inner = RelayInner {
-            upstream,
-            fee_tokens: FeeTokens::from_iter([(chain_id, fee_tokens)]),
-            quote_signer,
-            quote_ttl,
-        };
+        let inner = RelayInner { upstream, fee_tokens, quote_signer, quote_ttl, price_oracle };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -116,9 +112,9 @@ where
     }
 
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
-        if !self.inner.fee_tokens.contains(self.inner.upstream.chain_id(), &token) {
+        let Some(token) = self.inner.fee_tokens.find(self.inner.upstream.chain_id(), &token) else {
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
-        }
+        };
 
         // validate auth item chain id
         if request
@@ -143,7 +139,7 @@ where
             executionData: request.op.executionData.clone(),
             nonce: request.op.nonce,
             payer: Address::ZERO,
-            paymentToken: token,
+            paymentToken: token.address,
             paymentRecipient: Address::ZERO,
             paymentAmount: U256::ZERO,
             paymentMaxAmount: U256::ZERO,
@@ -221,10 +217,24 @@ where
             .map_err(EstimateFeeError::from)?;
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
+        // Get paymentPerGas
+        // TODO: only handles eth as native fee token
+        let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
+            return Err(EstimateFeeError::UnavailablePrice(token.address).into());
+        };
+        let gas_price = U256::from(
+            native_fee_estimate.max_fee_per_gas + native_fee_estimate.max_priority_fee_per_gas,
+        );
+        op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+
+        // Calculate amount with updated paymentPerGas
+        op.paymentAmount = op.paymentPerGas * op.combinedGas;
+        op.paymentMaxAmount = op.paymentAmount;
+
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
-            token,
-            amount: U256::ZERO,
+            token: token.address,
+            amount: op.paymentPerGas * U256::from(gas_estimate),
             gas_estimate,
             native_fee_estimate: native_fee_estimate.into(),
             digest: op.digest(),
@@ -338,4 +348,6 @@ struct RelayInner<P, Q> {
     quote_signer: Q,
     /// The TTL of a quote.
     quote_ttl: Duration,
+    /// Price oracle.
+    price_oracle: PriceOracle,
 }

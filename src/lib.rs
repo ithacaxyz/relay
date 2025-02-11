@@ -4,6 +4,7 @@
 
 pub mod error;
 pub mod metrics;
+pub mod price;
 pub mod rpc;
 pub mod serde;
 pub mod signer;

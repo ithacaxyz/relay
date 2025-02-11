@@ -2,32 +2,66 @@
 
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use alloy::{
     primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
-    providers::utils::Eip1559Estimation as AlloyEip1559Estimation,
+    providers::{utils::Eip1559Estimation as AlloyEip1559Estimation, Provider, WalletProvider},
 };
+use alloy_chains::Chain;
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 
-use super::Signed;
+use crate::{
+    types::{CoinKind, Signed, Token},
+    upstream::Upstream,
+};
 
 /// A container of supported fee tokens per chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeTokens(
-    #[serde(with = "alloy::serde::quantity::hashmap")] HashMap<ChainId, Vec<Address>>,
+    #[serde(with = "alloy::serde::quantity::hashmap")] HashMap<ChainId, Vec<Token>>,
 );
 
 impl FeeTokens {
+    /// Create a new [`FeeTokens`]
+    pub async fn new<P>(tokens: &[Address], upstream: Upstream<P>) -> Result<Self, eyre::Error>
+    where
+        P: Provider + WalletProvider,
+    {
+        let upstream = Arc::new(upstream);
+        let chain: Chain = upstream.chain_id().into();
+        let fee_tokens = try_join_all(tokens.iter().copied().map(|token| {
+            let upstream = upstream.clone();
+            async move {
+                Ok::<_, eyre::Error>(Token::new(
+                    token,
+                    upstream.get_token_decimals(token).await?,
+                    CoinKind::get_token(chain, token)
+                        .ok_or_else(|| eyre::eyre!("Token not supported: {token} @ {chain}."))?,
+                ))
+            }
+        }))
+        .await?;
+
+        Ok(Self(HashMap::from_iter([(upstream.chain_id(), fee_tokens)])))
+    }
+
     /// Check if the fee token is supported on the given chain.
     pub fn contains(&self, chain_id: ChainId, fee_token: &Address) -> bool {
-        self.0.get(&chain_id).is_some_and(|tokens| tokens.contains(fee_token))
+        self.0.get(&chain_id).is_some_and(|tokens| tokens.iter().any(|t| t.address == *fee_token))
+    }
+
+    /// Return a reference to a fee [`Token`] if supported on the given chain.
+    pub fn find(&self, chain_id: ChainId, fee_token: &Address) -> Option<&Token> {
+        self.0.get(&chain_id).and_then(|tokens| tokens.iter().find(|t| t.address == *fee_token))
     }
 }
 
-impl FromIterator<(ChainId, Vec<Address>)> for FeeTokens {
-    fn from_iter<T: IntoIterator<Item = (ChainId, Vec<Address>)>>(iter: T) -> Self {
+impl FromIterator<(ChainId, Vec<Token>)> for FeeTokens {
+    fn from_iter<T: IntoIterator<Item = (ChainId, Vec<Token>)>>(iter: T) -> Self {
         Self(HashMap::from_iter(iter))
     }
 }
