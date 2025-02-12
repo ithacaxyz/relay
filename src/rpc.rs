@@ -45,8 +45,7 @@ use crate::{
 };
 
 /// Ithaca `relay_` RPC namespace.
-#[cfg_attr(not(test), rpc(server, namespace = "relay"))]
-#[cfg_attr(test, rpc(server, client, namespace = "relay"))]
+#[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
     /// Get all supported fee tokens by chain.
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
