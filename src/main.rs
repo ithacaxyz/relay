@@ -1,4 +1,4 @@
-//! # Odyssey Relay
+//! # Ithaca Relay
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
 use clap::Parser;
