@@ -9,7 +9,6 @@ name = "relay"
 
 [dependencies]
 alloy = { version = "0.11", features = [
-    "eips",
     "dyn-abi",
     "providers",
     "rpc",
@@ -50,7 +49,7 @@ tracing-subscriber = { version = "0.3.19", features = [
 url = "2.5"
 
 [dev-dependencies]
-alloy = { version = "0.11", features = [ "provider-anvil-node"] }
+alloy = { version = "0.11", features = ["eips", "provider-anvil-node"] }
 
 # Speed up compilation time for dev builds by reducing emitted debug info.
 # NOTE: Debuggers may provide less useful information with this setting.

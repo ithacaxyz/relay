@@ -32,21 +32,35 @@ mod tests {
         rpc::types::TransactionRequest,
         signers::Signer,
         sol,
-        sol_types::{SolCall, SolValue},
+        sol_types::{SolCall, SolConstructor, SolValue},
     };
     use alloy_chains::NamedChain;
     use jsonrpsee::http_client::HttpClientBuilder;
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{
+        net::Ipv4Addr,
+        path::{Path, PathBuf},
+        time::Duration,
+    };
     use tokio::time::sleep;
 
     sol! {
         #[sol(rpc)]
         interface MockErc20 {
+            constructor(string memory name_, string memory symbol_, uint8 decimals_) {
+                _name = name_;
+                _symbol = symbol_;
+                _decimals = decimals_;
+                _nameHash = keccak256(bytes(name_));
+            }
             function mint(address a, uint256 val) external;
         }
     }
 
-    async fn setup_contract<P: Provider>(provider: &P, artifact_path: &str) -> Address {
+    async fn setup_contract<P: Provider>(
+        provider: &P,
+        artifact_path: &Path,
+        args: Option<Bytes>,
+    ) -> Address {
         let artifact_str = std::fs::read_to_string(artifact_path).unwrap();
         let artifact: serde_json::Value = serde_json::from_str(&artifact_str).unwrap();
         let bytecode = artifact
@@ -55,9 +69,13 @@ mod tests {
             .map(|b| b.as_str().unwrap())
             .ok_or("No bytecode found")
             .unwrap();
+
+        let mut input = hex::decode(bytecode).unwrap();
+        input.extend_from_slice(&args.unwrap_or_default());
+
         provider
             .send_transaction(TransactionRequest {
-                input: hex::decode(bytecode).unwrap().into(),
+                input: input.into(),
                 to: Some(TxKind::Create),
                 ..Default::default()
             })
@@ -90,18 +108,40 @@ mod tests {
             .on_http(upstream.clone());
 
         // Deploy contracts: Entrypoint, Delegation and FakeERC20
-        let mock_entrypoint =
-            setup_contract(&anvil_provider, "out/Entrypoint.sol/Entrypoint.json").await;
+        let contracts_path =
+            PathBuf::from(std::env::var("CONTRACTS").unwrap_or("out/".to_string()));
+        let mock_entrypoint = setup_contract(
+            &anvil_provider,
+            &contracts_path.join("EntryPoint.sol/EntryPoint.json"),
+            None,
+        )
+        .await;
+        let delegation = setup_contract(
+            &anvil_provider,
+            &contracts_path.join("Delegation.sol/Delegation.json"),
+            None,
+        )
+        .await;
+        let erc20 = setup_contract(
+            &anvil_provider,
+            &contracts_path.join("MockERC20.sol/MockERC20.json"),
+            Some(
+                MockErc20::constructorCall {
+                    name_: Default::default(),
+                    symbol_: Default::default(),
+                    decimals_: Default::default(),
+                }
+                .abi_encode()
+                .into(),
+            ),
+        )
+        .await;
 
         // Entrypoint address is hardcoded into delegation, so need to etch.
         anvil_provider
             .anvil_set_code(entrypoint, anvil_provider.get_code_at(mock_entrypoint).await.unwrap())
             .await
             .unwrap();
-
-        let delegation =
-            setup_contract(&anvil_provider, "out/Delegation.sol/Delegation.json").await;
-        let erc20 = setup_contract(&anvil_provider, "out/MockERC20.sol/MockERC20.json").await;
 
         // Fund FakeERC20
         for signer in [&relay_signer, &eoa_signer] {
