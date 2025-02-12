@@ -1,7 +1,7 @@
 //! Relay error types.
 
 use alloy::{
-    primitives::{Address, FixedBytes, B256, U256},
+    primitives::{Address, Bytes, B256, U256},
     rpc::types::error::EthRpcErrorCode,
 };
 
@@ -17,9 +17,12 @@ pub enum EstimateFeeError {
     /// The userop reverted when estimating gas.
     #[error("op reverted")]
     OpRevert {
-        /// The 4 byte error code returned by the entrypoint.
-        revert_reason: FixedBytes<4>,
+        /// The error code returned by the entrypoint.
+        revert_reason: Bytes,
     },
+    /// The userop could not be simulated.
+    #[error("the op could not be simulated")]
+    SimulationError,
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
@@ -30,17 +33,18 @@ pub enum EstimateFeeError {
 
 impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: EstimateFeeError) -> Self {
-        if let EstimateFeeError::OpRevert { revert_reason } = error {
-            return jsonrpsee::types::error::ErrorObject::owned::<FixedBytes<4>>(
+        if let EstimateFeeError::OpRevert { ref revert_reason } = error {
+            return jsonrpsee::types::error::ErrorObject::owned::<Bytes>(
                 EthRpcErrorCode::ExecutionError.code(),
                 error.to_string(),
-                Some(revert_reason),
+                Some(revert_reason.clone()),
             );
         }
 
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
                 EstimateFeeError::InternalError(_)
+                | EstimateFeeError::SimulationError
                 | EstimateFeeError::RpcError(_)
                 | EstimateFeeError::UnavailablePrice(_) => {
                     jsonrpsee::types::error::INTERNAL_ERROR_CODE
@@ -116,4 +120,15 @@ pub enum PriceOracleError {
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
+}
+
+/// Errors when performing `eth_call`s and decoding the result.
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// An error occurred ABI enc/decoding.
+    #[error(transparent)]
+    AbiError(#[from] alloy::sol_types::Error),
 }

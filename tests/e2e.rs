@@ -210,6 +210,7 @@ async fn e2e() {
             )
             .await
             .unwrap();
+        println!("Estimated call with nonce {nonce} to be {res:?}");
 
         // This would be done by the frontend. eg. Porto
         let op = {
@@ -223,7 +224,7 @@ async fn e2e() {
                 paymentAmount: U256::ZERO,
                 paymentMaxAmount: U256::ZERO,
                 paymentPerGas: U256::ZERO,
-                combinedGas: U256::from(res.ty().gas_estimate / 2),
+                combinedGas: U256::from(res.ty().gas_estimate),
                 signature: bytes!(""),
             };
 
@@ -232,20 +233,19 @@ async fn e2e() {
                 .await
                 .unwrap();
 
-            if nonce == 0 {
+            op.signature = if nonce == 0 {
                 // The first authorize should be done from the root key
-                op.signature = Bytes::from(signature.as_bytes());
+                signature.as_bytes().into()
             } else {
                 // Second action can be done with the alternative key_scheme that we authorized
-                op.signature = Bytes::from(
-                    Signature {
-                        innerSignature: signature.as_bytes().into(),
-                        keyHash: pass_key.key_hash(),
-                        prehash: false,
-                    }
-                    .abi_encode_packed(),
-                );
-            }
+                Signature {
+                    innerSignature: signature.as_bytes().into(),
+                    keyHash: pass_key.key_hash(),
+                    prehash: false,
+                }
+                .abi_encode_packed()
+                .into()
+            };
             op
         };
 

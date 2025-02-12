@@ -11,11 +11,11 @@
 use alloy::{
     eips::eip7702::constants::PER_AUTH_BASE_COST,
     hex,
-    primitives::{fixed_bytes, map::AddressMap, Address, Bytes, FixedBytes, TxHash, U256},
+    primitives::{fixed_bytes, map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
-    sol_types::{SolCall, SolValue},
+    sol_types::{SolCall, SolError, SolValue},
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -28,11 +28,11 @@ use std::{
 use tracing::{debug, warn};
 
 use crate::{
-    error::{EstimateFeeError, SendActionError},
+    error::{CallError, EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
-        executeCall, nonceSaltCall, Action, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, U40,
+        executeCall, nonceSaltCall, simulateExecuteCall, Action, FeeTokens, Key, KeyType,
+        PartialAction, Quote, Signature, SignedQuote, SimulationResult, UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -193,15 +193,16 @@ where
         .abi_encode_packed()
         .into();
 
-        // estimate gas
-        let (mut gas_estimate, native_fee_estimate) = self
+        // we perform a call to `simulateExecute`, which reverts with the amount of gas used and an
+        // error selector.
+        let mut gas_estimate = match self
             .inner
             .upstream
-            .estimate(
+            .call_with_overrides::<simulateExecuteCall>(
                 &TransactionRequest {
                     from: Some(self.inner.quote_signer.address()),
                     to: Some(self.inner.upstream.entrypoint().into()),
-                    input: executeCall { encodedUserOp: op.abi_encode().into() }
+                    input: simulateExecuteCall { encodedUserOp: op.abi_encode().into() }
                         .abi_encode()
                         .into(),
                     ..Default::default()
@@ -209,30 +210,26 @@ where
                 &overrides,
             )
             .await
-            .map_err(EstimateFeeError::from)?;
-        // perform an eth call to check if the call reverted
-        // todo: do this concurrently with estimating gas
-        let ret = self
-            .inner
-            .upstream
-            .call_with_overrides::<executeCall>(
-                &TransactionRequest {
-                    from: Some(self.inner.quote_signer.address()),
-                    to: Some(self.inner.upstream.entrypoint().into()),
-                    input: executeCall { encodedUserOp: op.abi_encode().into() }
-                        .abi_encode()
-                        .into(),
-                    ..Default::default()
-                },
-                &overrides,
-            )
-            .await
-            // todo default to err
-            .map_or(FixedBytes::<4>::default(), |ret| ret.err);
-        if ret != fixed_bytes!("00000000") {
-            debug!(eoa = %request.op.eoa, code = %ret, "Op reverted");
-            return Err(EstimateFeeError::OpRevert { revert_reason: ret }.into());
-        }
+        {
+            Err(CallError::RpcError(alloy::transports::RpcError::ErrorResp(err))) => {
+                let data = err.as_revert_data().unwrap_or_default();
+                if let Ok(result) = SimulationResult::abi_decode(&data, false) {
+                    if result.err != fixed_bytes!("00000000") {
+                        return Err(EstimateFeeError::OpRevert {
+                            revert_reason: result.err.into(),
+                        }
+                        .into());
+                    }
+
+                    result.gUsed.to::<u64>()
+                } else {
+                    return Err(EstimateFeeError::OpRevert { revert_reason: data }.into());
+                }
+            }
+            _ => return Err(EstimateFeeError::SimulationError.into()),
+        };
+        let native_fee_estimate =
+            self.inner.upstream.estimate_eip1559().await.map_err(EstimateFeeError::from)?;
 
         // for 7702 designations there is an additional gas charge
         //
@@ -263,7 +260,7 @@ where
             token: token.address,
             amount: op.paymentPerGas * U256::from(gas_estimate),
             gas_estimate,
-            native_fee_estimate: native_fee_estimate.into(),
+            native_fee_estimate,
             digest: op.digest(),
             ttl: SystemTime::now()
                 .checked_add(self.inner.quote_ttl)
@@ -295,7 +292,9 @@ where
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),
             chain_id: Some(self.inner.upstream.chain_id()),
-            gas: Some(quote.ty().gas_estimate),
+            // setting the gas limit here to exactly the gas estimate makes the tx revert;
+            // otoh setting it way higher is wasteful, as the estimate is actually very accurate.
+            // gas: Some(quote.ty().gas_estimate + ENTRYPOINT_INNER_GAS_OVERHEAD),
             max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
             max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
             ..Default::default()
