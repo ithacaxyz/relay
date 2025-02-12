@@ -1,21 +1,11 @@
-use super::CallArray;
+use super::Call;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{b256, keccak256, Address, ChainId, Keccak256, B256, U256},
+    primitives::{Address, ChainId, Keccak256, B256, U256},
     sol,
+    sol_types::{SolStruct, SolValue},
 };
 use serde::{Deserialize, Serialize};
-
-/// For EIP712 signature digest calculation for the `execute` function.
-///
-/// ```solidity
-/// bytes32 public constant USER_OP_TYPEHASH = keccak256("UserOp(bool multichain,address eoa,Call[] calls,uint256 nonce,uint256 nonceSalt,address payer,address paymentToken,uint256 paymentMaxAmount,uint256 paymentPerGas,uint256 combinedGas)Call(address target,uint256 value,bytes data)");
-/// ```
-const USER_OP_TYPEHASH: B256 =
-    b256!("0xc3607e2f6b50396b4728b4863949155412094a746596309e725db1d2d315053b");
-
-/// For EIP712 signature digest of an odd nonce.
-const ODD_NONCE: B256 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
 
 sol! {
     /// A struct to hold the user operation fields.
@@ -83,6 +73,26 @@ sol! {
     function nonceSalt() public view virtual returns (uint256);
 }
 
+mod eip712 {
+    use crate::types::Call;
+    use alloy::sol;
+
+    sol! {
+        struct UserOp {
+            bool multichain;
+            address eoa;
+            Call[] calls;
+            uint256 nonce;
+            uint256 nonceSalt;
+            address payer;
+            address paymentToken;
+            uint256 paymentMaxAmount;
+            uint256 paymentPerGas;
+            uint256 combinedGas;
+        }
+    }
+}
+
 impl UserOp {
     /// Calculate the EIP-712 digest of the [`UserOp`], which is the digest signed for the
     /// `signature` field of the [`UserOp`].
@@ -94,29 +104,25 @@ impl UserOp {
     ) -> Result<B256, alloy::sol_types::Error> {
         let is_odd_nonce = self.nonce.bit(0);
 
-        let mut hasher = Keccak256::new();
-        hasher.update(USER_OP_TYPEHASH);
-        hasher.update(is_odd_nonce.then_some(ODD_NONCE).unwrap_or_default());
-        hasher.update(B256::left_padding_from(self.eoa.as_ref()));
-        hasher.update(CallArray::abi_decode(&self.executionData)?.eip712_digest());
-        hasher.update(self.nonce.to_be_bytes::<32>());
-        hasher.update(nonce_salt.to_be_bytes::<32>());
-        hasher.update(B256::left_padding_from(self.payer.as_ref()));
-        hasher.update(B256::left_padding_from(self.paymentToken.as_ref()));
-        hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
-        hasher.update(self.paymentPerGas.to_be_bytes::<32>());
-        hasher.update(self.combinedGas.to_be_bytes::<32>());
-        let op = hasher.finalize();
-
-        let domain = Eip712Domain::new(
+        Ok(eip712::UserOp {
+            multichain: is_odd_nonce,
+            eoa: self.eoa,
+            calls: <Vec<Call>>::abi_decode(&self.executionData, false)?,
+            nonce: self.nonce,
+            nonceSalt: nonce_salt,
+            payer: self.payer,
+            paymentToken: self.paymentToken,
+            paymentMaxAmount: self.paymentMaxAmount,
+            paymentPerGas: self.paymentPerGas,
+            combinedGas: self.combinedGas,
+        }
+        .eip712_signing_hash(&Eip712Domain::new(
             Some("EntryPoint".into()),
             Some("0.0.1".into()),
             (!is_odd_nonce).then(|| U256::from(chain_id)),
             Some(domain_verifying_contract),
             None,
-        );
-
-        Ok(keccak256([&[0x19, 0x01], &domain.hash_struct()[..], &op[..]].concat()))
+        )))
     }
 
     /// Calculate a digest of the [`UserOp`], used for checksumming.
@@ -138,7 +144,7 @@ impl UserOp {
 mod tests {
     use crate::signer::LocalOrAws;
     use alloy::{
-        primitives::{address, bytes, Address},
+        primitives::{address, b256, bytes, Address},
         signers::Signer,
         sol_types::SolValue,
     };
