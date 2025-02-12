@@ -152,7 +152,6 @@ async fn e2e() {
             address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 3131,
             upstream,
-            entrypoint,
             quote_ttl: Duration::from_secs(60),
             quote_secret_key: relay_key.clone(),
             fee_tokens: vec![erc20],

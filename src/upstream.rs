@@ -17,7 +17,6 @@ use crate::{
 pub struct Upstream<P> {
     provider: P,
     chain_id: ChainId,
-    entrypoint: Address,
 }
 
 impl<P> Upstream<P> {
@@ -32,19 +31,14 @@ where
     P: Provider + WalletProvider,
 {
     /// Create a new [`Upstream`]
-    pub async fn new(provider: P, entrypoint: Address) -> TransportResult<Self> {
+    pub async fn new(provider: P) -> TransportResult<Self> {
         let chain_id = provider.get_chain_id().await?;
-        Ok(Self { chain_id, provider, entrypoint })
+        Ok(Self { chain_id, provider })
     }
 
     /// Get the address of this upstream's signer.
     pub fn default_signer_address(&self) -> Address {
         self.provider.default_signer_address()
-    }
-
-    /// Get the entrypoint on this chain.
-    pub fn entrypoint(&self) -> Address {
-        self.entrypoint
     }
 
     /// Get the code of the given account.

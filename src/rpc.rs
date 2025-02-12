@@ -32,8 +32,10 @@ use crate::{
     error::{CallError, EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
-        executeCall, nonceSaltCall, simulateExecuteCall, Action, FeeTokens, Key, KeyType,
-        PartialAction, Quote, Signature, SignedQuote, SimulationResult, UserOp, U40,
+        Action,
+        Delegation::{self},
+        EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote, Signature, SignedQuote, UserOp,
+        U40,
     },
     upstream::Upstream,
 };
@@ -158,14 +160,29 @@ where
         };
 
         // sign userop
+        let entrypoint = self
+            .inner
+            .upstream
+            .call_with_overrides::<Delegation::ENTRY_POINTCall>(
+                &TransactionRequest {
+                    to: Some(request.op.eoa.into()),
+                    input: Delegation::ENTRY_POINTCall {}.abi_encode().into(),
+                    ..Default::default()
+                },
+                &overrides,
+            )
+            .await
+            .map_err(|err| EstimateFeeError::InternalError(err.into()))?
+            .ENTRY_POINT;
+        debug!(eoa = %request.op.eoa, "Retrieved EOA entrypoint {entrypoint}");
         debug!(eoa = %request.op.eoa, "Retrieving nonce salt");
         let nonce_salt = self
             .inner
             .upstream
-            .call_with_overrides::<nonceSaltCall>(
+            .call_with_overrides::<Delegation::nonceSaltCall>(
                 &TransactionRequest {
                     to: Some(request.op.eoa.into()),
-                    input: nonceSaltCall {}.abi_encode().into(),
+                    input: Delegation::nonceSaltCall {}.abi_encode().into(),
                     ..Default::default()
                 },
                 &overrides,
@@ -177,12 +194,8 @@ where
             .inner
             .quote_signer
             .sign_hash(
-                &op.eip712_digest(
-                    self.inner.upstream.entrypoint(),
-                    self.inner.upstream.chain_id(),
-                    nonce_salt,
-                )
-                .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                &op.eip712_digest(entrypoint, self.inner.upstream.chain_id(), nonce_salt)
+                    .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
             )
             .await
             .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
@@ -199,13 +212,15 @@ where
         let mut gas_estimate = match self
             .inner
             .upstream
-            .call_with_overrides::<simulateExecuteCall>(
+            .call_with_overrides::<EntryPoint::simulateExecuteCall>(
                 &TransactionRequest {
                     from: Some(self.inner.quote_signer.address()),
-                    to: Some(self.inner.upstream.entrypoint().into()),
-                    input: simulateExecuteCall { encodedUserOp: op.abi_encode().into() }
-                        .abi_encode()
-                        .into(),
+                    to: Some(entrypoint.into()),
+                    input: EntryPoint::simulateExecuteCall {
+                        encodedUserOp: op.abi_encode().into(),
+                    }
+                    .abi_encode()
+                    .into(),
                     ..Default::default()
                 },
                 &overrides,
@@ -214,7 +229,7 @@ where
         {
             Err(CallError::RpcError(alloy::transports::RpcError::ErrorResp(err))) => {
                 let data = err.as_revert_data().unwrap_or_default();
-                if let Ok(result) = SimulationResult::abi_decode(&data, false) {
+                if let Ok(result) = EntryPoint::SimulationResult::abi_decode(&data, false) {
                     if result.err != fixed_bytes!("00000000") {
                         return Err(EstimateFeeError::OpRevert {
                             revert_reason: result.err.into(),
@@ -297,9 +312,25 @@ where
             tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
 
+        let entrypoint = self
+            .inner
+            .upstream
+            .call::<Delegation::ENTRY_POINTCall>(&TransactionRequest {
+                to: Some(action.op.eoa.into()),
+                input: Delegation::ENTRY_POINTCall {}.abi_encode().into(),
+                authorization_list: action.auth.as_ref().map(|auth| vec![auth.clone()]),
+                ..Default::default()
+            })
+            .await
+            .map_err(|err| SendActionError::InternalError(err.into()))?
+            .ENTRY_POINT;
+        debug!(eoa = %action.op.eoa, "Retrieved EOA entrypoint {entrypoint}");
+
         let mut request = TransactionRequest {
-            input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
-            to: Some(self.inner.upstream.entrypoint().into()),
+            input: EntryPoint::executeCall { encodedUserOp: action.op.abi_encode().into() }
+                .abi_encode()
+                .into(),
+            to: Some(entrypoint.into()),
             // note: we also set the `from` field here to correctly estimate for contracts that use
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),

@@ -68,9 +68,6 @@ sol! {
         bytes32 keyHash;
         bool prehash;
     }
-
-    /// Returns the nonce salt.
-    function nonceSalt() public view virtual returns (uint256);
 }
 
 mod eip712 {
