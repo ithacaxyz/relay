@@ -48,7 +48,7 @@ jobs:
           CONTRACTS=$(pwd)/../out cargo nextest run \
             --locked \
             --workspace \
-            -E "kind(lib) | kind(bin) | kind(proc-macro)" \
+            -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
             --no-tests=warn
 
   unit-success:
