@@ -1,19 +1,12 @@
-//! # Odyssey wallet.
+//! # Ithaca Relay RPC
 //!
-//! Implementations of a custom `relay_` namespace for Odyssey experiment 1.
+//! Implementations of a custom `relay_` namespace.
 //!
-//! - `odyssey_sendTransaction` that can perform service-sponsored [EIP-7702][eip-7702] delegations
-//!   and send other service-sponsored transactions on behalf of EOAs with delegated code.
+//! - `relay_estimateFee` for estimating [`UserOp`] fees.
+//! - `relay_sendAction` that can perform service-sponsored [EIP-7702][eip-7702] delegations and
+//!   send other service-sponsored UserOp's on behalf of EOAs with delegated code.
 //!
-//! # Restrictions
-//!
-//! `odyssey_sendTransaction` has additional verifications in place to prevent some
-//! rudimentary abuse of the service's funds. For example, transactions cannot contain any
-//! `value`.
-//!
-//! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
-// todo: rewrite module docs
 
 use alloy::{
     eips::eip7702::constants::PER_AUTH_BASE_COST,
@@ -75,14 +68,14 @@ pub trait RelayApi {
     async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash>;
 }
 
-/// Implementation of the Odyssey `relay_` namespace.
+/// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
 pub struct Relay<P, Q> {
     inner: Arc<RelayInner<P, Q>>,
 }
 
 impl<P, Q> Relay<P, Q> {
-    /// Create a new Odyssey wallet module.
+    /// Create a new Ithaca relay module.
     pub fn new(
         upstream: Upstream<P>,
         quote_signer: Q,

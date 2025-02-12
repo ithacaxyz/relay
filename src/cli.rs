@@ -26,7 +26,7 @@ use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use url::Url;
 
-/// The Odyssey relayer service sponsors transactions for EIP-7702 accounts.
+/// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
 #[derive(Debug, Parser)]
 #[command(author, about = "Relay", long_about = None)]
 pub struct Args {
