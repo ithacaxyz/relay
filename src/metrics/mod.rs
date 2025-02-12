@@ -9,8 +9,7 @@ use jsonrpsee::{
     types::Request,
     MethodResponse,
 };
-use metrics::{Counter, Histogram};
-use metrics_derive::Metrics;
+use metrics::{counter, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::{
     future::Future,
@@ -99,16 +98,6 @@ where
     }
 }
 
-/// Metrics for an RPC method.
-#[derive(Metrics, Clone)]
-#[metrics(scope = "rpc.call")]
-struct RpcMethodMetrics {
-    /// The number of calls to the RPC method.
-    count: Counter,
-    /// The latency histogram in milliseconds.
-    latency: Histogram,
-}
-
 /// A [`jsonrpsee`] RPC middleware that records metrics for RPC methods.
 #[derive(Debug, Clone)]
 pub struct RpcMetricsService<S> {
@@ -138,13 +127,17 @@ where
             let rp = service.call(req).await;
             let elapsed = timer.elapsed();
 
-            let metrics = RpcMethodMetrics::new_with_labels(&[
-                ("method", method),
-                ("code", rp.as_error_code().unwrap_or_default().to_string()),
-            ]);
+            counter!(
+                "rpc.call.count",
+                "method" => method.clone(),
+                "code" => rp.as_error_code().unwrap_or_default().to_string()
+            )
+            .increment(1);
 
-            metrics.count.increment(1);
-            metrics.latency.record(elapsed.as_millis() as f64);
+            histogram!(
+                "rpc.call.latency","method" => method
+            )
+            .record(elapsed.as_millis() as f64);
 
             rp
         })

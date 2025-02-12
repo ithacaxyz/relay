@@ -2924,18 +2924,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrics-derive"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3dbdd96ed57d565ec744cba02862d707acf373c5772d152abae6ec5c4e24f6c"
-dependencies = [
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.98",
-]
-
-[[package]]
 name = "metrics-exporter-prometheus"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3582,7 +3570,6 @@ dependencies = [
  "http-body 1.0.1",
  "jsonrpsee",
  "metrics",
- "metrics-derive",
  "metrics-exporter-prometheus",
  "reqwest",
  "serde",
