@@ -263,7 +263,7 @@ async fn e2e() {
             .unwrap();
 
         if !receipt.status() {
-            panic!("Failed tx receipt: {receipt:?}");
+            panic!("Failed tx {nonce} receipt {receipt:?}");
         }
     }
 }
