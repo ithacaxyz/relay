@@ -1,13 +1,16 @@
 //! A container for chain-specific information and RPCs.
 use alloy::{
     primitives::{map::AddressMap, Address, Bytes, ChainId, TxHash},
-    providers::{utils::Eip1559Estimation, Provider, WalletProvider},
+    providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::SolCall,
     transports::TransportResult,
 };
 
-use crate::{error::SendActionError, types::IERC20};
+use crate::{
+    error::CallError,
+    types::{Eip1559Estimation, IERC20},
+};
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Clone, Debug)]
@@ -55,10 +58,7 @@ where
     }
 
     /// Perform an `eth_call`.
-    pub async fn call<C: SolCall>(
-        &self,
-        tx: &TransactionRequest,
-    ) -> Result<C::Return, SendActionError> {
+    pub async fn call<C: SolCall>(&self, tx: &TransactionRequest) -> Result<C::Return, CallError> {
         self.call_with_overrides::<C>(tx, &AddressMap::from_iter([])).await
     }
 
@@ -67,30 +67,18 @@ where
         &self,
         tx: &TransactionRequest,
         overrides: &AddressMap<AccountOverride>,
-    ) -> Result<C::Return, SendActionError> {
+    ) -> Result<C::Return, CallError> {
         self.provider
             .call(tx)
             .overrides(overrides)
             .await
-            .map_err(|err| SendActionError::InternalError(err.into()))
-            .and_then(|r| {
-                C::abi_decode_returns(&r[..], false)
-                    .map_err(|err| SendActionError::InternalError(err.into()))
-            })
+            .map_err(Into::into)
+            .and_then(|r| C::abi_decode_returns(&r[..], false).map_err(Into::into))
     }
 
-    /// Estimate gas and fees of the transaction request.
-    pub async fn estimate(
-        &self,
-        tx: &TransactionRequest,
-        overrides: &AddressMap<AccountOverride>,
-    ) -> TransportResult<(u64, Eip1559Estimation)> {
-        let (estimate, fee_estimate) = tokio::join!(
-            self.provider.estimate_gas(tx).overrides(overrides),
-            self.provider.estimate_eip1559_fees(None)
-        );
-
-        Ok((estimate?, fee_estimate?))
+    /// Estimate EIP-1559 fees.
+    pub async fn estimate_eip1559(&self) -> TransportResult<Eip1559Estimation> {
+        self.provider.estimate_eip1559_fees(None).await.map(Into::into)
     }
 
     /// Sign and send the transaction request.
