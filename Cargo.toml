@@ -83,13 +83,13 @@ lto = "fat"
 codegen-units = 1
 
 [lints]
-rust.missing_debug_implementations = "warn"
-rust.missing_docs = "warn"
-rust.rust_2018_idioms = { level = "deny", priority = -1 }
-# rust.unnameable-types = "warn"
-# rust.unreachable_pub = "warn"
-rust.unused_must_use = "deny"
-
 rustdoc.all = "warn"
-
 clippy.missing-const-for-fn = "allow" # TODO: https://github.com/rust-lang/rust-clippy/issues/14020
+
+[lints.rust]
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+rust_2018_idioms = { level = "deny", priority = -1 }
+# unnameable-types = "warn"
+# unreachable_pub = "warn"
+unused_must_use = "deny"
