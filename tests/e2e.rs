@@ -272,11 +272,11 @@ async fn e2e() {
             panic!("Failed tx receipt: {receipt:?}");
         }
 
-        // Transaction  succeed but the userOp fail
+        // Transaction succeeded but the UserOp failed
         if !receipt.inner.logs().iter().any(|log| {
             log.topic0().is_some_and(|topic| topic == &Delegation::NonceInvalidated::SIGNATURE_HASH)
         }) {
-            panic!("\nFailed userOp. {tx_hash}");
+            panic!("\nTransaction succeeded but userOp failed. {tx_hash}");
         }
     }
 }
