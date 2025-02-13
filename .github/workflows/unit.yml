@@ -24,20 +24,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
 
-      - name: Checkout Account
-        uses: actions/checkout@v4
-        with:
-          repository: ithacaxyz/account
       - name: Build Account
         run: |
-          forge b && forge b lib/solady/test/utils/mocks/MockERC20.sol && mv out/ ..
+          cd tests/account
+          forge b && forge b lib/solady/test/utils/mocks/MockERC20.sol
 
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -45,7 +44,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Run tests
         run: |
-          CONTRACTS=$(pwd)/../out cargo nextest run \
+          CONTRACTS=$(pwd)/out cargo nextest run \
             --locked \
             --workspace \
             -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
