@@ -9,7 +9,7 @@
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy::{
-    eips::eip7702::constants::PER_AUTH_BASE_COST,
+    eips::eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     hex,
     primitives::{fixed_bytes, map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
@@ -28,6 +28,7 @@ use std::{
 use tracing::{debug, warn};
 
 use crate::{
+    constants::{INNER_ENTRYPOINT_GAS_OVERHEAD, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
     error::{CallError, EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
@@ -237,8 +238,12 @@ where
         // point it is not possible to compute the gas refund, so it is an overestimate, as we also
         // need to charge for the account being presumed empty.
         if request.auth.is_some() {
-            gas_estimate += PER_AUTH_BASE_COST + 25000;
+            gas_estimate += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
+
+        // Add some leeway, since the actual simulation may no be enough.
+        gas_estimate += USER_OP_GAS_BUFFER;
+
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
@@ -285,6 +290,13 @@ where
             return Err(SendActionError::WrongPaymentRecipient.into());
         }
 
+        // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
+        let mut tx_gas =
+            TX_GAS_BUFFER + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
+        if action.auth.is_some() {
+            tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
+        }
+
         let mut request = TransactionRequest {
             input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
             to: Some(self.inner.upstream.entrypoint().into()),
@@ -292,9 +304,7 @@ where
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),
             chain_id: Some(self.inner.upstream.chain_id()),
-            // setting the gas limit here to exactly the gas estimate makes the tx revert;
-            // otoh setting it way higher is wasteful, as the estimate is actually very accurate.
-            // gas: Some(quote.ty().gas_estimate + ENTRYPOINT_INNER_GAS_OVERHEAD),
+            gas: Some(tx_gas),
             max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
             max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
             ..Default::default()

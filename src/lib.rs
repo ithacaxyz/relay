@@ -3,6 +3,7 @@
 //! Library for the implementation of the Ithaca Relay.
 
 pub mod cli;
+pub mod constants;
 pub mod error;
 pub mod metrics;
 pub mod price;
