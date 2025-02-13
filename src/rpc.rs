@@ -237,8 +237,12 @@ where
         // point it is not possible to compute the gas refund, so it is an overestimate, as we also
         // need to charge for the account being presumed empty.
         if request.auth.is_some() {
-            gas_estimate += PER_AUTH_BASE_COST + 25000;
+            gas_estimate += PER_AUTH_BASE_COST + 25_000;
         }
+
+        // Add some leeway, since the actual simulation may no be enough.
+        gas_estimate += 25_000;
+
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
@@ -285,6 +289,12 @@ where
             return Err(SendActionError::WrongPaymentRecipient.into());
         }
 
+        // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
+        let mut tx_gas = 50_000 + ((quote.ty().gas_estimate + 100_000) * 64) / 63;
+        if action.auth.is_some() {
+            tx_gas += PER_AUTH_BASE_COST + 25_000;
+        }
+
         let mut request = TransactionRequest {
             input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
             to: Some(self.inner.upstream.entrypoint().into()),
@@ -292,9 +302,7 @@ where
             // e.g. `tx.origin`
             from: Some(self.inner.upstream.default_signer_address()),
             chain_id: Some(self.inner.upstream.chain_id()),
-            // setting the gas limit here to exactly the gas estimate makes the tx revert;
-            // otoh setting it way higher is wasteful, as the estimate is actually very accurate.
-            // gas: Some(quote.ty().gas_estimate + ENTRYPOINT_INNER_GAS_OVERHEAD),
+            gas: Some(tx_gas),
             max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
             max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
             ..Default::default()
