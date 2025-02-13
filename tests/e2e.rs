@@ -93,7 +93,8 @@ async fn e2e() {
         .on_http(upstream.clone());
 
     // Deploy contracts: Entrypoint, Delegation and FakeERC20
-    let contracts_path = PathBuf::from(std::env::var("CONTRACTS").unwrap_or("out/".to_string()));
+    let contracts_path =
+        PathBuf::from(std::env::var("CONTRACTS").unwrap_or("tests/account/out".to_string()));
     let mock_entrypoint = setup_contract(
         &anvil_provider,
         &contracts_path.join("EntryPoint.sol/EntryPoint.json"),

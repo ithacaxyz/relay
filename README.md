@@ -4,9 +4,12 @@ A transparent cross-chain transaction router for EIP-7702 accounts, specifically
 
 ## Table of Contents
 
-- [Running](#running)
-- [Testing](#testing)
-- [Deploying](#deploying)
+- [Ithaca Relay](#ithaca-relay)
+  - [Table of Contents](#table-of-contents)
+  - [Running](#running)
+  - [Testing](#testing)
+    - [End-to-End](#end-to-end)
+  - [Deploying](#deploying)
 
 ## Running
 
@@ -32,6 +35,36 @@ cargo run --bin relay -- \
 ```sh
 cargo test
 ```
+
+### End-to-End
+
+End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) under a git submodule located at `tests/account`. These tests depend on building certain these contracts.
+
+
+1. **Prerequisites**
+
+   Make sure [Foundry](https://getfoundry.sh/) is installed and available in your PATH.
+
+2. **Pull `ithacaxyz/account`**
+
+   ```bash
+   git submodule update --init --recursive
+   ```
+
+3. **Build the contracts**
+
+   ```bash
+   $ cd tests/account
+   $ forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol
+   ```
+
+4. **Run the Tests**
+
+   You can run the tests still in the same directory as before.
+
+   ```bash
+    $ CONTRACTS=$(pwd)/out cargo test -- e2e
+   ```
 
 ## Deploying
 
