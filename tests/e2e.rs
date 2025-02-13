@@ -9,7 +9,7 @@ use alloy::{
     rpc::types::TransactionRequest,
     signers::Signer,
     sol,
-    sol_types::{SolCall, SolConstructor, SolValue},
+    sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
 };
 use alloy_chains::NamedChain;
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -39,6 +39,13 @@ sol! {
             _nameHash = keccak256(bytes(name_));
         }
         function mint(address a, uint256 val) external;
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface Delegation {
+        event NonceInvalidated(uint256 nonce);
     }
 }
 
@@ -263,6 +270,13 @@ async fn e2e() {
 
         if !receipt.status() {
             panic!("Failed tx receipt: {receipt:?}");
+        }
+
+        // Transaction  succeed but the userOp fail
+        if !receipt.inner.logs().iter().any(|log| {
+            log.topic0().is_some_and(|topic| topic == &Delegation::NonceInvalidated::SIGNATURE_HASH)
+        }) {
+            panic!("\nFailed userOp. {tx_hash}");
         }
     }
 }
