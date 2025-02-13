@@ -44,7 +44,7 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Run tests
         run: |
-          CONTRACTS=$(pwd)/out cargo nextest run \
+          CONTRACTS=tests/account/out cargo nextest run \
             --locked \
             --workspace \
             -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
