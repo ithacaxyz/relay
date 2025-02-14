@@ -71,7 +71,7 @@ impl Args {
         let signer = Signer::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
 
-        let wallet = EthereumWallet::from(signer.0.clone());
+        let wallet = EthereumWallet::from(signer.0);
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
