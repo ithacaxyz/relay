@@ -8,7 +8,7 @@ use std::{
 
 use alloy::{
     primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
-    providers::{utils::Eip1559Estimation as AlloyEip1559Estimation, Provider, WalletProvider},
+    providers::{utils::Eip1559Estimation, Provider, WalletProvider},
 };
 use alloy_chains::Chain;
 use futures_util::future::try_join_all;
@@ -119,26 +119,5 @@ impl Quote {
                 .to_be_bytes(),
         );
         hasher.finalize()
-    }
-}
-
-// todo: this is temporary and should be replaced once https://github.com/alloy-rs/alloy/pull/2012 is released
-/// An EIP-1559 fee estimate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Eip1559Estimation {
-    /// The base fee per gas.
-    #[serde(with = "alloy::serde::quantity")]
-    pub max_fee_per_gas: u128,
-    /// The max priority fee per gas.
-    #[serde(with = "alloy::serde::quantity")]
-    pub max_priority_fee_per_gas: u128,
-}
-
-impl From<AlloyEip1559Estimation> for Eip1559Estimation {
-    fn from(
-        AlloyEip1559Estimation { max_fee_per_gas, max_priority_fee_per_gas}: AlloyEip1559Estimation,
-    ) -> Self {
-        Self { max_fee_per_gas, max_priority_fee_per_gas }
     }
 }
