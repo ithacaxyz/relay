@@ -195,11 +195,11 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                 ));
             }
         }
-        Err(_) => {
+        Err(err) => {
             if tx.expected.failed_send() {
                 return Ok(());
             }
-            return Err(eyre::eyre!("Send error for nonce {nonce}"));
+            return Err(eyre::eyre!("Send error for nonce {nonce}: {err}"));
         }
     }
 
