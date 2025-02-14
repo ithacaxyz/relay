@@ -60,13 +60,6 @@ sol! {
         /// Per delegated EOA.
         uint256 nonce;
     }
-
-    /// The signature of a [`UserOp`].
-    struct Signature {
-        bytes innerSignature;
-        bytes32 keyHash;
-        bool prehash;
-    }
 }
 
 mod eip712 {

@@ -20,7 +20,7 @@ use alloy::{
 use eyre::{Context, Result};
 use relay::{
     rpc::RelayApiClient,
-    types::{Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp},
+    types::{Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp, U40},
 };
 
 /// Executes all transactions from the test case. If it returns an error, ensures the relay task is
@@ -135,19 +135,8 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
     op.signature = if nonce == 0 {
         signature.as_bytes().into()
     } else {
-        Signature {
-            innerSignature: signature.as_bytes().into(),
-            keyHash: Key {
-                expiry: Default::default(),
-                keyType: KeyType::Secp256k1,
-                isSuperAdmin: true,
-                publicKey: env.eoa_signer.address().abi_encode().into(),
-            }
-            .key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into()
+        Key::secp256k1(env.eoa_signer.address(), U40::ZERO, true)
+            .encode_secp256k1_signature(signature)
     };
 
     let action = Action { op, auth };
