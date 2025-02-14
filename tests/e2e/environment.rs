@@ -16,7 +16,7 @@ use eyre::{self, ContextCompat, OptionExt, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{cli::Args, signer::LocalOrAws, types::CoinKind};
 use std::{
-    net::Ipv4Addr,
+    net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -114,12 +114,13 @@ impl Environment {
         assert!(CoinKind::get_token(NamedChain::AnvilHardhat.into(), erc20).is_some());
 
         // Start relay service.
+        let relay_port = get_available_port()?;
         let relay_handle = tokio::spawn({
             let upstream = upstream.clone();
             async move {
                 let cli = Args {
                     address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: 3131,
+                    port: relay_port,
                     upstream,
                     entrypoint,
                     quote_ttl: Duration::from_secs(60),
@@ -136,7 +137,7 @@ impl Environment {
         sleep(Duration::from_secs(1)).await;
 
         let relay_endpoint = HttpClientBuilder::default()
-            .build("http://localhost:3131")
+            .build(format!("http://localhost:{relay_port}"))
             .wrap_err("Failed to build relay client")?;
 
         let chain_id = provider.get_chain_id().await.wrap_err("Failed to get chain ID")?;
@@ -192,4 +193,11 @@ async fn setup_contract<P: Provider>(
         .await?
         .contract_address
         .wrap_err_with(|| format!("Failed to deploy artifact at {}", artifact_path.display()))
+}
+
+/// Finds an available port by binding to "127.0.0.1:0".
+fn get_available_port() -> std::io::Result<u16> {
+    // Binding to port 0 tells the OS to assign an available port.
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
 }
