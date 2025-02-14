@@ -2,22 +2,19 @@
 
 use std::{
     collections::HashMap,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use alloy::{
     primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
-    providers::{utils::Eip1559Estimation, Provider, WalletProvider},
+    providers::{utils::Eip1559Estimation, DynProvider, Provider},
 };
-use alloy_chains::Chain;
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    types::{CoinKind, Signed, Token},
-    upstream::Upstream,
-};
+use crate::types::{CoinKind, Signed, Token};
+
+use super::IERC20::IERC20Instance;
 
 /// A container of supported fee tokens per chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,33 +24,37 @@ pub struct FeeTokens(
 
 impl FeeTokens {
     /// Create a new [`FeeTokens`]
-    pub async fn new<P>(tokens: &[Address], upstream: Upstream<P>) -> Result<Self, eyre::Error>
-    where
-        P: Provider + WalletProvider,
-    {
-        let upstream = Arc::new(upstream);
-        let chain: Chain = upstream.chain_id().into();
-        let fee_tokens = try_join_all(tokens.iter().copied().map(|token| {
-            let upstream = upstream.clone();
-            async move {
-                let (decimals, coin_kind) = if token.is_zero() {
-                    // todo: native is ETH for now
-                    (18, CoinKind::ETH)
-                } else {
-                    (
-                        upstream.get_token_decimals(token).await?,
-                        CoinKind::get_token(chain, token).ok_or_else(|| {
-                            eyre::eyre!("Token not supported: {token} @ {chain}.")
-                        })?,
-                    )
-                };
+    pub async fn new(tokens: &[Address], providers: Vec<DynProvider>) -> Result<Self, eyre::Error> {
+        // todo: this is ugly
+        let futs = providers
+            .iter()
+            .flat_map(|provider| tokens.iter().map(move |token| (provider, token)))
+            .map(|(provider, token)| {
+                async move {
+                    let chain = provider.get_chain_id().await?;
+                    let (decimals, coin_kind) = if token.is_zero() {
+                        // todo: native is ETH for now
+                        (18, CoinKind::ETH)
+                    } else {
+                        (
+                            IERC20Instance::new(*token, provider).decimals().call().await?._0,
+                            CoinKind::get_token(chain.into(), *token).ok_or_else(|| {
+                                eyre::eyre!("Token not supported: {token} @ {chain}.")
+                            })?,
+                        )
+                    };
 
-                Ok::<_, eyre::Error>(Token::new(token, decimals, coin_kind))
-            }
-        }))
-        .await?;
+                    Ok::<_, eyre::Error>((chain, Token::new(*token, decimals, coin_kind)))
+                }
+            });
+        let fee_tokens = try_join_all(futs).await?;
 
-        Ok(Self(HashMap::from_iter([(upstream.chain_id(), fee_tokens)])))
+        let mut map: HashMap<ChainId, Vec<Token>> = HashMap::default();
+        for (chain_id, token) in fee_tokens.into_iter() {
+            map.entry(chain_id).or_default().push(token);
+        }
+
+        Ok(Self(map))
     }
 
     /// Check if the fee token is supported on the given chain.

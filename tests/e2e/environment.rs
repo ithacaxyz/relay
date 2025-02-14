@@ -55,7 +55,7 @@ impl Environment {
             .args(["--odyssey", "--host", "0.0.0.0"])
             .try_spawn()
             .wrap_err("Failed to spawn Anvil")?;
-        let upstream = anvil.endpoint_url();
+        let endpoint = anvil.endpoint_url();
         let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
 
         // Load signers.
@@ -69,7 +69,7 @@ impl Environment {
         // Build provider
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(relay_signer.clone()))
-            .on_http(upstream.clone());
+            .on_http(endpoint.clone());
 
         // Deploy contracts.
         let contracts_path = PathBuf::from(
@@ -116,12 +116,11 @@ impl Environment {
         // Start relay service.
         let relay_port = get_available_port()?;
         let relay_handle = tokio::spawn({
-            let upstream = upstream.clone();
             async move {
                 let cli = Args {
                     address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: relay_port,
-                    upstream,
+                    endpoints: vec![endpoint.clone()],
                     quote_ttl: Duration::from_secs(60),
                     quote_secret_key: RELAY_PRIVATE_KEY.to_string(),
                     fee_tokens: vec![erc20],
