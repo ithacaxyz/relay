@@ -18,6 +18,7 @@ use alloy::{
 };
 use eyre::{Context, Result};
 use relay::{
+    constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
     types::{Action, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp},
 };
@@ -170,7 +171,9 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             }
 
             if let Some(auth) = auth {
-                if env.provider.get_code_at(EOA_ADDRESS).await?.is_empty() {
+                if env.provider.get_code_at(EOA_ADDRESS).await?
+                    != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
+                {
                     return Err(eyre::eyre!("Transaction {nonce} failed to delegate"));
                 }
             }
