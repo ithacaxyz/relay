@@ -1,12 +1,13 @@
 //! A container for chain-specific information and RPCs.
 use alloy::{
+    eips::eip1559::Eip1559Estimation,
     primitives::{Address, Bytes, ChainId, TxHash},
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
     transports::TransportResult,
 };
 
-use crate::types::{Eip1559Estimation, IERC20};
+use crate::types::IERC20;
 
 /// A wrapper around an Alloy provider for signing and sending sponsored transactions.
 #[derive(Clone, Debug)]
@@ -54,7 +55,7 @@ where
 
     /// Estimate EIP-1559 fees.
     pub async fn estimate_eip1559(&self) -> TransportResult<Eip1559Estimation> {
-        self.provider.estimate_eip1559_fees(None).await.map(Into::into)
+        self.provider.estimate_eip1559_fees(None).await
     }
 
     /// Sign and send the transaction request.
