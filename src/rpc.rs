@@ -16,7 +16,7 @@ use alloy::{
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
-    sol_types::{SolCall, SolValue},
+    sol_types::{SolCall, SolError, SolValue},
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -32,6 +32,7 @@ use crate::{
     constants::{INNER_ENTRYPOINT_GAS_OVERHEAD, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
     error::{EstimateFeeError, SendActionError},
     price::PriceOracle,
+    signer::Signer,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
         UserOp, U40,
@@ -71,15 +72,15 @@ pub trait RelayApi {
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-pub struct Relay<P, Q> {
-    inner: Arc<RelayInner<P, Q>>,
+pub struct Relay<P> {
+    inner: Arc<RelayInner<P>>,
 }
 
-impl<P, Q> Relay<P, Q> {
+impl<P> Relay<P> {
     /// Create a new Ithaca relay module.
     pub fn new(
         upstream: Upstream<P>,
-        quote_signer: Q,
+        quote_signer: Signer,
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
@@ -97,10 +98,9 @@ const EIP7702_CLEARED_DELEGATION: [u8; 23] =
     hex!("0xef01000000000000000000000000000000000000000000");
 
 #[async_trait]
-impl<P, Q> RelayApiServer for Relay<P, Q>
+impl<P> RelayApiServer for Relay<P>
 where
     P: Provider + WalletProvider + 'static,
-    Q: Signer + Send + Sync + 'static,
 {
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
@@ -342,13 +342,13 @@ where
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner<P, Q> {
+struct RelayInner<P> {
     /// The upstream RPC of the relay.
     upstream: Upstream<P>,
     /// Supported fee tokens.
     fee_tokens: FeeTokens,
     /// The signer used to sign quotes.
-    quote_signer: Q,
+    quote_signer: Signer,
     /// The TTL of a quote.
     quote_ttl: Duration,
     /// Price oracle.

@@ -1,17 +1,15 @@
 //! # Relay CLI
 use crate::{
-    metrics,
-    metrics::{build_exporter, MetricsService, RpcMetricsService},
+    metrics::{self, build_exporter, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
-    signer::LocalOrAws,
+    signer::Signer,
     types::{CoinKind, CoinPair, FeeTokens},
     upstream::Upstream,
 };
 use alloy::{
     primitives::Address,
     providers::{network::EthereumWallet, ProviderBuilder},
-    signers::Signer,
 };
 use clap::Parser;
 use http::header;
@@ -70,14 +68,14 @@ impl Args {
         let handle = build_exporter();
 
         // construct provider
-        let signer = LocalOrAws::load(&self.secret_key, None).await?;
+        let signer = Signer::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
 
-        let wallet = EthereumWallet::from(signer);
+        let wallet = EthereumWallet::from(signer.0.clone());
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
-        let quote_signer = LocalOrAws::load(&self.quote_secret_key, None).await?;
+        let quote_signer = Signer::load(&self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
