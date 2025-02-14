@@ -122,7 +122,6 @@ impl Environment {
                     address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: relay_port,
                     upstream,
-                    entrypoint,
                     quote_ttl: Duration::from_secs(60),
                     quote_secret_key: RELAY_PRIVATE_KEY.to_string(),
                     fee_tokens: vec![erc20],

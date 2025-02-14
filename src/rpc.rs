@@ -10,11 +10,13 @@
 
 use alloy::{
     eips::eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+    hex,
+    network::{TransactionBuilder, TransactionBuilder7702},
     primitives::{fixed_bytes, map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
-    sol_types::{SolCall, SolError, SolValue},
+    sol_types::{SolCall, SolValue},
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -34,8 +36,8 @@ use crate::{
     error::{CallError, EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
-        executeCall, nonceSaltCall, simulateExecuteCall, Action, FeeTokens, Key, KeyType,
-        PartialAction, Quote, Signature, SignedQuote, SimulationResult, UserOp, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
+        UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -106,24 +108,17 @@ where
         };
 
         // create key
-        let key = Key {
-            expiry: U40::from(0),
-            keyType: KeyType::Secp256k1,
-            isSuperAdmin: true,
-            publicKey: self.inner.quote_signer.address().abi_encode().into(),
-        };
+        let key = Key::secp256k1(self.inner.quote_signer.address(), U40::ZERO, true);
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
             (
                 self.inner.quote_signer.address(),
-                AccountOverride {
-                    balance: Some(U256::MAX.div_ceil(2.try_into().unwrap())),
-                    ..Default::default()
-                },
+                AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
             ),
             (
                 request.op.eoa,
+                // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
                 AccountOverride {
                     state_diff: Some(key.storage_slots()),
                     // we manually etch the 7702 designator since we do not have a signed auth item
@@ -135,95 +130,47 @@ where
             ),
         ]);
 
+        // load account and entrypoint
+        let account = Account::new(request.op.eoa, self.inner.upstream.provider())
+            .with_overrides(overrides.clone());
+        let entrypoint = Entry::new(
+            account.entrypoint().await.map_err(EstimateFeeError::from)?,
+            self.inner.upstream.provider(),
+        )
+        .with_overrides(overrides.clone());
+
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
             executionData: request.op.executionData.clone(),
             nonce: request.op.nonce,
-            payer: Address::ZERO,
             paymentToken: token.address,
-            paymentRecipient: Address::ZERO,
-            paymentAmount: U256::ZERO,
-            paymentMaxAmount: U256::ZERO,
-            paymentPerGas: U256::ZERO,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(20_000_000),
-            signature: Bytes::default(),
+            ..Default::default()
         };
 
         // sign userop
-        debug!(eoa = %request.op.eoa, "Retrieving nonce salt");
-        let nonce_salt = self
-            .inner
-            .upstream
-            .call_with_overrides::<nonceSaltCall>(
-                &TransactionRequest {
-                    to: Some(request.op.eoa.into()),
-                    input: nonceSaltCall {}.abi_encode().into(),
-                    ..Default::default()
-                },
-                &overrides,
-            )
-            .await
-            .map_or(U256::ZERO, |ret| ret._0);
-        debug!(eoa = %request.op.eoa, "Got nonce salt {nonce_salt}");
-        let inner_signature = self
-            .inner
-            .quote_signer
-            .sign_hash(
-                &op.eip712_digest(
-                    self.inner.upstream.entrypoint(),
-                    self.inner.upstream.chain_id(),
-                    nonce_salt,
+        op.signature = key.encode_secp256k1_signature(
+            self.inner
+                .quote_signer
+                .sign_typed_data(
+                    &op.as_eip712(account.nonce_salt().await.unwrap_or_default())
+                        .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                    &entrypoint
+                        .eip712_domain(op.is_multichain())
+                        .await
+                        .map_err(EstimateFeeError::from)?,
                 )
+                .await
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-            )
-            .await
-            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
-        op.signature = Signature {
-            innerSignature: inner_signature.as_bytes().into(), // (r, s, v + 27)
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        );
 
         // we perform a call to `simulateExecute`, which reverts with the amount of gas used and an
         // error selector.
-        let mut gas_estimate = match self
-            .inner
-            .upstream
-            .call_with_overrides::<simulateExecuteCall>(
-                &TransactionRequest {
-                    from: Some(self.inner.quote_signer.address()),
-                    to: Some(self.inner.upstream.entrypoint().into()),
-                    input: simulateExecuteCall { encodedUserOp: op.abi_encode().into() }
-                        .abi_encode()
-                        .into(),
-                    ..Default::default()
-                },
-                &overrides,
-            )
-            .await
-        {
-            Err(CallError::RpcError(alloy::transports::RpcError::ErrorResp(err))) => {
-                let data = err.as_revert_data().unwrap_or_default();
-                if let Ok(result) = SimulationResult::abi_decode(&data, false) {
-                    if result.err != fixed_bytes!("00000000") {
-                        return Err(EstimateFeeError::OpRevert {
-                            revert_reason: result.err.into(),
-                        }
-                        .into());
-                    }
-
-                    result.gUsed.to::<u64>()
-                } else {
-                    return Err(EstimateFeeError::OpRevert { revert_reason: data }.into());
-                }
-            }
-            _ => return Err(EstimateFeeError::SimulationError.into()),
-        };
+        let mut gas_estimate =
+            entrypoint.simulate_execute(&op).await.map_err(EstimateFeeError::from)?.to::<u64>();
         let native_fee_estimate =
             self.inner.upstream.estimate_eip1559().await.map_err(EstimateFeeError::from)?;
 
@@ -238,7 +185,6 @@ where
 
         // Add some leeway, since the actual simulation may no be enough.
         gas_estimate += USER_OP_GAS_BUFFER;
-
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
@@ -277,35 +223,53 @@ where
     }
 
     // todo: chain ids
-    async fn send_action(&self, action: Action, quote: SignedQuote) -> RpcResult<TxHash> {
+    async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash> {
         // verify payment recipient is entrypoint or us
-        if !action.op.paymentRecipient.is_zero()
-            && action.op.paymentRecipient != self.inner.upstream.default_signer_address()
+        if !request.op.paymentRecipient.is_zero()
+            && request.op.paymentRecipient != self.inner.upstream.default_signer_address()
         {
             return Err(SendActionError::WrongPaymentRecipient.into());
         }
 
+        // possibly mocking the code for the eoa
+        let overrides = AddressMap::from_iter([(
+            request.op.eoa,
+            AccountOverride {
+                // we manually etch the 7702 designator since we do not have a signed auth item
+                code: request.auth.as_ref().map(|auth| {
+                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
+                }),
+                ..Default::default()
+            },
+        )]);
+
+        // get the account and entrypoint
+        let account =
+            Account::new(request.op.eoa, self.inner.upstream.provider()).with_overrides(overrides);
+        let entrypoint =
+            account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
+
         // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
         let mut tx_gas =
             TX_GAS_BUFFER + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
-        if action.auth.is_some() {
+        if request.auth.is_some() {
             tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
 
-        let mut request = TransactionRequest {
-            input: executeCall { encodedUserOp: action.op.abi_encode().into() }.abi_encode().into(),
-            to: Some(self.inner.upstream.entrypoint().into()),
-            // note: we also set the `from` field here to correctly estimate for contracts that use
-            // e.g. `tx.origin`
-            from: Some(self.inner.upstream.default_signer_address()),
-            chain_id: Some(self.inner.upstream.chain_id()),
-            gas: Some(tx_gas),
-            max_fee_per_gas: Some(quote.ty().native_fee_estimate.max_fee_per_gas),
-            max_priority_fee_per_gas: Some(quote.ty().native_fee_estimate.max_priority_fee_per_gas),
-            ..Default::default()
-        };
+        let mut tx = TransactionRequest::default()
+            .with_chain_id(self.inner.upstream.chain_id())
+            .input(
+                EntryPoint::executeCall { encodedUserOp: request.op.abi_encode().into() }
+                    .abi_encode()
+                    .into(),
+            )
+            .to(entrypoint)
+            .from(self.inner.upstream.default_signer_address())
+            .gas_limit(tx_gas)
+            .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
+            .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 
-        if let Some(auth) = action.auth {
+        if let Some(auth) = request.auth {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
@@ -315,7 +279,7 @@ where
                 .inner
                 .upstream
                 .inner()
-                .get_transaction_count(action.op.eoa)
+                .get_transaction_count(request.op.eoa)
                 .await
                 .map_err(SendActionError::from)?;
 
@@ -327,32 +291,36 @@ where
                 .into());
             }
 
-            request.authorization_list = Some(vec![auth]);
+            tx.set_authorization_list(vec![auth]);
         } else {
-            let code =
-                self.inner.upstream.get_code(action.op.eoa).await.map_err(SendActionError::from)?;
+            let code = self
+                .inner
+                .upstream
+                .get_code(request.op.eoa)
+                .await
+                .map_err(SendActionError::from)?;
 
             if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
                 || code[..] == EIP7702_CLEARED_DELEGATION
             {
-                return Err(SendActionError::EoaNotDelegated(action.op.eoa).into());
+                return Err(SendActionError::EoaNotDelegated(request.op.eoa).into());
             }
         }
 
         // check that the payment amount matches whats in the quote
-        if quote.ty().amount != action.op.paymentAmount {
+        if quote.ty().amount != request.op.paymentAmount {
             return Err(SendActionError::InvalidFeeAmount {
                 expected: quote.ty().amount,
-                got: action.op.paymentAmount,
+                got: request.op.paymentAmount,
             }
             .into());
         }
 
         // check that digest of the userop is the same as in the quote
-        if quote.ty().digest != action.op.digest() {
+        if quote.ty().digest != request.op.digest() {
             return Err(SendActionError::InvalidOpDigest {
                 expected: quote.ty().digest,
-                got: action.op.digest(),
+                got: request.op.digest(),
             }
             .into());
         }
@@ -376,7 +344,7 @@ where
         Ok(self
             .inner
             .upstream
-            .sign_and_send(request)
+            .sign_and_send(tx)
             .await
             .inspect_err(
                 |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),

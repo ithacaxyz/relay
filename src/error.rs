@@ -133,10 +133,26 @@ pub enum PriceOracleError {
 /// Errors when performing `eth_call`s and decoding the result.
 #[derive(Debug, thiserror::Error)]
 pub enum CallError {
+    /// The userop reverted when estimating gas.
+    #[error("op reverted")]
+    OpRevert {
+        /// The error code returned by the entrypoint.
+        revert_reason: Bytes,
+    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
     /// An error occurred ABI enc/decoding.
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
+}
+
+impl From<CallError> for EstimateFeeError {
+    fn from(err: CallError) -> Self {
+        match err {
+            CallError::OpRevert { revert_reason } => Self::OpRevert { revert_reason },
+            CallError::RpcError(err) => Self::RpcError(err),
+            CallError::AbiError(err) => Self::InternalError(err.into()),
+        }
+    }
 }
