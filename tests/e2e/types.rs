@@ -43,6 +43,16 @@ pub enum AuthKind {
     AuthWithNonce(u64),
 }
 
+impl AuthKind {
+    /// Return nonce if [`AuthKind::AuthWithNonce`], otherwise `None`
+    pub fn nonce(&self) -> Option<u64> {
+        match self {
+            AuthKind::Auth => None,
+            AuthKind::AuthWithNonce(nonce) => Some(*nonce),
+        }
+    }
+}
+
 /// Context for executing a test transaction
 #[derive(Debug)]
 pub struct TxContext {

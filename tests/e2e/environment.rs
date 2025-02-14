@@ -54,17 +54,17 @@ impl Environment {
         let anvil = Anvil::new()
             .args(["--odyssey", "--host", "0.0.0.0"])
             .try_spawn()
-            .expect("Failed to spawn Anvil");
+            .wrap_err("Failed to spawn Anvil")?;
         let upstream = anvil.endpoint_url();
         let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
 
         // Load signers.
         let relay_signer = LocalOrAws::load(&RELAY_PRIVATE_KEY.to_string(), None)
             .await
-            .expect("Relay signer load failed");
+            .wrap_err("Relay signer load failed")?;
         let eoa_signer = LocalOrAws::load(&EOA_PRIVATE_KEY.to_string(), None)
             .await
-            .expect("EOA signer load failed");
+            .wrap_err("EOA signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
@@ -99,7 +99,7 @@ impl Environment {
         provider
             .anvil_set_code(entrypoint, provider.get_code_at(mock_entrypoint).await?)
             .await
-            .expect("Failed to set code");
+            .wrap_err("Failed to set code")?;
 
         // Mint tokens for both signers.
         for signer in [&relay_signer, &eoa_signer] {
@@ -107,7 +107,7 @@ impl Environment {
                 .mint(signer.address(), U256::from(100e18))
                 .call()
                 .await
-                .expect("Minting failed");
+                .wrap_err("Minting failed")?;
         }
 
         // Temporary assertion until we can dynamically initialize COINS_CONFIG
@@ -137,9 +137,9 @@ impl Environment {
 
         let relay_endpoint = HttpClientBuilder::default()
             .build("http://localhost:3131")
-            .expect("Failed to build relay client");
+            .wrap_err("Failed to build relay client")?;
 
-        let chain_id = provider.get_chain_id().await.expect("Failed to get chain ID");
+        let chain_id = provider.get_chain_id().await.wrap_err("Failed to get chain ID")?;
 
         Ok(Self {
             _anvil: anvil,
@@ -181,7 +181,7 @@ async fn setup_contract<P: Provider>(
     })?;
     bytecode.extend_from_slice(&args.unwrap_or_default());
 
-    Ok(provider
+    provider
         .send_transaction(TransactionRequest {
             input: bytecode.into(),
             to: Some(TxKind::Create),
@@ -191,5 +191,5 @@ async fn setup_contract<P: Provider>(
         .get_receipt()
         .await?
         .contract_address
-        .wrap_err_with(|| format!("Failed to deploy artifact at {}", artifact_path.display()))?)
+        .wrap_err_with(|| format!("Failed to deploy artifact at {}", artifact_path.display()))
 }
