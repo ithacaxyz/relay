@@ -11,6 +11,7 @@ use environment::*;
 pub use types::*;
 
 use alloy::{
+    dyn_abi::Eip712Domain,
     primitives::{bytes, Address, Bytes, U256},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
@@ -19,7 +20,7 @@ use alloy::{
 use eyre::{Context, Result};
 use relay::{
     rpc::RelayApiClient,
-    types::{Action, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp},
+    types::{Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp},
 };
 
 /// Executes all transactions from the test case. If it returns an error, ensures the relay task is
@@ -121,10 +122,15 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
         signature: bytes!(""),
     };
 
-    let digest = op
-        .eip712_digest(env.entrypoint, env.chain_id, U256::ZERO)
-        .wrap_err("Failed to create digest")?;
-    let signature = env.eoa_signer.sign_hash(&digest).await.wrap_err("Signing failed")?;
+    let entry = Entry::new(env.entrypoint, env.provider.root());
+    let signature = env
+        .eoa_signer
+        .sign_typed_data(
+            &op.as_eip712(U256::ZERO).unwrap(),
+            &entry.eip712_domain(op.is_multichain()).await.unwrap(),
+        )
+        .await
+        .wrap_err("Signing failed")?;
 
     op.signature = if nonce == 0 {
         signature.as_bytes().into()

@@ -1,9 +1,8 @@
 use super::Call;
 use alloy::{
-    dyn_abi::Eip712Domain,
-    primitives::{Address, ChainId, Keccak256, B256, U256},
+    primitives::{Keccak256, B256, U256},
     sol,
-    sol_types::{SolStruct, SolValue},
+    sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +11,7 @@ sol! {
     ///
     /// Since L2s already include calldata compression with savings forwarded to users,
     /// we don't need to be too concerned about calldata overhead.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Default, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct UserOp {
         /// The user's address.
@@ -68,9 +67,6 @@ sol! {
         bytes32 keyHash;
         bool prehash;
     }
-
-    /// Returns the nonce salt.
-    function nonceSalt() public view virtual returns (uint256);
 }
 
 mod eip712 {
@@ -94,18 +90,20 @@ mod eip712 {
 }
 
 impl UserOp {
-    /// Calculate the EIP-712 digest of the [`UserOp`], which is the digest signed for the
-    /// `signature` field of the [`UserOp`].
-    pub fn eip712_digest(
-        &self,
-        domain_verifying_contract: Address,
-        chain_id: ChainId,
-        nonce_salt: U256,
-    ) -> Result<B256, alloy::sol_types::Error> {
-        let is_odd_nonce = self.nonce.bit(0);
+    /// Whether this [`UserOp`] is multichain.
+    ///
+    /// If the op is multichain, the EIP712 domain used for the signing hash of the op should not
+    /// include a chain ID.
+    pub fn is_multichain(&self) -> bool {
+        self.nonce.bit(0)
+    }
+
+    /// Get the EIP712 encoding of the [`UserOp`].
+    pub fn as_eip712(&self, nonce_salt: U256) -> Result<eip712::UserOp, alloy::sol_types::Error> {
+        let multichain = self.is_multichain();
 
         Ok(eip712::UserOp {
-            multichain: is_odd_nonce,
+            multichain,
             eoa: self.eoa,
             calls: <Vec<Call>>::abi_decode(&self.executionData, false)?,
             nonce: self.nonce,
@@ -115,14 +113,7 @@ impl UserOp {
             paymentMaxAmount: self.paymentMaxAmount,
             paymentPerGas: self.paymentPerGas,
             combinedGas: self.combinedGas,
-        }
-        .eip712_signing_hash(&Eip712Domain::new(
-            Some("EntryPoint".into()),
-            Some("0.0.1".into()),
-            (!is_odd_nonce).then(|| U256::from(chain_id)),
-            Some(domain_verifying_contract),
-            None,
-        )))
+        })
     }
 
     /// Calculate a digest of the [`UserOp`], used for checksumming.
@@ -144,9 +135,10 @@ impl UserOp {
 mod tests {
     use crate::signer::LocalOrAws;
     use alloy::{
+        dyn_abi::Eip712Domain,
         primitives::{address, b256, bytes, Address},
         signers::Signer,
-        sol_types::SolValue,
+        sol_types::{SolStruct, SolValue},
     };
 
     use super::*;
@@ -172,26 +164,26 @@ mod tests {
         // Even nonce (with chain id)
         user_op.nonce = U256::from(31338);
         assert_eq!(
-            user_op
-                .eip712_digest(
-                    address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
-                    31337,
-                    U256::ZERO
-                )
-                .unwrap(),
+            user_op.as_eip712(U256::ZERO).unwrap().eip712_signing_hash(&Eip712Domain::new(
+                Some("EntryPoint".into()),
+                Some("0.0.1".into()),
+                Some(U256::from(31337)),
+                Some(address!("307AF7d28AfEE82092aA95D35644898311CA5360")),
+                None
+            )),
             b256!("0x61b486d7713e2524feea197c603d8f8a59192bb7fc3c3c232536d8e18b35fde6")
         );
 
         // Odd nonce (no chain id)
         user_op.nonce = U256::from(31337);
         assert_eq!(
-            user_op
-                .eip712_digest(
-                    address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
-                    31337,
-                    U256::ZERO
-                )
-                .unwrap(),
+            user_op.as_eip712(U256::ZERO).unwrap().eip712_signing_hash(&Eip712Domain::new(
+                Some("EntryPoint".into()),
+                Some("0.0.1".into()),
+                None,
+                Some(address!("307AF7d28AfEE82092aA95D35644898311CA5360")),
+                None
+            )),
             b256!("0xaada23e8e365c4e46e9f3ab907a46d149d13e4cfc0355a708093ad93b157448c")
         );
     }
@@ -217,13 +209,13 @@ mod tests {
         let expected_digest =
             b256!("0x989f224e1d07735dd8c96c72f9dcb702fbe7a4d9133f331c6e066aee415a1678");
         assert_eq!(
-            user_op
-                .eip712_digest(
-                    address!("307AF7d28AfEE82092aA95D35644898311CA5360"),
-                    31337,
-                    U256::from(23)
-                )
-                .unwrap(),
+            user_op.as_eip712(U256::from(23)).unwrap().eip712_signing_hash(&Eip712Domain::new(
+                Some("EntryPoint".into()),
+                Some("0.0.1".into()),
+                None,
+                Some(address!("307AF7d28AfEE82092aA95D35644898311CA5360")),
+                None
+            )),
             expected_digest
         );
 

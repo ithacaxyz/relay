@@ -40,9 +40,6 @@ pub struct Args {
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
     #[arg(long, value_name = "RPC_ENDPOINT")]
     pub upstream: Url,
-    /// The address of the entrypoint contract.
-    #[arg(long, value_name = "ADDRESS")]
-    pub entrypoint: Address,
     /// The lifetime of a fee quote.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
     pub quote_ttl: Duration,
@@ -84,7 +81,7 @@ impl Args {
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
-        let upstream = Upstream::new(provider, self.entrypoint).await?;
+        let upstream = Upstream::new(provider).await?;
         let address = upstream.default_signer_address();
         let price_oracle = PriceOracle::new();
         price_oracle
