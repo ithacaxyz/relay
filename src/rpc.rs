@@ -16,7 +16,7 @@ use alloy::{
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
-    sol_types::{SolCall, SolError, SolValue},
+    sol_types::{SolCall, SolValue},
 };
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -32,7 +32,7 @@ use crate::{
     constants::{INNER_ENTRYPOINT_GAS_OVERHEAD, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
     error::{EstimateFeeError, SendActionError},
     price::PriceOracle,
-    signer::Signer,
+    signer::DynSigner,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
         UserOp, U40,
@@ -80,7 +80,7 @@ impl<P> Relay<P> {
     /// Create a new Ithaca relay module.
     pub fn new(
         upstream: Upstream<P>,
-        quote_signer: Signer,
+        quote_signer: DynSigner,
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
@@ -348,7 +348,7 @@ struct RelayInner<P> {
     /// Supported fee tokens.
     fee_tokens: FeeTokens,
     /// The signer used to sign quotes.
-    quote_signer: Signer,
+    quote_signer: DynSigner,
     /// The TTL of a quote.
     quote_ttl: Duration,
     /// Price oracle.

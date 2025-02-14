@@ -127,7 +127,7 @@ impl UserOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signer::Signer;
+    use crate::signer::DynSigner;
     use alloy::{
         dyn_abi::Eip712Domain,
         primitives::{address, b256, bytes, Address},
@@ -210,7 +210,7 @@ mod tests {
             expected_digest
         );
 
-        let signer = Signer::load(
+        let signer = DynSigner::load(
             "0x44a8f44ef7307087c960f8bfcbd95f7a1c9a2f505d438d1750dc947cfedb4b4a",
             None,
         )

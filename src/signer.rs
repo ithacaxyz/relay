@@ -10,15 +10,15 @@ use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 /// Abstraction over local signer or AWS.
-pub struct Signer(pub Arc<dyn FullSigner<PrimitiveSignature> + Send + Sync>);
+pub struct DynSigner(pub Arc<dyn FullSigner<PrimitiveSignature> + Send + Sync>);
 
-impl fmt::Debug for Signer {
+impl fmt::Debug for DynSigner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("RelaySigner").field(&self.address()).finish()
     }
 }
 
-impl Signer {
+impl DynSigner {
     /// Load a private key or AWS signer from environment variables.
     pub async fn load(key: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
         if let Ok(wallet) = PrivateKeySigner::from_str(key) {
@@ -36,7 +36,7 @@ impl Signer {
     }
 }
 
-impl Deref for Signer {
+impl Deref for DynSigner {
     type Target = dyn FullSigner<PrimitiveSignature> + Send + Sync;
 
     fn deref(&self) -> &Self::Target {

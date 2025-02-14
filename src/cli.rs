@@ -3,7 +3,7 @@ use crate::{
     metrics::{self, build_exporter, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
-    signer::Signer,
+    signer::DynSigner,
     types::{CoinKind, CoinPair, FeeTokens},
     upstream::Upstream,
 };
@@ -68,14 +68,14 @@ impl Args {
         let handle = build_exporter();
 
         // construct provider
-        let signer = Signer::load(&self.secret_key, None).await?;
+        let signer = DynSigner::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
 
         let wallet = EthereumWallet::from(signer.0);
         let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
 
         // construct quote signer
-        let quote_signer = Signer::load(&self.quote_secret_key, None).await?;
+        let quote_signer = DynSigner::load(&self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
