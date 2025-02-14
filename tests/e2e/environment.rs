@@ -114,21 +114,18 @@ impl Environment {
         assert!(CoinKind::get_token(NamedChain::AnvilHardhat.into(), erc20).is_some());
 
         // Start relay service.
-        let relay_handle = tokio::spawn({
-            let upstream = upstream.clone();
-            async move {
-                let cli = Args {
-                    address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: 3131,
-                    upstream,
-                    entrypoint,
-                    quote_ttl: Duration::from_secs(60),
-                    quote_secret_key: RELAY_PRIVATE_KEY.to_string(),
-                    fee_tokens: vec![erc20],
-                    secret_key: RELAY_PRIVATE_KEY.to_string(),
-                };
-                cli.run().await
-            }
+        let relay_handle = tokio::spawn(async move {
+            let cli = Args {
+                address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 3131,
+                upstream,
+                entrypoint,
+                quote_ttl: Duration::from_secs(60),
+                quote_secret_key: RELAY_PRIVATE_KEY.to_string(),
+                fee_tokens: vec![erc20],
+                secret_key: RELAY_PRIVATE_KEY.to_string(),
+            };
+            cli.run().await
         });
 
         // Wait for it to boot
