@@ -10,9 +10,8 @@
 
 use alloy::{
     eips::eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
-    hex,
     network::{TransactionBuilder, TransactionBuilder7702},
-    primitives::{fixed_bytes, map::AddressMap, Address, Bytes, TxHash, U256},
+    primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     signers::Signer,
@@ -33,7 +32,7 @@ use crate::{
         EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, INNER_ENTRYPOINT_GAS_OVERHEAD,
         TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
     },
-    error::{CallError, EstimateFeeError, SendActionError},
+    error::{EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
