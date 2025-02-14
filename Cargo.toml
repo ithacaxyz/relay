@@ -24,7 +24,7 @@ alloy = { version = "0.11", features = [
 alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.5"
-aws-sdk-kms = "1.59"
+aws-sdk-kms = "1.60"
 clap = { version = "4", features = ["derive", "env"] }
 eyre = "0.6.12"
 futures-util = "0.3"
