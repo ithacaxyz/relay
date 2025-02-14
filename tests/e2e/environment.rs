@@ -14,7 +14,7 @@ use alloy::{
 use alloy_chains::NamedChain;
 use eyre::{self, ContextCompat, OptionExt, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use relay::{cli::Args, signer::LocalOrAws, types::CoinKind};
+use relay::{cli::Args, signer::DynSigner, types::CoinKind};
 use std::{
     net::Ipv4Addr,
     path::{Path, PathBuf},
@@ -25,7 +25,7 @@ use tokio::time::sleep;
 pub struct Environment {
     pub _anvil: AnvilInstance,
     pub provider: Box<dyn Provider>,
-    pub eoa_signer: LocalOrAws,
+    pub eoa_signer: DynSigner,
     pub entrypoint: Address,
     pub delegation: Address,
     pub erc20: Address,
@@ -59,16 +59,16 @@ impl Environment {
         let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
 
         // Load signers.
-        let relay_signer = LocalOrAws::load(&RELAY_PRIVATE_KEY.to_string(), None)
+        let relay_signer = DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), None)
             .await
             .wrap_err("Relay signer load failed")?;
-        let eoa_signer = LocalOrAws::load(&EOA_PRIVATE_KEY.to_string(), None)
+        let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None)
             .await
             .wrap_err("EOA signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(relay_signer.clone()))
+            .wallet(EthereumWallet::from(relay_signer.0.clone()))
             .on_http(upstream.clone());
 
         // Deploy contracts.
