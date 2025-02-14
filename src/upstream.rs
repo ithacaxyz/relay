@@ -25,6 +25,11 @@ impl<P> Upstream<P> {
     pub fn chain_id(&self) -> ChainId {
         self.chain_id
     }
+
+    /// Get the chain ID of this upstream.
+    pub fn inner(&self) -> &P {
+        &self.provider
+    }
 }
 
 impl<P> Upstream<P>

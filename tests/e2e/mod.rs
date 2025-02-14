@@ -123,7 +123,7 @@ async fn process_tx_case(nonce: usize, tx: TxContext, env: &Environment) -> Resu
         .into()
     };
 
-    let action = Action { op, auth };
+    let action = Action { op, auth: auth.clone() };
 
     match env.relay_endpoint.send_action(action, quote).await {
         Ok(tx_hash) => {
@@ -146,6 +146,12 @@ async fn process_tx_case(nonce: usize, tx: TxContext, env: &Environment) -> Resu
                 }
             } else if !tx.expected.reverted_tx() {
                 return Err(eyre::eyre!("Transaction failed for nonce {nonce}: {receipt:?}"));
+            }
+
+            if let Some(auth) = auth {
+                if env.provider.get_code_at(EOA_ADDRESS).await?.is_empty() {
+                    return Err(eyre::eyre!("Transaction {nonce} failed to delegate"));
+                }
             }
 
             // UserOp has succeeded if the nonce has been invalidated.

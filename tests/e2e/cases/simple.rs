@@ -43,3 +43,27 @@ async fn auth_then_total_supply() -> Result<()> {
 
     run_e2e(test_vector).await
 }
+
+#[tokio::test]
+async fn invalid_auth_nonce() -> Result<()> {
+    let test_vector = vec![TxContext {
+        calls: vec![Call {
+            target: EOA_ADDRESS,
+            value: U256::ZERO,
+            data: authorizeCall {
+                key: Key {
+                    expiry: Default::default(),
+                    keyType: KeyType::Secp256k1,
+                    isSuperAdmin: true,
+                    publicKey: EOA_ADDRESS.abi_encode().into(),
+                },
+            }
+            .abi_encode()
+            .into(),
+        }],
+        expected: ExpectedOutcome::FailSend,
+        auth: Some(AuthKind::AuthWithNonce(123)),
+    }];
+
+    run_e2e(test_vector).await
+}

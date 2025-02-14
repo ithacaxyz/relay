@@ -315,6 +315,23 @@ where
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
             }
+
+            let expected_nonce = self
+                .inner
+                .upstream
+                .inner()
+                .get_transaction_count(action.op.eoa)
+                .await
+                .map_err(SendActionError::from)?;
+
+            if expected_nonce != auth.nonce {
+                return Err(SendActionError::AuthItemInvalidNonce {
+                    expected: expected_nonce,
+                    got: auth.nonce,
+                }
+                .into());
+            }
+
             request.authorization_list = Some(vec![auth]);
         } else {
             let code =

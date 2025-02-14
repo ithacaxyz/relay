@@ -66,6 +66,14 @@ pub enum SendActionError {
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
+    /// The provided EIP-7702 auth item has an invalid nonce.
+    #[error("invalid auth item nonce, expected {expected}, got {got}")]
+    AuthItemInvalidNonce {
+        /// The nonce expected.
+        expected: u64,
+        /// The nonce in the authorization item.
+        got: u64,
+    },
     /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),
