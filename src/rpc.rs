@@ -33,8 +33,8 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
+        UserOp, U40,
     },
     upstream::Upstream,
 };
@@ -112,12 +112,7 @@ where
         };
 
         // create key
-        let key = Key {
-            expiry: U40::from(0),
-            keyType: KeyType::Secp256k1,
-            isSuperAdmin: true,
-            publicKey: self.inner.quote_signer.address().abi_encode().into(),
-        };
+        let key = Key::secp256k1(self.inner.quote_signer.address(), U40::ZERO, true);
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -161,26 +156,20 @@ where
         };
 
         // sign userop
-        let inner_signature = self
-            .inner
-            .quote_signer
-            .sign_typed_data(
-                &op.as_eip712(account.nonce_salt().await.unwrap_or_default())
-                    .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-                &entrypoint
-                    .eip712_domain(op.is_multichain())
-                    .await
-                    .map_err(EstimateFeeError::from)?,
-            )
-            .await
-            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
-        op.signature = Signature {
-            innerSignature: inner_signature.as_bytes().into(), // (r, s, v + 27)
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        op.signature = key.encode_secp256k1_signature(
+            self.inner
+                .quote_signer
+                .sign_typed_data(
+                    &op.as_eip712(account.nonce_salt().await.unwrap_or_default())
+                        .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                    &entrypoint
+                        .eip712_domain(op.is_multichain())
+                        .await
+                        .map_err(EstimateFeeError::from)?,
+                )
+                .await
+                .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+        );
 
         // we perform a call to `simulateExecute`, which reverts with the amount of gas used and an
         // error selector.

@@ -1,11 +1,17 @@
 use alloy::{
-    primitives::{bytes::Buf, keccak256, map::B256Map, FixedBytes, Keccak256, B256, U256},
+    primitives::{
+        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256,
+        PrimitiveSignature, B256, U256,
+    },
     sol,
     sol_types::SolValue,
 };
 
+use super::U40;
+
 sol! {
     /// The type of key.
+    #[derive(Debug, Eq, PartialEq)]
     enum KeyType {
         /// A P256 key.
         P256,
@@ -47,6 +53,13 @@ sol! {
         bool isSuperAdmin;
     }
 
+    /// The signature of a [`UserOp`].
+    struct Signature {
+        bytes innerSignature;
+        bytes32 keyHash;
+        bool prehash;
+    }
+
     /// Delegation interface.
     interface IDelegation {
         /// Authorizes the key.
@@ -63,6 +76,29 @@ impl From<Key> for PackedKey {
 }
 
 impl Key {
+    /// Create a new key secp256k1 key.
+    pub fn secp256k1(address: Address, expiry: U40, super_admin: bool) -> Self {
+        Self {
+            publicKey: address.abi_encode().into(),
+            expiry,
+            keyType: KeyType::Secp256k1,
+            isSuperAdmin: super_admin,
+        }
+    }
+
+    /// Encode a [`PrimitiveSignature`].
+    pub fn encode_secp256k1_signature(&self, signature: PrimitiveSignature) -> Bytes {
+        assert!(self.keyType == KeyType::Secp256k1);
+
+        Signature {
+            innerSignature: signature.as_bytes().into(),
+            keyHash: self.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into()
+    }
+
     /// The key hash.
     ///
     /// The hash is computed as `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
