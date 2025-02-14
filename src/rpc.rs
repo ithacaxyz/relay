@@ -10,7 +10,6 @@
 
 use alloy::{
     eips::eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
-    hex,
     network::{TransactionBuilder, TransactionBuilder7702},
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{Provider, WalletProvider},
@@ -29,7 +28,10 @@ use std::{
 use tracing::{debug, warn};
 
 use crate::{
-    constants::{INNER_ENTRYPOINT_GAS_OVERHEAD, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    constants::{
+        EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, INNER_ENTRYPOINT_GAS_OVERHEAD,
+        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+    },
     error::{EstimateFeeError, SendActionError},
     price::PriceOracle,
     types::{
@@ -88,13 +90,6 @@ impl<P, Q> Relay<P, Q> {
         Self { inner: Arc::new(inner) }
     }
 }
-
-/// The EIP-7702 delegation designator.
-const EIP7702_DELEGATION_DESIGNATOR: [u8; 3] = hex!("0xef0100");
-
-/// The EIP-7702 delegation designator for a cleared delegation.
-const EIP7702_CLEARED_DELEGATION: [u8; 23] =
-    hex!("0xef01000000000000000000000000000000000000000000");
 
 #[async_trait]
 impl<P, Q> RelayApiServer for Relay<P, Q>
@@ -278,6 +273,23 @@ where
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
             }
+
+            let expected_nonce = self
+                .inner
+                .upstream
+                .inner()
+                .get_transaction_count(request.op.eoa)
+                .await
+                .map_err(SendActionError::from)?;
+
+            if expected_nonce != auth.nonce {
+                return Err(SendActionError::AuthItemInvalidNonce {
+                    expected: expected_nonce,
+                    got: auth.nonce,
+                }
+                .into());
+            }
+
             tx.set_authorization_list(vec![auth]);
         } else {
             let code = self
