@@ -9,7 +9,7 @@ use alloy::{
 use eyre::Result;
 use relay::types::{Call, IDelegation::authorizeCall, Key, KeyType};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn auth_then_total_supply() -> Result<()> {
     let test_vector = vec![
         TxContext {

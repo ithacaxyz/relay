@@ -16,20 +16,19 @@ use alloy::{
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
 };
-use eyre::Result;
+use eyre::{Context, Result};
 use relay::{
     rpc::RelayApiClient,
     types::{Action, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp},
 };
 
-/// Executes all test cases using the refactored environment and test case processors.
-/// If any test case returns an error, ensures the relay task is shutdown before returning the
-/// error.
+/// Executes all transactions from the test case. If it returns an error, ensures the relay task is
+/// shutdown first.
 pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
     let env = Environment::setup().await?;
     let result = async {
         for (nonce, tx) in txs.into_iter().enumerate() {
-            process_tx_case(nonce, tx, &env).await?;
+            process_tx(nonce, tx, &env).await?;
         }
         Ok(())
     }
@@ -39,28 +38,50 @@ pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
     result
 }
 
-/// Processes a single test case, returning an error on failure.
-async fn process_tx_case(nonce: usize, tx: TxContext, env: &Environment) -> Result<()> {
+/// Processes a single transaction, returning an error on failure.
+///
+/// The process follows these steps:
+/// 1. Prepares execution data and authorization (if required):
+///    - Encodes the transaction calls
+///    - Creates and signs an EIP-7702 authorization if specified
+///
+/// 2. Estimates fees through the relay:
+///    - Sends a fee estimation request with the partial user operation
+///    - Handles expected estimation failures
+///
+/// 3. Constructs the full UserOp:
+///    - Sets basic parameters (EOA, execution data, nonce)
+///    - Initializes payment-related fields
+///    - Sets gas parameters based on the quote
+///
+/// 4. Signs the UserOp:
+///    - Creates an EIP-712 digest of the operation
+///    - Signs with EOA signer
+///    - For nonce 0: uses raw signature
+///    - For other nonces: wraps signature with key information
+///
+/// 5. Submits and verifies execution:
+///    - Sends the action to the relay
+///    - Handles expected send failures
+///    - Retrieves and checks transaction receipt
+///    - Verifies transaction status matches expectations
+///    - Confirms UserOp success by checking nonce invalidation
+async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()> {
     let execution_data: Bytes = tx.calls.abi_encode().into();
-    let auth =
-        if let Some(auth) = tx.auth {
-            let nonce_val = match auth {
-                AuthKind::Auth => nonce as u64,
-                AuthKind::AuthWithNonce(n) => n,
-            };
-            let auth_struct = alloy::eips::eip7702::Authorization {
-                chain_id: U256::from(0),
-                address: env.delegation,
-                nonce: nonce_val,
-            };
-            let auth_hash = auth_struct.signature_hash();
-
-            Some(auth_struct.into_signed(
-                env.eoa_signer.sign_hash(&auth_hash).await.expect("Auth signing failed"),
-            ))
-        } else {
-            None
+    let auth = if let Some(auth) = tx.auth {
+        let auth_struct = alloy::eips::eip7702::Authorization {
+            chain_id: U256::from(0),
+            address: env.delegation,
+            nonce: auth.nonce().unwrap_or(nonce as u64),
         };
+        let auth_hash = auth_struct.signature_hash();
+
+        Some(auth_struct.into_signed(
+            env.eoa_signer.sign_hash(&auth_hash).await.wrap_err("Auth signing failed")?,
+        ))
+    } else {
+        None
+    };
 
     let quote = env
         .relay_endpoint
@@ -102,8 +123,8 @@ async fn process_tx_case(nonce: usize, tx: TxContext, env: &Environment) -> Resu
 
     let digest = op
         .eip712_digest(env.entrypoint, env.chain_id, U256::ZERO)
-        .expect("Failed to create digest");
-    let signature = env.eoa_signer.sign_hash(&digest).await.expect("Signing failed");
+        .wrap_err("Failed to create digest")?;
+    let signature = env.eoa_signer.sign_hash(&digest).await.wrap_err("Signing failed")?;
 
     op.signature = if nonce == 0 {
         signature.as_bytes().into()
@@ -136,7 +157,7 @@ async fn process_tx_case(nonce: usize, tx: TxContext, env: &Environment) -> Resu
             let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
                 .get_receipt()
                 .await
-                .expect("Failed to get receipt");
+                .wrap_err("Failed to get receipt")?;
 
             if receipt.status() {
                 if tx.expected.reverted_tx() {
