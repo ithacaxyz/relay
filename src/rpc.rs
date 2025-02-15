@@ -17,6 +17,7 @@ use alloy::{
     signers::Signer,
     sol_types::{SolCall, SolValue},
 };
+use futures_util::TryFutureExt;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -132,11 +133,11 @@ where
         // load account and entrypoint
         let account = Account::new(request.op.eoa, self.inner.upstream.provider())
             .with_overrides(overrides.clone());
-        let entrypoint = Entry::new(
-            account.entrypoint().await.map_err(EstimateFeeError::from)?,
-            self.inner.upstream.provider(),
-        )
-        .with_overrides(overrides.clone());
+        let (entrypoint_address, nonce_salt) =
+            futures_util::try_join!(account.entrypoint(), account.nonce_salt())
+                .map_err(EstimateFeeError::from)?;
+        let entrypoint = Entry::new(entrypoint_address, self.inner.upstream.provider())
+            .with_overrides(overrides.clone());
 
         // fill userop
         let mut op = UserOp {
@@ -155,7 +156,7 @@ where
             self.inner
                 .quote_signer
                 .sign_typed_data(
-                    &op.as_eip712(account.nonce_salt().await.unwrap_or_default())
+                    &op.as_eip712(nonce_salt)
                         .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
                     &entrypoint
                         .eip712_domain(op.is_multichain())
@@ -166,12 +167,14 @@ where
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
         );
 
-        // we perform a call to `simulateExecute`, which reverts with the amount of gas used and an
-        // error selector.
-        let mut gas_estimate =
-            entrypoint.simulate_execute(&op).await.map_err(EstimateFeeError::from)?.to::<u64>();
-        let native_fee_estimate =
-            self.inner.upstream.estimate_eip1559().await.map_err(EstimateFeeError::from)?;
+        // we estimate gas and fees
+        let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
+            entrypoint
+                .simulate_execute(&op)
+                .map_ok(|gas| gas.to::<u64>())
+                .map_err(EstimateFeeError::from),
+            self.inner.upstream.estimate_eip1559().map_err(EstimateFeeError::from)
+        )?;
 
         // for 7702 designations there is an additional gas charge
         //
