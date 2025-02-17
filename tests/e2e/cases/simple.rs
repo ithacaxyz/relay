@@ -10,7 +10,7 @@ use eyre::Result;
 use relay::types::{Call, IDelegation::authorizeCall, Key, KeyType};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn auth_then_total_supply() -> Result<()> {
+async fn auth_then_transfer() -> Result<()> {
     let test_vector = vec![
         TxContext {
             calls: vec![Call {
@@ -34,7 +34,9 @@ async fn auth_then_total_supply() -> Result<()> {
             calls: vec![Call {
                 target: FAKE_ERC20,
                 value: U256::ZERO,
-                data: Bytes::from(hex::decode("0x18160ddd").unwrap()),
+                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+                    .abi_encode()
+                    .into(),
             }],
             expected: ExpectedOutcome::Pass,
             auth: None,

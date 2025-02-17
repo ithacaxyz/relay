@@ -105,7 +105,7 @@ impl Environment {
         for signer in [&relay_signer, &eoa_signer] {
             MockErc20::new(erc20, &provider)
                 .mint(signer.address(), U256::from(100e18))
-                .call()
+                .send()
                 .await
                 .wrap_err("Minting failed")?;
         }

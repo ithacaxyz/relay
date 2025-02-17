@@ -74,6 +74,7 @@ sol! {
             _nameHash = keccak256(bytes(name_));
         }
         function mint(address a, uint256 val) external;
+        function transfer(address recipient, uint256 amount);
     }
 }
 
