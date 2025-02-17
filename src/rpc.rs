@@ -19,7 +19,6 @@ use alloy::{
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{fillers::NonceManager, Provider},
     rpc::types::{state::AccountOverride, TransactionRequest},
-    signers::Signer,
     sol_types::{SolCall, SolValue},
 };
 use futures_util::TryFutureExt;
@@ -42,7 +41,7 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
-    signer::LocalOrAws,
+    signer::DynSigner,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
         UserOp, U40,
@@ -90,7 +89,7 @@ impl Relay {
     pub fn new(
         chains: Chains,
         tx_signer: EthereumWallet,
-        quote_signer: LocalOrAws,
+        quote_signer: DynSigner,
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
@@ -125,7 +124,7 @@ impl RelayApiServer for Relay {
         };
 
         // create key
-        let mock_signer_address = Signer::address(&self.inner.quote_signer);
+        let mock_signer_address = self.inner.quote_signer.address();
         let key = Key::secp256k1(mock_signer_address, U40::ZERO, true);
 
         // mocking key storage for the eoa, and the balance for the mock signer
@@ -352,7 +351,7 @@ impl RelayApiServer for Relay {
         // ticket from `relay_estimateFee`'
         if !quote
             .recover_address()
-            .is_ok_and(|address| address == Signer::address(&self.inner.quote_signer))
+            .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
             return Err(SendActionError::InvalidQuoteSignature.into());
         }
@@ -398,7 +397,7 @@ struct RelayInner {
     /// The signer used to sign transactions.
     tx_signer: EthereumWallet,
     /// The signer used to sign quotes.
-    quote_signer: LocalOrAws,
+    quote_signer: DynSigner,
     /// The TTL of a quote.
     quote_ttl: Duration,
     /// Price oracle.

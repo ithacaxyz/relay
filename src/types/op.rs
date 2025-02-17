@@ -126,15 +126,13 @@ impl UserOp {
 
 #[cfg(test)]
 mod tests {
-    use crate::signer::LocalOrAws;
+    use super::*;
+    use crate::signer::DynSigner;
     use alloy::{
         dyn_abi::Eip712Domain,
         primitives::{address, b256, bytes, Address},
-        signers::Signer,
         sol_types::{SolStruct, SolValue},
     };
-
-    use super::*;
 
     #[test]
     fn user_op_eip712_digest() {
@@ -212,7 +210,7 @@ mod tests {
             expected_digest
         );
 
-        let signer = LocalOrAws::load(
+        let signer = DynSigner::load(
             "0x44a8f44ef7307087c960f8bfcbd95f7a1c9a2f505d438d1750dc947cfedb4b4a",
             None,
         )
