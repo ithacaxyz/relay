@@ -9,14 +9,19 @@
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy::{
-    eips::eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
-    hex,
-    network::{TransactionBuilder, TransactionBuilder7702},
+    eips::{
+        eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+        Encodable2718,
+    },
+    network::{
+        Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TransactionBuilder7702,
+    },
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
-    providers::{Provider, WalletProvider},
+    providers::{fillers::NonceManager, Provider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::{SolCall, SolValue},
 };
+use futures_util::TryFutureExt;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -28,15 +33,19 @@ use std::{
 use tracing::{debug, warn};
 
 use crate::{
-    constants::{INNER_ENTRYPOINT_GAS_OVERHEAD, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    chains::Chains,
+    constants::{
+        EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, INNER_ENTRYPOINT_GAS_OVERHEAD,
+        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+    },
     error::{EstimateFeeError, SendActionError},
+    nonce::MultiChainNonceManager,
     price::PriceOracle,
     signer::DynSigner,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
         UserOp, U40,
     },
-    upstream::Upstream,
 };
 
 /// Ithaca `relay_` RPC namespace.
@@ -71,52 +80,57 @@ pub trait RelayApi {
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-pub struct Relay<P> {
-    inner: Arc<RelayInner<P>>,
+pub struct Relay {
+    inner: Arc<RelayInner>,
 }
 
-impl<P> Relay<P> {
+impl Relay {
     /// Create a new Ithaca relay module.
     pub fn new(
-        upstream: Upstream<P>,
+        chains: Chains,
+        tx_signer: EthereumWallet,
         quote_signer: DynSigner,
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
     ) -> Self {
-        let inner = RelayInner { upstream, fee_tokens, quote_signer, quote_ttl, price_oracle };
+        let inner = RelayInner {
+            chains,
+            fee_tokens,
+            nonce_manager: MultiChainNonceManager::default(),
+            tx_signer,
+            quote_signer,
+            quote_ttl,
+            price_oracle,
+        };
         Self { inner: Arc::new(inner) }
     }
 }
 
-/// The EIP-7702 delegation designator.
-const EIP7702_DELEGATION_DESIGNATOR: [u8; 3] = hex!("0xef0100");
-
-/// The EIP-7702 delegation designator for a cleared delegation.
-const EIP7702_CLEARED_DELEGATION: [u8; 23] =
-    hex!("0xef01000000000000000000000000000000000000000000");
-
 #[async_trait]
-impl<P> RelayApiServer for Relay<P>
-where
-    P: Provider + WalletProvider + 'static,
-{
+impl RelayApiServer for Relay {
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
     }
 
     async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
-        let Some(token) = self.inner.fee_tokens.find(self.inner.upstream.chain_id(), &token) else {
+        let provider = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+        let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
         };
 
         // create key
-        let key = Key::secp256k1(self.inner.quote_signer.address(), U40::ZERO, true);
+        let mock_signer_address = self.inner.quote_signer.address();
+        let key = Key::secp256k1(mock_signer_address, U40::ZERO, true);
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
             (
-                self.inner.quote_signer.address(),
+                mock_signer_address,
                 AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
             ),
             (
@@ -134,13 +148,13 @@ where
         ]);
 
         // load account and entrypoint
-        let account = Account::new(request.op.eoa, self.inner.upstream.provider())
-            .with_overrides(overrides.clone());
-        let entrypoint = Entry::new(
-            account.entrypoint().await.map_err(EstimateFeeError::from)?,
-            self.inner.upstream.provider(),
-        )
-        .with_overrides(overrides.clone());
+        let account =
+            Account::new(request.op.eoa, provider.clone()).with_overrides(overrides.clone());
+        let (entrypoint_address, nonce_salt) =
+            futures_util::try_join!(account.entrypoint(), account.nonce_salt())
+                .map_err(EstimateFeeError::from)?;
+        let entrypoint =
+            Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
 
         // fill userop
         let mut op = UserOp {
@@ -159,7 +173,7 @@ where
             self.inner
                 .quote_signer
                 .sign_typed_data(
-                    &op.as_eip712(account.nonce_salt().await.unwrap_or_default())
+                    &op.as_eip712(nonce_salt)
                         .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
                     &entrypoint
                         .eip712_domain(op.is_multichain())
@@ -170,12 +184,14 @@ where
                 .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
         );
 
-        // we perform a call to `simulateExecute`, which reverts with the amount of gas used and an
-        // error selector.
-        let mut gas_estimate =
-            entrypoint.simulate_execute(&op).await.map_err(EstimateFeeError::from)?.to::<u64>();
-        let native_fee_estimate =
-            self.inner.upstream.estimate_eip1559().await.map_err(EstimateFeeError::from)?;
+        // we estimate gas and fees
+        let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
+            entrypoint
+                .simulate_execute(&op)
+                .map_ok(|gas| gas.to::<u64>())
+                .map_err(EstimateFeeError::from),
+            provider.estimate_eip1559_fees(None).map_err(EstimateFeeError::from)
+        )?;
 
         // for 7702 designations there is an additional gas charge
         //
@@ -225,11 +241,19 @@ where
         Ok(quote.into_signed(sig))
     }
 
-    // todo: chain ids
     async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash> {
+        let provider = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+
         // verify payment recipient is entrypoint or us
+        let tx_signer_address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(
+            &self.inner.tx_signer,
+        );
         if !request.op.paymentRecipient.is_zero()
-            && request.op.paymentRecipient != self.inner.upstream.default_signer_address()
+            && request.op.paymentRecipient != tx_signer_address
         {
             return Err(SendActionError::WrongPaymentRecipient.into());
         }
@@ -247,8 +271,7 @@ where
         )]);
 
         // get the account and entrypoint
-        let account =
-            Account::new(request.op.eoa, self.inner.upstream.provider()).with_overrides(overrides);
+        let account = Account::new(request.op.eoa, provider.clone()).with_overrides(overrides);
         let entrypoint =
             account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
 
@@ -260,14 +283,14 @@ where
         }
 
         let mut tx = TransactionRequest::default()
-            .with_chain_id(self.inner.upstream.chain_id())
+            .with_chain_id(request.chain_id)
             .input(
                 EntryPoint::executeCall { encodedUserOp: request.op.abi_encode().into() }
                     .abi_encode()
                     .into(),
             )
             .to(entrypoint)
-            .from(self.inner.upstream.default_signer_address())
+            .from(tx_signer_address)
             .gas_limit(tx_gas)
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
@@ -277,14 +300,27 @@ where
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
             }
-            tx.set_authorization_list(vec![auth]);
-        } else {
-            let code = self
+
+            let expected_nonce = self
                 .inner
-                .upstream
-                .get_code(request.op.eoa)
+                .chains
+                .get(request.chain_id)
+                .unwrap()
+                .get_transaction_count(request.op.eoa)
                 .await
                 .map_err(SendActionError::from)?;
+
+            if expected_nonce != auth.nonce {
+                return Err(SendActionError::AuthItemInvalidNonce {
+                    expected: expected_nonce,
+                    got: auth.nonce,
+                }
+                .into());
+            }
+
+            tx.set_authorization_list(vec![auth]);
+        } else {
+            let code = provider.get_code_at(request.op.eoa).await.map_err(SendActionError::from)?;
 
             if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
                 || code[..] == EIP7702_CLEARED_DELEGATION
@@ -327,25 +363,39 @@ where
         }
 
         // broadcast the tx
-        Ok(self
-            .inner
-            .upstream
-            .sign_and_send(tx)
-            .await
-            .inspect_err(
-                |err| warn!(target: "rpc::wallet", ?err, "Error adding sponsored tx to pool"),
+        tx.set_nonce(
+            self.inner
+                .nonce_manager
+                .get_next_nonce(&provider, tx_signer_address)
+                .await
+                .map_err(|err| SendActionError::InternalError(err.into()))?,
+        );
+
+        Ok(provider
+            .send_raw_transaction(
+                &tx.build(&self.inner.tx_signer)
+                    .await
+                    .map_err(|err| SendActionError::InternalError(err.into()))?
+                    .encoded_2718(),
             )
+            .await
+            .map(|pending| *pending.tx_hash())
+            .inspect_err(|err| warn!(?err, "Error adding sponsored tx to pool"))
             .map_err(SendActionError::from)?)
     }
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner<P> {
-    /// The upstream RPC of the relay.
-    upstream: Upstream<P>,
+struct RelayInner {
+    /// The chains supported by the relay.
+    chains: Chains,
     /// Supported fee tokens.
     fee_tokens: FeeTokens,
+    /// The nonce manager used to manage transaction nonces.
+    nonce_manager: MultiChainNonceManager,
+    /// The signer used to sign transactions.
+    tx_signer: EthereumWallet,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
     /// The TTL of a quote.

@@ -1073,9 +1073,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-kms"
-version = "1.59.0"
+version = "1.60.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2da21a543bfc06001637785ec6ed7b4bec9a3d737f0abca3ddd8d7b962e71fb1"
+checksum = "adc36035f7393a24719069c9a2f52e20972f7ee8472bd788e863968736acc449"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -4077,6 +4077,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-kms",
  "clap",
+ "dashmap",
  "eyre",
  "futures-util",
  "http 1.2.0",

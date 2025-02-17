@@ -19,6 +19,7 @@ use alloy::{
 };
 use eyre::{Context, Result};
 use relay::{
+    constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
     types::{Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp, U40},
 };
@@ -93,6 +94,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                     executionData: execution_data.clone(),
                     nonce: U256::from(nonce),
                 },
+                chain_id: env.chain_id,
                 auth: auth.as_ref().map(|auth| *auth.address()),
             },
             env.erc20,
@@ -139,7 +141,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             .encode_secp256k1_signature(signature)
     };
 
-    let action = Action { op, auth };
+    let action = Action { op, chain_id: env.chain_id, auth: auth.clone() };
 
     match env.relay_endpoint.send_action(action, quote).await {
         Ok(tx_hash) => {
@@ -164,6 +166,14 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                 return Err(eyre::eyre!("Transaction failed for nonce {nonce}: {receipt:?}"));
             }
 
+            if let Some(auth) = auth {
+                if env.provider.get_code_at(EOA_ADDRESS).await?
+                    != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
+                {
+                    return Err(eyre::eyre!("Transaction {nonce} failed to delegate"));
+                }
+            }
+
             // UserOp has succeeded if the nonce has been invalidated.
             let nonce_invalidated = receipt.inner.logs().iter().any(|log| {
                 log.topic0()
@@ -181,11 +191,11 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                 ));
             }
         }
-        Err(_) => {
+        Err(err) => {
             if tx.expected.failed_send() {
                 return Ok(());
             }
-            return Err(eyre::eyre!("Send error for nonce {nonce}"));
+            return Err(eyre::eyre!("Send error for nonce {nonce}: {err}"));
         }
     }
 

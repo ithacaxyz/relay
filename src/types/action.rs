@@ -1,6 +1,9 @@
 //! RPC action types.
 
-use alloy::{eips::eip7702::SignedAuthorization, primitives::Address};
+use alloy::{
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, ChainId},
+};
 use serde::{Deserialize, Serialize};
 
 use super::{PartialUserOp, UserOp};
@@ -13,6 +16,8 @@ use super::{PartialUserOp, UserOp};
 pub struct PartialAction {
     /// The user op.
     pub op: PartialUserOp,
+    /// The destination chain ID.
+    pub chain_id: ChainId,
     /// An optional unsigned authorization item.
     ///
     /// The account in `op.eoa` will be delegated to this address.
@@ -25,6 +30,8 @@ pub struct PartialAction {
 pub struct Action {
     /// The user op.
     pub op: UserOp,
+    /// The destination chain ID.
+    pub chain_id: ChainId,
     /// An optional authorization item.
     pub auth: Option<SignedAuthorization>,
 }

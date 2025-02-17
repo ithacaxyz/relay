@@ -1,13 +1,16 @@
 //! Relay error types.
 
 use alloy::{
-    primitives::{Address, Bytes, B256, U256},
+    primitives::{Address, Bytes, ChainId, B256, U256},
     rpc::types::error::EthRpcErrorCode,
 };
 
 /// Errors returned by `relay_estimateFee`
 #[derive(Debug, thiserror::Error)]
 pub enum EstimateFeeError {
+    /// The chain is not supported.
+    #[error("unsupported chain {0}")]
+    UnsupportedChain(ChainId),
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
@@ -60,12 +63,23 @@ impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
 /// Errors returned by `relay_sendAction`
 #[derive(Debug, thiserror::Error)]
 pub enum SendActionError {
+    /// The chain is not supported.
+    #[error("unsupported chain {0}")]
+    UnsupportedChain(ChainId),
     /// The payment recipient in the provided [`UserOp`] is not the entrypoint or the tx signer.
     #[error("the payment recipient is not the entrypoint or the signer")]
     WrongPaymentRecipient,
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
+    /// The provided EIP-7702 auth item has an invalid nonce.
+    #[error("invalid auth item nonce, expected {expected}, got {got}")]
+    AuthItemInvalidNonce {
+        /// The nonce expected.
+        expected: u64,
+        /// The nonce in the authorization item.
+        got: u64,
+    },
     /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),

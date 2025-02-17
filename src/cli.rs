@@ -1,15 +1,16 @@
 //! # Relay CLI
 use crate::{
+    chains::Chains,
     metrics::{self, build_exporter, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
     signer::DynSigner,
     types::{CoinKind, CoinPair, FeeTokens},
-    upstream::Upstream,
 };
 use alloy::{
+    network::EthereumWallet,
     primitives::Address,
-    providers::{network::EthereumWallet, ProviderBuilder},
+    providers::{DynProvider, Provider, ProviderBuilder},
 };
 use clap::Parser;
 use http::header;
@@ -34,10 +35,11 @@ pub struct Args {
     /// The port to serve the RPC on.
     #[arg(long = "http.port", value_name = "PORT", default_value_t = 9119)]
     pub port: u16,
-    /// The RPC endpoint of the chain to send transactions to.
+    /// The RPC endpoint of a chain to send transactions to.
+    ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
-    #[arg(long, value_name = "RPC_ENDPOINT")]
-    pub upstream: Url,
+    #[arg(long = "endpoint", value_name = "RPC_ENDPOINT", required = true)]
+    pub endpoints: Vec<Url>,
     /// The lifetime of a fee quote.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
     pub quote_ttl: Duration,
@@ -71,31 +73,35 @@ impl Args {
         let signer = DynSigner::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
 
-        let wallet = EthereumWallet::from(signer.0);
-        let provider = ProviderBuilder::new().wallet(wallet).on_http(self.upstream.clone());
+        let providers: Vec<DynProvider> = self
+            .endpoints
+            .iter()
+            .cloned()
+            .map(|url| ProviderBuilder::new().on_http(url).erased())
+            .collect();
 
         // construct quote signer
         let quote_signer = DynSigner::load(&self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
-        let upstream = Upstream::new(provider).await?;
-        let address = upstream.default_signer_address();
         let price_oracle = PriceOracle::new();
         price_oracle
             .spawn_fetcher(PriceFetcher::CoinGecko, &CoinPair::ethereum_pairs(&[CoinKind::USDT]));
 
+        // todo: avoid all this darn cloning
         let rpc = Relay::new(
-            upstream.clone(),
+            Chains::new(providers.clone()).await?,
+            EthereumWallet::new(signer.0),
             quote_signer,
             self.quote_ttl,
             price_oracle,
-            FeeTokens::new(&self.fee_tokens, upstream).await?,
+            FeeTokens::new(&self.fee_tokens, providers).await?,
         )
         .into_rpc();
 
         // launch period metric collectors
-        metrics::spawn_periodic_collectors(address, vec![self.upstream]).await?;
+        metrics::spawn_periodic_collectors(signer_addr, self.endpoints).await?;
 
         // http layers
         let cors = CorsLayer::new()
