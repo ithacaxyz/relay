@@ -2,9 +2,9 @@ use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{fixed_bytes, Address, Bytes, FixedBytes, U256},
     providers::Provider,
-    rpc::types::state::StateOverride,
+    rpc::types::{state::StateOverride, TransactionRequest},
     sol,
-    sol_types::{SolError, SolValue},
+    sol_types::{SolCall, SolError, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
 use EntryPoint::EntryPointInstance;
@@ -149,6 +149,21 @@ impl<P: Provider> Entry<P> {
             .overrides(&self.overrides)
             .await
             .map_err(TransportErrorKind::custom)?;
+
+        if ret.err != NO_ERROR {
+            Err(CallError::OpRevert { revert_reason: ret.err.into() })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Executes a dry-run call using `eth_call` and decodes the response as if it were from the
+    /// [`EntryPoint::executeCall`] function.
+    pub async fn call(provider: P, tx: &TransactionRequest) -> Result<(), CallError> {
+        let ret = provider.call(tx).await.and_then(|res| {
+            EntryPoint::executeCall::abi_decode_returns(&res, true)
+                .map_err(TransportErrorKind::custom)
+        })?;
 
         if ret.err != NO_ERROR {
             Err(CallError::OpRevert { revert_reason: ret.err.into() })

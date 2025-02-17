@@ -371,6 +371,9 @@ impl RelayApiServer for Relay {
                 .map_err(|err| SendActionError::InternalError(err.into()))?,
         );
 
+        // try eth_call before committing to send the actual transaction
+        Entry::call(&provider, &tx).await.map_err(SendActionError::from)?;
+
         Ok(provider
             .send_raw_transaction(
                 &tx.build(&self.inner.tx_signer)

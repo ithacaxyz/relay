@@ -105,6 +105,12 @@ pub enum SendActionError {
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
+    /// The userop reverted when trying transaction.
+    #[error("op reverted")]
+    OpRevert {
+        /// The error code returned by the entrypoint.
+        revert_reason: Bytes,
+    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
@@ -125,6 +131,16 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
             error.to_string(),
             None,
         )
+    }
+}
+
+impl From<CallError> for SendActionError {
+    fn from(err: CallError) -> Self {
+        match err {
+            CallError::OpRevert { revert_reason } => Self::OpRevert { revert_reason },
+            CallError::RpcError(err) => Self::RpcError(err),
+            CallError::AbiError(err) => Self::InternalError(err.into()),
+        }
     }
 }
 
