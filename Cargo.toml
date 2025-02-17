@@ -11,6 +11,7 @@ name = "relay"
 alloy = { version = "0.11", features = [
     "dyn-abi",
     "eip712",
+    "eips",
     "providers",
     "rpc",
     "rpc-types",
@@ -26,6 +27,7 @@ async-trait = "0.1"
 aws-config = "1.5"
 aws-sdk-kms = "1.60"
 clap = { version = "4", features = ["derive", "env"] }
+dashmap = "6.1.0"
 eyre = "0.6.12"
 futures-util = "0.3"
 http = "1"

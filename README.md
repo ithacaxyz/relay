@@ -23,7 +23,7 @@ Run the relay, passing in the following flags. In the example below, the binary 
 
 ```sh
 cargo run --bin relay -- \
-    --upstream $RPC_URL \
+    --endpoint $RPC_URL \
     --fee-token $FEE_TOKEN_ADDR \ # You can pass this multiple times
     --secret-key $TX_SIGNING_PRIV_KEY \
     --quote-secret-key $QUOTE_SIGNING_PRIV_KEY
