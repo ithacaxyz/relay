@@ -95,9 +95,9 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                     nonce: U256::from(nonce),
                 },
                 chain_id: env.chain_id,
-                auth: auth.as_ref().map(|auth| *auth.address()),
             },
             env.erc20,
+            auth.as_ref().map(|auth| *auth.address()),
         )
         .await;
 
@@ -141,9 +141,9 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             .encode_secp256k1_signature(signature)
     };
 
-    let action = Action { op, chain_id: env.chain_id, auth: auth.clone() };
+    let action = Action { op, chain_id: env.chain_id };
 
-    match env.relay_endpoint.send_action(action, quote).await {
+    match env.relay_endpoint.send_action(action, quote, auth.clone()).await {
         Ok(tx_hash) => {
             if tx.expected.failed_send() {
                 return Err(eyre::eyre!(
