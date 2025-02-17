@@ -10,7 +10,7 @@ use eyre::Result;
 use relay::types::{Call, IDelegation::authorizeCall, Key, KeyType};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn auth_then_transfer() -> Result<()> {
+async fn auth_then_erc20_transfer() -> Result<()> {
     let test_vector = vec![
         TxContext {
             calls: vec![Call {
