@@ -148,16 +148,11 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = Key::new(
-            key_type,
-            if key_type.is_secp256k1() {
-                mock_signer_address.abi_encode().into()
-            } else {
-                self.inner.p256_signer.public_key()
-            },
-            U40::ZERO,
-            true,
-        );
+        let key = if key_type.is_secp256k1() {
+            Key::secp256k1(mock_signer_address, U40::ZERO, true)
+        } else {
+            Key::p256(self.inner.p256_signer.public_key(), U40::ZERO, true)
+        };
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([

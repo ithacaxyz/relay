@@ -17,13 +17,12 @@ async fn auth_then_erc20_transfer() -> Result<()> {
     let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None).await?;
 
     for key_type in [KeyType::P256, KeyType::Secp256k1] {
-        let public_key = if key_type.is_secp256k1() {
-            eoa_signer.address().abi_encode().into()
+        let key = if key_type.is_secp256k1() {
+            Key::secp256k1(EOA_ADDRESS, Default::default(), true)
         } else {
-            EOA_P256_SIGNER.public_key()
+            Key::p256(EOA_P256_SIGNER.public_key(), Default::default(), true)
         };
 
-        let key = Key::new(key_type, public_key, Default::default(), true);
         let test_vector = vec![
             TxContext {
                 calls: vec![Call {

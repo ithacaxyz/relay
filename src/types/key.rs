@@ -1,5 +1,7 @@
 use alloy::{
-    primitives::{bytes::Buf, keccak256, map::B256Map, Bytes, FixedBytes, Keccak256, B256, U256},
+    primitives::{
+        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256, B256, U256,
+    },
     sol,
     sol_types::SolValue,
 };
@@ -83,14 +85,19 @@ impl From<Key> for PackedKey {
 }
 
 impl Key {
-    /// Create a new [`Key`].
-    pub fn new(key_type: KeyType, public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
+    /// Create a new key secp256k1 key.
+    pub fn secp256k1(address: Address, expiry: U40, super_admin: bool) -> Self {
         Self {
-            publicKey: public_key,
+            publicKey: address.abi_encode().into(),
             expiry,
-            keyType: key_type,
+            keyType: KeyType::Secp256k1,
             isSuperAdmin: super_admin,
         }
+    }
+
+    /// Create a new key p256 key.
+    pub fn p256(public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
+        Self { publicKey: public_key, expiry, keyType: KeyType::P256, isSuperAdmin: super_admin }
     }
 
     /// The key hash.
