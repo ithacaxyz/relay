@@ -76,6 +76,11 @@ impl KeyType {
     pub fn is_secp256k1(&self) -> bool {
         matches!(self, Self::Secp256k1)
     }
+
+    /// Whether it is [`Self::WebAuthnP256`].
+    pub fn is_webauthn(&self) -> bool {
+        matches!(self, Self::WebAuthnP256)
+    }
 }
 
 impl From<Key> for PackedKey {
@@ -98,6 +103,16 @@ impl Key {
     /// Create a new key p256 key.
     pub fn p256(public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
         Self { publicKey: public_key, expiry, keyType: KeyType::P256, isSuperAdmin: super_admin }
+    }
+
+    /// Create a new key webauthn key.
+    pub fn webauthn(public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
+        Self {
+            publicKey: public_key,
+            expiry,
+            keyType: KeyType::WebAuthnP256,
+            isSuperAdmin: super_admin,
+        }
     }
 
     /// The key hash.

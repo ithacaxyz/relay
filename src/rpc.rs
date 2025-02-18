@@ -148,10 +148,15 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = if key_type.is_secp256k1() {
-            Key::secp256k1(mock_signer_address, U40::ZERO, true)
-        } else {
-            Key::p256(self.inner.p256_signer.public_key(), U40::ZERO, true)
+        let expiry = U40::ZERO;
+        let super_admin = true;
+        let key = match key_type {
+            KeyType::P256 => Key::p256(self.inner.p256_signer.public_key(), expiry, super_admin),
+            KeyType::WebAuthnP256 => {
+                Key::webauthn(self.inner.p256_signer.public_key(), expiry, super_admin)
+            }
+            KeyType::Secp256k1 => Key::secp256k1(mock_signer_address, expiry, super_admin),
+            _ => return Err(EstimateFeeError::UnsupportedKeyType.into()),
         };
 
         // mocking key storage for the eoa, and the balance for the mock signer
@@ -209,7 +214,7 @@ impl RelayApiServer for Relay {
         } else {
             self.inner
                 .p256_signer
-                .sign_typed_data(&payload, &domain)
+                .sign_typed_data(&payload, &domain, key_type.is_webauthn())
                 .await
                 .map_err(EstimateFeeError::InternalError)?
         };

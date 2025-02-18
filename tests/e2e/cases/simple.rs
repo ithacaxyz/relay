@@ -15,12 +15,17 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
     let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None).await?;
+    let expiry = U40::ZERO;
+    let super_admin = true;
 
-    for key_type in [KeyType::P256, KeyType::Secp256k1] {
-        let key = if key_type.is_secp256k1() {
-            Key::secp256k1(EOA_ADDRESS, Default::default(), true)
-        } else {
-            Key::p256(EOA_P256_SIGNER.public_key(), Default::default(), true)
+    for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
+        let key = match key_type {
+            KeyType::P256 => Key::p256(EOA_P256_SIGNER.public_key(), expiry, super_admin),
+            KeyType::WebAuthnP256 => {
+                Key::webauthn(EOA_P256_SIGNER.public_key(), expiry, super_admin)
+            }
+            KeyType::Secp256k1 => Key::secp256k1(EOA_ADDRESS, expiry, super_admin),
+            _ => unreachable!(),
         };
 
         let test_vector = vec![

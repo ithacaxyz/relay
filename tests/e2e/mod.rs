@@ -12,7 +12,7 @@ pub use types::*;
 
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{bytes, Address, Bytes, U256},
+    primitives::{bytes, Address, Bytes, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
@@ -21,7 +21,10 @@ use eyre::{Context, OptionExt, Result};
 use relay::{
     constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
-    types::{Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp, U40},
+    types::{
+        Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, UserOp, WebAuthnP256,
+        U40,
+    },
 };
 
 /// Executes all transactions from the test case. If it returns an error, ensures the relay task is
@@ -127,7 +130,10 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
     let signature = if key_type.is_secp256k1() {
         env.eoa_signer.sign_typed_data(&payload, &domain).await.wrap_err("Signing failed")?
     } else {
-        EOA_P256_SIGNER.sign_typed_data(&payload, &domain).await.wrap_err("Signing failed")?
+        EOA_P256_SIGNER
+            .sign_typed_data(&payload, &domain, key_type.is_webauthn())
+            .await
+            .wrap_err("Signing failed")?
     };
 
     op.signature = if nonce == 0 {

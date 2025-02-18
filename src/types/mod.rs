@@ -33,5 +33,8 @@ pub use token::*;
 mod call;
 pub use call::*;
 
+mod webauthn;
+pub use webauthn::*;
+
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;
