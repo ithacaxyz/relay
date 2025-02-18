@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy::{
     network::EthereumWallet,
-    primitives::{Address, B256},
+    primitives::Address,
     providers::{DynProvider, Provider, ProviderBuilder},
 };
 use clap::Parser;

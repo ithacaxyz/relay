@@ -70,20 +70,8 @@ pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
 ///    - Confirms UserOp success by checking nonce invalidation
 async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()> {
     let execution_data: Bytes = tx.calls.abi_encode().into();
-    let auth = if let Some(auth) = tx.auth {
-        let auth_struct = alloy::eips::eip7702::Authorization {
-            chain_id: U256::from(0),
-            address: env.delegation,
-            nonce: auth.nonce().unwrap_or(nonce as u64),
-        };
-        let auth_hash = auth_struct.signature_hash();
-
-        Some(auth_struct.into_signed(
-            env.eoa_signer.sign_hash(&auth_hash).await.wrap_err("Auth signing failed")?,
-        ))
-    } else {
-        None
-    };
+    let auth =
+        if let Some(auth) = tx.auth { Some(auth.sign(env, nonce as u64).await?) } else { None };
 
     let key_type = tx
         .key

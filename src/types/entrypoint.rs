@@ -14,7 +14,7 @@ use crate::error::CallError;
 use super::UserOp;
 
 /// The 4-byte selector returned by the entrypoint if there is no error during execution.
-const NO_ERROR: FixedBytes<4> = fixed_bytes!("00000000");
+pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("00000000");
 
 sol! {
     #[sol(rpc)]
@@ -124,7 +124,7 @@ impl<P: Provider> Entry<P> {
                     revert_data.as_deref().unwrap_or(&Bytes::default()),
                     false,
                 ) {
-                    if result.err != NO_ERROR {
+                    if result.err != ENTRYPOINT_NO_ERROR {
                         Err(CallError::OpRevert { revert_reason: result.err.into() })
                     } else {
                         Ok(result.gUsed)
@@ -150,7 +150,7 @@ impl<P: Provider> Entry<P> {
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        if ret.err != NO_ERROR {
+        if ret.err != ENTRYPOINT_NO_ERROR {
             Err(CallError::OpRevert { revert_reason: ret.err.into() })
         } else {
             Ok(())

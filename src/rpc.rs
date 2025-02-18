@@ -23,6 +23,7 @@ use alloy::{
     providers::{fillers::NonceManager, Provider},
     rpc::types::{state::AccountOverride, TransactionRequest},
     sol_types::{SolCall, SolValue},
+    transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
 use jsonrpsee::{
@@ -47,7 +48,7 @@ use crate::{
     signer::DynSigner,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, U40,
+        Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40,
     },
 };
 
@@ -401,6 +402,22 @@ impl RelayApiServer for Relay {
                 .await
                 .map_err(|err| SendActionError::InternalError(err.into()))?,
         );
+
+        // try eth_call before committing to send the actual transaction
+        provider
+            .call(&tx)
+            .await
+            .and_then(|res| {
+                EntryPoint::executeCall::abi_decode_returns(&res, true)
+                    .map_err(TransportErrorKind::custom)
+            })
+            .map_err(SendActionError::from)
+            .and_then(|result| {
+                if result.err != ENTRYPOINT_NO_ERROR {
+                    return Err(SendActionError::OpRevert { revert_reason: result.err.into() });
+                }
+                Ok(())
+            })?;
 
         Ok(provider
             .send_raw_transaction(
