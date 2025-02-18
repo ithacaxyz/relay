@@ -102,8 +102,7 @@ impl P256Signer {
         Ok(self
             .0
             .sign_prehash(digest)
-            .map(|s: p256::ecdsa::Signature| s.normalize_s().unwrap_or(s))
-            .unwrap())
+            .map(|s: p256::ecdsa::Signature| s.normalize_s().unwrap_or(s))?)
     }
 
     /// Returns a signature that the contract can validate.
