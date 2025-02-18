@@ -136,11 +136,7 @@ impl P256Signer {
         let digest = Sha256::digest(raw);
 
         // Sign raw data using p256 signing key
-        let signature = self
-            .0
-            .sign_prehash(&digest)
-            .map(|s: p256::ecdsa::Signature| s.normalize_s().unwrap_or(s))
-            .unwrap();
+        let signature = self.sign(&digest)?;
 
         let challenge_index =
             U256::from(client_data_json.find("\"challenge\":").expect("should exist"));
