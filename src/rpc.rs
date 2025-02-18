@@ -333,11 +333,7 @@ impl RelayApiServer for Relay {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
             }
 
-            let expected_nonce = self
-                .inner
-                .chains
-                .get(request.chain_id)
-                .unwrap()
+            let expected_nonce = provider
                 .get_transaction_count(request.op.eoa)
                 .await
                 .map_err(SendActionError::from)?;

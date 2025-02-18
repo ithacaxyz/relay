@@ -21,8 +21,7 @@ use std::{
 };
 use tower::{layer::layer_fn, ServiceBuilder};
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing::info;
 use url::Url;
 
 /// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
@@ -57,15 +56,6 @@ pub struct Args {
 impl Args {
     /// Run the relayer service.
     pub async fn run(self) -> eyre::Result<()> {
-        let _ = tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(
-                EnvFilter::builder()
-                    .with_default_directive(LevelFilter::INFO.into())
-                    .from_env_lossy(),
-            )
-            .try_init();
-
         // setup metrics
         let handle = build_exporter();
 
