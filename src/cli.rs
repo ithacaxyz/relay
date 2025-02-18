@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy::{
     network::EthereumWallet,
-    primitives::Address,
+    primitives::{Address, B256},
     providers::{DynProvider, Provider, ProviderBuilder},
 };
 use clap::Parser;
@@ -70,7 +70,7 @@ impl Args {
         let handle = build_exporter();
 
         // construct provider
-        let signer = DynSigner::load(&self.secret_key, None).await?;
+        let signer = DynSigner::load(&self.secret_key, &self.secret_key, None).await?;
         let signer_addr = signer.address();
 
         let providers: Vec<DynProvider> = self
@@ -81,7 +81,8 @@ impl Args {
             .collect();
 
         // construct quote signer
-        let quote_signer = DynSigner::load(&self.quote_secret_key, None).await?;
+        let quote_signer =
+            DynSigner::load(&self.quote_secret_key, &self.quote_secret_key, None).await?;
         let quote_signer_addr = quote_signer.address();
 
         // construct rpc module
@@ -92,7 +93,7 @@ impl Args {
         // todo: avoid all this darn cloning
         let rpc = Relay::new(
             Chains::new(providers.clone()).await?,
-            EthereumWallet::new(signer.0),
+            EthereumWallet::new(signer.transaction_signer()),
             quote_signer,
             self.quote_ttl,
             price_oracle,

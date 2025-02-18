@@ -212,6 +212,7 @@ mod tests {
 
         let signer = DynSigner::load(
             "0x44a8f44ef7307087c960f8bfcbd95f7a1c9a2f505d438d1750dc947cfedb4b4a",
+            "0x44a8f44ef7307087c960f8bfcbd95f7a1c9a2f505d438d1750dc947cfedb4b4a",
             None,
         )
         .await

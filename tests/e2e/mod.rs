@@ -17,7 +17,7 @@ use alloy::{
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
 };
-use eyre::{Context, Result};
+use eyre::{Context, OptionExt, Result};
 use relay::{
     constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
@@ -85,6 +85,13 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
         None
     };
 
+    let key_type = tx
+        .key
+        .as_ref()
+        .map(|k| k.keyType)
+        .filter(|k| (nonce == 0 && k.is_secp256k1()) || nonce > 0)
+        .unwrap_or(KeyType::Secp256k1);
+
     let quote = env
         .relay_endpoint
         .estimate_fee(
@@ -98,6 +105,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             },
             env.erc20,
             auth.as_ref().map(|auth| *auth.address()),
+            key_type,
         )
         .await;
 
@@ -128,6 +136,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
     let signature = env
         .eoa_signer
         .sign_typed_data(
+            key_type,
             &op.as_eip712(U256::ZERO).unwrap(),
             &entry.eip712_domain(op.is_multichain()).await.unwrap(),
         )
@@ -135,10 +144,15 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
         .wrap_err("Signing failed")?;
 
     op.signature = if nonce == 0 {
-        signature.as_bytes().into()
+        signature
     } else {
-        Key::secp256k1(env.eoa_signer.address(), U40::ZERO, true)
-            .encode_secp256k1_signature(signature)
+        Signature {
+            innerSignature: signature,
+            keyHash: tx.key.as_ref().ok_or_eyre("Key should be specified")?.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into()
     };
 
     let action = Action { op, chain_id: env.chain_id };

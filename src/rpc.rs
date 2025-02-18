@@ -46,8 +46,8 @@ use crate::{
     price::PriceOracle,
     signer::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
-        UserOp, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
+        Signature, SignedQuote, UserOp, U40,
     },
 };
 
@@ -65,6 +65,7 @@ pub trait RelayApi {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
+        key: KeyType,
     ) -> RpcResult<SignedQuote>;
 
     // todo: rewrite
@@ -131,6 +132,7 @@ impl RelayApiServer for Relay {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
+        key_type: KeyType,
     ) -> RpcResult<SignedQuote> {
         let provider = self
             .inner
@@ -143,7 +145,7 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = Key::secp256k1(mock_signer_address, U40::ZERO, true);
+        let key = Key::new(key_type, &self.inner.quote_signer, U40::ZERO, true);
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -187,10 +189,12 @@ impl RelayApiServer for Relay {
         };
 
         // sign userop
-        op.signature = key.encode_secp256k1_signature(
-            self.inner
+        op.signature = Signature {
+            innerSignature: self
+                .inner
                 .quote_signer
                 .sign_typed_data(
+                    key_type,
                     &op.as_eip712(nonce_salt)
                         .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
                     &entrypoint
@@ -199,8 +203,12 @@ impl RelayApiServer for Relay {
                         .map_err(EstimateFeeError::from)?,
                 )
                 .await
-                .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-        );
+                .map_err(EstimateFeeError::InternalError)?,
+            keyHash: key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(

@@ -11,39 +11,41 @@ use relay::types::{Call, IDelegation::authorizeCall, Key, KeyType};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    let test_vector = vec![
-        TxContext {
-            calls: vec![Call {
-                target: EOA_ADDRESS,
-                value: U256::ZERO,
-                data: authorizeCall {
-                    key: Key {
-                        expiry: Default::default(),
-                        keyType: KeyType::Secp256k1,
-                        isSuperAdmin: true,
-                        publicKey: EOA_ADDRESS.abi_encode().into(),
-                    },
-                }
-                .abi_encode()
-                .into(),
-            }],
-            expected: ExpectedOutcome::Pass,
-            auth: Some(AuthKind::Auth),
-        },
-        TxContext {
-            calls: vec![Call {
-                target: FAKE_ERC20,
-                value: U256::ZERO,
-                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+    let eoa_signer = eoa_signer().await;
+
+    for key_type in [KeyType::Secp256k1] {
+        let key = Key::new(key_type, &eoa_signer, Default::default(), true);
+        let test_vector = vec![
+            TxContext {
+                calls: vec![Call {
+                    target: EOA_ADDRESS,
+                    value: U256::ZERO,
+                    data: authorizeCall { key: key.clone() }.abi_encode().into(),
+                }],
+                expected: ExpectedOutcome::Pass,
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                calls: vec![Call {
+                    target: FAKE_ERC20,
+                    value: U256::ZERO,
+                    data: MockErc20::transferCall {
+                        recipient: Address::ZERO,
+                        amount: U256::from(10),
+                    }
                     .abi_encode()
                     .into(),
-            }],
-            expected: ExpectedOutcome::Pass,
-            auth: None,
-        },
-    ];
+                }],
+                expected: ExpectedOutcome::Pass,
+                key: Some(key),
+                ..Default::default()
+            },
+        ];
 
-    run_e2e(test_vector).await
+        run_e2e(test_vector).await?;
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -65,6 +67,7 @@ async fn invalid_auth_nonce() -> Result<()> {
         }],
         expected: ExpectedOutcome::FailSend,
         auth: Some(AuthKind::AuthWithNonce(123)),
+        ..Default::default()
     }];
 
     run_e2e(test_vector).await

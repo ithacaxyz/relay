@@ -1,17 +1,18 @@
 use alloy::{
-    primitives::{
-        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256,
-        PrimitiveSignature, B256, U256,
-    },
+    primitives::{bytes::Buf, keccak256, map::B256Map, FixedBytes, Keccak256, B256, U256},
     sol,
     sol_types::SolValue,
 };
+use serde::{Deserialize, Serialize};
+
+use crate::signer::DynSigner;
 
 use super::U40;
 
 sol! {
     /// The type of key.
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "lowercase")]
     enum KeyType {
         /// A P256 key.
         P256,
@@ -22,6 +23,7 @@ sol! {
     }
 
     /// A key that can be used to authorize call.
+    #[derive(Debug)]
     struct Key {
         /// Unix timestamp at which the key expires (0 = never).
         uint40 expiry;
@@ -69,6 +71,13 @@ sol! {
     }
 }
 
+impl KeyType {
+    /// Whether it is [`Self::Secp256k1`].
+    pub fn is_secp256k1(&self) -> bool {
+        matches!(self, Self::Secp256k1)
+    }
+}
+
 impl From<Key> for PackedKey {
     fn from(Key { publicKey, expiry, keyType, isSuperAdmin }: Key) -> Self {
         Self { publicKey, expiry, keyType, isSuperAdmin }
@@ -76,27 +85,18 @@ impl From<Key> for PackedKey {
 }
 
 impl Key {
-    /// Create a new key secp256k1 key.
-    pub fn secp256k1(address: Address, expiry: U40, super_admin: bool) -> Self {
+    /// Create a new [`Key`].
+    pub fn new(key_type: KeyType, signer: &DynSigner, expiry: U40, super_admin: bool) -> Self {
         Self {
-            publicKey: address.abi_encode().into(),
+            publicKey: match key_type {
+                KeyType::P256 | KeyType::WebAuthnP256 => signer.p256_public_key(),
+                KeyType::Secp256k1 => signer.address().abi_encode().into(),
+                KeyType::__Invalid => unreachable!(),
+            },
             expiry,
-            keyType: KeyType::Secp256k1,
+            keyType: key_type,
             isSuperAdmin: super_admin,
         }
-    }
-
-    /// Encode a [`PrimitiveSignature`].
-    pub fn encode_secp256k1_signature(&self, signature: PrimitiveSignature) -> Bytes {
-        assert!(self.keyType == KeyType::Secp256k1);
-
-        Signature {
-            innerSignature: signature.as_bytes().into(),
-            keyHash: self.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into()
     }
 
     /// The key hash.
