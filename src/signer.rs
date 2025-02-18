@@ -47,8 +47,8 @@ impl DynSigner {
         &self,
         payload: &T,
         domain: &Eip712Domain,
-    ) -> eyre::Result<Bytes> {
-        Ok(self.sign_hash(&payload.eip712_signing_hash(domain)).await?.as_bytes().into())
+    ) -> eyre::Result<PrimitiveSignature> {
+        Ok(self.sign_hash(&payload.eip712_signing_hash(domain)).await?)
     }
 
     /// Returns the signer's Ethereum Address.

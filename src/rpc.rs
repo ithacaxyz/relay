@@ -211,6 +211,8 @@ impl RelayApiServer for Relay {
                 .sign_typed_data(&payload, &domain)
                 .await
                 .map_err(EstimateFeeError::InternalError)?
+                .as_bytes()
+                .into()
         } else {
             self.inner
                 .p256_signer
