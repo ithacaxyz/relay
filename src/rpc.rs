@@ -10,7 +10,10 @@
 
 use alloy::{
     eips::{
-        eip7702::constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+        eip7702::{
+            constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+            SignedAuthorization,
+        },
         Encodable2718,
     },
     network::{
@@ -57,7 +60,12 @@ pub trait RelayApi {
 
     /// Estimates the fee a user would have to pay for the given action in the given fee token.
     #[method(name = "estimateFee", aliases = ["wallet_estimateFee"])]
-    async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote>;
+    async fn estimate_fee(
+        &self,
+        request: PartialAction,
+        token: Address,
+        authorization_address: Option<Address>,
+    ) -> RpcResult<SignedQuote>;
 
     // todo: rewrite
     /// Send a sponsored transaction.
@@ -75,7 +83,12 @@ pub trait RelayApi {
     /// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
     /// [eip-1559]: https://eips.ethereum.org/EIPS/eip-1559
     #[method(name = "sendAction", aliases = ["wallet_sendAction"])]
-    async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash>;
+    async fn send_action(
+        &self,
+        request: Action,
+        quote: SignedQuote,
+        authorization: Option<SignedAuthorization>,
+    ) -> RpcResult<TxHash>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -113,7 +126,12 @@ impl RelayApiServer for Relay {
         Ok(self.inner.fee_tokens.clone())
     }
 
-    async fn estimate_fee(&self, request: PartialAction, token: Address) -> RpcResult<SignedQuote> {
+    async fn estimate_fee(
+        &self,
+        request: PartialAction,
+        token: Address,
+        authorization_address: Option<Address>,
+    ) -> RpcResult<SignedQuote> {
         let provider = self
             .inner
             .chains
@@ -139,7 +157,7 @@ impl RelayApiServer for Relay {
                 AccountOverride {
                     state_diff: Some(key.storage_slots()),
                     // we manually etch the 7702 designator since we do not have a signed auth item
-                    code: request.auth.map(|addr| {
+                    code: authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     }),
                     ..Default::default()
@@ -198,7 +216,7 @@ impl RelayApiServer for Relay {
         // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
         // point it is not possible to compute the gas refund, so it is an overestimate, as we also
         // need to charge for the account being presumed empty.
-        if request.auth.is_some() {
+        if authorization_address.is_some() {
             gas_estimate += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
 
@@ -241,7 +259,12 @@ impl RelayApiServer for Relay {
         Ok(quote.into_signed(sig))
     }
 
-    async fn send_action(&self, request: Action, quote: SignedQuote) -> RpcResult<TxHash> {
+    async fn send_action(
+        &self,
+        request: Action,
+        quote: SignedQuote,
+        authorization: Option<SignedAuthorization>,
+    ) -> RpcResult<TxHash> {
         let provider = self
             .inner
             .chains
@@ -263,7 +286,7 @@ impl RelayApiServer for Relay {
             request.op.eoa,
             AccountOverride {
                 // we manually etch the 7702 designator since we do not have a signed auth item
-                code: request.auth.as_ref().map(|auth| {
+                code: authorization.as_ref().map(|auth| {
                     Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
                 }),
                 ..Default::default()
@@ -278,7 +301,7 @@ impl RelayApiServer for Relay {
         // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
         let mut tx_gas =
             TX_GAS_BUFFER + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
-        if request.auth.is_some() {
+        if authorization.is_some() {
             tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
 
@@ -295,7 +318,7 @@ impl RelayApiServer for Relay {
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 
-        if let Some(auth) = request.auth {
+        if let Some(auth) = authorization {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
