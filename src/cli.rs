@@ -4,8 +4,8 @@ use crate::{
     metrics::{self, build_exporter, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
-    signer::{DynSigner, P256Signer},
-    types::{CoinKind, CoinPair, FeeTokens},
+    signer::DynSigner,
+    types::{CoinKind, CoinPair, FeeTokens, P256Signer},
 };
 use alloy::{
     network::EthereumWallet,

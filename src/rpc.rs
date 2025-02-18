@@ -45,10 +45,9 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
-    signer::{DynSigner, P256Signer},
+    signer::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, P256Signer, PartialAction, Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40
     },
 };
 
