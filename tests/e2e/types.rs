@@ -1,5 +1,11 @@
-use alloy::sol;
-use relay::types::Call;
+use super::environment::Environment;
+use alloy::{
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, U256},
+    sol,
+};
+use eyre::WrapErr;
+use relay::{signer::DynSigner, types::Call};
 
 /// Represents the expected outcome of a test case execution
 #[derive(Debug)]
@@ -39,17 +45,52 @@ impl ExpectedOutcome {
 pub enum AuthKind {
     /// Use sequential nonce for authorization
     Auth,
-    /// Use specific nonce value for authorization
-    AuthWithNonce(u64),
+    /// Use specific parameters for authorization
+    ModifiedAuth { signer: Option<DynSigner>, nonce: Option<u64> },
 }
 
 impl AuthKind {
-    /// Return nonce if [`AuthKind::AuthWithNonce`], otherwise `None`
+    /// Return [`AuthKind::ModifiedAuth`] with a specified nonce.
+    pub fn modified_nonce(nonce: u64) -> Self {
+        Self::ModifiedAuth { signer: None, nonce: Some(nonce) }
+    }
+
+    /// Return [`AuthKind::ModifiedAuth`] with a specified signer.
+    pub fn modified_signer(signer: DynSigner) -> Self {
+        Self::ModifiedAuth { signer: Some(signer), nonce: None }
+    }
+
+    /// Return nonce if [`AuthKind::ModifiedAuth`] has it, otherwise `None`
     pub fn nonce(&self) -> Option<u64> {
         match self {
             AuthKind::Auth => None,
-            AuthKind::AuthWithNonce(nonce) => Some(*nonce),
+            AuthKind::ModifiedAuth { signer, nonce } => *nonce,
         }
+    }
+
+    /// Return signer if [`AuthKind::ModifiedAuth`] has it, otherwise `None`
+    pub fn signer(&self) -> Option<&DynSigner> {
+        match self {
+            AuthKind::Auth => None,
+            AuthKind::ModifiedAuth { signer, nonce } => signer.as_ref(),
+        }
+    }
+
+    pub async fn sign(&self, env: &Environment, nonce: u64) -> eyre::Result<SignedAuthorization> {
+        let auth_struct = alloy::eips::eip7702::Authorization {
+            chain_id: U256::from(0),
+            address: env.delegation,
+            nonce: self.nonce().unwrap_or(nonce),
+        };
+        let auth_hash = auth_struct.signature_hash();
+
+        Ok(auth_struct.into_signed(
+            self.signer()
+                .unwrap_or(&env.eoa_signer)
+                .sign_hash(&auth_hash)
+                .await
+                .wrap_err("Auth signing failed")?,
+        ))
     }
 }
 

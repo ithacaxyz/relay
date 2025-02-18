@@ -18,7 +18,7 @@ pub enum EstimateFeeError {
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
     /// The userop reverted when estimating gas.
-    #[error("op reverted")]
+    #[error("op reverted: {revert_reason}")]
     OpRevert {
         /// The error code returned by the entrypoint.
         revert_reason: Bytes,
@@ -105,6 +105,12 @@ pub enum SendActionError {
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
+    /// The userop reverted when trying transaction.
+    #[error("op reverted: {revert_reason}")]
+    OpRevert {
+        /// The error code returned by the entrypoint.
+        revert_reason: Bytes,
+    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
@@ -140,7 +146,7 @@ pub enum PriceOracleError {
 #[derive(Debug, thiserror::Error)]
 pub enum CallError {
     /// The userop reverted when estimating gas.
-    #[error("op reverted")]
+    #[error("op reverted: {revert_reason}")]
     OpRevert {
         /// The error code returned by the entrypoint.
         revert_reason: Bytes,
