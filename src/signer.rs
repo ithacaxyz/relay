@@ -93,11 +93,12 @@ impl P256Signer {
         Ok(self.sign(digest.as_slice())?.to_bytes().to_vec().into())
     }
 
-    /// Returns the signer's k256 public key in [`Bytes`].
+    /// Returns the signer's p256 public key in [`Bytes`].
     pub fn public_key(&self) -> Bytes {
         self.0.verifying_key().to_encoded_point(false).to_bytes()[1..].to_vec().into()
     }
 
+    /// Signs the digest with the p256 key.
     fn sign(&self, digest: &[u8]) -> eyre::Result<p256::ecdsa::Signature> {
         Ok(self
             .0
