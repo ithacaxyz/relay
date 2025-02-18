@@ -18,6 +18,7 @@ use std::{
 };
 use tower::Service;
 use tower_http::BoxError;
+use tracing::warn;
 
 /// Builds a Prometheus exporter, returning a handle.
 ///
@@ -38,7 +39,9 @@ pub fn build_exporter() -> PrometheusHandle {
         }
     });
 
-    metrics::set_global_recorder(recorder).expect("could not set metrics recorder");
+    if let Err(err) = metrics::set_global_recorder(recorder) {
+        warn!("Could not set metrics recorder: {err}");
+    }
 
     handle
 }

@@ -57,14 +57,14 @@ pub struct Args {
 impl Args {
     /// Run the relayer service.
     pub async fn run(self) -> eyre::Result<()> {
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(fmt::layer())
             .with(
                 EnvFilter::builder()
                     .with_default_directive(LevelFilter::INFO.into())
                     .from_env_lossy(),
             )
-            .init();
+            .try_init();
 
         // setup metrics
         let handle = build_exporter();

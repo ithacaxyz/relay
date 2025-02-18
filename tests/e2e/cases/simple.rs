@@ -16,7 +16,7 @@ use relay::{
 async fn auth_then_erc20_transfer() -> Result<()> {
     let eoa_signer = eoa_signer().await;
 
-    for key_type in [KeyType::Secp256k1] {
+    for key_type in [KeyType::P256, KeyType::Secp256k1] {
         let key = Key::new(key_type, &eoa_signer, Default::default(), true);
         let test_vector = vec![
             TxContext {
