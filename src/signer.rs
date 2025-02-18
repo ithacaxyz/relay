@@ -29,7 +29,7 @@ impl fmt::Debug for DynSigner {
 }
 
 impl DynSigner {
-    /// Load a private key or AWS signer from environment variables
+    /// Load a private key or AWS signer from environment variables.
     pub async fn load(key: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
         if let Ok(wallet) = PrivateKeySigner::from_str(key) {
             return Ok(Self(Arc::new(wallet)));
