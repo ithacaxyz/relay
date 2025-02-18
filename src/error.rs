@@ -134,16 +134,6 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     }
 }
 
-impl From<CallError> for SendActionError {
-    fn from(err: CallError) -> Self {
-        match err {
-            CallError::OpRevert { revert_reason } => Self::OpRevert { revert_reason },
-            CallError::RpcError(err) => Self::RpcError(err),
-            CallError::AbiError(err) => Self::InternalError(err.into()),
-        }
-    }
-}
-
 /// Price oracle related errors
 #[derive(Debug, thiserror::Error)]
 pub enum PriceOracleError {
