@@ -47,7 +47,8 @@ use crate::{
     price::PriceOracle,
     signer::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, P256Signer, PartialAction, Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40
+        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, P256Signer, PartialAction,
+        Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40,
     },
 };
 

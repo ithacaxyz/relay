@@ -5,10 +5,7 @@ use alloy::{
     dyn_abi::Eip712Domain,
     network::{FullSigner, TxSigner},
     primitives::{Address, PrimitiveSignature},
-    signers::{
-        aws::AwsSigner,
-        local::PrivateKeySigner,
-    },
+    signers::{aws::AwsSigner, local::PrivateKeySigner},
     sol_types::SolStruct,
 };
 use aws_config::BehaviorVersion;

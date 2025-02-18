@@ -1,3 +1,5 @@
+//! P256 signer type with webauthn capabilities.
+
 use crate::types::WebAuthnP256;
 use alloy::{
     dyn_abi::Eip712Domain,
