@@ -45,7 +45,7 @@ use crate::{
     signer::DynSigner,
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
-        UserOp, NO_ERROR, U40,
+        UserOp, ENTRYPOINT_NO_ERROR, U40,
     },
 };
 
@@ -381,9 +381,9 @@ impl RelayApiServer for Relay {
                     .map_err(TransportErrorKind::custom)
             })
             .map_err(SendActionError::from)
-            .and_then(|decoded| {
-                if decoded.err != NO_ERROR {
-                    return Err(SendActionError::OpRevert { revert_reason: decoded.err.into() });
+            .and_then(|result| {
+                if result.err != ENTRYPOINT_NO_ERROR {
+                    return Err(SendActionError::OpRevert { revert_reason: result.err.into() });
                 }
                 Ok(())
             })?;
