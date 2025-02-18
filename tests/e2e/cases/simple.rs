@@ -89,7 +89,7 @@ async fn invalid_auth_signature() -> Result<()> {
             .into(),
         }],
         expected: ExpectedOutcome::FailSend,
-        // Signing with an unrelated key should fail the send_Action when doing an ethCall
+        // Signing with an unrelated key should fail during sendAction when calling eth_call
         auth: Some(AuthKind::modified_signer(
             DynSigner::load(
                 "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
