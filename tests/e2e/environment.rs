@@ -59,15 +59,16 @@ impl Environment {
         let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
 
         // Load signers.
-        let eoa_signer = eoa_signer().await;
-        let relay_signer =
-            DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), &RELAY_PRIVATE_KEY.to_string(), None)
-                .await
-                .wrap_err("Relay signer load failed")?;
+        let relay_signer = DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), None)
+            .await
+            .wrap_err("Relay signer load failed")?;
+        let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None)
+            .await
+            .wrap_err("EOA signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(relay_signer.transaction_signer().clone()))
+            .wallet(EthereumWallet::from(relay_signer.0.clone()))
             .on_http(endpoint.clone());
 
         // Deploy contracts.

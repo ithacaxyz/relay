@@ -121,15 +121,14 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
     };
 
     let entry = Entry::new(env.entrypoint, env.provider.root());
-    let signature = env
-        .eoa_signer
-        .sign_typed_data(
-            key_type,
-            &op.as_eip712(U256::ZERO).unwrap(),
-            &entry.eip712_domain(op.is_multichain()).await.unwrap(),
-        )
-        .await
-        .wrap_err("Signing failed")?;
+
+    let payload = op.as_eip712(U256::ZERO)?;
+    let domain = entry.eip712_domain(op.is_multichain()).await?;
+    let signature = if key_type.is_secp256k1() {
+        env.eoa_signer.sign_typed_data(&payload, &domain).await.wrap_err("Signing failed")?
+    } else {
+        EOA_P256_SIGNER.sign_typed_data(&payload, &domain).await.wrap_err("Signing failed")?
+    };
 
     op.signature = if nonce == 0 {
         signature

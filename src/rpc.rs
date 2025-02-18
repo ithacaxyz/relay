@@ -45,7 +45,7 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
-    signer::DynSigner,
+    signer::{DynSigner, P256Signer},
     types::{
         Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
         Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40,
@@ -108,6 +108,7 @@ impl Relay {
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
+        p256_signer: P256Signer,
     ) -> Self {
         let inner = RelayInner {
             chains,
@@ -117,6 +118,7 @@ impl Relay {
             quote_signer,
             quote_ttl,
             price_oracle,
+            p256_signer,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -146,7 +148,16 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = Key::new(key_type, &self.inner.quote_signer, U40::ZERO, true);
+        let key = Key::new(
+            key_type,
+            if key_type.is_secp256k1() {
+                mock_signer_address.abi_encode().into()
+            } else {
+                self.inner.p256_signer.public_key()
+            },
+            U40::ZERO,
+            true,
+        );
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -190,26 +201,28 @@ impl RelayApiServer for Relay {
         };
 
         // sign userop
-        op.signature = Signature {
-            innerSignature: self
-                .inner
+        let payload =
+            op.as_eip712(nonce_salt).map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+        let domain =
+            entrypoint.eip712_domain(op.is_multichain()).await.map_err(EstimateFeeError::from)?;
+        let signature = if key_type.is_secp256k1() {
+            self.inner
                 .quote_signer
-                .sign_typed_data(
-                    key_type,
-                    &op.as_eip712(nonce_salt)
-                        .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-                    &entrypoint
-                        .eip712_domain(op.is_multichain())
-                        .await
-                        .map_err(EstimateFeeError::from)?,
-                )
+                .sign_typed_data(&payload, &domain)
                 .await
-                .map_err(EstimateFeeError::InternalError)?,
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+                .map_err(EstimateFeeError::InternalError)?
+        } else {
+            self.inner
+                .p256_signer
+                .sign_typed_data(&payload, &domain)
+                .await
+                .map_err(EstimateFeeError::InternalError)?
+        };
+
+        op.signature =
+            Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
+                .abi_encode_packed()
+                .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
@@ -446,4 +459,6 @@ struct RelayInner {
     quote_ttl: Duration,
     /// Price oracle.
     price_oracle: PriceOracle,
+    /// The P256 signer used to estimate fees.
+    p256_signer: P256Signer,
 }

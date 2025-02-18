@@ -14,10 +14,16 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    let eoa_signer = eoa_signer().await;
+    let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None).await?;
 
     for key_type in [KeyType::P256, KeyType::Secp256k1] {
-        let key = Key::new(key_type, &eoa_signer, Default::default(), true);
+        let public_key = if key_type.is_secp256k1() {
+            eoa_signer.address().abi_encode().into()
+        } else {
+            EOA_P256_SIGNER.public_key()
+        };
+
+        let key = Key::new(key_type, public_key, Default::default(), true);
         let test_vector = vec![
             TxContext {
                 calls: vec![Call {
@@ -97,7 +103,6 @@ async fn invalid_auth_signature() -> Result<()> {
         // Signing with an unrelated key should fail during sendAction when calling eth_call
         auth: Some(AuthKind::modified_signer(
             DynSigner::load(
-                "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
                 "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
                 None,
             )

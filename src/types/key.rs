@@ -1,11 +1,9 @@
 use alloy::{
-    primitives::{bytes::Buf, keccak256, map::B256Map, FixedBytes, Keccak256, B256, U256},
+    primitives::{bytes::Buf, keccak256, map::B256Map, Bytes, FixedBytes, Keccak256, B256, U256},
     sol,
     sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::signer::DynSigner;
 
 use super::U40;
 
@@ -86,13 +84,9 @@ impl From<Key> for PackedKey {
 
 impl Key {
     /// Create a new [`Key`].
-    pub fn new(key_type: KeyType, signer: &DynSigner, expiry: U40, super_admin: bool) -> Self {
+    pub fn new(key_type: KeyType, public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
         Self {
-            publicKey: match key_type {
-                KeyType::P256 | KeyType::WebAuthnP256 => signer.p256_public_key(),
-                KeyType::Secp256k1 => signer.address().abi_encode().into(),
-                KeyType::__Invalid => unreachable!(),
-            },
+            publicKey: public_key,
             expiry,
             keyType: key_type,
             isSuperAdmin: super_admin,
