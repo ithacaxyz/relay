@@ -1,4 +1,4 @@
-//! P256 signer type with webauthn capabilities.
+//! P256 signer type with webauthn capabilities used for gas estimation and testing.
 
 use crate::types::WebAuthnP256;
 use alloy::{
