@@ -54,7 +54,7 @@ pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
     result
 }
 
-/// Processes a single transaction, returning an error on failure.
+/// Processes a single transaction, returning error on a unexpected failure.
 ///
 /// The process follows these steps:
 /// 1. Obtains a valid authorization (if required), signed quote and action request from
