@@ -392,15 +392,6 @@ impl RelayApiServer for Relay {
             return Err(SendActionError::QuoteExpired.into());
         }
 
-        // broadcast the tx
-        tx.set_nonce(
-            self.inner
-                .nonce_manager
-                .get_next_nonce(&provider, tx_signer_address)
-                .await
-                .map_err(|err| SendActionError::InternalError(err.into()))?,
-        );
-
         // try eth_call before committing to send the actual transaction
         provider
             .call(&tx)
@@ -417,6 +408,14 @@ impl RelayApiServer for Relay {
                 Ok(())
             })?;
 
+        // broadcast the tx
+        tx.set_nonce(
+            self.inner
+                .nonce_manager
+                .get_next_nonce(&provider, tx_signer_address)
+                .await
+                .map_err(|err| SendActionError::InternalError(err.into()))?,
+        );
         Ok(provider
             .send_raw_transaction(
                 &tx.build(&self.inner.tx_signer)
