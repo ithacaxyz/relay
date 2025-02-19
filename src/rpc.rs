@@ -320,7 +320,7 @@ impl RelayApiServer for Relay {
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 
-        // check that that authorization item matches whats in the quote
+        // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
             return Err(SendActionError::InvalidAuthItem {
                 expected: quote.ty().authorization_address,
