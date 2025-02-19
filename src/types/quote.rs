@@ -97,6 +97,10 @@ pub struct Quote {
     /// This is a UNIX timestamp in seconds.
     #[serde(with = "crate::serde::timestamp")]
     pub ttl: SystemTime,
+    /// An optional unsigned authorization item.
+    ///
+    /// The account in `op.eoa` will be delegated to this address.
+    pub authorization_address: Option<Address>,
 }
 
 impl Quote {
@@ -119,6 +123,9 @@ impl Quote {
                 .as_secs()
                 .to_be_bytes(),
         );
+        if let Some(address) = self.authorization_address {
+            hasher.update(address);
+        }
         hasher.finalize()
     }
 }

@@ -8,6 +8,7 @@ use alloy::{
 };
 use eyre::Result;
 use relay::{
+    error::SendActionError,
     signer::DynSigner,
     types::{Call, IDelegation::authorizeCall, Key, KeyType},
 };
@@ -102,4 +103,38 @@ async fn invalid_auth_signature() -> Result<()> {
     }];
 
     run_e2e(test_vector).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_auth_quote_check() -> Result<()> {
+    let tx = TxContext {
+        calls: vec![Call {
+            target: EOA_ADDRESS,
+            value: U256::ZERO,
+            data: authorizeCall {
+                key: Key {
+                    expiry: Default::default(),
+                    keyType: KeyType::Secp256k1,
+                    isSuperAdmin: true,
+                    publicKey: EOA_ADDRESS.abi_encode().into(),
+                },
+            }
+            .abi_encode()
+            .into(),
+        }],
+        expected: ExpectedOutcome::Pass,
+        auth: Some(AuthKind::Auth),
+    };
+
+    let env = Environment::setup().await?;
+
+    let ActionRequest { action, mut authorization, quote } =
+        prepare_action_request(0, &tx, &env).await?.expect("should not fail");
+
+    // If the quote authorization item is different than the one passed to the action, fail.
+    assert!(quote.ty().authorization_address.is_some());
+    authorization = None;
+    assert!(env.relay_endpoint.send_action(action, quote, authorization).await.is_err());
+
+    Ok(())
 }

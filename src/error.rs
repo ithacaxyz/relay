@@ -83,6 +83,14 @@ pub enum SendActionError {
     /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),
+    /// The quote was signed for a different authorization item.
+    #[error("invalid authorization item, expected {expected:?}, got {got:?}")]
+    InvalidAuthItem {
+        /// The expected item.
+        expected: Option<Address>,
+        /// The item in the request.
+        got: Option<Address>,
+    },
     /// The payment amount in the userop did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
     InvalidFeeAmount {

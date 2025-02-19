@@ -249,6 +249,7 @@ impl RelayApiServer for Relay {
             ttl: SystemTime::now()
                 .checked_add(self.inner.quote_ttl)
                 .expect("should never overflow"),
+            authorization_address,
         };
         let sig = self
             .inner
@@ -318,6 +319,15 @@ impl RelayApiServer for Relay {
             .gas_limit(tx_gas)
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
+
+        // check that that authorization item matches whats in the quote
+        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
+            return Err(SendActionError::InvalidAuthItem {
+                expected: quote.ty().authorization_address,
+                got: authorization.map(|auth| auth.address),
+            }
+            .into());
+        }
 
         if let Some(auth) = authorization {
             // todo: persist auth
