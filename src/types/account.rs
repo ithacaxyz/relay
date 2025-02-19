@@ -1,6 +1,6 @@
 use Delegation::DelegationInstance;
 use alloy::{
-    primitives::{Address, U256},
+    primitives::Address,
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
@@ -12,9 +12,6 @@ sol! {
     #[sol(rpc)]
     contract Delegation {
         address public constant ENTRY_POINT;
-
-        /// Returns the nonce salt.
-        function nonceSalt() public view virtual returns (uint256);
     }
 }
 
@@ -57,25 +54,5 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(entrypoint.ENTRY_POINT)
-    }
-
-    /// Get the nonce salt for this account.
-    pub async fn nonce_salt(&self) -> TransportResult<U256> {
-        debug!(eoa = %self.delegation.address(), "Fetching nonce salt");
-        let nonce_salt = self
-            .delegation
-            .nonceSalt()
-            .call()
-            .overrides(&self.overrides)
-            .await
-            .map_err(TransportErrorKind::custom)?
-            ._0;
-        debug!(
-            eoa = %self.delegation.address(),
-            "Fetched nonce salt {}",
-            nonce_salt
-        );
-
-        Ok(nonce_salt)
     }
 }

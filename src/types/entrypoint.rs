@@ -40,6 +40,16 @@ sol! {
         /// An error selector of 0 means the call did not revert.
         function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
 
+        /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
+        ///
+        /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
+        /// Otherwise, it means `nonce` might still be able to be used.
+        function nonceStatus(address eoa, uint256 nonce)
+            public
+            view
+            virtual
+            returns (uint64 seq, bytes4 err);
+
         /// Returns the EIP712 domain of the entrypoint.
         ///
         /// See: https://eips.ethereum.org/EIPS/eip-5267
@@ -84,27 +94,6 @@ impl<P: Provider> Entry<P> {
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
-    }
-
-    /// Get the [`Eip712Domain`] for this entrypoint.
-    ///
-    /// If `multichain` is `true`, then the chain ID is omitted from the domain.
-    pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
-        let domain = self
-            .entrypoint
-            .eip712Domain()
-            .call()
-            .overrides(&self.overrides)
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
-        Ok(Eip712Domain::new(
-            Some(domain.name.into()),
-            Some(domain.version.into()),
-            (!multichain).then_some(domain.chainId),
-            Some(domain.verifyingContract),
-            None,
-        ))
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
@@ -155,5 +144,51 @@ impl<P: Provider> Entry<P> {
         } else {
             Ok(())
         }
+    }
+
+    /// Get status of the given nonce.
+    ///
+    /// Returns the current sequence for the sequence key in the given nonce, as well as the status
+    /// of the call.
+    ///
+    /// If the status is not equal to `ENTRYPOINT_NO_ERROR`, it means that the call failed.
+    ///
+    /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
+    /// Otherwise, it means `nonce` might still be able to be used.
+    pub async fn nonce_status(
+        &self,
+        account: Address,
+        nonce: U256,
+    ) -> TransportResult<(u64, FixedBytes<4>)> {
+        let status = self
+            .entrypoint
+            .nonceStatus(account, nonce)
+            .call()
+            .overrides(&self.overrides)
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok((status.seq, status.err))
+    }
+
+    /// Get the [`Eip712Domain`] for this entrypoint.
+    ///
+    /// If `multichain` is `true`, then the chain ID is omitted from the domain.
+    pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
+        let domain = self
+            .entrypoint
+            .eip712Domain()
+            .call()
+            .overrides(&self.overrides)
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok(Eip712Domain::new(
+            Some(domain.name.into()),
+            Some(domain.version.into()),
+            (!multichain).then_some(domain.chainId),
+            Some(domain.verifyingContract),
+            None,
+        ))
     }
 }

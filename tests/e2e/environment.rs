@@ -6,7 +6,7 @@ use alloy::{
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256, address},
-    providers::{Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
+    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
     rpc::types::TransactionRequest,
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
@@ -33,7 +33,7 @@ use tokio::time::sleep;
 
 pub struct Environment {
     pub _anvil: AnvilInstance,
-    pub provider: Box<dyn Provider>,
+    pub provider: DynProvider,
     pub eoa_signer: DynSigner,
     pub entrypoint: Address,
     pub delegation: Address,
@@ -148,7 +148,7 @@ impl Environment {
 
         Ok(Self {
             _anvil: anvil,
-            provider: Box::new(provider),
+            provider: provider.erased(),
             eoa_signer,
             entrypoint,
             delegation,

@@ -173,9 +173,7 @@ impl RelayApiServer for Relay {
         // load account and entrypoint
         let account =
             Account::new(request.op.eoa, provider.clone()).with_overrides(overrides.clone());
-        let (entrypoint_address, nonce_salt) =
-            futures_util::try_join!(account.entrypoint(), account.nonce_salt())
-                .map_err(EstimateFeeError::from)?;
+        let entrypoint_address = account.entrypoint().await.map_err(EstimateFeeError::from)?;
         let entrypoint =
             Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
 
@@ -194,8 +192,7 @@ impl RelayApiServer for Relay {
         // sign userop
         let signature = key
             .sign_typed_data(
-                &op.as_eip712(nonce_salt)
-                    .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                &op.as_eip712().map_err(|err| EstimateFeeError::InternalError(err.into()))?,
                 &entrypoint
                     .eip712_domain(op.is_multichain())
                     .await

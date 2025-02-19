@@ -17,6 +17,7 @@ use alloy::{
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
+    uint,
 };
 use eyre::{Context, OptionExt, Result};
 use relay::{
@@ -24,8 +25,8 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, SignedQuote, U40,
-        UserOp, WebAuthnP256,
+        Action, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, PartialAction, PartialUserOp,
+        Signature, SignedQuote, U40, UserOp, WebAuthnP256,
     },
 };
 
@@ -71,6 +72,8 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
         return Ok(());
     };
 
+    let eoa = action.op.eoa;
+    let op_nonce = action.op.nonce;
     match env.relay_endpoint.send_action(action, quote, authorization.clone()).await {
         Ok(tx_hash) => {
             if tx.expected.failed_send() {
@@ -91,7 +94,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
                     ));
                 }
             } else if !tx.expected.reverted_tx() {
-                return Err(eyre::eyre!("Transaction failed for nonce {nonce}: {receipt:?}"));
+                return Err(eyre::eyre!("Transaction failed for nonce {nonce}: {receipt:#?}"));
             }
 
             if let Some(auth) = authorization {
@@ -103,11 +106,12 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             }
 
             // UserOp has succeeded if the nonce has been invalidated.
-            let nonce_invalidated = receipt.inner.logs().iter().any(|log| {
-                log.topic0()
-                    .is_some_and(|topic| topic == &Delegation::NonceInvalidated::SIGNATURE_HASH)
-            });
-            if nonce_invalidated {
+            let (seq, err) = Entry::new(env.entrypoint, env.provider.clone())
+                .nonce_status(eoa, op_nonce)
+                .await?;
+            let nonce_invalidated = seq > (U256::from(op_nonce >> 192).to());
+            let op_success = err == ENTRYPOINT_NO_ERROR;
+            if nonce_invalidated && op_success {
                 if tx.expected.failed_user_op() {
                     return Err(eyre::eyre!(
                         "UserOp nonce {nonce} passed when it should have failed."
@@ -210,8 +214,7 @@ pub async fn prepare_action_request(
     };
 
     let entry = Entry::new(env.entrypoint, env.provider.root());
-
-    let payload = op.as_eip712(U256::ZERO)?;
+    let payload = op.as_eip712()?;
     let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
 
     op.signature = if nonce == 0 {

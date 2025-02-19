@@ -35,7 +35,8 @@ jobs:
       - name: Build Account
         run: |
           cd tests/account
-          forge b && forge b lib/solady/test/utils/mocks/MockERC20.sol
+          forge build
+          forge build lib/solady/test/utils/mocks/MockERC20.sol
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
