@@ -1,13 +1,17 @@
+use super::{
+    super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
+    U40,
+};
 use alloy::{
     primitives::{
         bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256, B256, U256,
     },
+    signers::local::LocalSigner,
     sol,
     sol_types::SolValue,
 };
 use serde::{Deserialize, Serialize};
-
-use super::U40;
+use std::sync::Arc;
 
 sol! {
     /// The type of key.
@@ -222,6 +226,51 @@ impl Key {
         }
 
         slots
+    }
+}
+
+/// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.
+#[derive(Debug)]
+pub struct KeyWith712Signer {
+    /// A key that can be used to authorize call.
+    pub key: Key,
+    /// Signer associated with the key that signs eip712
+    pub signer: Box<dyn Eip712PayLoadSigner>,
+}
+
+impl KeyWith712Signer {
+    /// Returns a random [`Self`] from a [`KeyType`].
+    pub fn random(key_type: KeyType) -> eyre::Result<Option<Self>> {
+        let mock_key = B256::random();
+        let expiry = U40::ZERO;
+        let super_admin = true;
+
+        let (key, signer) = match key_type {
+            KeyType::P256 => {
+                let signer = P256Signer::load(&mock_key)?;
+                (
+                    Key::p256(signer.public_key(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            KeyType::WebAuthnP256 => {
+                let signer = WebAuthnSigner::load(&mock_key)?;
+                (
+                    Key::webauthn(signer.public_key(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            KeyType::Secp256k1 => {
+                let signer = DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?));
+                (
+                    Key::secp256k1(signer.address(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(KeyWith712Signer { key, signer }))
     }
 }
 

@@ -22,7 +22,7 @@ use alloy::{
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{fillers::NonceManager, Provider},
     rpc::types::{state::AccountOverride, TransactionRequest},
-    sol_types::{SolCall, SolValue},
+    sol_types::{SolCall, SolStruct, SolValue},
     transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
@@ -45,10 +45,10 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
-    signers::{DynSigner, P256Signer},
+    signers::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, KeyType, PartialAction, Quote,
-        Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, KeyType, KeyWith712Signer, PartialAction,
+        Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR,
     },
 };
 
@@ -108,7 +108,6 @@ impl Relay {
         quote_ttl: Duration,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
-        p256_signer: P256Signer,
     ) -> Self {
         let inner = RelayInner {
             chains,
@@ -118,7 +117,6 @@ impl Relay {
             quote_signer,
             quote_ttl,
             price_oracle,
-            p256_signer,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -148,16 +146,9 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let expiry = U40::ZERO;
-        let super_admin = true;
-        let key = match key_type {
-            KeyType::P256 => Key::p256(self.inner.p256_signer.public_key(), expiry, super_admin),
-            KeyType::WebAuthnP256 => {
-                Key::webauthn(self.inner.p256_signer.public_key(), expiry, super_admin)
-            }
-            KeyType::Secp256k1 => Key::secp256k1(mock_signer_address, expiry, super_admin),
-            _ => return Err(EstimateFeeError::UnsupportedKeyType.into()),
-        };
+        let key_with_signer = KeyWith712Signer::random(key_type)
+            .and_then(|k| k.ok_or_else(|| EstimateFeeError::UnsupportedKeyType.into()))
+            .map_err(EstimateFeeError::from)?;
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -169,7 +160,7 @@ impl RelayApiServer for Relay {
                 request.op.eoa,
                 // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
                 AccountOverride {
-                    state_diff: Some(key.storage_slots()),
+                    state_diff: Some(key_with_signer.key.storage_slots()),
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     code: authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -203,28 +194,22 @@ impl RelayApiServer for Relay {
         // sign userop
         let payload =
             op.as_eip712(nonce_salt).map_err(|err| EstimateFeeError::InternalError(err.into()))?;
-        let domain =
-            entrypoint.eip712_domain(op.is_multichain()).await.map_err(EstimateFeeError::from)?;
-        let signature = if key_type.is_secp256k1() {
-            self.inner
-                .quote_signer
-                .sign_typed_data(&payload, &domain)
-                .await
-                .map_err(EstimateFeeError::InternalError)?
-                .as_bytes()
-                .into()
-        } else {
-            self.inner
-                .p256_signer
-                .sign_typed_data(&payload, &domain, key_type.is_webauthn())
-                .await
-                .map_err(EstimateFeeError::InternalError)?
-        };
+        let payload_hash = payload.eip712_signing_hash(
+            &entrypoint.eip712_domain(op.is_multichain()).await.map_err(EstimateFeeError::from)?,
+        );
+        let signature = key_with_signer
+            .signer
+            .sign_payload_hash(payload_hash)
+            .await
+            .map_err(EstimateFeeError::InternalError)?;
 
-        op.signature =
-            Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
-                .abi_encode_packed()
-                .into();
+        op.signature = Signature {
+            innerSignature: signature,
+            keyHash: key_with_signer.key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
@@ -470,6 +455,4 @@ struct RelayInner {
     quote_ttl: Duration,
     /// Price oracle.
     price_oracle: PriceOracle,
-    /// The P256 signer used to estimate fees.
-    p256_signer: P256Signer,
 }

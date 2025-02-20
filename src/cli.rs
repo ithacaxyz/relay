@@ -4,12 +4,12 @@ use crate::{
     metrics::{self, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
-    signers::{DynSigner, P256Signer},
+    signers::DynSigner,
     types::{CoinKind, CoinPair, FeeTokens},
 };
 use alloy::{
     network::EthereumWallet,
-    primitives::{Address, B256},
+    primitives::Address,
     providers::{DynProvider, Provider, ProviderBuilder},
 };
 use clap::Parser;
@@ -85,7 +85,6 @@ impl Args {
             self.quote_ttl,
             price_oracle,
             FeeTokens::new(&self.fee_tokens, providers).await?,
-            P256Signer::load(&B256::random())?,
         )
         .into_rpc();
 

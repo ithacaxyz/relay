@@ -7,7 +7,7 @@ use alloy::{
 use eyre::WrapErr;
 use relay::{
     signers::{DynSigner, P256Signer},
-    types::{Call, Key, KeyType},
+    types::{Call, Key, KeyType, KeyWith712Signer},
 };
 
 /// Represents the expected outcome of a test case execution
@@ -108,7 +108,7 @@ pub struct TxContext {
     /// Optional authorization.
     pub auth: Option<AuthKind>,
     /// Optional Key.
-    pub key: Option<Key>,
+    pub key: Option<KeyWith712Signer>,
 }
 
 sol! {

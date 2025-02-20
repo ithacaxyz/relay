@@ -10,7 +10,7 @@ use eyre::Result;
 use relay::{
     error::SendActionError,
     signers::{DynSigner, P256Signer},
-    types::{Call, IDelegation::authorizeCall, Key, KeyType},
+    types::{Call, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,21 +20,14 @@ async fn auth_then_erc20_transfer() -> Result<()> {
     let super_admin = true;
 
     for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
-        let key = match key_type {
-            KeyType::P256 => Key::p256(EOA_P256_SIGNER.public_key(), expiry, super_admin),
-            KeyType::WebAuthnP256 => {
-                Key::webauthn(EOA_P256_SIGNER.public_key(), expiry, super_admin)
-            }
-            KeyType::Secp256k1 => Key::secp256k1(EOA_ADDRESS, expiry, super_admin),
-            _ => unreachable!(),
-        };
+        let key_with_signer = KeyWith712Signer::random(key_type)?.unwrap();
 
         let test_vector = vec![
             TxContext {
                 calls: vec![Call {
                     target: EOA_ADDRESS,
                     value: U256::ZERO,
-                    data: authorizeCall { key: key.clone() }.abi_encode().into(),
+                    data: authorizeCall { key: key_with_signer.key.clone() }.abi_encode().into(),
                 }],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
@@ -52,7 +45,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                     .into(),
                 }],
                 expected: ExpectedOutcome::Pass,
-                key: Some(key),
+                key: Some(key_with_signer),
                 ..Default::default()
             },
         ];

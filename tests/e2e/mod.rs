@@ -16,12 +16,13 @@ use alloy::{
     primitives::{bytes, Address, Bytes, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
-    sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
+    sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
 };
 use eyre::{Context, OptionExt, Result};
 use relay::{
     constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
     types::{
         Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, SignedQuote, UserOp,
         WebAuthnP256, U40,
@@ -167,7 +168,7 @@ pub async fn prepare_action_request(
     let key_type = tx
         .key
         .as_ref()
-        .map(|k| k.keyType)
+        .map(|k| k.key.keyType)
         .filter(|k| (nonce == 0 && k.is_secp256k1()) || nonce > 0)
         .unwrap_or(KeyType::Secp256k1);
 
@@ -214,27 +215,20 @@ pub async fn prepare_action_request(
     let entry = Entry::new(env.entrypoint, env.provider.root());
 
     let payload = op.as_eip712(U256::ZERO)?;
-    let domain = entry.eip712_domain(op.is_multichain()).await?;
-    let signature = if key_type.is_secp256k1() {
-        env.eoa_signer
-            .sign_typed_data(&payload, &domain)
-            .await
-            .wrap_err("Signing failed")?
-            .as_bytes()
-            .into()
-    } else {
-        EOA_P256_SIGNER
-            .sign_typed_data(&payload, &domain, key_type.is_webauthn())
-            .await
-            .wrap_err("Signing failed")?
-    };
+    let payload_hash =
+        payload.eip712_signing_hash(&entry.eip712_domain(op.is_multichain()).await.unwrap());
 
     op.signature = if nonce == 0 {
-        signature
+        env.eoa_signer.sign_payload_hash(payload_hash).await.wrap_err("Signing failed")?
     } else {
+        let key_with_signer = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
         Signature {
-            innerSignature: signature,
-            keyHash: tx.key.as_ref().ok_or_eyre("Key should be specified")?.key_hash(),
+            innerSignature: key_with_signer
+                .signer
+                .sign_payload_hash(payload_hash)
+                .await
+                .wrap_err("Signing failed")?,
+            keyHash: key_with_signer.key.key_hash(),
             prehash: false,
         }
         .abi_encode_packed()
