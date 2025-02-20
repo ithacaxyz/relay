@@ -146,3 +146,50 @@ async fn invalid_auth_quote_check() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
+    let expiry = U40::ZERO;
+    let super_admin = true;
+    let key1 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
+    let key2 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
+
+    let test_vector = vec![
+        TxContext {
+            expected: ExpectedOutcome::Pass,
+            calls: vec![Call {
+                target: EOA_ADDRESS,
+                value: U256::ZERO,
+                data: authorizeCall { key: key1.clone() }.abi_encode().into(),
+            }],
+            auth: Some(AuthKind::Auth),
+            ..Default::default()
+        },
+        TxContext {
+            expected: ExpectedOutcome::Pass,
+            calls: vec![Call {
+                target: EOA_ADDRESS,
+                value: U256::ZERO,
+                data: authorizeCall { key: key2.clone() }.abi_encode().into(),
+            }],
+            key: Some(key1),
+            ..Default::default()
+        },
+        TxContext {
+            expected: ExpectedOutcome::Pass,
+            calls: vec![Call {
+                target: FAKE_ERC20,
+                value: U256::ZERO,
+                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+                    .abi_encode()
+                    .into(),
+            }],
+            key: Some(key2),
+            ..Default::default()
+        },
+    ];
+
+    run_e2e(test_vector).await?;
+
+    Ok(())
+}
