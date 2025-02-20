@@ -194,12 +194,16 @@ impl RelayApiServer for Relay {
         // sign userop
         let payload =
             op.as_eip712(nonce_salt).map_err(|err| EstimateFeeError::InternalError(err.into()))?;
-        let payload_hash = payload.eip712_signing_hash(
-            &entrypoint.eip712_domain(op.is_multichain()).await.map_err(EstimateFeeError::from)?,
-        );
         let signature = key_with_signer
             .signer
-            .sign_payload_hash(payload_hash)
+            .sign_payload_hash(
+                payload.eip712_signing_hash(
+                    &entrypoint
+                        .eip712_domain(op.is_multichain())
+                        .await
+                        .map_err(EstimateFeeError::from)?,
+                ),
+            )
             .await
             .map_err(EstimateFeeError::InternalError)?;
 

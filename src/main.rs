@@ -1,11 +1,10 @@
 //! # Ithaca Relay
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
-use std::time::Duration;
-
 use clap::Parser;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use relay::cli::*;
+use std::time::Duration;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 

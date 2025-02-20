@@ -80,11 +80,6 @@ impl KeyType {
     pub fn is_secp256k1(&self) -> bool {
         matches!(self, Self::Secp256k1)
     }
-
-    /// Whether it is [`Self::WebAuthnP256`].
-    pub fn is_webauthn(&self) -> bool {
-        matches!(self, Self::WebAuthnP256)
-    }
 }
 
 impl From<Key> for PackedKey {

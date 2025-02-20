@@ -12,7 +12,7 @@ pub use webauthn::WebAuthnSigner;
 
 /// Trait for a [EIP-712] payload signer.
 #[async_trait::async_trait]
-pub trait Eip712PayLoadSigner: std::fmt::Debug + Send {
+pub trait Eip712PayLoadSigner: std::fmt::Debug + Send + Sync {
     /// Signs the [EIP-712] payload hash.
     ///
     /// Returns [`Bytes`].
