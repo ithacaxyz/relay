@@ -1,17 +1,23 @@
-use alloy::{
-    primitives::{
-        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256,
-        PrimitiveSignature, B256, U256,
-    },
-    sol,
-    sol_types::SolValue,
+use super::{
+    super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
+    U40,
 };
-
-use super::U40;
+use alloy::{
+    dyn_abi::Eip712Domain,
+    primitives::{
+        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256, B256, U256,
+    },
+    signers::local::LocalSigner,
+    sol,
+    sol_types::{SolStruct, SolValue},
+};
+use serde::{Deserialize, Serialize};
+use std::{ops::Deref, sync::Arc};
 
 sol! {
     /// The type of key.
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "lowercase")]
     enum KeyType {
         /// A P256 key.
         P256,
@@ -22,6 +28,7 @@ sol! {
     }
 
     /// A key that can be used to authorize call.
+    #[derive(Debug)]
     struct Key {
         /// Unix timestamp at which the key expires (0 = never).
         uint40 expiry;
@@ -69,6 +76,13 @@ sol! {
     }
 }
 
+impl KeyType {
+    /// Whether it is [`Self::Secp256k1`].
+    pub fn is_secp256k1(&self) -> bool {
+        matches!(self, Self::Secp256k1)
+    }
+}
+
 impl From<Key> for PackedKey {
     fn from(Key { publicKey, expiry, keyType, isSuperAdmin }: Key) -> Self {
         Self { publicKey, expiry, keyType, isSuperAdmin }
@@ -86,17 +100,19 @@ impl Key {
         }
     }
 
-    /// Encode a [`PrimitiveSignature`].
-    pub fn encode_secp256k1_signature(&self, signature: PrimitiveSignature) -> Bytes {
-        assert!(self.keyType == KeyType::Secp256k1);
+    /// Create a new key p256 key.
+    pub fn p256(public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
+        Self { publicKey: public_key, expiry, keyType: KeyType::P256, isSuperAdmin: super_admin }
+    }
 
-        Signature {
-            innerSignature: signature.as_bytes().into(),
-            keyHash: self.key_hash(),
-            prehash: false,
+    /// Create a new key webauthn key.
+    pub fn webauthn(public_key: Bytes, expiry: U40, super_admin: bool) -> Self {
+        Self {
+            publicKey: public_key,
+            expiry,
+            keyType: KeyType::WebAuthnP256,
+            isSuperAdmin: super_admin,
         }
-        .abi_encode_packed()
-        .into()
     }
 
     /// The key hash.
@@ -206,6 +222,70 @@ impl Key {
         }
 
         slots
+    }
+}
+
+/// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.
+#[derive(Debug)]
+pub struct KeyWith712Signer {
+    /// A key that can be used to authorize call.
+    key: Key,
+    /// Signer associated with the key that signs eip712
+    signer: Box<dyn Eip712PayLoadSigner>,
+}
+
+impl KeyWith712Signer {
+    /// Returns a random [`Self`] from a [`KeyType`].
+    pub fn random(key_type: KeyType) -> eyre::Result<Option<Self>> {
+        let mock_key = B256::random();
+        let expiry = U40::ZERO;
+        let super_admin = true;
+
+        let (key, signer) = match key_type {
+            KeyType::P256 => {
+                let signer = P256Signer::load(&mock_key)?;
+                (
+                    Key::p256(signer.public_key(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            KeyType::WebAuthnP256 => {
+                let signer = WebAuthnSigner::load(&mock_key)?;
+                (
+                    Key::webauthn(signer.public_key(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            KeyType::Secp256k1 => {
+                let signer = DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?));
+                (
+                    Key::secp256k1(signer.address(), expiry, super_admin),
+                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                )
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(KeyWith712Signer { key, signer }))
+    }
+
+    /// Encodes and signs the typed data according to [EIP-712].
+    ///
+    /// [EIP-712]: https://eips.ethereum.org/EIPS/eip-712
+    pub async fn sign_typed_data<T: SolStruct + Send + Sync>(
+        &self,
+        payload: &T,
+        domain: &Eip712Domain,
+    ) -> eyre::Result<Bytes> {
+        self.signer.sign_payload_hash(payload.eip712_signing_hash(domain)).await
+    }
+}
+
+impl Deref for KeyWith712Signer {
+    type Target = Key;
+
+    fn deref(&self) -> &Self::Target {
+        &self.key
     }
 }
 

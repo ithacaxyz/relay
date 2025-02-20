@@ -1,6 +1,12 @@
 //! Relay end-to-end test constants
 
-use alloy::primitives::{address, b256, Address, B256};
+use std::sync::LazyLock;
+
+use alloy::{
+    hex,
+    primitives::{address, b256, Address, B256},
+};
+use relay::signers::{DynSigner, P256Signer};
 
 pub const EOA_ADDRESS: Address = address!("70997970c51812dc3a010c7d01b50e0d17dc79c8");
 

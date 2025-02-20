@@ -11,5 +11,5 @@ pub mod nonce;
 pub mod price;
 pub mod rpc;
 pub mod serde;
-pub mod signer;
+pub mod signers;
 pub mod types;

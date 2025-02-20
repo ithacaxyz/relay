@@ -45,10 +45,10 @@ use crate::{
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
-    signer::DynSigner,
+    signers::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, Key, PartialAction, Quote, SignedQuote,
-        UserOp, ENTRYPOINT_NO_ERROR, U40,
+        Account, Action, Entry, EntryPoint, FeeTokens, KeyType, KeyWith712Signer, PartialAction,
+        Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR,
     },
 };
 
@@ -66,6 +66,7 @@ pub trait RelayApi {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
+        key: KeyType,
     ) -> RpcResult<SignedQuote>;
 
     // todo: rewrite
@@ -132,6 +133,7 @@ impl RelayApiServer for Relay {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
+        key_type: KeyType,
     ) -> RpcResult<SignedQuote> {
         let provider = self
             .inner
@@ -144,7 +146,9 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = Key::secp256k1(mock_signer_address, U40::ZERO, true);
+        let key = KeyWith712Signer::random(key_type)
+            .and_then(|k| k.ok_or_else(|| EstimateFeeError::UnsupportedKeyType.into()))
+            .map_err(EstimateFeeError::from)?;
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = AddressMap::from_iter([
@@ -188,20 +192,22 @@ impl RelayApiServer for Relay {
         };
 
         // sign userop
-        op.signature = key.encode_secp256k1_signature(
-            self.inner
-                .quote_signer
-                .sign_typed_data(
-                    &op.as_eip712(nonce_salt)
-                        .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-                    &entrypoint
-                        .eip712_domain(op.is_multichain())
-                        .await
-                        .map_err(EstimateFeeError::from)?,
-                )
-                .await
-                .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
-        );
+        let signature = key
+            .sign_typed_data(
+                &op.as_eip712(nonce_salt)
+                    .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                &entrypoint
+                    .eip712_domain(op.is_multichain())
+                    .await
+                    .map_err(EstimateFeeError::from)?,
+            )
+            .await
+            .map_err(EstimateFeeError::InternalError)?;
+
+        op.signature =
+            Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
+                .abi_encode_packed()
+                .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(

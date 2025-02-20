@@ -9,45 +9,50 @@ use alloy::{
 use eyre::Result;
 use relay::{
     error::SendActionError,
-    signer::DynSigner,
-    types::{Call, IDelegation::authorizeCall, Key, KeyType},
+    signers::{DynSigner, P256Signer},
+    types::{Call, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    let test_vector = vec![
-        TxContext {
-            calls: vec![Call {
-                target: EOA_ADDRESS,
-                value: U256::ZERO,
-                data: authorizeCall {
-                    key: Key {
-                        expiry: Default::default(),
-                        keyType: KeyType::Secp256k1,
-                        isSuperAdmin: true,
-                        publicKey: EOA_ADDRESS.abi_encode().into(),
-                    },
-                }
-                .abi_encode()
-                .into(),
-            }],
-            expected: ExpectedOutcome::Pass,
-            auth: Some(AuthKind::Auth),
-        },
-        TxContext {
-            calls: vec![Call {
-                target: FAKE_ERC20,
-                value: U256::ZERO,
-                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+    let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None).await?;
+    let expiry = U40::ZERO;
+    let super_admin = true;
+
+    for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
+        let key = KeyWith712Signer::random(key_type)?.unwrap();
+
+        let test_vector = vec![
+            TxContext {
+                calls: vec![Call {
+                    target: EOA_ADDRESS,
+                    value: U256::ZERO,
+                    data: authorizeCall { key: key.clone() }.abi_encode().into(),
+                }],
+                expected: ExpectedOutcome::Pass,
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                calls: vec![Call {
+                    target: FAKE_ERC20,
+                    value: U256::ZERO,
+                    data: MockErc20::transferCall {
+                        recipient: Address::ZERO,
+                        amount: U256::from(10),
+                    }
                     .abi_encode()
                     .into(),
-            }],
-            expected: ExpectedOutcome::Pass,
-            auth: None,
-        },
-    ];
+                }],
+                expected: ExpectedOutcome::Pass,
+                key: Some(key),
+                ..Default::default()
+            },
+        ];
 
-    run_e2e(test_vector).await
+        run_e2e(test_vector).await?;
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -69,6 +74,7 @@ async fn invalid_auth_nonce() -> Result<()> {
         }],
         expected: ExpectedOutcome::FailSend,
         auth: Some(AuthKind::modified_nonce(123)),
+        ..Default::default()
     }];
 
     run_e2e(test_vector).await
@@ -100,6 +106,7 @@ async fn invalid_auth_signature() -> Result<()> {
             )
             .await?,
         )),
+        ..Default::default()
     }];
 
     run_e2e(test_vector).await
@@ -124,6 +131,7 @@ async fn invalid_auth_quote_check() -> Result<()> {
         }],
         expected: ExpectedOutcome::Pass,
         auth: Some(AuthKind::Auth),
+        ..Default::default()
     };
 
     let env = Environment::setup().await?;

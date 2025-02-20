@@ -17,6 +17,9 @@ pub enum EstimateFeeError {
     /// The price for fee token is not available.
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
+    /// The key type is not supported.
+    #[error("only supports `p256`, `webauthnp256` and `secp256k1` key types")]
+    UnsupportedKeyType,
     /// The userop reverted when estimating gas.
     #[error("op reverted: {revert_reason}")]
     OpRevert {

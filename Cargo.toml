@@ -9,6 +9,7 @@ name = "relay"
 
 [dependencies]
 alloy = { version = "0.11", features = [
+    "getrandom",
     "dyn-abi",
     "eip712",
     "eips",
@@ -27,6 +28,7 @@ alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.5"
 aws-sdk-kms = "1.60"
+base64 = "0.21"
 clap = { version = "4", features = ["derive", "env"] }
 dashmap = "6.1.0"
 eyre = "0.6.12"
@@ -36,6 +38,7 @@ http-body = "1"
 jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16"
+p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 serde = "1"
 serde_json = "1.0"

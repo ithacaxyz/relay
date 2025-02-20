@@ -5,12 +5,16 @@ use alloy::{
     sol,
 };
 use eyre::WrapErr;
-use relay::{signer::DynSigner, types::Call};
+use relay::{
+    signers::{DynSigner, P256Signer},
+    types::{Call, Key, KeyType, KeyWith712Signer},
+};
 
 /// Represents the expected outcome of a test case execution
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum ExpectedOutcome {
     /// Test should pass completely
+    #[default]
     Pass,
     /// Test should fail at fee estimation
     FailEstimate,
@@ -95,7 +99,7 @@ impl AuthKind {
 }
 
 /// Context for executing a test transaction
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TxContext {
     /// List of calls to execute
     pub calls: Vec<Call>,
@@ -103,6 +107,8 @@ pub struct TxContext {
     pub expected: ExpectedOutcome,
     /// Optional authorization.
     pub auth: Option<AuthKind>,
+    /// Optional Key.
+    pub key: Option<KeyWith712Signer>,
 }
 
 sol! {

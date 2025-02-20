@@ -13,18 +13,19 @@ pub use types::*;
 use alloy::{
     dyn_abi::Eip712Domain,
     eips::eip7702::SignedAuthorization,
-    primitives::{bytes, Address, Bytes, U256},
+    primitives::{bytes, Address, Bytes, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
-    sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
+    sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
 };
-use eyre::{Context, Result};
+use eyre::{Context, OptionExt, Result};
 use relay::{
     constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
     types::{
         Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, SignedQuote, UserOp,
-        U40,
+        WebAuthnP256, U40,
     },
 };
 
@@ -164,6 +165,13 @@ pub async fn prepare_action_request(
         None
     };
 
+    let key_type = tx
+        .key
+        .as_ref()
+        .map(|k| k.keyType)
+        .filter(|k| (nonce == 0 && k.is_secp256k1()) || nonce > 0)
+        .unwrap_or(KeyType::Secp256k1);
+
     let quote = env
         .relay_endpoint
         .estimate_fee(
@@ -177,6 +185,7 @@ pub async fn prepare_action_request(
             },
             env.erc20,
             authorization.as_ref().map(|auth| *auth.address()),
+            key_type,
         )
         .await;
 
@@ -204,20 +213,27 @@ pub async fn prepare_action_request(
     };
 
     let entry = Entry::new(env.entrypoint, env.provider.root());
-    let signature = env
-        .eoa_signer
-        .sign_typed_data(
-            &op.as_eip712(U256::ZERO).unwrap(),
-            &entry.eip712_domain(op.is_multichain()).await.unwrap(),
-        )
-        .await
-        .wrap_err("Signing failed")?;
+
+    let payload = op.as_eip712(U256::ZERO)?;
+    let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
 
     op.signature = if nonce == 0 {
-        signature.as_bytes().into()
+        env.eoa_signer
+            .sign_payload_hash(payload.eip712_signing_hash(&domain))
+            .await
+            .wrap_err("Signing failed")?
     } else {
-        Key::secp256k1(env.eoa_signer.address(), U40::ZERO, true)
-            .encode_secp256k1_signature(signature)
+        let key = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
+        Signature {
+            innerSignature: key
+                .sign_typed_data(&payload, &domain)
+                .await
+                .wrap_err("Signing failed")?,
+            keyHash: key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into()
     };
 
     Ok(Some(ActionRequest { action: Action { op, chain_id: env.chain_id }, authorization, quote }))
