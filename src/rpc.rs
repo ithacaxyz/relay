@@ -22,7 +22,7 @@ use alloy::{
     primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
     providers::{fillers::NonceManager, Provider},
     rpc::types::{state::AccountOverride, TransactionRequest},
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolValue},
     transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
@@ -146,7 +146,7 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key_with_signer = KeyWith712Signer::random(key_type)
+        let key = KeyWith712Signer::random(key_type)
             .and_then(|k| k.ok_or_else(|| EstimateFeeError::UnsupportedKeyType.into()))
             .map_err(EstimateFeeError::from)?;
 
@@ -160,7 +160,7 @@ impl RelayApiServer for Relay {
                 request.op.eoa,
                 // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
                 AccountOverride {
-                    state_diff: Some(key_with_signer.key.storage_slots()),
+                    state_diff: Some(key.storage_slots()),
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     code: authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -192,28 +192,22 @@ impl RelayApiServer for Relay {
         };
 
         // sign userop
-        let payload =
-            op.as_eip712(nonce_salt).map_err(|err| EstimateFeeError::InternalError(err.into()))?;
-        let signature = key_with_signer
-            .signer
-            .sign_payload_hash(
-                payload.eip712_signing_hash(
-                    &entrypoint
-                        .eip712_domain(op.is_multichain())
-                        .await
-                        .map_err(EstimateFeeError::from)?,
-                ),
+        let signature = key
+            .sign_typed_data(
+                &op.as_eip712(nonce_salt)
+                    .map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                &entrypoint
+                    .eip712_domain(op.is_multichain())
+                    .await
+                    .map_err(EstimateFeeError::from)?,
             )
             .await
             .map_err(EstimateFeeError::InternalError)?;
 
-        op.signature = Signature {
-            innerSignature: signature,
-            keyHash: key_with_signer.key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        op.signature =
+            Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
+                .abi_encode_packed()
+                .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(

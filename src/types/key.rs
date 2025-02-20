@@ -3,15 +3,16 @@ use super::{
     U40,
 };
 use alloy::{
+    dyn_abi::Eip712Domain,
     primitives::{
         bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256, B256, U256,
     },
     signers::local::LocalSigner,
     sol,
-    sol_types::SolValue,
+    sol_types::{SolStruct, SolValue},
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 sol! {
     /// The type of key.
@@ -228,9 +229,9 @@ impl Key {
 #[derive(Debug)]
 pub struct KeyWith712Signer {
     /// A key that can be used to authorize call.
-    pub key: Key,
+    key: Key,
     /// Signer associated with the key that signs eip712
-    pub signer: Box<dyn Eip712PayLoadSigner>,
+    signer: Box<dyn Eip712PayLoadSigner>,
 }
 
 impl KeyWith712Signer {
@@ -266,6 +267,25 @@ impl KeyWith712Signer {
         };
 
         Ok(Some(KeyWith712Signer { key, signer }))
+    }
+
+    /// Encodes and signs the typed data according to [EIP-712].
+    ///
+    /// [EIP-712]: https://eips.ethereum.org/EIPS/eip-712
+    pub async fn sign_typed_data<T: SolStruct + Send + Sync>(
+        &self,
+        payload: &T,
+        domain: &Eip712Domain,
+    ) -> eyre::Result<Bytes> {
+        self.signer.sign_payload_hash(payload.eip712_signing_hash(domain)).await
+    }
+}
+
+impl Deref for KeyWith712Signer {
+    type Target = Key;
+
+    fn deref(&self) -> &Self::Target {
+        &self.key
     }
 }
 

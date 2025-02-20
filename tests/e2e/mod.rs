@@ -168,7 +168,7 @@ pub async fn prepare_action_request(
     let key_type = tx
         .key
         .as_ref()
-        .map(|k| k.key.keyType)
+        .map(|k| k.keyType)
         .filter(|k| (nonce == 0 && k.is_secp256k1()) || nonce > 0)
         .unwrap_or(KeyType::Secp256k1);
 
@@ -215,20 +215,21 @@ pub async fn prepare_action_request(
     let entry = Entry::new(env.entrypoint, env.provider.root());
 
     let payload = op.as_eip712(U256::ZERO)?;
-    let payload_hash =
-        payload.eip712_signing_hash(&entry.eip712_domain(op.is_multichain()).await.unwrap());
+    let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
 
     op.signature = if nonce == 0 {
-        env.eoa_signer.sign_payload_hash(payload_hash).await.wrap_err("Signing failed")?
+        env.eoa_signer
+            .sign_payload_hash(payload.eip712_signing_hash(&domain))
+            .await
+            .wrap_err("Signing failed")?
     } else {
-        let key_with_signer = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
+        let key = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
         Signature {
-            innerSignature: key_with_signer
-                .signer
-                .sign_payload_hash(payload_hash)
+            innerSignature: key
+                .sign_typed_data(&payload, &domain)
                 .await
                 .wrap_err("Signing failed")?,
-            keyHash: key_with_signer.key.key_hash(),
+            keyHash: key.key_hash(),
             prehash: false,
         }
         .abi_encode_packed()
