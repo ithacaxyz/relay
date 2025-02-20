@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use alloy::{
     hex,
-    primitives::{address, b256, Address, B256},
+    primitives::{Address, B256, address, b256},
 };
 use relay::signers::{DynSigner, P256Signer};
 

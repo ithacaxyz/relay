@@ -3,7 +3,7 @@
 use crate::e2e::*;
 use alloy::{
     hex,
-    primitives::{b256, Bytes, B256, U256},
+    primitives::{B256, Bytes, U256, b256},
     sol_types::{SolCall, SolValue},
 };
 use eyre::Result;

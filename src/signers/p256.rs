@@ -1,8 +1,8 @@
 //! P256 signer type with webauthn capabilities used for gas estimation and testing.
 
 use super::Eip712PayLoadSigner;
-use alloy::primitives::{Bytes, B256};
-use p256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
+use alloy::primitives::{B256, Bytes};
+use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use std::sync::Arc;
 
 /// Trait for all signers that use a [`SigningKey`] underneath..

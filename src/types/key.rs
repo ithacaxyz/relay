@@ -5,7 +5,7 @@ use super::{
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
-        bytes::Buf, keccak256, map::B256Map, Address, Bytes, FixedBytes, Keccak256, B256, U256,
+        Address, B256, Bytes, FixedBytes, Keccak256, U256, bytes::Buf, keccak256, map::B256Map,
     },
     signers::local::LocalSigner,
     sol,
@@ -304,7 +304,7 @@ mod tests {
     use crate::types::U40;
     use alloy::{
         hex,
-        primitives::{b256, map::HashMap, B256},
+        primitives::{B256, b256, map::HashMap},
     };
 
     #[test]

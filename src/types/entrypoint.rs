@@ -1,13 +1,13 @@
+use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{fixed_bytes, Address, Bytes, FixedBytes, U256},
+    primitives::{Address, Bytes, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
     sol_types::{SolError, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
-use EntryPoint::EntryPointInstance;
 
 use crate::error::CallError;
 

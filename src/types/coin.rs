@@ -1,4 +1,4 @@
-use alloy::primitives::{address, Address};
+use alloy::primitives::{Address, address};
 use alloy_chains::{Chain, NamedChain};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::LazyLock};

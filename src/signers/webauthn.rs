@@ -1,7 +1,7 @@
-use super::{p256::P256Key, Eip712PayLoadSigner};
+use super::{Eip712PayLoadSigner, p256::P256Key};
 use crate::types::WebAuthnP256;
 use alloy::{
-    primitives::{bytes, Bytes, B256, U256},
+    primitives::{B256, Bytes, U256, bytes},
     signers::k256::sha2::{Digest, Sha256},
     sol_types::SolValue,
 };

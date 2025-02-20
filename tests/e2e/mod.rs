@@ -13,7 +13,7 @@ pub use types::*;
 use alloy::{
     dyn_abi::Eip712Domain,
     eips::eip7702::SignedAuthorization,
-    primitives::{bytes, Address, Bytes, B256, U256},
+    primitives::{Address, B256, Bytes, U256, bytes},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
@@ -24,8 +24,8 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, SignedQuote, UserOp,
-        WebAuthnP256, U40,
+        Action, Entry, Key, KeyType, PartialAction, PartialUserOp, Signature, SignedQuote, U40,
+        UserOp, WebAuthnP256,
     },
 };
 

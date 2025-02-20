@@ -3,11 +3,11 @@
 mod periodic;
 pub use periodic::spawn_periodic_collectors;
 
-use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
+use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
 use jsonrpsee::{
-    server::{middleware::rpc::RpcServiceT, HttpBody, HttpRequest, HttpResponse},
-    types::Request,
     MethodResponse,
+    server::{HttpBody, HttpRequest, HttpResponse, middleware::rpc::RpcServiceT},
+    types::Request,
 };
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::PrometheusHandle;

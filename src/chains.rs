@@ -1,7 +1,7 @@
 //! A collection of providers for different chains.
 
 use alloy::{
-    primitives::{map::HashMap, ChainId},
+    primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
     transports::{RpcError, TransportErrorKind, TransportResult},
 };

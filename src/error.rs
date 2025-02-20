@@ -1,7 +1,7 @@
 //! Relay error types.
 
 use alloy::{
-    primitives::{Address, Bytes, ChainId, B256, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256},
     rpc::types::error::EthRpcErrorCode,
 };
 

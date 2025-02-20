@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, PrimitiveSignature, SignatureError, B256};
+use alloy::primitives::{Address, B256, PrimitiveSignature, SignatureError};
 use serde::{Deserialize, Serialize};
 
 /// A type that has been signed.

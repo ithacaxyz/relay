@@ -6,7 +6,7 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use relay::cli::*;
 use std::time::Duration;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Builds a Prometheus exporter, returning a handle.
 ///
@@ -36,7 +36,7 @@ fn build_exporter() -> PrometheusHandle {
 async fn main() {
     // Enable backtraces unless a RUST_BACKTRACE value has already been explicitly provided.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        std::env::set_var("RUST_BACKTRACE", "1");
+        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
     tracing_subscriber::registry()
