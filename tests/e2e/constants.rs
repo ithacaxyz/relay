@@ -6,7 +6,7 @@ use alloy::{
     hex,
     primitives::{address, b256, Address, B256},
 };
-use relay::{signer::DynSigner, types::P256Signer};
+use relay::signers::{DynSigner, P256Signer};
 
 pub const EOA_ADDRESS: Address = address!("70997970c51812dc3a010c7d01b50e0d17dc79c8");
 

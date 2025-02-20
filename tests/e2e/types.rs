@@ -6,7 +6,7 @@ use alloy::{
 };
 use eyre::WrapErr;
 use relay::{
-    signer::DynSigner,
+    signers::{DynSigner, P256Signer},
     types::{Call, Key, KeyType},
 };
 

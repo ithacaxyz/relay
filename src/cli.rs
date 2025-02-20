@@ -1,11 +1,11 @@
 //! # Relay CLI
 use crate::{
     chains::Chains,
-    metrics::{self, build_exporter, MetricsService, RpcMetricsService},
+    metrics::{self, MetricsService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
-    signer::DynSigner,
-    types::{CoinKind, CoinPair, FeeTokens, P256Signer},
+    signers::{DynSigner, P256Signer},
+    types::{CoinKind, CoinPair, FeeTokens},
 };
 use alloy::{
     network::EthereumWallet,
@@ -15,6 +15,7 @@ use alloy::{
 use clap::Parser;
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server};
+use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     net::{IpAddr, Ipv4Addr},
     time::Duration,
@@ -55,10 +56,7 @@ pub struct Args {
 
 impl Args {
     /// Run the relayer service.
-    pub async fn run(self) -> eyre::Result<()> {
-        // setup metrics
-        let handle = build_exporter();
-
+    pub async fn run(self, metrics_recorder: Option<PrometheusHandle>) -> eyre::Result<()> {
         // construct provider
         let signer = DynSigner::load(&self.secret_key, None).await?;
         let signer_addr = signer.address();
@@ -99,12 +97,13 @@ impl Args {
             .allow_methods(AllowMethods::any())
             .allow_origin(AllowOrigin::any())
             .allow_headers([header::CONTENT_TYPE]);
-        let metrics = layer_fn(move |service| MetricsService::new(service, handle.clone()));
+        let metrics = metrics_recorder
+            .map(|handle| layer_fn(move |service| MetricsService::new(service, handle.clone())));
 
         // start server
         let server = Server::builder()
             .http_only()
-            .set_http_middleware(ServiceBuilder::new().layer(cors).layer(metrics))
+            .set_http_middleware(ServiceBuilder::new().layer(cors).option_layer(metrics))
             .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
             .build((self.address, self.port))
             .await?;

@@ -9,7 +9,7 @@ use alloy::{
 use eyre::Result;
 use relay::{
     error::SendActionError,
-    signer::DynSigner,
+    signers::{DynSigner, P256Signer},
     types::{Call, IDelegation::authorizeCall, Key, KeyType},
 };
 

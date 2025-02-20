@@ -21,9 +21,6 @@ pub use key::*;
 mod op;
 pub use op::*;
 
-mod p256;
-pub use p256::*;
-
 mod signed;
 pub use signed::*;
 

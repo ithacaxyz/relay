@@ -10,41 +10,10 @@ use jsonrpsee::{
     MethodResponse,
 };
 use metrics::{counter, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use std::{
-    future::Future,
-    pin::Pin,
-    time::{Duration, Instant},
-};
+use metrics_exporter_prometheus::PrometheusHandle;
+use std::{future::Future, pin::Pin, time::Instant};
 use tower::Service;
 use tower_http::BoxError;
-use tracing::warn;
-
-/// Builds a Prometheus exporter, returning a handle.
-///
-/// The recorder will perform upkeep every 5 seconds.
-///
-/// # Panics
-///
-/// This will panic if the Prometheus recorder could not be set as the global metrics recorder.
-pub fn build_exporter() -> PrometheusHandle {
-    let recorder = PrometheusBuilder::new().build_recorder();
-    let handle = recorder.handle();
-
-    let recorder_handle = handle.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            recorder_handle.run_upkeep();
-        }
-    });
-
-    if let Err(err) = metrics::set_global_recorder(recorder) {
-        warn!("Could not set metrics recorder: {err}");
-    }
-
-    handle
-}
 
 /// A Tower service that renders Prometheus metrics at `/metrics`.
 #[derive(Debug, Clone)]

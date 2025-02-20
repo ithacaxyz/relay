@@ -14,7 +14,11 @@ use alloy::{
 use alloy_chains::NamedChain;
 use eyre::{self, ContextCompat, OptionExt, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use relay::{cli::Args, signer::DynSigner, types::CoinKind};
+use relay::{
+    cli::Args,
+    signers::{DynSigner, P256Signer},
+    types::CoinKind,
+};
 use std::{
     net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
@@ -126,7 +130,7 @@ impl Environment {
                     fee_tokens: vec![erc20],
                     secret_key: RELAY_PRIVATE_KEY.to_string(),
                 };
-                cli.run().await
+                cli.run(None).await
             }
         });
 

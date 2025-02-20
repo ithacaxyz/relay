@@ -127,7 +127,7 @@ impl UserOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signer::DynSigner;
+    use crate::signers::DynSigner;
     use alloy::{
         dyn_abi::Eip712Domain,
         primitives::{address, b256, bytes, Address},
