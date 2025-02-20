@@ -272,6 +272,7 @@ impl RelayApiServer for Relay {
             ttl: SystemTime::now()
                 .checked_add(self.inner.quote_ttl)
                 .expect("should never overflow"),
+            authorization_address,
         };
         let sig = self
             .inner
@@ -342,6 +343,15 @@ impl RelayApiServer for Relay {
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 
+        // check that the authorization item matches what's in the quote
+        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
+            return Err(SendActionError::InvalidAuthItem {
+                expected: quote.ty().authorization_address,
+                got: authorization.map(|auth| auth.address),
+            }
+            .into());
+        }
+
         if let Some(auth) = authorization {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
@@ -405,15 +415,6 @@ impl RelayApiServer for Relay {
             return Err(SendActionError::QuoteExpired.into());
         }
 
-        // broadcast the tx
-        tx.set_nonce(
-            self.inner
-                .nonce_manager
-                .get_next_nonce(&provider, tx_signer_address)
-                .await
-                .map_err(|err| SendActionError::InternalError(err.into()))?,
-        );
-
         // try eth_call before committing to send the actual transaction
         provider
             .call(&tx)
@@ -430,6 +431,14 @@ impl RelayApiServer for Relay {
                 Ok(())
             })?;
 
+        // broadcast the tx
+        tx.set_nonce(
+            self.inner
+                .nonce_manager
+                .get_next_nonce(&provider, tx_signer_address)
+                .await
+                .map_err(|err| SendActionError::InternalError(err.into()))?,
+        );
         Ok(provider
             .send_raw_transaction(
                 &tx.build(&self.inner.tx_signer)
