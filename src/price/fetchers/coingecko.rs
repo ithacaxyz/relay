@@ -1,6 +1,6 @@
 use crate::{
     error::PriceOracleError,
-    price::{oracle::PriceOracleMessage, PriceFetcher},
+    price::{PriceFetcher, oracle::PriceOracleMessage},
     types::{CoinKind, CoinPair},
 };
 use alloy::primitives::Address;

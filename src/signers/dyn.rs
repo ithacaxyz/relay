@@ -4,7 +4,7 @@
 use super::Eip712PayLoadSigner;
 use alloy::{
     network::{FullSigner, TxSigner},
-    primitives::{Address, Bytes, PrimitiveSignature, B256},
+    primitives::{Address, B256, Bytes, PrimitiveSignature},
     signers::{aws::AwsSigner, local::PrivateKeySigner},
 };
 use aws_config::BehaviorVersion;

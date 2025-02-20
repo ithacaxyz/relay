@@ -1,7 +1,7 @@
 //! Relay signers.
 
 mod r#dyn;
-use alloy::primitives::{Bytes, B256};
+use alloy::primitives::{B256, Bytes};
 pub use r#dyn::DynSigner;
 
 mod p256;

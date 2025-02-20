@@ -1,3 +1,4 @@
+use Delegation::DelegationInstance;
 use alloy::{
     primitives::{Address, U256},
     providers::Provider,
@@ -6,7 +7,6 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
 };
 use tracing::debug;
-use Delegation::DelegationInstance;
 
 sol! {
     #[sol(rpc)]

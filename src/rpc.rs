@@ -10,24 +10,24 @@
 
 use alloy::{
     eips::{
-        eip7702::{
-            constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
-            SignedAuthorization,
-        },
         Encodable2718,
+        eip7702::{
+            SignedAuthorization,
+            constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+        },
     },
     network::{
         Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TransactionBuilder7702,
     },
-    primitives::{map::AddressMap, Address, Bytes, TxHash, U256},
-    providers::{fillers::NonceManager, Provider},
-    rpc::types::{state::AccountOverride, TransactionRequest},
+    primitives::{Address, Bytes, TxHash, U256, map::AddressMap},
+    providers::{Provider, fillers::NonceManager},
+    rpc::types::{TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolValue},
     transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use std::{
@@ -47,8 +47,8 @@ use crate::{
     price::PriceOracle,
     signers::DynSigner,
     types::{
-        Account, Action, Entry, EntryPoint, FeeTokens, KeyType, KeyWith712Signer, PartialAction,
-        Quote, Signature, SignedQuote, UserOp, ENTRYPOINT_NO_ERROR,
+        Account, Action, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens, KeyType,
+        KeyWith712Signer, PartialAction, Quote, Signature, SignedQuote, UserOp,
     },
 };
 

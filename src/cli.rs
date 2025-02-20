@@ -20,7 +20,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     time::Duration,
 };
-use tower::{layer::layer_fn, ServiceBuilder};
+use tower::{ServiceBuilder, layer::layer_fn};
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::info;
 use url::Url;

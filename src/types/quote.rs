@@ -6,8 +6,8 @@ use std::{
 };
 
 use alloy::{
-    primitives::{Address, ChainId, Keccak256, PrimitiveSignature, B256, U256},
-    providers::{utils::Eip1559Estimation, DynProvider, Provider},
+    primitives::{Address, B256, ChainId, Keccak256, PrimitiveSignature, U256},
+    providers::{DynProvider, Provider, utils::Eip1559Estimation},
 };
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
