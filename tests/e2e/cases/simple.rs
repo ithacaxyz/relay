@@ -180,16 +180,13 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
             calls: vec![Call {
                 target: FAKE_ERC20,
                 value: U256::ZERO,
-                data: MockErc20::transferCall {
-                    recipient: Address::ZERO,
-                    amount: U256::from(10),
-                }
-                .abi_encode()
-                .into(),
+                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+                    .abi_encode()
+                    .into(),
             }],
             key: Some(key2),
             ..Default::default()
-        }
+        },
     ];
 
     run_e2e(test_vector).await?;
