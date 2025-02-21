@@ -127,11 +127,11 @@ impl Environment {
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(relay_port)
-                .with_endpoints(vec![endpoint.clone()])
+                .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_quote_secret_key(RELAY_PRIVATE_KEY.to_string())
                 .with_secret_key(RELAY_PRIVATE_KEY.to_string())
-                .with_fee_tokens(vec![erc20]),
+                .with_fee_tokens(&[erc20]),
             None,
         )
         .await?;

@@ -65,12 +65,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the list of RPC endpoints (as URLs) for the chain transactions.
-    pub fn with_endpoints(mut self, endpoints: Vec<Url>) -> Self {
-        self.endpoints = endpoints;
-        self
-    }
-
     /// Sets the lifetime duration for fee quotes.
     pub fn with_quote_ttl(mut self, quote_ttl: Duration) -> Self {
         self.quote_ttl = quote_ttl;
@@ -78,20 +72,26 @@ impl RelayConfig {
     }
 
     /// Sets the secret key used to sign fee quotes.
-    pub fn with_quote_secret_key<S: Into<String>>(mut self, key: S) -> Self {
-        self.quote_secret_key = key.into();
-        self
-    }
-
-    /// Sets the list of fee tokens that the relay accepts.
-    pub fn with_fee_tokens(mut self, fee_tokens: Vec<Address>) -> Self {
-        self.fee_tokens = fee_tokens;
+    pub fn with_quote_secret_key(mut self, quote_secret_key: String) -> Self {
+        self.quote_secret_key = quote_secret_key;
         self
     }
 
     /// Sets the secret key used to sign transactions.
-    pub fn with_secret_key<S: Into<String>>(mut self, key: S) -> Self {
-        self.secret_key = key.into();
+    pub fn with_secret_key(mut self, secret_key: String) -> Self {
+        self.secret_key = secret_key;
+        self
+    }
+
+    /// Extends the list of fee tokens that the relay accepts.
+    pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
+        self.fee_tokens.extend_from_slice(fee_tokens);
+        self
+    }
+
+    /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
+    pub fn with_endpoints(mut self, endpoints: &[Url]) -> Self {
+        self.endpoints.extend_from_slice(endpoints);
         self
     }
 

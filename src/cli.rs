@@ -49,27 +49,22 @@ impl Args {
 
     /// Merges [`Args`] values into an existing [`RelayConfig`] instance.
     pub fn merge_relay_config(self, mut config: RelayConfig) -> RelayConfig {
-        config =
-            config.with_quote_secret_key(self.quote_secret_key).with_secret_key(self.secret_key);
+        config = config
+            .with_quote_secret_key(self.quote_secret_key)
+            .with_secret_key(self.secret_key)
+            .with_endpoints(&self.endpoints)
+            .with_fee_tokens(&self.fee_tokens);
 
         if let Some(address) = self.address {
-            config.address = address;
+            config = config.with_address(address);
         }
 
         if let Some(port) = self.port {
-            config.port = port;
-        }
-
-        if !self.endpoints.is_empty() {
-            config.endpoints.extend_from_slice(&self.endpoints);
+            config = config.with_port(port);
         }
 
         if let Some(quote_ttl) = self.quote_ttl {
-            config.quote_ttl = quote_ttl;
-        }
-
-        if !self.fee_tokens.is_empty() {
-            config.fee_tokens.extend_from_slice(&self.fee_tokens);
+            config = config.with_quote_ttl(quote_ttl);
         }
 
         config
