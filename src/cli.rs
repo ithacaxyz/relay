@@ -3,7 +3,11 @@ use crate::{config::RelayConfig, spawn::try_spawn_with_args};
 use alloy::primitives::Address;
 use clap::Parser;
 use metrics_exporter_prometheus::PrometheusHandle;
-use std::{net::{IpAddr, Ipv4Addr}, path::PathBuf, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    time::Duration,
+};
 use url::Url;
 
 /// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
@@ -50,8 +54,8 @@ impl Args {
     /// Merges [`Args`] values into an existing [`RelayConfig`] instance.
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
-            .with_quote_secret_key(self.quote_secret_key)
-            .with_secret_key(self.secret_key)
+            .with_quote_key(self.quote_secret_key)
+            .with_transaction_key(self.secret_key)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
             .with_address(self.address)
@@ -64,4 +68,48 @@ impl Args {
 fn parse_duration_secs(arg: &str) -> Result<std::time::Duration, std::num::ParseIntError> {
     let seconds = arg.parse()?;
     Ok(std::time::Duration::from_secs(seconds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use crate::spawn::try_spawn_with_args;
+    use std::{
+        env::temp_dir,
+        net::{IpAddr, Ipv4Addr, TcpListener},
+    };
+
+    /// Finds an available port by binding to "127.0.0.1:0".
+    fn get_available_port() -> std::io::Result<u16> {
+        // Binding to port 0 tells the OS to assign an available port.
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        Ok(listener.local_addr()?.port())
+    }
+
+    #[tokio::test]
+    async fn respawn_cli() -> eyre::Result<()> {
+        let dir = temp_dir();
+        let config = dir.join("relay.toml");
+        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+        for _ in 0..=1 {
+            let _ = try_spawn_with_args(
+                Args {
+                    config: config.clone(),
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: get_available_port().unwrap(),
+                    endpoints: Default::default(),
+                    quote_ttl: Default::default(),
+                    quote_secret_key: key.to_string(),
+                    fee_tokens: Default::default(),
+                    secret_key: key.to_string(),
+                },
+                config.clone(),
+                None,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
 }

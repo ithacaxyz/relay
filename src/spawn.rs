@@ -45,10 +45,11 @@ pub async fn try_spawn(
     metrics: Option<PrometheusHandle>,
 ) -> eyre::Result<ServerHandle> {
     // construct provider
-    let signer = DynSigner::load(&config.secret_key, None).await?;
+    let signer = DynSigner::load(&config.secrets.transaction_key, None).await?;
     let signer_addr = signer.address();
 
     let providers: Vec<DynProvider> = config
+        .chain
         .endpoints
         .iter()
         .cloned()
@@ -56,12 +57,12 @@ pub async fn try_spawn(
         .collect();
 
     // construct quote signer
-    let quote_signer = DynSigner::load(&config.quote_secret_key, None).await?;
+    let quote_signer = DynSigner::load(&config.secrets.quote_key, None).await?;
     let quote_signer_addr = quote_signer.address();
 
     // construct rpc module
     let mut price_oracle = PriceOracle::new();
-    if let Some(constant_rate) = config.constant_rate {
+    if let Some(constant_rate) = config.quote.constant_rate {
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
     } else {
@@ -74,14 +75,14 @@ pub async fn try_spawn(
         Chains::new(providers.clone()).await?,
         EthereumWallet::new(signer.0),
         quote_signer,
-        config.quote_ttl,
+        config.quote.ttl,
         price_oracle,
-        FeeTokens::new(&config.fee_tokens, providers).await?,
+        FeeTokens::new(&config.chain.fee_tokens, providers).await?,
     )
     .into_rpc();
 
     // launch period metric collectors
-    metrics::spawn_periodic_collectors(signer_addr, config.endpoints).await?;
+    metrics::spawn_periodic_collectors(signer_addr, config.chain.endpoints).await?;
 
     // http layers
     let cors = CorsLayer::new()
@@ -96,7 +97,7 @@ pub async fn try_spawn(
         .http_only()
         .set_http_middleware(ServiceBuilder::new().layer(cors).option_layer(metrics))
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
-        .build((config.address, config.port))
+        .build((config.server.address, config.server.port))
         .await?;
     info!(addr = %server.local_addr().unwrap(), "Started relay service");
     info!("Transaction signer key: {}", signer_addr);
