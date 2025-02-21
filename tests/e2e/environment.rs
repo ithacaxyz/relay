@@ -123,9 +123,10 @@ impl Environment {
         assert!(CoinKind::get_token(NamedChain::AnvilHardhat.into(), erc20).is_some());
 
         // Start relay service.
+        let relay_port = get_available_port()?;
         let relay_handle = try_spawn(
             RelayConfig::default()
-                .with_port(get_available_port()?)
+                .with_port(relay_port)
                 .with_endpoints(vec![endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_quote_secret_key(RELAY_PRIVATE_KEY.to_string())

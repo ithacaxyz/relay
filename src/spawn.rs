@@ -28,20 +28,12 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
     metrics: Option<PrometheusHandle>,
 ) -> eyre::Result<ServerHandle> {
     let config = if !config_path.as_ref().exists() {
-        let config = args.into_relay_config()?;
+        let config = args.merge_relay_config(RelayConfig::default());
         config.save_to_file(&config_path)?;
         config
     } else {
         // File exists: load and override with CLI values.
-        let config = RelayConfig::load_from_file(&config_path)?;
-        config
-            .with_address(args.address)
-            .with_port(args.port)
-            .with_endpoints(args.endpoints)
-            .with_quote_ttl(args.quote_ttl)
-            .with_quote_secret_key(args.quote_secret_key)
-            .with_fee_tokens(args.fee_tokens)
-            .with_secret_key(args.secret_key)
+        args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
     };
 
     try_spawn(config, metrics).await
