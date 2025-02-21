@@ -290,13 +290,16 @@ impl RelayApiServer for Relay {
         }
 
         // possibly mocking the code for the eoa
-        let overrides = AddressMap::from_iter([(request.op.eoa, AccountOverride {
-            // we manually etch the 7702 designator since we do not have a signed auth item
-            code: authorization.as_ref().map(|auth| {
-                Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
-            }),
-            ..Default::default()
-        })]);
+        let overrides = AddressMap::from_iter([(
+            request.op.eoa,
+            AccountOverride {
+                // we manually etch the 7702 designator since we do not have a signed auth item
+                code: authorization.as_ref().map(|auth| {
+                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
+                }),
+                ..Default::default()
+            },
+        )]);
 
         // get the account and entrypoint
         let account = Account::new(request.op.eoa, provider.clone()).with_overrides(overrides);

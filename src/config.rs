@@ -1,4 +1,5 @@
 //! Relay configuration.
+use crate::types::CoinKind;
 use alloy::primitives::{Address, ChainId};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -9,8 +10,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-
-use crate::types::CoinKind;
 
 /// Configurations of the relay
 #[derive(Debug, Serialize, Deserialize)]
