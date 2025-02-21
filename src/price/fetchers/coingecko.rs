@@ -1,12 +1,12 @@
 use crate::{
     error::PriceOracleError,
     price::{PriceFetcher, oracle::PriceOracleMessage},
-    types::{CoinKind, CoinPair},
+    types::{CoinKind, CoinPair, CoinRegistry},
 };
-use alloy::primitives::Address;
+use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
 use reqwest::get;
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
 
@@ -14,24 +14,30 @@ use tracing::{error, trace, warn};
 #[derive(Debug)]
 pub struct CoinGecko {
     /// URLs used to fetch prices.
-    request_urls: Vec<(Chain, String)>,
+    request_urls: Vec<(ChainId, String)>,
     /// Price oracle sender used to update the price.
     update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+    /// Coin registry.
+    coin_registry: Arc<CoinRegistry>,
 }
 
 impl CoinGecko {
     /// Creates an instance of [`CoinGecko`] that sends a price feed to [`PriceOracle`] for all
     /// tokens from a spawned task every 10 seconds.
-    pub fn launch(pairs: &[CoinPair], update_tx: mpsc::UnboundedSender<PriceOracleMessage>) {
-        let mut chains_with_tokens: HashMap<Chain, Vec<Address>> = HashMap::new();
-        let eth_mainnet = Chain::mainnet();
+    pub fn launch(
+        coin_registry: Arc<CoinRegistry>,
+        pairs: &[CoinPair],
+        update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+    ) {
+        let mut chains_with_tokens: HashMap<ChainId, Vec<Address>> = HashMap::new();
+        let eth_mainnet = Chain::mainnet().into();
 
         // Organize all pairs by platform and addresses
         for pair in pairs {
             // todo: only support eth native for now
             if pair.to.is_eth() {
                 // Get all the chains that support this coin
-                let chains = pair.from.get_chains();
+                let chains = pair.from.get_chains(&coin_registry);
 
                 if chains.is_empty() {
                     warn!(coin = ?pair.to, "Unsupported coin.")
@@ -41,7 +47,7 @@ impl CoinGecko {
                 let chain = if chains.contains(&eth_mainnet) { eth_mainnet } else { chains[0] };
 
                 // Organize tokens by chain with no repeated tokens across chains.
-                if let Some(token_address) = pair.from.get_token_address(chain) {
+                if let Some(token_address) = pair.from.get_token_address(&coin_registry, chain) {
                     chains_with_tokens.entry(chain).or_default().push(token_address);
                 } else {
                     warn!(token = ?pair.from, ?chain, "Did not find token address.")
@@ -66,7 +72,7 @@ impl CoinGecko {
             request_urls.push((chain, url))
         }
 
-        let gecko = Self { request_urls, update_tx };
+        let gecko = Self { coin_registry, request_urls, update_tx };
 
         // Launch task to fetch prices every 10 seconds
         tokio::spawn(async move {
@@ -83,15 +89,15 @@ impl CoinGecko {
     }
 
     /// Returns the platform and native currency identifiers.
-    fn identifiers(chain: Chain) -> (&'static str, &'static str) {
-        let platform = if chain == Chain::base_goerli()
-            || chain == Chain::base_sepolia()
-            || chain == Chain::base_mainnet()
+    fn identifiers(chain: ChainId) -> (&'static str, &'static str) {
+        let platform = if chain == Chain::base_goerli().id()
+            || chain == Chain::base_sepolia().id()
+            || chain == Chain::base_mainnet().id()
         {
             "base"
-        } else if chain == Chain::optimism_goerli()
-            || chain == Chain::optimism_sepolia()
-            || chain == Chain::optimism_mainnet()
+        } else if chain == Chain::optimism_goerli().id()
+            || chain == Chain::optimism_sepolia().id()
+            || chain == Chain::optimism_mainnet().id()
         {
             "optimistic-ethereum"
         } else {
@@ -134,7 +140,11 @@ impl CoinGecko {
 
                     Some((
                         CoinPair {
-                            from: CoinKind::get_token(*chain, Address::from_str(&addr).ok()?)?,
+                            from: CoinKind::get_token(
+                                &self.coin_registry,
+                                *chain,
+                                Address::from_str(&addr).ok()?,
+                            )?,
                             to: Self::parse_currency(&currency)?,
                         },
                         price,

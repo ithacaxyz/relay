@@ -25,12 +25,18 @@ cargo run --bin relay -- \
     --fee-token $FEE_TOKEN_ADDR \ # You can pass this multiple times
     --secret-key $TX_SIGNING_PRIV_KEY \
     --quote-secret-key $QUOTE_SIGNING_PRIV_KEY
+    # --registry $REGISTRY_PATH  # Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
+    # --config $CONFIG_PATH
 ```
 
 If no `--config` flag is given, a default `relay.toml` is created in the working directory. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
 
-Example:
+Similarly, if no `--registry` flag is given, a default registry configuration file `registry.toml` is created in the working directory.
+
+Examples:
 ```toml
+# relay.toml
+
 [server]
 address = "127.0.0.1"
 port = 8323
@@ -46,8 +52,29 @@ ttl = 5
 [quote.gas]
 user_op_buffer = 25000
 tx_buffer = 1000000
+```
 
-[coin_registry]
+```toml
+// registry.toml
+
+1 = [
+    "ETH",
+    [
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "USDT",
+],
+    [
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "USDC",
+],
+]
+8453 = [
+    "ETH",
+    [
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "USDC",
+],
+]
 ```
 
 

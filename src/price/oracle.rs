@@ -1,10 +1,10 @@
 use super::CoinGecko;
 use crate::{
     price::fetchers::PriceFetcher,
-    types::{CoinKind, CoinPair},
+    types::{CoinKind, CoinPair, CoinRegistry},
 };
 use alloy::primitives::U256;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
 use tracing::trace;
 
@@ -76,9 +76,14 @@ impl PriceOracle {
     }
 
     /// Spawns a price fetcher with a [`CoinPair`] list.
-    pub fn spawn_fetcher(&self, fetcher: PriceFetcher, pairs: &[CoinPair]) {
+    pub fn spawn_fetcher(
+        &self,
+        coin_registry: Arc<CoinRegistry>,
+        fetcher: PriceFetcher,
+        pairs: &[CoinPair],
+    ) {
         match fetcher {
-            PriceFetcher::CoinGecko => CoinGecko::launch(pairs, self.tx.clone()),
+            PriceFetcher::CoinGecko => CoinGecko::launch(coin_registry, pairs, self.tx.clone()),
         }
     }
 

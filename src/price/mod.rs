@@ -8,10 +8,9 @@ pub use oracle::PriceOracle;
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use crate::types::{CoinKind, CoinPair};
+    use crate::types::{CoinKind, CoinPair, CoinRegistry};
+    use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
 
     #[ignore] // requires GECKO_API
@@ -19,6 +18,7 @@ mod tests {
     async fn coingecko() {
         let oracle = PriceOracle::new();
         oracle.spawn_fetcher(
+            Arc::new(CoinRegistry::default()),
             PriceFetcher::CoinGecko,
             &[
                 CoinPair { from: CoinKind::USDT, to: CoinKind::ETH },

@@ -1,50 +1,6 @@
-use alloy::primitives::{Address, address};
-use alloy_chains::{Chain, NamedChain};
+use super::{CoinRegistry, CoinRegistryKey};
+use alloy::primitives::{Address, ChainId};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::LazyLock};
-
-/// Global map from ([`Chain`], Option<[`Address`]>) to [`CoinKind`].
-///
-/// A (chain, none) refers to native chain coins. eg. Ethereum.
-static COINS_CONFIG: LazyLock<HashMap<(Chain, Option<Address>), CoinKind>> = LazyLock::new(|| {
-    // todo: read from file
-    let mut coin_map = HashMap::new();
-
-    // ETH
-    {
-        coin_map.insert((Chain::mainnet(), None), CoinKind::ETH);
-        coin_map.insert((Chain::optimism_mainnet(), None), CoinKind::ETH);
-        coin_map.insert((Chain::base_mainnet(), None), CoinKind::ETH);
-        coin_map.insert((NamedChain::Odyssey.into(), None), CoinKind::ETH);
-    }
-
-    // USDT
-    {
-        let addresses = [
-            (Chain::mainnet(), address!("dAC17F958D2ee523a2206206994597C13D831ec7")),
-            (Chain::optimism_mainnet(), address!("0xdAC17F958D2ee523a2206206994597C13D831ec7")),
-            (NamedChain::Odyssey.into(), address!("238c8CD93ee9F8c7Edf395548eF60c0d2e46665E")),
-            (NamedChain::Odyssey.into(), address!("706aa5c8e5cc2c67da21ee220718f6f6b154e75c")),
-            (NamedChain::AnvilHardhat.into(), address!("9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0")),
-        ];
-        for (chain, address) in addresses {
-            coin_map.insert((chain, Some(address)), CoinKind::USDT);
-        }
-    }
-
-    // USDC
-    {
-        let addresses = [
-            (Chain::mainnet(), address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")),
-            (Chain::base_mainnet(), address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")),
-        ];
-        for (chain, address) in addresses {
-            coin_map.insert((chain, Some(address)), CoinKind::USDC);
-        }
-    }
-
-    coin_map
-});
 
 /// A coin price pair.
 #[derive(Debug, Hash, Eq, PartialEq)]
@@ -76,22 +32,22 @@ pub enum CoinKind {
 
 impl CoinKind {
     /// Get a list of [`Chain`] from [`self`].
-    pub fn get_chains(&self) -> Vec<Chain> {
-        COINS_CONFIG
+    pub fn get_chains(&self, registry: &CoinRegistry) -> Vec<ChainId> {
+        registry
             .iter()
-            .filter(|((_, _), entry_coin)| *entry_coin == self)
-            .map(|((chain, _), _)| *chain)
+            .filter(|(_, entry_coin)| *entry_coin == self)
+            .map(|(key, _)| key.chain)
             .collect()
     }
 
     /// Get [`Address`] from a [`Chain`] and `self`.
-    pub fn get_token_address(&self, chain: Chain) -> Option<Address> {
-        COINS_CONFIG
+    pub fn get_token_address(&self, registry: &CoinRegistry, chain: ChainId) -> Option<Address> {
+        registry
             .iter()
-            .find(|((entry_chain, address), entry_coin)| {
-                *entry_chain == chain && *entry_coin == self && address.is_some()
+            .find(|(entry_key, entry_coin)| {
+                entry_key.chain == chain && *entry_coin == self && entry_key.token_address.is_some()
             })
-            .map(|((_, address), _)| address.expect("qed"))
+            .map(|(key, _)| key.token_address.expect("qed"))
     }
 
     /// Whether this is ETH.
@@ -100,12 +56,12 @@ impl CoinKind {
     }
 
     /// Get native [`CoinKind`] from [`Chain`].
-    pub fn get_native(chain: Chain) -> Option<Self> {
-        COINS_CONFIG.get(&(chain, None)).copied()
+    pub fn get_native(registry: &CoinRegistry, chain: ChainId) -> Option<Self> {
+        registry.get(&CoinRegistryKey { chain, token_address: None }).copied()
     }
 
     /// Get [`CoinKind`] from a [`Chain`] and [`Address`].
-    pub fn get_token(chain: Chain, address: Address) -> Option<Self> {
-        COINS_CONFIG.get(&(chain, Some(address))).copied()
+    pub fn get_token(registry: &CoinRegistry, chain: ChainId, address: Address) -> Option<Self> {
+        registry.get(&CoinRegistryKey { chain, token_address: Some(address) }).copied()
     }
 }

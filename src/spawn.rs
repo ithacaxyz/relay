@@ -7,7 +7,7 @@ use crate::{
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
-    types::{CoinKind, CoinPair, FeeTokens},
+    types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
     network::EthereumWallet,
@@ -16,7 +16,7 @@ use alloy::{
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
 use metrics_exporter_prometheus::PrometheusHandle;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 use tower::{ServiceBuilder, layer::layer_fn};
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
@@ -25,6 +25,7 @@ use tracing::{info, warn};
 pub async fn try_spawn_with_args<P: AsRef<Path>>(
     args: Args,
     config_path: P,
+    registry_path: P,
     metrics: Option<PrometheusHandle>,
 ) -> eyre::Result<ServerHandle> {
     let config = if !config_path.as_ref().exists() {
@@ -36,14 +37,25 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
         args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
     };
 
-    try_spawn(config, metrics).await
+    let registry = if !registry_path.as_ref().exists() {
+        let registry = CoinRegistry::default();
+        registry.save_to_file(&registry_path)?;
+        registry
+    } else {
+        CoinRegistry::load_from_file(&registry_path)?
+    };
+
+    try_spawn(config, registry, metrics).await
 }
 
-/// Spawns the relay service using the provided [`RelayConfig`].
+/// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
 pub async fn try_spawn(
     config: RelayConfig,
+    registry: CoinRegistry,
     metrics: Option<PrometheusHandle>,
 ) -> eyre::Result<ServerHandle> {
+    let registry = Arc::new(registry);
+
     // construct provider
     let signer = DynSigner::load(&config.secrets.transaction_key, None).await?;
     let signer_addr = signer.address();
@@ -66,8 +78,11 @@ pub async fn try_spawn(
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
     } else {
-        price_oracle
-            .spawn_fetcher(PriceFetcher::CoinGecko, &CoinPair::ethereum_pairs(&[CoinKind::USDT]));
+        price_oracle.spawn_fetcher(
+            registry.clone(),
+            PriceFetcher::CoinGecko,
+            &CoinPair::ethereum_pairs(&[CoinKind::USDT]),
+        );
     }
 
     // todo: avoid all this darn cloning
@@ -77,7 +92,7 @@ pub async fn try_spawn(
         quote_signer,
         config.quote,
         price_oracle,
-        FeeTokens::new(&config.chain.fee_tokens, providers).await?,
+        FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
     )
     .into_rpc();
 
