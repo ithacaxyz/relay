@@ -1,10 +1,32 @@
 //! # Ithaca Relay
 //!
 //! A relay service that sponsors transactions for EIP-7702 accounts.
+
 use clap::Parser;
-use relay::cli::*;
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use relay::{
+    cli::*,
+    otlp::{OtelConfig, OtelGuard},
+};
+use tracing::debug;
+use tracing_subscriber::prelude::*;
+
+fn init_tracing_subscriber() -> Option<OtelGuard> {
+    let registry = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_filter(tracing_subscriber::filter::EnvFilter::from_default_env()),
+    );
+
+    if let Some(cfg) = OtelConfig::load() {
+        debug!(endpoint = %cfg.endpoint, "initializing opentelemetry");
+
+        let guard = cfg.provider();
+        registry.with(guard.layer()).init();
+        Some(guard)
+    } else {
+        registry.init();
+        None
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -13,12 +35,7 @@ async fn main() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
-        )
-        .init();
+    let _guard = init_tracing_subscriber();
 
     let args = Args::parse();
     if let Err(err) = args.run().await {

@@ -39,7 +39,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
-use tracing::{debug, error};
+use tracing::{debug, error, instrument};
 
 use crate::{
     chains::{Chain, Chains},
@@ -164,6 +164,7 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
+    #[instrument(skip_all)]
     async fn estimate_fee(
         &self,
         request: PartialAction,
@@ -322,6 +323,7 @@ impl Relay {
         Ok((asset_diff, quote.into_signed(sig)))
     }
 
+    #[instrument(skip_all)]
     async fn send_action(
         &self,
         quote: SignedQuote,
@@ -412,6 +414,7 @@ impl Relay {
     }
 
     /// Get keys from an account.
+    #[instrument(skip_all)]
     async fn get_keys(
         &self,
         request: GetKeysParameters,
@@ -436,6 +439,7 @@ impl Relay {
     }
 
     /// Get keys from an account onchain.
+    #[instrument(skip_all)]
     async fn get_keys_onchain(
         &self,
         request: GetKeysParameters,
@@ -531,6 +535,7 @@ impl RelayApiServer for Relay {
         Ok(self.inner.fee_tokens.clone())
     }
 
+    #[instrument(skip_all)]
     async fn prepare_create_account(
         &self,
         request: PrepareCreateAccountParameters,
@@ -568,6 +573,7 @@ impl RelayApiServer for Relay {
         })
     }
 
+    #[instrument(skip_all)]
     async fn create_account(
         &self,
         request: CreateAccountParameters,
@@ -598,6 +604,7 @@ impl RelayApiServer for Relay {
         Ok(keys)
     }
 
+    #[instrument(skip_all)]
     async fn get_accounts(
         &self,
         request: GetAccountsParameters,
@@ -648,10 +655,12 @@ impl RelayApiServer for Relay {
         .await
     }
 
+    #[instrument(skip_all)]
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
         Ok(self.get_keys(request).await?)
     }
 
+    #[instrument(skip_all)]
     async fn prepare_calls(
         &self,
         request: PrepareCallsParameters,
@@ -764,6 +773,7 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
+    #[instrument(skip_all)]
     async fn prepare_upgrade_account(
         &self,
         request: PrepareUpgradeAccountParameters,
@@ -836,6 +846,7 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
+    #[instrument(skip_all)]
     async fn send_prepared_calls(
         &self,
         mut request: SendPreparedCallsParameters,
@@ -880,6 +891,7 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
+    #[instrument(skip_all)]
     async fn upgrade_account(
         &self,
         mut request: UpgradeAccountParameters,
@@ -914,6 +926,7 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
+    #[instrument(skip_all)]
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
         let tx_hash: TxHash = *id;
         let (chain_id, chain) = self.inner.chains.first().unwrap();

@@ -3,6 +3,9 @@
 mod periodic;
 pub use periodic::spawn_periodic_collectors;
 
+mod transport;
+pub use transport::*;
+
 use futures_util::future::BoxFuture;
 use jsonrpsee::{MethodResponse, server::middleware::rpc::RpcServiceT, types::Request};
 use metrics::{counter, histogram};

@@ -3,7 +3,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    metrics::{self, RpcMetricsService},
+    metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
@@ -113,6 +113,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
+                .layer(TraceLayer)
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
