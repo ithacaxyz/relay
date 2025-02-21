@@ -68,10 +68,9 @@ mod tests {
         let handle = PrometheusBuilder::new().install_recorder().unwrap();
 
         // Launches periodic jobs
-        spawn_periodic_collectors(
-            address!("4242424242424242424242424242424242424242"),
-            vec![Url::from_str("http://localhost:8545").unwrap()],
-        )
+        spawn_periodic_collectors(address!("4242424242424242424242424242424242424242"), vec![
+            Url::from_str("http://localhost:8545").unwrap(),
+        ])
         .await
         .unwrap();
 

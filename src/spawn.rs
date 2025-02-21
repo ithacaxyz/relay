@@ -1,0 +1,114 @@
+//! Relay spawn utilities.
+use crate::{
+    chains::Chains,
+    cli::Args,
+    config::RelayConfig,
+    metrics::{self, MetricsService, RpcMetricsService},
+    price::{PriceFetcher, PriceOracle},
+    rpc::{Relay, RelayApiServer},
+    signers::DynSigner,
+    types::{CoinKind, CoinPair, FeeTokens},
+};
+use alloy::{
+    network::EthereumWallet,
+    providers::{DynProvider, Provider, ProviderBuilder},
+};
+use http::header;
+use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
+use metrics_exporter_prometheus::PrometheusHandle;
+use std::path::Path;
+use tower::{ServiceBuilder, layer::layer_fn};
+use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
+use tracing::{info, warn};
+
+/// Attempts to spawn the relay service using CLI arguments and a configuration file.
+pub async fn try_spawn_with_args<P: AsRef<Path>>(
+    args: Args,
+    config_path: P,
+    metrics: Option<PrometheusHandle>,
+) -> eyre::Result<ServerHandle> {
+    let config = if !config_path.as_ref().exists() {
+        let config = args.into_relay_config()?;
+        config.save_to_file(&config_path)?;
+        config
+    } else {
+        // File exists: load and override with CLI values.
+        let config = RelayConfig::load_from_file(&config_path)?;
+        config
+            .with_address(args.address)
+            .with_port(args.port)
+            .with_endpoints(args.endpoints)
+            .with_quote_ttl(args.quote_ttl)
+            .with_quote_secret_key(args.quote_secret_key)
+            .with_fee_tokens(args.fee_tokens)
+            .with_secret_key(args.secret_key)
+    };
+
+    try_spawn(config, metrics).await
+}
+
+/// Spawns the relay service using the provided [`RelayConfig`].
+pub async fn try_spawn(
+    config: RelayConfig,
+    metrics: Option<PrometheusHandle>,
+) -> eyre::Result<ServerHandle> {
+    // construct provider
+    let signer = DynSigner::load(&config.secret_key, None).await?;
+    let signer_addr = signer.address();
+
+    let providers: Vec<DynProvider> = config
+        .endpoints
+        .iter()
+        .cloned()
+        .map(|url| ProviderBuilder::new().on_http(url).erased())
+        .collect();
+
+    // construct quote signer
+    let quote_signer = DynSigner::load(&config.quote_secret_key, None).await?;
+    let quote_signer_addr = quote_signer.address();
+
+    // construct rpc module
+    let mut price_oracle = PriceOracle::new();
+    if let Some(constant_rate) = config.constant_rate {
+        warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
+        price_oracle = price_oracle.with_constant_rate(constant_rate);
+    } else {
+        price_oracle
+            .spawn_fetcher(PriceFetcher::CoinGecko, &CoinPair::ethereum_pairs(&[CoinKind::USDT]));
+    }
+
+    // todo: avoid all this darn cloning
+    let rpc = Relay::new(
+        Chains::new(providers.clone()).await?,
+        EthereumWallet::new(signer.0),
+        quote_signer,
+        config.quote_ttl,
+        price_oracle,
+        FeeTokens::new(&config.fee_tokens, providers).await?,
+    )
+    .into_rpc();
+
+    // launch period metric collectors
+    metrics::spawn_periodic_collectors(signer_addr, config.endpoints).await?;
+
+    // http layers
+    let cors = CorsLayer::new()
+        .allow_methods(AllowMethods::any())
+        .allow_origin(AllowOrigin::any())
+        .allow_headers([header::CONTENT_TYPE]);
+    let metrics =
+        metrics.map(|handle| layer_fn(move |service| MetricsService::new(service, handle.clone())));
+
+    // start server
+    let server = Server::builder()
+        .http_only()
+        .set_http_middleware(ServiceBuilder::new().layer(cors).option_layer(metrics))
+        .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
+        .build((config.address, config.port))
+        .await?;
+    info!(addr = %server.local_addr().unwrap(), "Started relay service");
+    info!("Transaction signer key: {}", signer_addr);
+    info!("Quote signer key: {}", quote_signer_addr);
+
+    Ok(server.start(rpc))
+}

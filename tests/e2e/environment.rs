@@ -13,10 +13,15 @@ use alloy::{
 };
 use alloy_chains::NamedChain;
 use eyre::{self, ContextCompat, OptionExt, WrapErr};
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::{
+    http_client::{HttpClient, HttpClientBuilder},
+    server::ServerHandle,
+};
 use relay::{
     cli::Args,
+    config::RelayConfig,
     signers::{DynSigner, P256Signer},
+    spawn::try_spawn,
     types::CoinKind,
 };
 use std::{
@@ -35,7 +40,7 @@ pub struct Environment {
     pub erc20: Address,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
-    pub relay_handle: tokio::task::JoinHandle<eyre::Result<()>>,
+    pub relay_handle: ServerHandle,
 }
 
 impl std::fmt::Debug for Environment {
@@ -118,21 +123,17 @@ impl Environment {
         assert!(CoinKind::get_token(NamedChain::AnvilHardhat.into(), erc20).is_some());
 
         // Start relay service.
-        let relay_port = get_available_port()?;
-        let relay_handle = tokio::spawn({
-            async move {
-                let cli = Args {
-                    address: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: relay_port,
-                    endpoints: vec![endpoint.clone()],
-                    quote_ttl: Duration::from_secs(60),
-                    quote_secret_key: RELAY_PRIVATE_KEY.to_string(),
-                    fee_tokens: vec![erc20],
-                    secret_key: RELAY_PRIVATE_KEY.to_string(),
-                };
-                cli.run(None).await
-            }
-        });
+        let relay_handle = try_spawn(
+            RelayConfig::default()
+                .with_port(get_available_port()?)
+                .with_endpoints(vec![endpoint.clone()])
+                .with_quote_ttl(Duration::from_secs(60))
+                .with_quote_secret_key(RELAY_PRIVATE_KEY.to_string())
+                .with_secret_key(RELAY_PRIVATE_KEY.to_string())
+                .with_fee_tokens(vec![erc20]),
+            None,
+        )
+        .await?;
 
         // Wait for it to boot
         // todo: health endpoint
@@ -155,12 +156,6 @@ impl Environment {
             relay_endpoint,
             relay_handle,
         })
-    }
-
-    /// Cleanup the environment, ensuring the relay task is shutdown
-    pub async fn cleanup(self) {
-        self.relay_handle.abort();
-        let _ = self.relay_handle.await;
     }
 }
 

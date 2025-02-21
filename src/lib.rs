@@ -4,6 +4,7 @@
 
 pub mod chains;
 pub mod cli;
+pub mod config;
 pub mod constants;
 pub mod error;
 pub mod metrics;
@@ -12,4 +13,5 @@ pub mod price;
 pub mod rpc;
 pub mod serde;
 pub mod signers;
+pub mod spawn;
 pub mod types;

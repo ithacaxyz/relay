@@ -18,13 +18,10 @@ mod tests {
     #[tokio::test]
     async fn coingecko() {
         let oracle = PriceOracle::new();
-        oracle.spawn_fetcher(
-            PriceFetcher::CoinGecko,
-            &[
-                CoinPair { from: CoinKind::USDT, to: CoinKind::ETH },
-                CoinPair { from: CoinKind::USDC, to: CoinKind::ETH },
-            ],
-        );
+        oracle.spawn_fetcher(PriceFetcher::CoinGecko, &[
+            CoinPair { from: CoinKind::USDT, to: CoinKind::ETH },
+            CoinPair { from: CoinKind::USDC, to: CoinKind::ETH },
+        ]);
 
         // Allow coingecko to fetch prices
         sleep(Duration::from_millis(500)).await;

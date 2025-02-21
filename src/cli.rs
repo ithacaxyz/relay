@@ -1,28 +1,13 @@
 //! # Relay CLI
-use crate::{
-    chains::Chains,
-    metrics::{self, MetricsService, RpcMetricsService},
-    price::{PriceFetcher, PriceOracle},
-    rpc::{Relay, RelayApiServer},
-    signers::DynSigner,
-    types::{CoinKind, CoinPair, FeeTokens},
-};
-use alloy::{
-    network::EthereumWallet,
-    primitives::Address,
-    providers::{DynProvider, Provider, ProviderBuilder},
-};
+use crate::{config::RelayConfig, spawn::try_spawn_with_args};
+use alloy::primitives::Address;
 use clap::Parser;
-use http::header;
-use jsonrpsee::server::{RpcServiceBuilder, Server};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
     time::Duration,
 };
-use tower::{ServiceBuilder, layer::layer_fn};
-use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
-use tracing::info;
 use url::Url;
 
 /// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
@@ -57,63 +42,24 @@ pub struct Args {
 impl Args {
     /// Run the relayer service.
     pub async fn run(self, metrics_recorder: Option<PrometheusHandle>) -> eyre::Result<()> {
-        // construct provider
-        let signer = DynSigner::load(&self.secret_key, None).await?;
-        let signer_addr = signer.address();
-
-        let providers: Vec<DynProvider> = self
-            .endpoints
-            .iter()
-            .cloned()
-            .map(|url| ProviderBuilder::new().on_http(url).erased())
-            .collect();
-
-        // construct quote signer
-        let quote_signer = DynSigner::load(&self.quote_secret_key, None).await?;
-        let quote_signer_addr = quote_signer.address();
-
-        // construct rpc module
-        let price_oracle = PriceOracle::new();
-        price_oracle
-            .spawn_fetcher(PriceFetcher::CoinGecko, &CoinPair::ethereum_pairs(&[CoinKind::USDT]));
-
-        // todo: avoid all this darn cloning
-        let rpc = Relay::new(
-            Chains::new(providers.clone()).await?,
-            EthereumWallet::new(signer.0),
-            quote_signer,
-            self.quote_ttl,
-            price_oracle,
-            FeeTokens::new(&self.fee_tokens, providers).await?,
-        )
-        .into_rpc();
-
-        // launch period metric collectors
-        metrics::spawn_periodic_collectors(signer_addr, self.endpoints).await?;
-
-        // http layers
-        let cors = CorsLayer::new()
-            .allow_methods(AllowMethods::any())
-            .allow_origin(AllowOrigin::any())
-            .allow_headers([header::CONTENT_TYPE]);
-        let metrics = metrics_recorder
-            .map(|handle| layer_fn(move |service| MetricsService::new(service, handle.clone())));
-
-        // start server
-        let server = Server::builder()
-            .http_only()
-            .set_http_middleware(ServiceBuilder::new().layer(cors).option_layer(metrics))
-            .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
-            .build((self.address, self.port))
-            .await?;
-        info!(addr = %server.local_addr().unwrap(), "Started relay service");
-        info!("Transaction signer key: {}", signer_addr);
-        info!("Quote signer key: {}", quote_signer_addr);
-
-        let handle = server.start(rpc);
-        handle.stopped().await;
+        try_spawn_with_args(self, &PathBuf::from("relay.toml"), metrics_recorder)
+            .await?
+            .stopped()
+            .await;
 
         Ok(())
+    }
+
+    /// Converts [`Args`] to [`RelayConfig`].
+    pub fn into_relay_config(self) -> eyre::Result<RelayConfig> {
+        Ok(RelayConfig::default()
+            .with_address(self.address)
+            .with_port(self.port)
+            .with_endpoints(self.endpoints)
+            .with_quote_ttl(self.quote_ttl)
+            .with_fee_tokens(self.fee_tokens)
+            .with_quote_secret_key(self.quote_secret_key)
+            .with_secret_key(self.secret_key))
     }
 }
 

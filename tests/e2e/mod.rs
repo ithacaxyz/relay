@@ -39,20 +39,17 @@ pub struct ActionRequest {
     quote: SignedQuote,
 }
 
-/// Executes all transactions from the test case. If it returns an error, ensures the relay task is
-/// shutdown first.
+/// Executes all transactions from the test case.
 pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
     let env = Environment::setup().await?;
-    let result = async {
+
+    async {
         for (nonce, tx) in txs.into_iter().enumerate() {
             process_tx(nonce, tx, &env).await?;
         }
         Ok(())
     }
-    .await;
-
-    env.cleanup().await;
-    result
+    .await
 }
 
 /// Processes a single transaction, returning error on a unexpected failure.
