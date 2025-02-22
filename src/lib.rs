@@ -2,6 +2,7 @@
 //!
 //! Library for the implementation of the Ithaca Relay.
 
+pub mod backend;
 pub mod chains;
 pub mod cli;
 pub mod constants;
