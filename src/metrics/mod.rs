@@ -99,17 +99,24 @@ where
             let rp = service.call(req).await;
             let elapsed = timer.elapsed();
 
-            counter!(
-                "rpc.call.count",
-                "method" => method.clone(),
-                "code" => rp.as_error_code().unwrap_or_default().to_string()
-            )
-            .increment(1);
+            // only record metrics for methods that exist
+            if rp
+                .as_error_code()
+                .is_none_or(|code| code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE)
+            {
+                counter!(
+                    "rpc.call.count",
+                    "method" => method.clone(),
+                    "code" => rp.as_error_code().unwrap_or_default().to_string()
+                )
+                .increment(1);
 
-            histogram!(
-                "rpc.call.latency","method" => method
-            )
-            .record(elapsed.as_millis() as f64);
+                histogram!(
+                    "rpc.call.latency",
+                    "method" => method
+                )
+                .record(elapsed.as_millis() as f64);
+            }
 
             rp
         })
