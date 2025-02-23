@@ -53,7 +53,7 @@ impl NonceManager for MultiChainNonceManager {
         let mut nonce = nonce.lock().await;
         let new_nonce = if *nonce == NONE {
             // Initialize the nonce if we haven't seen this account before.
-            provider.get_transaction_count(address).await?
+            provider.get_transaction_count(address).pending().await?
         } else {
             *nonce + 1
         };
