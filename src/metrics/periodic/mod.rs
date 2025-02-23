@@ -87,6 +87,6 @@ mod tests {
             "balance{address=\"0x0000000000000000000000000000000000000000\",chain_id=\"1\"} 0"
         ));
 
-        assert!(metrics_output.contains("latency{url=\"http://localhost:8545/\",quantile"));
+        assert!(metrics_output.contains("node_latency{url=\"http://localhost:8545/\",quantile"));
     }
 }

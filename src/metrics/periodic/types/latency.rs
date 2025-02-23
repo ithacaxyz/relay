@@ -29,7 +29,7 @@ where
             let elapsed = start.elapsed().as_millis() as f64;
 
             histogram!(
-                "latency",
+                "node_latency",
                 "url" => format!("{url}"),
             )
             .record(elapsed);
