@@ -4,12 +4,10 @@ A transparent cross-chain transaction router for EIP-7702 accounts, specifically
 
 ## Table of Contents
 
-- [Ithaca Relay](#ithaca-relay)
-  - [Table of Contents](#table-of-contents)
-  - [Running](#running)
-  - [Testing](#testing)
+- [Running](#running)
+- [Testing](#testing)
     - [End-to-End](#end-to-end)
-  - [Deploying](#deploying)
+- [Deploying](#deploying)
 
 ## Running
 
