@@ -69,9 +69,6 @@ pub enum SendActionError {
     /// The chain is not supported.
     #[error("unsupported chain {0}")]
     UnsupportedChain(ChainId),
-    /// The payment recipient in the provided [`UserOp`] is not the entrypoint or the tx signer.
-    #[error("the payment recipient is not the entrypoint or the signer")]
-    WrongPaymentRecipient,
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
