@@ -157,12 +157,17 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
     let test_vector = vec![
         TxContext {
             expected: ExpectedOutcome::Pass,
+            calls: vec![],
+            auth: Some(AuthKind::Auth),
+            ..Default::default()
+        },
+        TxContext {
+            expected: ExpectedOutcome::Pass,
             calls: vec![Call {
                 target: EOA_ADDRESS,
                 value: U256::ZERO,
                 data: authorizeCall { key: key1.clone() }.abi_encode().into(),
             }],
-            auth: Some(AuthKind::Auth),
             ..Default::default()
         },
         TxContext {

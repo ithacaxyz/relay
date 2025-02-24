@@ -131,14 +131,11 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_quote_key(RELAY_PRIVATE_KEY.to_string())
                 .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
-                .with_fee_tokens(&[erc20]),
+                .with_fee_tokens(&[erc20])
+                .with_quote_constant_rate(1.0),
             None,
         )
         .await?;
-
-        // Wait for it to boot
-        // todo: health endpoint
-        sleep(Duration::from_secs(1)).await;
 
         let relay_endpoint = HttpClientBuilder::default()
             .build(format!("http://localhost:{relay_port}"))
