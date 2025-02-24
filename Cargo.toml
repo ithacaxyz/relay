@@ -40,9 +40,10 @@ metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16"
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
-serde = "1"
+serde = { version = "1", features = ["rc"] }
 serde_json = "1.0"
 thiserror = "2"
+toml = "*"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
@@ -52,7 +53,7 @@ tracing-subscriber = { version = "0.3.19", features = [
     "std",
     "env-filter",
 ] }
-url = "2.5"
+url = { version = "2.5", features = ["serde"] }
 
 [dev-dependencies]
 alloy = { version = "0.11", features = ["eips", "provider-anvil-node"] }
