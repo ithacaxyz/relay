@@ -176,6 +176,22 @@ mod tests {
     };
 
     #[test]
+    fn is_multichain() {
+        assert!(!UserOp::default().is_multichain());
+        assert!(
+            UserOp { nonce: U256::from(MULTICHAIN_NONCE_PREFIX << 240), ..Default::default() }
+                .is_multichain()
+        );
+        assert!(
+            UserOp {
+                nonce: (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338),
+                ..Default::default()
+            }
+            .is_multichain()
+        )
+    }
+
+    #[test]
     fn user_op_eip712_digest() {
         let mut user_op = UserOp {
             eoa: address!("7b9fc63d6d9e8f94e90d1b0abfc3f611de2638d0"),
