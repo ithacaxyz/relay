@@ -41,16 +41,16 @@ pub struct ActionRequest {
 }
 
 /// Executes all transactions from the test case.
-pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
-    let env = Environment::setup().await?;
-
-    async {
-        for (nonce, tx) in txs.into_iter().enumerate() {
-            process_tx(nonce, tx, &env).await?;
-        }
-        Ok(())
+pub async fn run_e2e<F>(build_txs: F) -> Result<()>
+where
+    F: FnOnce(&mut Environment) -> Vec<TxContext>,
+{
+    let mut env = Environment::setup().await?;
+    let txs = build_txs(&mut env);
+    for (nonce, tx) in txs.into_iter().enumerate() {
+        process_tx(nonce, tx, &mut env).await?;
     }
-    .await
+    Ok(())
 }
 
 /// Processes a single transaction, returning error on a unexpected failure.
@@ -98,7 +98,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             }
 
             if let Some(auth) = authorization {
-                if env.provider.get_code_at(EOA_ADDRESS).await?
+                if env.provider.get_code_at(env.eoa_signer.address()).await?
                     != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
                     return Err(eyre::eyre!("Transaction {nonce} failed to delegate"));
