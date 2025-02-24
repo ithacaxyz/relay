@@ -41,16 +41,16 @@ pub struct ActionRequest {
 }
 
 /// Executes all transactions from the test case.
-pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
-    let env = Environment::setup().await?;
-
-    async {
-        for (nonce, tx) in txs.into_iter().enumerate() {
-            process_tx(nonce, tx, &env).await?;
-        }
-        Ok(())
+pub async fn run_e2e<F>(build_txs: F) -> Result<()>
+where
+    F: FnOnce(&Environment) -> Vec<TxContext>,
+{
+    let mut env = Environment::setup().await?;
+    let txs = build_txs(&env);
+    for (nonce, tx) in txs.into_iter().enumerate() {
+        process_tx(nonce, tx, &env).await?;
     }
-    .await
+    Ok(())
 }
 
 /// Processes a single transaction, returning error on a unexpected failure.
@@ -64,9 +64,9 @@ pub async fn run_e2e(txs: Vec<TxContext>) -> Result<()> {
 ///    - Retrieves and checks transaction receipt
 ///    - Verifies transaction status matches expectations
 ///    - Confirms UserOp success by checking nonce invalidation
-async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()> {
+async fn process_tx(tx_num: usize, tx: TxContext, env: &Environment) -> Result<()> {
     let Some(ActionRequest { action, authorization, quote }) =
-        prepare_action_request(nonce, &tx, env).await?
+        prepare_action_request(tx_num, &tx, env).await?
     else {
         // We had an expected failure so we should exit.
         return Ok(());
@@ -77,9 +77,9 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
     match env.relay_endpoint.send_action(action, quote, authorization.clone()).await {
         Ok(tx_hash) => {
             if tx.expected.failed_send() {
-                return Err(eyre::eyre!(
-                    "Send action nonce {nonce} passed when it should have failed.",
-                ));
+                return Err(
+                    eyre::eyre!("Send action {tx_num} passed when it should have failed.",),
+                );
             }
 
             let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
@@ -90,18 +90,18 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             if receipt.status() {
                 if tx.expected.reverted_tx() {
                     return Err(eyre::eyre!(
-                        "Transaction nonce {nonce} passed when it should have reverted.",
+                        "Transaction {tx_num} passed when it should have reverted.",
                     ));
                 }
             } else if !tx.expected.reverted_tx() {
-                return Err(eyre::eyre!("Transaction failed for nonce {nonce}: {receipt:#?}"));
+                return Err(eyre::eyre!("Transaction {tx_num} failed: {receipt:#?}"));
             }
 
             if let Some(auth) = authorization {
-                if env.provider.get_code_at(EOA_ADDRESS).await?
+                if env.provider.get_code_at(env.eoa_signer.address()).await?
                     != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
-                    return Err(eyre::eyre!("Transaction {nonce} failed to delegate"));
+                    return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
                 }
             }
 
@@ -113,13 +113,11 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             let op_success = err == ENTRYPOINT_NO_ERROR;
             if nonce_invalidated && op_success {
                 if tx.expected.failed_user_op() {
-                    return Err(eyre::eyre!(
-                        "UserOp nonce {nonce} passed when it should have failed."
-                    ));
+                    return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
                 }
             } else if !tx.expected.failed_user_op() {
                 return Err(eyre::eyre!(
-                    "Transaction succeeded but UserOp failed for nonce {nonce}",
+                    "Transaction succeeded but UserOp failed for transaction {tx_num}",
                 ));
             }
         }
@@ -127,7 +125,7 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
             if tx.expected.failed_send() {
                 return Ok(());
             }
-            return Err(eyre::eyre!("Send error for nonce {nonce}: {err}"));
+            return Err(eyre::eyre!("Send error for transaction {tx_num}: {err}"));
         }
     }
 
@@ -155,23 +153,16 @@ async fn process_tx(nonce: usize, tx: TxContext, env: &Environment) -> Result<()
 ///    - For nonce 0: uses raw signature
 ///    - For other nonces: wraps signature with key information
 pub async fn prepare_action_request(
-    nonce: usize,
+    tx_num: usize,
     tx: &TxContext,
     env: &Environment,
 ) -> eyre::Result<Option<ActionRequest>> {
     let execution_data: Bytes = tx.calls.abi_encode().into();
-    let authorization = if let Some(auth) = tx.auth.as_ref() {
-        Some(auth.sign(env, nonce as u64).await?)
-    } else {
-        None
-    };
+    let nonce = env.provider.get_transaction_count(env.eoa_signer.address()).await?;
+    let authorization =
+        if let Some(auth) = tx.auth.as_ref() { Some(auth.sign(env, nonce).await?) } else { None };
 
-    let key_type = tx
-        .key
-        .as_ref()
-        .map(|k| k.keyType)
-        .filter(|k| (nonce == 0 && k.is_secp256k1()) || nonce > 0)
-        .unwrap_or(KeyType::Secp256k1);
+    let key_type = tx.key.as_ref().map(|k| k.keyType).unwrap_or(KeyType::Secp256k1);
 
     let quote = env
         .relay_endpoint
@@ -180,7 +171,7 @@ pub async fn prepare_action_request(
                 op: PartialUserOp {
                     eoa: env.eoa_signer.address(),
                     executionData: execution_data.clone(),
-                    nonce: U256::from(nonce),
+                    nonce: U256::from(tx_num),
                 },
                 chain_id: env.chain_id,
             },
@@ -194,7 +185,7 @@ pub async fn prepare_action_request(
         if tx.expected.failed_estimate() {
             return Ok(None);
         } else {
-            return Err(eyre::eyre!("Fee estimation error for nonce {nonce}: {quote:?}"));
+            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {quote:?}"));
         }
     }
 
@@ -202,7 +193,7 @@ pub async fn prepare_action_request(
     let mut op = UserOp {
         eoa: env.eoa_signer.address(),
         executionData: execution_data.clone(),
-        nonce: U256::from(nonce),
+        nonce: U256::from(tx_num),
         payer: Address::ZERO,
         paymentToken: env.erc20,
         paymentRecipient: Address::ZERO,

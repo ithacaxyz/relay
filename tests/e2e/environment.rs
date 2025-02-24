@@ -27,12 +27,14 @@ use relay::{
 use std::{
     net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 use tokio::time::sleep;
+use url::Url;
 
 pub struct Environment {
-    pub _anvil: AnvilInstance,
+    pub _anvil: Option<AnvilInstance>,
     pub provider: DynProvider,
     pub eoa_signer: DynSigner,
     pub entrypoint: Address,
@@ -58,69 +60,73 @@ impl std::fmt::Debug for Environment {
 
 impl Environment {
     /// Sets up the test environment including Anvil, contracts, and the relay service.
+    ///
+    /// Available environment variables:
+    /// - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
+    /// - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for inprocess spawned Anvil.
+    /// - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
+    /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
+    /// - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
+    /// - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
+    /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
+    ///
+    /// Example `.env`:
+    /// ```env
+    /// TEST_EXTERNAL_ANVIL="http://localhost:8545"
+    /// TEST_FORK_URL="https://odyssey.ithaca.xyz"
+    /// TEST_FORK_BLOCK_NUMBER=11577300
+    /// TEST_EOA_PRIVATE_KEY=0xabc123...
+    /// TEST_CONTRACTS="./tests/account/out"
+    /// TEST_ENTRYPOINT="0xEntryPointAddress"
+    /// TEST_DELEGATION="0xDelegationAddress"
+    /// TEST_ERC20="0xYourErc20Address"
+    /// ```
     pub async fn setup() -> eyre::Result<Self> {
-        // Spawn local Ethereum node.
-        let anvil = Anvil::new()
-            .args(["--odyssey", "--host", "0.0.0.0"])
-            .try_spawn()
-            .wrap_err("Failed to spawn Anvil")?;
-        let endpoint = anvil.endpoint_url();
-        let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
+        dotenv::dotenv().ok();
+
+        // Spawns a local Ethereum node if one is not specified.
+        let (endpoint, anvil) = if let Ok(endpoint) = std::env::var("TEST_EXTERNAL_ANVIL") {
+            (Url::from_str(&endpoint).wrap_err("Invalid endpoint on $TEST_EXTERNAL_ANVIL ")?, None)
+        } else {
+            let mut args = vec![];
+
+            let fork_url = std::env::var("TEST_FORK_URL");
+            if let Ok(fork_url) = &fork_url {
+                args.extend(["--fork-url", fork_url]);
+            }
+
+            let fork_block_number = std::env::var("TEST_FORK_BLOCK_NUMBER");
+            if let Ok(fork_block_number) = &fork_block_number {
+                args.extend(["--fork-block-number", fork_block_number]);
+            }
+
+            let anvil = Anvil::new()
+                .args(["--odyssey", "--host", "0.0.0.0"].into_iter().chain(args.into_iter()))
+                .try_spawn()
+                .wrap_err("Failed to spawn Anvil")?;
+
+            (anvil.endpoint_url(), Some(anvil))
+        };
 
         // Load signers.
         let relay_signer = DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), None)
             .await
             .wrap_err("Relay signer load failed")?;
-        let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None)
-            .await
-            .wrap_err("EOA signer load failed")?;
+        let eoa_signer = DynSigner::load(
+            &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
+            None,
+        )
+        .await
+        .wrap_err("EOA signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(relay_signer.0.clone()))
             .on_http(endpoint.clone());
 
-        // Deploy contracts.
-        let contracts_path = PathBuf::from(
-            std::env::var("CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-        );
-        let mock_entrypoint =
-            setup_contract(&provider, &contracts_path.join("EntryPoint.sol/EntryPoint.json"), None)
-                .await?;
-        let delegation =
-            setup_contract(&provider, &contracts_path.join("Delegation.sol/Delegation.json"), None)
-                .await?;
-        let erc20 = setup_contract(
-            &provider,
-            &contracts_path.join("MockERC20.sol/MockERC20.json"),
-            Some(
-                MockErc20::constructorCall {
-                    name_: Default::default(),
-                    symbol_: Default::default(),
-                    decimals_: Default::default(),
-                }
-                .abi_encode()
-                .into(),
-            ),
-        )
-        .await?;
-
-        provider
-            .anvil_set_code(entrypoint, provider.get_code_at(mock_entrypoint).await?)
-            .await
-            .wrap_err("Failed to set code")?;
-
-        // Mint tokens for both signers.
-        for signer in [&relay_signer, &eoa_signer] {
-            MockErc20::new(erc20, &provider)
-                .mint(signer.address(), U256::from(100e18))
-                .send()
-                .await
-                .wrap_err("Minting failed")?;
-        }
-
-        // Temporary assertion until we can dynamically initialize COINS_CONFIG
-        assert!(CoinKind::get_token(NamedChain::AnvilHardhat.into(), erc20).is_some());
+        // Get or deploy mock contracts.
+        let (delegation, entrypoint, erc20) =
+            get_or_deploy_contracts(&provider, &relay_signer, &eoa_signer).await?;
 
         // Start relay service.
         let relay_port = get_available_port()?;
@@ -157,7 +163,73 @@ impl Environment {
     }
 }
 
-async fn setup_contract<P: Provider>(
+/// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
+async fn get_or_deploy_contracts<P: Provider>(
+    provider: &P,
+    relay_signer: &DynSigner,
+    eoa_signer: &DynSigner,
+) -> Result<(Address, Address, Address), eyre::Error> {
+    let contracts_path = PathBuf::from(
+        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
+    );
+    let mock_entrypoint =
+        deploy_contract(&provider, &contracts_path.join("EntryPoint.sol/EntryPoint.json"), None)
+            .await?;
+    let mut delegation =
+        deploy_contract(&provider, &contracts_path.join("Delegation.sol/Delegation.json"), None)
+            .await?;
+
+    // Entrypoint
+    let entrypoint = if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
+        Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?
+    } else {
+        let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
+        provider
+            .anvil_set_code(entrypoint, provider.get_code_at(mock_entrypoint).await?)
+            .await
+            .wrap_err("Failed to set code")?;
+        entrypoint
+    };
+
+    // Delegation
+    if let Ok(address) = std::env::var("TEST_DELEGATION") {
+        delegation = Address::from_str(&address).wrap_err("Delegation address parse failed.")?
+    }
+
+    // FakeERC20
+    let erc20 = if let Ok(entrypoint) = std::env::var("TEST_ERC20") {
+        Address::from_str(&entrypoint).wrap_err("ERC20 address parse failed.")?
+    } else {
+        let erc20 = deploy_contract(
+            &provider,
+            &contracts_path.join("MockERC20.sol/MockERC20.json"),
+            Some(
+                MockErc20::constructorCall {
+                    name_: Default::default(),
+                    symbol_: Default::default(),
+                    decimals_: Default::default(),
+                }
+                .abi_encode()
+                .into(),
+            ),
+        )
+        .await?;
+
+        // Mint tokens for both signers.
+        for signer in [relay_signer, eoa_signer] {
+            MockErc20::new(erc20, &provider)
+                .mint(signer.address(), U256::from(100e18))
+                .send()
+                .await
+                .wrap_err("Minting failed")?;
+        }
+
+        erc20
+    };
+    Ok((delegation, entrypoint, erc20))
+}
+
+async fn deploy_contract<P: Provider>(
     provider: &P,
     artifact_path: &Path,
     args: Option<Bytes>,

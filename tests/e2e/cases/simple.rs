@@ -15,115 +15,116 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    let eoa_signer = DynSigner::load(&EOA_PRIVATE_KEY.to_string(), None).await?;
     let expiry = U40::ZERO;
     let super_admin = true;
 
     for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
         let key = KeyWith712Signer::random(key_type)?.unwrap();
 
-        let test_vector = vec![
-            TxContext {
-                calls: vec![Call {
-                    target: EOA_ADDRESS,
-                    value: U256::ZERO,
-                    data: authorizeCall { key: key.clone() }.abi_encode().into(),
-                }],
-                expected: ExpectedOutcome::Pass,
-                auth: Some(AuthKind::Auth),
-                ..Default::default()
-            },
-            TxContext {
-                calls: vec![Call {
-                    target: FAKE_ERC20,
-                    value: U256::ZERO,
-                    data: MockErc20::transferCall {
-                        recipient: Address::ZERO,
-                        amount: U256::from(10),
-                    }
-                    .abi_encode()
-                    .into(),
-                }],
-                expected: ExpectedOutcome::Pass,
-                key: Some(key),
-                ..Default::default()
-            },
-        ];
-
-        run_e2e(test_vector).await?;
+        run_e2e(|env| {
+            vec![
+                TxContext {
+                    calls: vec![Call {
+                        target: env.eoa_signer.address(),
+                        value: U256::ZERO,
+                        data: authorizeCall { key: key.clone() }.abi_encode().into(),
+                    }],
+                    expected: ExpectedOutcome::Pass,
+                    auth: Some(AuthKind::Auth),
+                    ..Default::default()
+                },
+                TxContext {
+                    calls: vec![Call {
+                        target: env.erc20,
+                        value: U256::ZERO,
+                        data: MockErc20::transferCall {
+                            recipient: Address::ZERO,
+                            amount: U256::from(10),
+                        }
+                        .abi_encode()
+                        .into(),
+                    }],
+                    expected: ExpectedOutcome::Pass,
+                    key: Some(key),
+                    ..Default::default()
+                },
+            ]
+        })
+        .await?;
     }
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
-    let test_vector = vec![TxContext {
-        calls: vec![Call {
-            target: EOA_ADDRESS,
-            value: U256::ZERO,
-            data: authorizeCall {
-                key: Key {
-                    expiry: Default::default(),
-                    keyType: KeyType::Secp256k1,
-                    isSuperAdmin: true,
-                    publicKey: EOA_ADDRESS.abi_encode().into(),
-                },
-            }
-            .abi_encode()
-            .into(),
-        }],
-        expected: ExpectedOutcome::FailSend,
-        auth: Some(AuthKind::modified_nonce(123)),
-        ..Default::default()
-    }];
-
-    run_e2e(test_vector).await
+    run_e2e(|env| {
+        vec![TxContext {
+            calls: vec![Call {
+                target: env.eoa_signer.address(),
+                value: U256::ZERO,
+                data: authorizeCall {
+                    key: Key {
+                        expiry: Default::default(),
+                        keyType: KeyType::Secp256k1,
+                        isSuperAdmin: true,
+                        publicKey: env.eoa_signer.address().abi_encode().into(),
+                    },
+                }
+                .abi_encode()
+                .into(),
+            }],
+            expected: ExpectedOutcome::FailSend,
+            auth: Some(AuthKind::modified_nonce(123)),
+            ..Default::default()
+        }]
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
-    let test_vector = vec![TxContext {
-        calls: vec![Call {
-            target: EOA_ADDRESS,
-            value: U256::ZERO,
-            data: authorizeCall {
-                key: Key {
-                    expiry: Default::default(),
-                    keyType: KeyType::Secp256k1,
-                    isSuperAdmin: true,
-                    publicKey: EOA_ADDRESS.abi_encode().into(),
-                },
-            }
-            .abi_encode()
-            .into(),
-        }],
-        expected: ExpectedOutcome::FailSend,
-        // Signing with an unrelated key should fail during sendAction when calling eth_call
-        auth: Some(AuthKind::modified_signer(
-            DynSigner::load(
-                "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
-                None,
-            )
-            .await?,
-        )),
-        ..Default::default()
-    }];
+    let dummy_signer =
+        DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
+            .await?;
 
-    run_e2e(test_vector).await
+    run_e2e(|env| {
+        vec![TxContext {
+            calls: vec![Call {
+                target: env.eoa_signer.address(),
+                value: U256::ZERO,
+                data: authorizeCall {
+                    key: Key {
+                        expiry: Default::default(),
+                        keyType: KeyType::Secp256k1,
+                        isSuperAdmin: true,
+                        publicKey: env.eoa_signer.address().abi_encode().into(),
+                    },
+                }
+                .abi_encode()
+                .into(),
+            }],
+            expected: ExpectedOutcome::FailSend,
+            // Signing with an unrelated key should fail during sendAction when calling eth_call
+            auth: Some(AuthKind::modified_signer(dummy_signer)),
+            ..Default::default()
+        }]
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_quote_check() -> Result<()> {
+    let env = Environment::setup().await?;
     let tx = TxContext {
         calls: vec![Call {
-            target: EOA_ADDRESS,
+            target: env.eoa_signer.address(),
             value: U256::ZERO,
             data: authorizeCall {
                 key: Key {
                     expiry: Default::default(),
                     keyType: KeyType::Secp256k1,
                     isSuperAdmin: true,
-                    publicKey: EOA_ADDRESS.abi_encode().into(),
+                    publicKey: env.eoa_signer.address().abi_encode().into(),
                 },
             }
             .abi_encode()
@@ -133,8 +134,6 @@ async fn invalid_auth_quote_check() -> Result<()> {
         auth: Some(AuthKind::Auth),
         ..Default::default()
     };
-
-    let env = Environment::setup().await?;
 
     let ActionRequest { action, mut authorization, quote } =
         prepare_action_request(0, &tx, &env).await?.expect("should not fail");
@@ -154,47 +153,49 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
     let key1 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
     let key2 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
 
-    let test_vector = vec![
-        TxContext {
-            expected: ExpectedOutcome::Pass,
-            calls: vec![],
-            auth: Some(AuthKind::Auth),
-            ..Default::default()
-        },
-        TxContext {
-            expected: ExpectedOutcome::Pass,
-            calls: vec![Call {
-                target: EOA_ADDRESS,
-                value: U256::ZERO,
-                data: authorizeCall { key: key1.clone() }.abi_encode().into(),
-            }],
-            ..Default::default()
-        },
-        TxContext {
-            expected: ExpectedOutcome::Pass,
-            calls: vec![Call {
-                target: EOA_ADDRESS,
-                value: U256::ZERO,
-                data: authorizeCall { key: key2.clone() }.abi_encode().into(),
-            }],
-            key: Some(key1),
-            ..Default::default()
-        },
-        TxContext {
-            expected: ExpectedOutcome::Pass,
-            calls: vec![Call {
-                target: FAKE_ERC20,
-                value: U256::ZERO,
-                data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
+    run_e2e(|env| {
+        vec![
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![],
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![Call {
+                    target: env.eoa_signer.address(),
+                    value: U256::ZERO,
+                    data: authorizeCall { key: key1.clone() }.abi_encode().into(),
+                }],
+                ..Default::default()
+            },
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![Call {
+                    target: env.eoa_signer.address(),
+                    value: U256::ZERO,
+                    data: authorizeCall { key: key2.clone() }.abi_encode().into(),
+                }],
+                key: Some(key1),
+                ..Default::default()
+            },
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![Call {
+                    target: env.erc20,
+                    value: U256::ZERO,
+                    data: MockErc20::transferCall {
+                        recipient: Address::ZERO,
+                        amount: U256::from(10),
+                    }
                     .abi_encode()
                     .into(),
-            }],
-            key: Some(key2),
-            ..Default::default()
-        },
-    ];
-
-    run_e2e(test_vector).await?;
-
-    Ok(())
+                }],
+                key: Some(key2),
+                ..Default::default()
+            },
+        ]
+    })
+    .await
 }

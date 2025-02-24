@@ -84,8 +84,17 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
    You can run the tests still in the same directory as before.
 
    ```bash
-    $ CONTRACTS=$(pwd)/out cargo test -- e2e
+    $ TEST_CONTRACTS=$(pwd)/out cargo test -- e2e
    ```
+
+   More advanced options are available through the following environment variables with `.env` support.
+   - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
+   - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
+   - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
+   - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
+   - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
+   - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
+   - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
 
 ## Deploying
 

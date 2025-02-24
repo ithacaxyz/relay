@@ -32,3 +32,6 @@ lcov.info
 rustc-ice-*
 
 crates/testing/resources/**/cache/*
+
+# Environment files
+.env
