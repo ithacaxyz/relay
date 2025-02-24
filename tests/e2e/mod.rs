@@ -206,9 +206,9 @@ pub async fn prepare_action_request(
         payer: Address::ZERO,
         paymentToken: env.erc20,
         paymentRecipient: Address::ZERO,
-        paymentAmount: U256::ZERO,
-        paymentMaxAmount: U256::ZERO,
-        paymentPerGas: U256::ZERO,
+        paymentAmount: quote.ty().amount,
+        paymentMaxAmount: quote.ty().amount,
+        paymentPerGas: quote.ty().amount / U256::from(quote.ty().gas_estimate),
         combinedGas: U256::from(quote.ty().gas_estimate),
         signature: bytes!(""),
     };
@@ -217,7 +217,7 @@ pub async fn prepare_action_request(
     let payload = op.as_eip712()?;
     let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
 
-    op.signature = if nonce == 0 {
+    op.signature = if tx.key.is_none() {
         env.eoa_signer
             .sign_payload_hash(payload.eip712_signing_hash(&domain))
             .await
