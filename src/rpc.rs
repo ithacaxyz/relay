@@ -36,9 +36,7 @@ use tracing::{debug, warn};
 use crate::{
     chains::Chains,
     config::QuoteConfig,
-    constants::{
-        EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, INNER_ENTRYPOINT_GAS_OVERHEAD,
-    },
+    constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
@@ -205,10 +203,7 @@ impl RelayApiServer for Relay {
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
-            entrypoint
-                .simulate_execute(&op)
-                .map_ok(|gas| gas.to::<u64>())
-                .map_err(EstimateFeeError::from),
+            entrypoint.simulate_execute(&op).map_err(EstimateFeeError::from),
             provider.estimate_eip1559_fees(None).map_err(EstimateFeeError::from)
         )?;
 
@@ -218,12 +213,16 @@ impl RelayApiServer for Relay {
         // point it is not possible to compute the gas refund, so it is an overestimate, as we also
         // need to charge for the account being presumed empty.
         if authorization_address.is_some() {
-            gas_estimate += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
+            gas_estimate.tx += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
 
         // Add some leeway, since the actual simulation may no be enough.
-        gas_estimate += self.inner.quote_config.user_op_buffer();
-        debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
+        // todo: re-evaluate if this is still necessary
+        gas_estimate.op += self.inner.quote_config.user_op_buffer();
+        gas_estimate.tx += self.inner.quote_config.user_op_buffer();
+        gas_estimate.tx += self.inner.quote_config.tx_buffer();
+
+        debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
         // TODO: only handles eth as native fee token
@@ -242,7 +241,7 @@ impl RelayApiServer for Relay {
         // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
             token: token.address,
-            amount: op.paymentPerGas * U256::from(gas_estimate),
+            amount: op.paymentPerGas * U256::from(gas_estimate.tx),
             gas_estimate,
             native_fee_estimate,
             digest: op.digest(),
@@ -300,13 +299,6 @@ impl RelayApiServer for Relay {
         let entrypoint =
             account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
 
-        // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
-        let mut tx_gas = self.inner.quote_config.tx_buffer()
-            + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
-        if authorization.is_some() {
-            tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
-        }
-
         let mut tx = TransactionRequest::default()
             .with_chain_id(request.chain_id)
             .input(
@@ -316,7 +308,7 @@ impl RelayApiServer for Relay {
             )
             .to(entrypoint)
             .from(tx_signer_address)
-            .gas_limit(tx_gas)
+            .gas_limit(quote.ty().gas_estimate.tx)
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 

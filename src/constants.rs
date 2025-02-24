@@ -2,10 +2,6 @@
 
 use alloy::hex;
 
-/// Additional gas overhead for the inner entrypoint during execution,
-/// used to adjust gas estimation.
-pub const INNER_ENTRYPOINT_GAS_OVERHEAD: u64 = 100_000;
-
 /// Extra buffer added to UserOp gas estimates to cover execution overhead
 /// and ensure sufficient gas is provided.
 pub const USER_OP_GAS_BUFFER: u64 = 25_000;
