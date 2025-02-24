@@ -124,10 +124,3 @@ sol! {
         function transfer(address recipient, uint256 amount);
     }
 }
-
-sol! {
-    #[sol(rpc)]
-    interface Delegation {
-        event NonceInvalidated(uint256 nonce);
-    }
-}

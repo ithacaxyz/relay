@@ -3,8 +3,12 @@ use alloy::{
     primitives::{B256, Keccak256, U256},
     sol,
     sol_types::SolValue,
+    uint,
 };
 use serde::{Deserialize, Serialize};
+
+/// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
+pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
 
 sol! {
     /// A struct to hold the user operation fields.
@@ -17,33 +21,72 @@ sol! {
         /// The user's address.
         address eoa;
         /// An encoded array of calls, using ERC7579 batch execution encoding.
-        /// `abi.encode(calls)`, where `calls` is an array of type `Call[]`.
+        ///
+        /// The format is `abi.encode(calls)`, where `calls` is an array of type `Call[]`.
+        ///
         /// This allows for more efficient safe forwarding to the EOA.
         bytes executionData;
         /// Per delegated EOA.
+        ///
+        /// # Memory layout
+        ///
+        /// Each nonce has the following memory layout:
+        ///
+        ///      ,----------------------------------------------------.
+        /// bits | 0-191 (192 bits)                | 192-255 (64 bits)|
+        ///      |---------------------------------|------------------|
+        /// desc | sequence key                    | sequential nonce |
+        ///      `----------------.----------------|------------------'
+        ///                       |
+        ///                       v
+        ///      ,-------------------------------------.
+        /// bits | 0-15 (16 bits)  | 16-191 (176 bits) |
+        ///      |-------------------------------------|
+        /// desc | multichain flag | remainder         |
+        ///      `-------------------------------------'
+        ///
+        /// If the upper 16 bits of the sequence key is `0xc1d0`, then the EIP-712 has
+        /// of the UserOp will exlude the chain ID.
+        ///
+        /// # Ordering
+        ///
+        /// Ordering matters within a sequence key, but not between sequence keys.
+        ///
+        /// This means that users who do not care about the order of specific userops
+        /// can sign their userops using a random sequence key. On the other hand, if
+        /// they do care about ordering, they would use the same sequence key.
         uint256 nonce;
         /// The account paying the payment token.
+        ///
         /// If this is `address(0)`, it defaults to the `eoa`.
         address payer;
         /// The ERC20 or native token used to pay for gas.
         address paymentToken;
         /// The payment recipient for the ERC20 token.
+        ///
         /// Excluded from signature. The filler can replace this with their own address.
+        ///
         /// This enables multiple fillers, allowing for competitive filling, better uptime.
         /// If `address(0)`, the payment will be accrued by the entry point.
         address paymentRecipient;
         /// The amount of the token to pay.
-        /// Excluded from signature. This will be required to be less than `paymentMaxAmount`.
+        ///
+        /// Excluded from signature.
+        ///
+        /// This will be required to be less than `paymentMaxAmount`.
         uint256 paymentAmount;
         /// The maximum amount of the token to pay.
         uint256 paymentMaxAmount;
         /// The amount of ERC20 to pay per gas spent. For calculation of refunds.
+        ///
         /// If this is left at zero, it will be treated as infinity (i.e. no refunds).
         uint256 paymentPerGas;
         /// The combined gas limit for payment, verification, and calling the EOA.
         uint256 combinedGas;
         /// The wrapped signature.
-        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        ///
+        /// The format is `abi.encodePacked(innerSignature, keyHash, prehash)` for most signatures,
+        /// except if it is signed by the EOA root key, in which case `abi.encodePacked(r, s, v)` is valid as well.
         bytes signature;
     }
 
@@ -72,7 +115,6 @@ mod eip712 {
             address eoa;
             Call[] calls;
             uint256 nonce;
-            uint256 nonceSalt;
             address payer;
             address paymentToken;
             uint256 paymentMaxAmount;
@@ -88,11 +130,11 @@ impl UserOp {
     /// If the op is multichain, the EIP712 domain used for the signing hash of the op should not
     /// include a chain ID.
     pub fn is_multichain(&self) -> bool {
-        self.nonce.bit(0)
+        self.nonce >> 240 == MULTICHAIN_NONCE_PREFIX
     }
 
     /// Get the EIP712 encoding of the [`UserOp`].
-    pub fn as_eip712(&self, nonce_salt: U256) -> Result<eip712::UserOp, alloy::sol_types::Error> {
+    pub fn as_eip712(&self) -> Result<eip712::UserOp, alloy::sol_types::Error> {
         let multichain = self.is_multichain();
 
         Ok(eip712::UserOp {
@@ -100,7 +142,6 @@ impl UserOp {
             eoa: self.eoa,
             calls: <Vec<Call>>::abi_decode(&self.executionData, false)?,
             nonce: self.nonce,
-            nonceSalt: nonce_salt,
             payer: self.payer,
             paymentToken: self.paymentToken,
             paymentMaxAmount: self.paymentMaxAmount,
@@ -130,7 +171,7 @@ mod tests {
     use crate::signers::DynSigner;
     use alloy::{
         dyn_abi::Eip712Domain,
-        primitives::{Address, address, b256, bytes},
+        primitives::{Address, Bytes, address, b256, bytes},
         sol_types::{SolStruct, SolValue},
     };
 
@@ -152,30 +193,30 @@ mod tests {
             signature: bytes!(""),
         };
 
-        // Even nonce (with chain id)
+        // Single chain op
         user_op.nonce = U256::from(31338);
         assert_eq!(
-            user_op.as_eip712(U256::ZERO).unwrap().eip712_signing_hash(&Eip712Domain::new(
+            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("EntryPoint".into()),
                 Some("0.0.1".into()),
                 Some(U256::from(31337)),
                 Some(address!("307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0x61b486d7713e2524feea197c603d8f8a59192bb7fc3c3c232536d8e18b35fde6")
+            b256!("0xa061c7f7b00cb09a30df73dbaa1818c324b1cec3b5d24200c83f950889602e81")
         );
 
-        // Odd nonce (no chain id)
-        user_op.nonce = U256::from(31337);
+        // Multichain op
+        user_op.nonce = (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338);
         assert_eq!(
-            user_op.as_eip712(U256::ZERO).unwrap().eip712_signing_hash(&Eip712Domain::new(
+            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("EntryPoint".into()),
                 Some("0.0.1".into()),
                 None,
                 Some(address!("307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0xaada23e8e365c4e46e9f3ab907a46d149d13e4cfc0355a708093ad93b157448c")
+            b256!("0x9e40e365f1468829fcd714657022845bece8ad42887c7ddd2b7279c82d19dfb3")
         );
     }
 
@@ -198,9 +239,9 @@ mod tests {
         };
 
         let expected_digest =
-            b256!("0x989f224e1d07735dd8c96c72f9dcb702fbe7a4d9133f331c6e066aee415a1678");
+            b256!("0x6b0c7817fbe9aa9fc4df720918c054cb25f1c5f069ef873168afe472a74c86ed");
         assert_eq!(
-            user_op.as_eip712(U256::from(23)).unwrap().eip712_signing_hash(&Eip712Domain::new(
+            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("EntryPoint".into()),
                 Some("0.0.1".into()),
                 None,
@@ -221,15 +262,40 @@ mod tests {
         assert_eq!(
             user_op.signature,
             bytes!(
-                "0x80ee9c354e39d09a28ba9af6258843ea125e39f9af26c8372898998975a7d9594599380e39cd753414c4aa18987a1e6de52858e8a16b59cd3fb5ca52deb85f341c"
+                "0xb9390037f06164d3b6ce84f26b534b4030e73b92b6672b68f52defc000da6adb6916725f0bdad98671066a52758585b006ba725d704f3b0978aa2118c2df4e461c"
             )
         );
 
         assert_eq!(
-            user_op.abi_encode(),
+            Bytes::from(user_op.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000002c000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004180ee9c354e39d09a28ba9af6258843ea125e39f9af26c8372898998975a7d9594599380e39cd753414c4aa18987a1e6de52858e8a16b59cd3fb5ca52deb85f341c00000000000000000000000000000000000000000000000000000000000000"
-            )
+                "0000000000000000000000000000000000000000000000000000000000000020"
+                "000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196"
+                "0000000000000000000000000000000000000000000000000000000000000160"
+                "0000000000000000000000000000000000000000000000000000000000000001"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "000000000000000000000000000000000000000000000000000000003cdf478c"
+                "000000000000000000000000000000000000000000000000000000003cdf478c"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "0000000000000000000000000000000000000000000000000000000000989680"
+                "00000000000000000000000000000000000000000000000000000000000002c0"
+                "0000000000000000000000000000000000000000000000000000000000000140"
+                "0000000000000000000000000000000000000000000000000000000000000020"
+                "0000000000000000000000000000000000000000000000000000000000000001"
+                "0000000000000000000000000000000000000000000000000000000000000020"
+                "0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496"
+                "000000000000000000000000000000000000000000000000000000009009e8ec"
+                "0000000000000000000000000000000000000000000000000000000000000060"
+                "0000000000000000000000000000000000000000000000000000000000000044"
+                "3c78f39500000000000000000000000000000000000000000000000000000000"
+                "0000002000000000000000000000000000000000000000000000000000000000"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "0000000000000000000000000000000000000000000000000000000000000041"
+                "b9390037f06164d3b6ce84f26b534b4030e73b92b6672b68f52defc000da6adb"
+                "6916725f0bdad98671066a52758585b006ba725d704f3b0978aa2118c2df4e46"
+                "1c00000000000000000000000000000000000000000000000000000000000000")
         );
     }
 }
