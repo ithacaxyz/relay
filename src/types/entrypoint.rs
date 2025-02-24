@@ -8,6 +8,7 @@ use alloy::{
     sol_types::{SolError, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::error::CallError;
 
@@ -20,8 +21,14 @@ sol! {
     #[sol(rpc)]
     contract EntryPoint {
         /// For returning the gas used and the error from a simulation.
+        ///
+        /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
+        /// - `gCombined` is the recommendation for `gCombined` in the UserOp.
+        /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
+        ///
+        /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
         #[derive(Debug)]
-        error SimulationResult(uint256 gUsed, bytes4 err);
+        error SimulationResult2(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
         /// Executes a single encoded user operation.
         ///
@@ -36,9 +43,7 @@ sol! {
             returns (bytes4 err);
 
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
-        ///
-        /// An error selector of 0 means the call did not revert.
-        function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
+        function simulateExecute2(bytes calldata encodedUserOp) public payable virtual;
 
         /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
         ///
@@ -97,10 +102,10 @@ impl<P: Provider> Entry<P> {
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
-    pub async fn simulate_execute(&self, op: &UserOp) -> Result<U256, CallError> {
+    pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, CallError> {
         let ret = self
             .entrypoint
-            .simulateExecute(op.abi_encode().into())
+            .simulateExecute2(op.abi_encode().into())
             .call()
             .overrides(&self.overrides)
             .await;
@@ -109,14 +114,15 @@ impl<P: Provider> Entry<P> {
             Err(alloy::contract::Error::TransportError(err)) => {
                 let revert_data = err.as_error_resp().and_then(|res| res.as_revert_data());
 
-                if let Ok(result) = EntryPoint::SimulationResult::abi_decode(
+                if let Ok(result) = EntryPoint::SimulationResult2::abi_decode(
                     revert_data.as_deref().unwrap_or(&Bytes::default()),
                     false,
                 ) {
                     if result.err != ENTRYPOINT_NO_ERROR {
                         Err(CallError::OpRevert { revert_reason: result.err.into() })
                     } else {
-                        Ok(result.gUsed)
+                        // todo: sanitize this as a malicious contract can make us panic
+                        Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
                     }
                 } else if let Some(data) = revert_data {
                     Err(CallError::OpRevert { revert_reason: data })
@@ -191,4 +197,15 @@ impl<P: Provider> Entry<P> {
             None,
         ))
     }
+}
+
+/// A gas estimate result for a [`UserOp`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GasEstimate {
+    /// The recommended gas limit for the transaction.
+    #[serde(with = "alloy::serde::quantity")]
+    pub tx: u64,
+    /// The recommended gas limit for the [`UserOp`].
+    #[serde(with = "alloy::serde::quantity")]
+    pub op: u64,
 }

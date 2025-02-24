@@ -8,6 +8,8 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::GasEstimate;
+
 /// A relay-signed [`Quote`].
 pub type SignedQuote = Signed<Quote>;
 
@@ -20,8 +22,7 @@ pub struct Quote {
     /// The amount of the fee token to pay for the call.
     pub amount: U256,
     /// The estimated amount of gas the action will consume.
-    #[serde(with = "alloy::serde::quantity")]
-    pub gas_estimate: u64,
+    pub gas_estimate: GasEstimate,
     /// The fee estimate for the action in the destination chains native token.
     pub native_fee_estimate: Eip1559Estimation,
     /// The digest of the [`UserOp`][crate::types::UserOp].
@@ -48,7 +49,8 @@ impl Quote {
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
         hasher.update(self.amount.to_be_bytes::<32>());
-        hasher.update(self.gas_estimate.to_be_bytes());
+        hasher.update(self.gas_estimate.op.to_be_bytes());
+        hasher.update(self.gas_estimate.tx.to_be_bytes());
         hasher.update(self.digest);
         hasher.update(
             self.ttl
