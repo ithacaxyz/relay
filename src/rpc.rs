@@ -263,7 +263,7 @@ impl RelayApiServer for Relay {
 
     async fn send_action(
         &self,
-        request: Action,
+        mut request: Action,
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<TxHash> {
@@ -273,15 +273,11 @@ impl RelayApiServer for Relay {
             .get(request.chain_id)
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
 
-        // verify payment recipient is entrypoint or us
+        // set payment recipient to us
         let tx_signer_address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(
             &self.inner.tx_signer,
         );
-        if !request.op.paymentRecipient.is_zero()
-            && request.op.paymentRecipient != tx_signer_address
-        {
-            return Err(SendActionError::WrongPaymentRecipient.into());
-        }
+        request.op.paymentRecipient = tx_signer_address;
 
         // possibly mocking the code for the eoa
         let overrides = AddressMap::from_iter([(
