@@ -75,7 +75,7 @@ pub async fn try_spawn(
         Chains::new(providers.clone()).await?,
         EthereumWallet::new(signer.0),
         quote_signer,
-        config.quote.ttl,
+        config.quote,
         price_oracle,
         FeeTokens::new(&config.chain.fee_tokens, providers).await?,
     )

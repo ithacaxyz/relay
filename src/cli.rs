@@ -1,5 +1,9 @@
 //! # Relay CLI
-use crate::{config::RelayConfig, spawn::try_spawn_with_args};
+use crate::{
+    config::RelayConfig,
+    constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    spawn::try_spawn_with_args,
+};
 use alloy::primitives::Address;
 use clap::Parser;
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -31,6 +35,12 @@ pub struct Args {
     /// The lifetime of a fee quote.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
     pub quote_ttl: Duration,
+    /// Extra buffer added to UserOp gas estimates.
+    #[arg(long, value_name = "USER_OP_GAS", default_value_t = USER_OP_GAS_BUFFER)]
+    pub user_op_gas_buffer: u64,
+    /// Extra buffer added to transaction gas estimates.
+    #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
+    pub tx_gas_buffer: u64,
     /// The secret key to sign fee quotes with.
     #[arg(long, value_name = "SECRET_KEY", env = "RELAY_FEE_SK")]
     pub quote_secret_key: String,
@@ -61,6 +71,8 @@ impl Args {
             .with_address(self.address)
             .with_port(self.port)
             .with_quote_ttl(self.quote_ttl)
+            .with_user_op_gas_buffer(self.user_op_gas_buffer)
+            .with_tx_gas_buffer(self.tx_gas_buffer)
     }
 }
 
@@ -103,6 +115,8 @@ mod tests {
                     quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
                     secret_key: key.to_string(),
+                    user_op_gas_buffer: Default::default(),
+                    tx_gas_buffer: Default::default(),
                 },
                 config.clone(),
                 None,

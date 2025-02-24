@@ -30,17 +30,14 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 use tracing::{debug, warn};
 
 use crate::{
     chains::Chains,
+    config::QuoteConfig,
     constants::{
         EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, INNER_ENTRYPOINT_GAS_OVERHEAD,
-        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
     },
     error::{EstimateFeeError, SendActionError},
     nonce::MultiChainNonceManager,
@@ -105,7 +102,7 @@ impl Relay {
         chains: Chains,
         tx_signer: EthereumWallet,
         quote_signer: DynSigner,
-        quote_ttl: Duration,
+        quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
     ) -> Self {
@@ -115,7 +112,7 @@ impl Relay {
             nonce_manager: MultiChainNonceManager::default(),
             tx_signer,
             quote_signer,
-            quote_ttl,
+            quote_config,
             price_oracle,
         };
         Self { inner: Arc::new(inner) }
@@ -228,7 +225,7 @@ impl RelayApiServer for Relay {
         }
 
         // Add some leeway, since the actual simulation may no be enough.
-        gas_estimate += USER_OP_GAS_BUFFER;
+        gas_estimate += self.inner.quote_config.user_op_buffer();
         debug!(eoa = %request.op.eoa, gas_estimate = %gas_estimate, "Estimated operation");
 
         // Get paymentPerGas
@@ -253,7 +250,7 @@ impl RelayApiServer for Relay {
             native_fee_estimate,
             digest: op.digest(),
             ttl: SystemTime::now()
-                .checked_add(self.inner.quote_ttl)
+                .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
             authorization_address,
         };
@@ -307,8 +304,8 @@ impl RelayApiServer for Relay {
             account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
 
         // Calculate tx.gas with the 63/64 check, auth cost and extra for leeway.
-        let mut tx_gas =
-            TX_GAS_BUFFER + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
+        let mut tx_gas = self.inner.quote_config.tx_buffer()
+            + ((quote.ty().gas_estimate + INNER_ENTRYPOINT_GAS_OVERHEAD) * 64) / 63;
         if authorization.is_some() {
             tx_gas += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
         }
@@ -449,8 +446,8 @@ struct RelayInner {
     tx_signer: EthereumWallet,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
-    /// The TTL of a quote.
-    quote_ttl: Duration,
+    /// Quote related configuration.
+    quote_config: QuoteConfig,
     /// Price oracle.
     price_oracle: PriceOracle,
 }
