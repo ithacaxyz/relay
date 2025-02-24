@@ -27,8 +27,9 @@ cargo run --bin relay -- \
     --quote-secret-key $QUOTE_SIGNING_PRIV_KEY
 ```
 
-If no `--config` flag is given, a default `relay.toml` is used. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
+If no `--config` flag is given, a default `relay.toml` is created in the working directory. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
 
+Example:
 ```toml
 [server]
 address = "127.0.0.1"
@@ -40,7 +41,11 @@ fee_tokens = ["0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c"]
 
 [quote]
 ttl = 5
-# constant_rate = 1.0 # should be use ONLY for testing
+# constant_rate = 1.0 # should be used ONLY for testing
+
+[quote.gas]
+user_op_buffer = 25000
+tx_buffer = 1000000
 
 [coin_registry]
 ```

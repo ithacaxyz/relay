@@ -1,5 +1,8 @@
 //! Relay configuration.
-use crate::types::CoinKind;
+use crate::{
+    constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    types::CoinKind,
+};
 use alloy::primitives::{Address, ChainId};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -48,11 +51,34 @@ pub struct ChainConfig {
 /// Quote configuration.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QuoteConfig {
+    /// Sets a constant rate for the price oracle. Used for testing.
+    pub constant_rate: Option<f64>,
+    /// Gas estimate configuration.
+    gas: GasConfig,
     /// The lifetime of a fee quote.
     #[serde(with = "crate::serde::duration")]
     pub ttl: Duration,
-    /// Sets a constant rate for the price oracle. Used for testing.
-    pub constant_rate: Option<f64>,
+}
+
+/// Gas estimate configuration.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct GasConfig {
+    /// Extra buffer added to UserOp gas estimates.
+    pub user_op_buffer: u64,
+    /// Extra buffer added to transaction gas estimates.
+    pub tx_buffer: u64,
+}
+
+impl QuoteConfig {
+    /// Returns the configured extra buffer added to userOp gas estimates.
+    pub fn user_op_buffer(&self) -> u64 {
+        self.gas.user_op_buffer
+    }
+
+    /// Returns the configured extra buffer added to transaction gas estimates.
+    pub fn tx_buffer(&self) -> u64 {
+        self.gas.tx_buffer
+    }
 }
 
 /// Secrets (kept out of serialized output).
@@ -69,7 +95,11 @@ impl Default for RelayConfig {
         Self {
             server: ServerConfig { address: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 9119 },
             chain: ChainConfig { endpoints: vec![], fee_tokens: vec![] },
-            quote: QuoteConfig { ttl: Duration::from_secs(5), constant_rate: None },
+            quote: QuoteConfig {
+                constant_rate: None,
+                gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
+                ttl: Duration::from_secs(5),
+            },
             secrets: SecretsConfig::default(),
             coin_registry: Default::default(),
         }
@@ -98,6 +128,18 @@ impl RelayConfig {
     /// Sets a constant rate for the price oracle. Used for testing.
     pub fn with_quote_constant_rate(mut self, constant_rate: f64) -> Self {
         self.quote.constant_rate = Some(constant_rate);
+        self
+    }
+
+    /// Sets the buffer added to UserOp gas estimates.
+    pub fn with_user_op_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.user_op_buffer = buffer;
+        self
+    }
+
+    /// Sets the buffer added to tx gas estimates.
+    pub fn with_tx_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.tx_buffer = buffer;
         self
     }
 
