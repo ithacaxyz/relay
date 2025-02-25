@@ -19,8 +19,17 @@ use url::Url;
 #[command(author, about = "Relay", long_about = None)]
 pub struct Args {
     /// The configuration file.
+    ///
+    /// If missing, a default one will be used and stored in the working directory under
+    /// `relay.toml`.
     #[arg(long, value_name = "CONFIG", env = "RELAY_CONFIG", default_value = "relay.toml")]
     pub config: PathBuf,
+    /// The coin registry file. Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
+    ///
+    /// If missing, a default one will be used and stored in the working directory under
+    /// `registry.toml`.
+    #[arg(long, value_name = "REGISTRY", env = "REGISTRY", default_value = "registry.toml")]
+    pub registry: PathBuf,
     /// The address to serve the RPC on.
     #[arg(long = "http.addr", value_name = "ADDR", default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
     pub address: IpAddr,
@@ -56,7 +65,11 @@ impl Args {
     /// Run the relayer service.
     pub async fn run(self, metrics_recorder: Option<PrometheusHandle>) -> eyre::Result<()> {
         let config_path = self.config.clone();
-        try_spawn_with_args(self, &config_path, metrics_recorder).await?.stopped().await;
+        let registry_path = self.registry.clone();
+        try_spawn_with_args(self, &config_path, &registry_path, metrics_recorder)
+            .await?
+            .stopped()
+            .await;
 
         Ok(())
     }
@@ -102,12 +115,14 @@ mod tests {
     async fn respawn_cli() -> eyre::Result<()> {
         let dir = temp_dir();
         let config = dir.join("relay.toml");
+        let registry = dir.join("registry.toml");
         let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
         for _ in 0..=1 {
             let _ = try_spawn_with_args(
                 Args {
                     config: config.clone(),
+                    registry: registry.clone(),
                     address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: get_available_port().unwrap(),
                     endpoints: Default::default(),
@@ -119,6 +134,7 @@ mod tests {
                     tx_gas_buffer: Default::default(),
                 },
                 config.clone(),
+                registry.clone(),
                 None,
             )
             .await?;

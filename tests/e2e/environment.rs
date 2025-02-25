@@ -22,7 +22,7 @@ use relay::{
     config::RelayConfig,
     signers::{DynSigner, P256Signer},
     spawn::try_spawn,
-    types::CoinKind,
+    types::{CoinKind, CoinRegistry},
 };
 use std::{
     net::{Ipv4Addr, TcpListener},
@@ -128,6 +128,10 @@ impl Environment {
         let (delegation, entrypoint, erc20) =
             get_or_deploy_contracts(&provider, &relay_signer, &eoa_signer).await?;
 
+        // Ensure our registry has our token
+        let mut registry = CoinRegistry::default();
+        registry.extend([((provider.get_chain_id().await?, Some(erc20)), CoinKind::USDT)]);
+
         // Start relay service.
         let relay_port = get_available_port()?;
         let relay_handle = try_spawn(
@@ -137,8 +141,9 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_quote_key(RELAY_PRIVATE_KEY.to_string())
                 .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
-                .with_fee_tokens(&[erc20])
-                .with_quote_constant_rate(1.0),
+                .with_quote_constant_rate(1.0)
+                .with_fee_tokens(&[erc20]),
+            registry,
             None,
         )
         .await?;

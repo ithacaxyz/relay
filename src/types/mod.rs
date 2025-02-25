@@ -8,6 +8,9 @@ pub use action::*;
 mod coin;
 pub use coin::*;
 
+mod coin_registry;
+pub use coin_registry::*;
+
 mod entrypoint;
 pub use entrypoint::*;
 

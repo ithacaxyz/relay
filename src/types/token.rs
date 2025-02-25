@@ -1,4 +1,4 @@
-use super::{CoinKind, IERC20::IERC20Instance};
+use crate::types::{CoinKind, CoinRegistry, IERC20::IERC20Instance};
 use alloy::{
     primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, Provider},
@@ -32,7 +32,11 @@ pub struct FeeTokens(
 
 impl FeeTokens {
     /// Create a new [`FeeTokens`]
-    pub async fn new(tokens: &[Address], providers: Vec<DynProvider>) -> Result<Self, eyre::Error> {
+    pub async fn new(
+        coin_registry: &CoinRegistry,
+        tokens: &[Address],
+        providers: Vec<DynProvider>,
+    ) -> Result<Self, eyre::Error> {
         // todo: this is ugly
         let futs = providers
             .iter()
@@ -46,7 +50,7 @@ impl FeeTokens {
                     } else {
                         (
                             IERC20Instance::new(*token, provider).decimals().call().await?._0,
-                            CoinKind::get_token(chain.into(), *token).ok_or_else(|| {
+                            CoinKind::get_token(coin_registry, chain, *token).ok_or_else(|| {
                                 eyre::eyre!("Token not supported: {token} @ {chain}.")
                             })?,
                         )

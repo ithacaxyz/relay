@@ -1,16 +1,11 @@
 //! Relay configuration.
-use crate::{
-    constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
-    types::CoinKind,
-};
-use alloy::primitives::{Address, ChainId};
+use crate::constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER};
+use alloy::primitives::Address;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv4Addr},
     path::Path,
-    sync::Arc,
     time::Duration,
 };
 
@@ -26,8 +21,6 @@ pub struct RelayConfig {
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
-    /// Global map from ([ChainId], Option<[Address]>) to [CoinKind].
-    pub coin_registry: Arc<HashMap<(ChainId, Option<Address>), CoinKind>>,
 }
 
 /// Server configuration.
@@ -101,7 +94,6 @@ impl Default for RelayConfig {
                 ttl: Duration::from_secs(5),
             },
             secrets: SecretsConfig::default(),
-            coin_registry: Default::default(),
         }
     }
 }
@@ -164,17 +156,6 @@ impl RelayConfig {
     /// Sets the secret key used to sign transactions.
     pub fn with_transaction_key(mut self, secret_key: String) -> Self {
         self.secrets.transaction_key = secret_key;
-        self
-    }
-
-    /// Extend the coin registry with additional entries.
-    pub fn extend_coin_registry(
-        mut self,
-        registry: HashMap<(ChainId, Option<Address>), CoinKind>,
-    ) -> Self {
-        let mut new_registry = (*self.coin_registry).clone();
-        new_registry.extend(registry);
-        self.coin_registry = Arc::new(new_registry);
         self
     }
 
