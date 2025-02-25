@@ -141,7 +141,7 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = KeyWith712Signer::random(key_type)
+        let key = KeyWith712Signer::random_admin(key_type)
             .and_then(|k| k.ok_or_else(|| EstimateFeeError::UnsupportedKeyType.into()))
             .map_err(EstimateFeeError::from)?;
 

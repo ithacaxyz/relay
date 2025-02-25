@@ -35,6 +35,9 @@ sol! {
             virtual
             onlyThis
             checkKeyHashIsNonZero(keyHash);
+
+        /// Sets the ability of a key hash to execute a call with a function selector.
+        function setCanExecute(bytes32 keyHash, address target, bytes4 fnSel, bool can);
     }
 }
 
