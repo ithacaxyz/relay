@@ -100,7 +100,7 @@ impl AuthKind {
 
 /// Context for executing a test transaction
 #[derive(Debug, Default)]
-pub struct TxContext {
+pub struct TxContext<'a> {
     /// List of calls to execute
     pub calls: Vec<Call>,
     /// Expected outcome of the transaction
@@ -108,7 +108,7 @@ pub struct TxContext {
     /// Optional authorization.
     pub auth: Option<AuthKind>,
     /// Optional Key.
-    pub key: Option<KeyWith712Signer>,
+    pub key: Option<&'a KeyWith712Signer>,
 }
 
 sol! {

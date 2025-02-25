@@ -41,9 +41,9 @@ pub struct ActionRequest {
 }
 
 /// Executes all transactions from the test case.
-pub async fn run_e2e<F>(build_txs: F) -> Result<()>
+pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
-    F: FnOnce(&Environment) -> Vec<TxContext>,
+    F: FnOnce(&Environment) -> Vec<TxContext<'a>>,
 {
     let mut env = Environment::setup().await?;
     let txs = build_txs(&env);
@@ -64,7 +64,7 @@ where
 ///    - Retrieves and checks transaction receipt
 ///    - Verifies transaction status matches expectations
 ///    - Confirms UserOp success by checking nonce invalidation
-async fn process_tx(tx_num: usize, tx: TxContext, env: &Environment) -> Result<()> {
+async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Result<()> {
     let Some(ActionRequest { action, authorization, quote }) =
         prepare_action_request(tx_num, &tx, env).await?
     else {
@@ -154,7 +154,7 @@ async fn process_tx(tx_num: usize, tx: TxContext, env: &Environment) -> Result<(
 ///    - For other nonces: wraps signature with key information
 pub async fn prepare_action_request(
     tx_num: usize,
-    tx: &TxContext,
+    tx: &TxContext<'_>,
     env: &Environment,
 ) -> eyre::Result<Option<ActionRequest>> {
     let execution_data: Bytes = tx.calls.abi_encode().into();
