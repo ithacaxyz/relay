@@ -71,8 +71,6 @@ sol! {
     interface IDelegation {
         /// Authorizes the key.
         function authorize(Key memory key) public virtual returns (bytes32 keyHash);
-        /// (GuardedExecutor) Sets the ability of a key hash to execute a call with a function selector.
-        function setCanExecute(bytes32 keyHash, address target, bytes4 fnSel, bool can);
     }
 }
 
@@ -235,8 +233,14 @@ pub struct KeyWith712Signer {
 }
 
 impl KeyWith712Signer {
-    /// Returns a random [`Self`] from a [`KeyType`].
-    pub fn random(key_type: KeyType) -> eyre::Result<Option<Self>> {
+    /// Returns a random non admin [`Self`] from a [`KeyType`].
+    pub fn random_session(key_type: KeyType) -> eyre::Result<Option<Self>> {
+        let mut key = Self::random_admin(key_type)?.unwrap();
+        key.key.isSuperAdmin = false;
+        Ok(Some(key))
+    }
+    /// Returns a random admin [`Self`] from a [`KeyType`].
+    pub fn random_admin(key_type: KeyType) -> eyre::Result<Option<Self>> {
         let mock_key = B256::random();
         let expiry = U40::ZERO;
         let super_admin = true;

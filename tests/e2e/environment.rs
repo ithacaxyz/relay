@@ -40,6 +40,7 @@ pub struct Environment {
     pub entrypoint: Address,
     pub delegation: Address,
     pub erc20: Address,
+    pub erc20_alt: Address,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
     pub relay_handle: ServerHandle,
@@ -125,12 +126,13 @@ impl Environment {
             .on_http(endpoint.clone());
 
         // Get or deploy mock contracts.
-        let (delegation, entrypoint, erc20) =
+        let (delegation, entrypoint, erc20s) =
             get_or_deploy_contracts(&provider, &relay_signer, &eoa_signer).await?;
 
-        // Ensure our registry has our token
+        // Ensure our registry has our tokens
+        let chain_id = provider.get_chain_id().await?;
         let mut registry = CoinRegistry::default();
-        registry.extend([((provider.get_chain_id().await?, Some(erc20)), CoinKind::USDT)]);
+        registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
 
         // Start relay service.
         let relay_port = get_available_port()?;
@@ -142,7 +144,7 @@ impl Environment {
                 .with_quote_key(RELAY_PRIVATE_KEY.to_string())
                 .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
                 .with_quote_constant_rate(1.0)
-                .with_fee_tokens(&[erc20])
+                .with_fee_tokens(&erc20s)
                 .with_user_op_gas_buffer(100_000), // todo: temp
             registry,
             None,
@@ -161,7 +163,8 @@ impl Environment {
             eoa_signer,
             entrypoint,
             delegation,
-            erc20,
+            erc20: erc20s[0],
+            erc20_alt: erc20s[1],
             chain_id,
             relay_endpoint,
             relay_handle,
@@ -174,7 +177,7 @@ async fn get_or_deploy_contracts<P: Provider>(
     provider: &P,
     relay_signer: &DynSigner,
     eoa_signer: &DynSigner,
-) -> Result<(Address, Address, Address), eyre::Error> {
+) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
@@ -202,10 +205,13 @@ async fn get_or_deploy_contracts<P: Provider>(
         delegation = Address::from_str(&address).wrap_err("Delegation address parse failed.")?
     }
 
-    // FakeERC20
-    let erc20 = if let Ok(entrypoint) = std::env::var("TEST_ERC20") {
-        Address::from_str(&entrypoint).wrap_err("ERC20 address parse failed.")?
-    } else {
+    // Have at least 2 erc20 deployed
+    let mut erc20s = Vec::with_capacity(2);
+    if let Ok(entrypoint) = std::env::var("TEST_ERC20") {
+        erc20s.push(Address::from_str(&entrypoint).wrap_err("ERC20 address parse failed.")?)
+    };
+
+    while erc20s.len() != 2 {
         let erc20 = deploy_contract(
             &provider,
             &contracts_path.join("MockERC20.sol/MockERC20.json"),
@@ -230,9 +236,9 @@ async fn get_or_deploy_contracts<P: Provider>(
                 .wrap_err("Minting failed")?;
         }
 
-        erc20
-    };
-    Ok((delegation, entrypoint, erc20))
+        erc20s.push(erc20)
+    }
+    Ok((delegation, entrypoint, erc20s))
 }
 
 async fn deploy_contract<P: Provider>(
