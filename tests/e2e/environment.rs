@@ -143,7 +143,7 @@ impl Environment {
                 .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20])
-                .with_user_op_gas_buffer(2_000_000), // todo: temp
+                .with_user_op_gas_buffer(100_000), // todo: temp
             registry,
             None,
         )
