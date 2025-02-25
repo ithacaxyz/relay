@@ -10,14 +10,13 @@ use eyre::Result;
 use relay::{
     error::SendActionError,
     signers::{DynSigner, P256Signer},
-    types::{Call, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer},
+    types::{
+        Call, Delegation::SpendPeriod, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer,
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    let expiry = U40::ZERO;
-    let super_admin = true;
-
     for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
         let key = KeyWith712Signer::random(key_type)?.unwrap();
 
@@ -45,7 +44,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                         .into(),
                     }],
                     expected: ExpectedOutcome::Pass,
-                    key: Some(key),
+                    key: Some(&key),
                     ..Default::default()
                 },
             ]
@@ -148,8 +147,6 @@ async fn invalid_auth_quote_check() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
-    let expiry = U40::ZERO;
-    let super_admin = true;
     let key1 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
     let key2 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
 
@@ -177,7 +174,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
                     value: U256::ZERO,
                     data: authorizeCall { key: key2.clone() }.abi_encode().into(),
                 }],
-                key: Some(key1),
+                key: Some(&key1),
                 ..Default::default()
             },
             TxContext {
@@ -192,7 +189,75 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
                     .abi_encode()
                     .into(),
                 }],
-                key: Some(key2),
+                key: Some(&key2),
+                ..Default::default()
+            },
+        ]
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spend_limits() -> Result<()> {
+    let key1 = KeyWith712Signer::random(KeyType::P256)?.unwrap();
+
+    run_e2e(|env| {
+        vec![
+            // delegate, auth and set spend limit
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![
+                    Call {
+                        target: env.eoa_signer.address(),
+                        value: U256::ZERO,
+                        data: authorizeCall { key: key1.clone() }.abi_encode().into(),
+                    },
+                    Call {
+                        target: env.eoa_signer.address(),
+                        value: U256::ZERO,
+                        data: Delegation::setSpendLimitCall {
+                            keyHash: key1.key_hash(),
+                            token: env.erc20,
+                            period: SpendPeriod::Day,
+                            limit: U256::from(15),
+                        }
+                        .abi_encode()
+                        .into(),
+                    },
+                ],
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            // succesful transfer
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![Call {
+                    target: env.erc20,
+                    value: U256::ZERO,
+                    data: MockErc20::transferCall {
+                        recipient: Address::ZERO,
+                        amount: U256::from(10),
+                    }
+                    .abi_encode()
+                    .into(),
+                }],
+                key: Some(&key1),
+                ..Default::default()
+            },
+            // spend limit exceeded (20 wei exp > 15 wei exp)
+            TxContext {
+                expected: ExpectedOutcome::FailSend, // todo this should fail on estimate
+                calls: vec![Call {
+                    target: env.erc20,
+                    value: U256::ZERO,
+                    data: MockErc20::transferCall {
+                        recipient: Address::ZERO,
+                        amount: U256::from(10),
+                    }
+                    .abi_encode()
+                    .into(),
+                }],
+                key: Some(&key1),
                 ..Default::default()
             },
         ]

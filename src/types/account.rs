@@ -12,6 +12,29 @@ sol! {
     #[sol(rpc)]
     contract Delegation {
         address public constant ENTRY_POINT;
+
+        /// A spend period.
+        enum SpendPeriod {
+            /// Per minute.
+            Minute,
+            /// Per hour.
+            Hour,
+            /// Per day.
+            Day,
+            /// Per week.
+            Week,
+            /// Per month.
+            Month,
+            /// Per year.
+            Year
+        }
+
+        /// Set a limited amount of `token` that `keyHash` can spend per `period`.
+        function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)
+            public
+            virtual
+            onlyThis
+            checkKeyHashIsNonZero(keyHash);
     }
 }
 

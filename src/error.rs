@@ -129,6 +129,14 @@ pub enum SendActionError {
 
 impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(error: SendActionError) -> Self {
+        if let SendActionError::OpRevert { ref revert_reason } = error {
+            return jsonrpsee::types::error::ErrorObject::owned::<Bytes>(
+                EthRpcErrorCode::ExecutionError.code(),
+                error.to_string(),
+                Some(revert_reason.clone()),
+            );
+        }
+
         jsonrpsee::types::error::ErrorObject::owned::<()>(
             match error {
                 SendActionError::InternalError(_) | SendActionError::RpcError(_) => {
