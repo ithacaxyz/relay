@@ -192,7 +192,7 @@ async fn get_or_deploy_contracts<P: Provider>(
     let entrypoint = if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
         Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?
     } else {
-        let entrypoint = address!("307AF7d28AfEE82092aA95D35644898311CA5360");
+        let entrypoint = address!("0x307AF7d28AfEE82092aA95D35644898311CA5360");
         provider
             .anvil_set_code(entrypoint, provider.get_code_at(mock_entrypoint).await?)
             .await

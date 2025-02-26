@@ -61,13 +61,13 @@ impl Default for CoinRegistry {
                 ((base, None), eth),
                 ((odyssey, None), eth),
                 // USDT mappings
-                ((ethereum, address!("dAC17F958D2ee523a2206206994597C13D831ec7").into()), usdt),
+                ((ethereum, address!("0xdAC17F958D2ee523a2206206994597C13D831ec7").into()), usdt),
                 ((op, address!("0xdAC17F958D2ee523a2206206994597C13D831ec7").into()), usdt),
-                ((odyssey, address!("238c8CD93ee9F8c7Edf395548eF60c0d2e46665E").into()), usdt),
-                ((odyssey, address!("706aa5c8e5cc2c67da21ee220718f6f6b154e75c").into()), usdt),
+                ((odyssey, address!("0x238c8CD93ee9F8c7Edf395548eF60c0d2e46665E").into()), usdt),
+                ((odyssey, address!("0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c").into()), usdt),
                 // USDC mappings
-                ((ethereum, address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").into()), usdc),
-                ((base, address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").into()), usdc),
+                ((ethereum, address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").into()), usdc),
+                ((base, address!("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").into()), usdc),
             ]
             .into_iter()
             .map(|(k, v)| (k.into(), v))

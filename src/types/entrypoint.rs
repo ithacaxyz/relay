@@ -15,7 +15,7 @@ use crate::error::CallError;
 use super::UserOp;
 
 /// The 4-byte selector returned by the entrypoint if there is no error during execution.
-pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("00000000");
+pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
 
 sol! {
     #[sol(rpc)]
