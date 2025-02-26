@@ -366,12 +366,12 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("66660046373aa54db720a1e783350b8b72164124dec4ac0f440c8280fa5cab06"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
+                    b256!("0x66660046373aa54db720a1e783350b8b72164124dec4ac0f440c8280fa5cab06"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
                 ),
                 (
-                    b256!("f8ae8897de7599677a07b826c5e75519342a40c2478792c35966af4e7ac921eb"),
-                    b256!("0000000000020100000000000000000000000000000000000000000000000000")
+                    b256!("0xf8ae8897de7599677a07b826c5e75519342a40c2478792c35966af4e7ac921eb"),
+                    b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
             ])
         );
@@ -400,44 +400,44 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a18"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a18"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("68a02f4387b8eb2b560b17dd43f66a22b7800a81babf3c2b943967ae533a7cdd"),
+                    b256!("0x68a02f4387b8eb2b560b17dd43f66a22b7800a81babf3c2b943967ae533a7cdd"),
                     B256::left_padding_from(&67583u64.to_be_bytes())
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1d"),
-                    b256!("0000000000020100000000000000000000000000000000000000000000000000")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1d"),
+                    b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a19"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a19"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1a"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1a"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1c"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1c"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a17"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a17"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1b"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1b"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a16"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a16"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a15"),
-                    b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a15"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 )
             ])
         );
