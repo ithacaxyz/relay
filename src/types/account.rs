@@ -16,6 +16,7 @@ sol! {
 
         /// A spend period.
         #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "lowercase")]
         enum SpendPeriod {
             /// Per minute.
             Minute,
