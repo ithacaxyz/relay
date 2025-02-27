@@ -15,7 +15,8 @@ sol! {
         address public constant ENTRY_POINT;
 
         /// A spend period.
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+        #[serde(rename_all = "lowercase")]
         enum SpendPeriod {
             /// Per minute.
             Minute,

@@ -31,13 +31,15 @@ sol! {
     #[derive(Debug, Serialize, Deserialize)]
     struct Key {
         /// Unix timestamp at which the key expires (0 = never).
+        #[serde(default)]
         uint40 expiry;
         /// Type of key. See the {KeyType} enum.
+        #[serde(rename = "type")]
         KeyType keyType;
         /// Whether the key is a super admin key.
         /// Super admin keys are allowed to call into super admin functions such as
         /// `authorize` and `revoke` via `execute`.
-        // todo: serialize/deserialize this as role
+        #[serde(rename = "role", with = "crate::serde::key_role")]
         bool isSuperAdmin;
         /// Public key in encoded form.
         bytes publicKey;
@@ -243,6 +245,7 @@ impl KeyWith712Signer {
         key.key.isSuperAdmin = false;
         Ok(Some(key))
     }
+
     /// Returns a random admin [`Self`] from a [`KeyType`].
     pub fn random_admin(key_type: KeyType) -> eyre::Result<Option<Self>> {
         let mock_key = B256::random();
@@ -444,6 +447,44 @@ mod tests {
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 )
             ])
+        );
+    }
+
+    #[test]
+    fn serialize_admin_key() {
+        let key = Key {
+            expiry: U40::ZERO,
+            keyType: KeyType::Secp256k1,
+            isSuperAdmin: true,
+            publicKey: hex!(
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe" // 31 bytes
+            )
+            .into(),
+        };
+
+        let serialized = serde_json::to_string(&key).unwrap();
+        assert_eq!(
+            serialized,
+            r#"{"expiry":"0x0","type":"secp256k1","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe"}"#
+        );
+    }
+
+    #[test]
+    fn serialize_normal_key() {
+        let key = Key {
+            expiry: U40::ZERO,
+            keyType: KeyType::Secp256k1,
+            isSuperAdmin: false,
+            publicKey: hex!(
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe" // 31 bytes
+            )
+            .into(),
+        };
+
+        let serialized = serde_json::to_string(&key).unwrap();
+        assert_eq!(
+            serialized,
+            r#"{"expiry":"0x0","type":"secp256k1","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe"}"#
         );
     }
 }

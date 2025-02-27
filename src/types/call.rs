@@ -14,7 +14,7 @@ use super::{
 
 sol! {
     /// ERC-7579 call struct.
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, PartialEq)]
     struct Call {
         /// The call target.
         address target;

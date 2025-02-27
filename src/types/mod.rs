@@ -5,6 +5,8 @@ pub use account::*;
 mod action;
 pub use action::*;
 
+pub mod capabilities;
+
 mod coin;
 pub use coin::*;
 
