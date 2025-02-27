@@ -28,7 +28,7 @@ sol! {
     }
 
     /// A key that can be used to authorize call.
-    #[derive(Debug)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct Key {
         /// Unix timestamp at which the key expires (0 = never).
         uint40 expiry;
@@ -37,6 +37,7 @@ sol! {
         /// Whether the key is a super admin key.
         /// Super admin keys are allowed to call into super admin functions such as
         /// `authorize` and `revoke` via `execute`.
+        // todo: serialize/deserialize this as role
         bool isSuperAdmin;
         /// Public key in encoded form.
         bytes publicKey;
@@ -71,6 +72,9 @@ sol! {
     interface IDelegation {
         /// Authorizes the key.
         function authorize(Key memory key) public virtual returns (bytes32 keyHash);
+
+        /// Revokes the key.
+        function revoke(bytes32 keyHash) public virtual onlyThis;
     }
 }
 

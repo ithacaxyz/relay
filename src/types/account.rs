@@ -6,6 +6,7 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 sol! {
@@ -14,6 +15,7 @@ sol! {
         address public constant ENTRY_POINT;
 
         /// A spend period.
+        #[derive(Debug, Serialize, Deserialize)]
         enum SpendPeriod {
             /// Per minute.
             Minute,
@@ -31,6 +33,13 @@ sol! {
 
         /// Set a limited amount of `token` that `keyHash` can spend per `period`.
         function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)
+            public
+            virtual
+            onlyThis
+            checkKeyHashIsNonZero(keyHash);
+
+        /// Removes the daily spend limit of `token` for `keyHash` for `period`.
+        function removeSpendLimit(bytes32 keyHash, address token, SpendPeriod period)
             public
             virtual
             onlyThis
