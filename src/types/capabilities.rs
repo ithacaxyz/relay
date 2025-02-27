@@ -3,6 +3,7 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
+use crate::types::U40;
 use super::{Call, Delegation::SpendPeriod, Key};
 
 /// Represents a key authorization.
@@ -10,7 +11,7 @@ use super::{Call, Delegation::SpendPeriod, Key};
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
@@ -42,8 +43,40 @@ impl AuthorizeKey {
     }
 }
 
+// Custom deserializer to enforce key validation rules
+impl<'de> Deserialize<'de> for AuthorizeKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        struct Helper {
+            #[serde(flatten)]
+            key: Key,
+            permissions: Vec<Permission>,
+        }
+
+        let Helper { key, permissions } = Helper::deserialize(deserializer)?;
+
+        if !key.isSuperAdmin {
+            if key.expiry == U40::ZERO {
+                return Err(Error::custom("normal keys must have a non-zero expiry"));
+            }
+
+            if !permissions.iter().any(|perm| matches!(perm, Permission::Spend(_)))
+            || !permissions.iter().any(|perm| matches!(perm, Permission::Call(_))) {
+                return Err(Error::custom("normal keys must have at least one `spend` permission and one `call` permission"));
+            }
+        }
+
+        Ok(AuthorizeKey { key, permissions })
+    }
+}
+
 /// Represents key permissions.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(tag = "type")]
 pub enum Permission {
     /// Call permission.
@@ -164,6 +197,71 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&key).unwrap(),
             r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"},{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
+        );
+    }
+
+    #[test]
+    fn deserialize_authorize_key() {
+        let key = serde_json::from_str::<AuthorizeKey>(
+            r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"},{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
+        ).unwrap();
+
+        assert_eq!(
+            key,
+            AuthorizeKey {
+                key: Key {
+                    expiry: U40::from(0),
+                    keyType: KeyType::P256,
+                    isSuperAdmin: true,
+                    publicKey: Bytes::from(fixed_bytes!(
+                        "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                    )),
+                },
+                permissions: vec![
+                    Permission::Call(CallPermission {
+                        to: Address::ZERO,
+                        selector: fixed_bytes!("0xa9059cbb"),
+                    }),
+                    Permission::Spend(SpendPermission {
+                        limit: U256::from(1000),
+                        period: SpendPeriod::Day,
+                        token: Address::ZERO,
+                    }),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn deserialize_authorize_key_no_permissions() {
+        let err = serde_json::from_str::<AuthorizeKey>(
+            r#"{"expiry":"0x1","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[]}"#
+        ).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "normal keys must have at least one `spend` permission and one `call` permission"
+        );
+    }
+
+    #[test]
+    fn deserialize_authorize_key_insufficient_permissions() {
+        let err = serde_json::from_str::<AuthorizeKey>(
+            r#"{"expiry":"0x1","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+        ).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "normal keys must have at least one `spend` permission and one `call` permission"
+        );
+
+        let err = serde_json::from_str::<AuthorizeKey>(
+            r#"{"expiry":"0x1","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
+        ).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "normal keys must have at least one `spend` permission and one `call` permission"
         );
     }
 
