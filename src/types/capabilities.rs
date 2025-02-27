@@ -10,13 +10,13 @@ use super::{Call, Delegation::SpendPeriod, Key};
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
     key: Key,
     /// The permissions for the key.
-    permissions: Permissions,
+    permissions: Vec<Permission>,
 }
 
 impl AuthorizeKey {
@@ -29,11 +29,13 @@ impl AuthorizeKey {
     pub fn into_calls(self, eoa: Address) -> (Call, Vec<Call>) {
         let mut calls = Vec::new();
 
-        calls.extend(self.permissions.calls.into_iter().map(|perm| {
-            Call::set_can_execute(eoa, self.key.key_hash(), perm.to, perm.selector, true)
-        }));
-        calls.extend(self.permissions.spend.into_iter().map(|perm| {
-            Call::set_spend_limit(eoa, self.key.key_hash(), perm.token, perm.period, perm.limit)
+        calls.extend(self.permissions.into_iter().map(|perm| match perm {
+            Permission::Call(perm) => {
+                Call::set_can_execute(eoa, self.key.key_hash(), perm.to, perm.selector, true)
+            }
+            Permission::Spend(perm) => {
+                Call::set_spend_limit(eoa, self.key.key_hash(), perm.token, perm.period, perm.limit)
+            }
         }));
 
         (Call::authorize(eoa, self.key), calls)
@@ -41,16 +43,19 @@ impl AuthorizeKey {
 }
 
 /// Represents key permissions.
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Permissions {
-    /// Call permissions.
-    calls: Vec<CallPermission>,
-    /// Spend permissions.
-    spend: Vec<SpendPermission>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Permission {
+    /// Call permission.
+    #[serde(rename = "call")]
+    Call(CallPermission),
+    /// Spend permission.
+    #[serde(rename = "spend")]
+    Spend(SpendPermission),
 }
 
 /// Represents call permissions.
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CallPermission {
     /// The selector of the function this permission applies to.
     #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]
@@ -60,7 +65,7 @@ pub struct CallPermission {
 }
 
 /// Represents spend permissions.
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SpendPermission {
     /// The spending limit.
     limit: U256,
@@ -73,9 +78,94 @@ pub struct SpendPermission {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{Address, fixed_bytes};
+    use alloy::primitives::{Address, Bytes, U256, fixed_bytes};
 
-    use crate::types::capabilities::CallPermission;
+    use crate::types::{
+        Call,
+        Delegation::SpendPeriod,
+        KeyType, U40,
+        capabilities::{AuthorizeKey, CallPermission, Key, Permission, SpendPermission},
+    };
+
+    #[test]
+    fn test_into_calls() {
+        let key = AuthorizeKey {
+            key: Key {
+                expiry: U40::from(0),
+                keyType: KeyType::P256,
+                isSuperAdmin: true,
+                publicKey: Bytes::from(fixed_bytes!(
+                    "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                )),
+            },
+            permissions: vec![
+                Permission::Call(CallPermission {
+                    to: Address::ZERO,
+                    selector: fixed_bytes!("0xa9059cbb"),
+                }),
+                Permission::Spend(SpendPermission {
+                    limit: U256::from(1000),
+                    period: SpendPeriod::Day,
+                    token: Address::ZERO,
+                }),
+            ],
+        };
+
+        let (authorize, calls) = key.clone().into_calls(Address::ZERO);
+
+        assert_eq!(authorize, Call::authorize(Address::ZERO, key.clone().key));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0],
+            Call::set_can_execute(
+                Address::ZERO,
+                key.key.key_hash(),
+                Address::ZERO,
+                fixed_bytes!("0xa9059cbb"),
+                true
+            )
+        );
+        assert_eq!(
+            calls[1],
+            Call::set_spend_limit(
+                Address::ZERO,
+                key.key.key_hash(),
+                Address::ZERO,
+                SpendPeriod::Day,
+                U256::from(1000)
+            )
+        );
+    }
+
+    #[test]
+    fn serialize_authorize_key() {
+        let key = AuthorizeKey {
+            key: Key {
+                expiry: U40::from(0),
+                keyType: KeyType::P256,
+                isSuperAdmin: true,
+                publicKey: Bytes::from(fixed_bytes!(
+                    "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                )),
+            },
+            permissions: vec![
+                Permission::Call(CallPermission {
+                    to: Address::ZERO,
+                    selector: fixed_bytes!("0xa9059cbb"),
+                }),
+                Permission::Spend(SpendPermission {
+                    limit: U256::from(1000),
+                    period: SpendPeriod::Day,
+                    token: Address::ZERO,
+                }),
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_string(&key).unwrap(),
+            r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"},{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
+        );
+    }
 
     #[test]
     fn deserialize_call_permission() {
