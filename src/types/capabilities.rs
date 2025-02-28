@@ -4,7 +4,6 @@ use alloy::primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
 use super::{Call, Delegation::SpendPeriod, Key};
-use crate::types::U40;
 
 /// Represents a key authorization.
 ///
