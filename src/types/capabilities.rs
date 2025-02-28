@@ -3,8 +3,8 @@
 use alloy::primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::types::U40;
 use super::{Call, Delegation::SpendPeriod, Key};
+use crate::types::U40;
 
 /// Represents a key authorization.
 ///
@@ -66,8 +66,11 @@ impl<'de> Deserialize<'de> for AuthorizeKey {
             }
 
             if !permissions.iter().any(|perm| matches!(perm, Permission::Spend(_)))
-            || !permissions.iter().any(|perm| matches!(perm, Permission::Call(_))) {
-                return Err(Error::custom("normal keys must have at least one `spend` permission and one `call` permission"));
+                || !permissions.iter().any(|perm| matches!(perm, Permission::Call(_)))
+            {
+                return Err(Error::custom(
+                    "normal keys must have at least one `spend` permission and one `call` permission",
+                ));
             }
         }
 
