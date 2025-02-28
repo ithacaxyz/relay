@@ -28,7 +28,7 @@ sol! {
     }
 
     /// A key that can be used to authorize call.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     struct Key {
         /// Unix timestamp at which the key expires (0 = never).
         #[serde(default)]
