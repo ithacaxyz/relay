@@ -60,18 +60,13 @@ impl<'de> Deserialize<'de> for AuthorizeKey {
 
         let Helper { key, permissions } = Helper::deserialize(deserializer)?;
 
-        if !key.isSuperAdmin {
-            if key.expiry == U40::ZERO {
-                return Err(Error::custom("normal keys must have a non-zero expiry"));
-            }
-
-            if !permissions.iter().any(|perm| matches!(perm, Permission::Spend(_)))
-                || !permissions.iter().any(|perm| matches!(perm, Permission::Call(_)))
-            {
-                return Err(Error::custom(
-                    "normal keys must have at least one `spend` permission and one `call` permission",
-                ));
-            }
+        if !key.isSuperAdmin
+            && (!permissions.iter().any(|perm| matches!(perm, Permission::Spend(_)))
+                || !permissions.iter().any(|perm| matches!(perm, Permission::Call(_))))
+        {
+            return Err(Error::custom(
+                "normal keys must have at least one `spend` permission and one `call` permission",
+            ));
         }
 
         Ok(AuthorizeKey { key, permissions })
