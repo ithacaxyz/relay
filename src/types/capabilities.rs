@@ -57,11 +57,7 @@ pub struct AuthorizeKeyResponse {
 impl AuthorizeKeyResponse {
     /// Create a new response.
     pub fn new(key: AuthorizeKey) -> Self {
-        Self {
-            hash: key.key.key_hash(),
-            key: key.key,
-            permissions: key.permissions,
-        }
+        Self { hash: key.key.key_hash(), key: key.key, permissions: key.permissions }
     }
 }
 
@@ -101,7 +97,7 @@ pub struct SpendPermission {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{fixed_bytes, Address, Bytes, U256};
+    use alloy::primitives::{Address, Bytes, U256, fixed_bytes};
 
     use crate::types::{
         Call,
