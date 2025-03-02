@@ -45,11 +45,24 @@ impl AuthorizeKey {
 /// Represents a key authorization response.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct AuthorizeKeyResponse {
+    /// Key hash.
+    hash: B256,
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
     key: Key,
     /// The permissions for the key.
-    permissions: Vec<PermissionResponse<Permission>>,
+    permissions: Vec<Permission>,
+}
+
+impl AuthorizeKeyResponse {
+    /// Create a new response.
+    pub fn new(key: AuthorizeKey) -> Self {
+        Self {
+            hash: key.key.key_hash(),
+            key: key.key,
+            permissions: key.permissions,
+        }
+    }
 }
 
 /// Represents key permissions.
@@ -62,16 +75,6 @@ pub enum Permission {
     /// Spend permission.
     #[serde(rename = "spend")]
     Spend(SpendPermission),
-}
-
-/// Represents a key permission response.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-struct PermissionResponse<P> {
-    /// ID of the permission.
-    id: B256,
-    /// Permission.
-    #[serde(flatten)]
-    permission: P,
 }
 
 /// Represents call permissions.
@@ -98,15 +101,14 @@ pub struct SpendPermission {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
+    use alloy::primitives::{fixed_bytes, Address, Bytes, U256};
 
     use crate::types::{
         Call,
         Delegation::SpendPeriod,
         KeyType, U40,
         capabilities::{
-            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Key, Permission,
-            PermissionResponse, SpendPermission,
+            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Key, Permission, SpendPermission,
         },
     };
 
@@ -218,7 +220,7 @@ mod tests {
 
     #[test]
     fn serialize_authorize_key_response() {
-        let key = AuthorizeKeyResponse {
+        let key = AuthorizeKeyResponse::new(AuthorizeKey {
             key: Key {
                 expiry: U40::from(0),
                 keyType: KeyType::P256,
@@ -227,30 +229,27 @@ mod tests {
                     "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                 )),
             },
-            permissions: vec![PermissionResponse {
-                id: B256::ZERO,
-                permission: Permission::Call(CallPermission {
-                    to: Address::ZERO,
-                    selector: fixed_bytes!("0xa9059cbb"),
-                }),
-            }],
-        };
+            permissions: vec![Permission::Call(CallPermission {
+                to: Address::ZERO,
+                selector: fixed_bytes!("0xa9059cbb"),
+            })],
+        });
 
         assert_eq!(
             serde_json::to_string(&key).unwrap(),
-            r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"id":"0x0000000000000000000000000000000000000000000000000000000000000000","type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         );
     }
 
     #[test]
     fn deserialize_authorize_key_response() {
         let key = serde_json::from_str::<AuthorizeKeyResponse>(
-            r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"id":"0x0000000000000000000000000000000000000000000000000000000000000000","type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         ).unwrap();
 
         assert_eq!(
             key,
-            AuthorizeKeyResponse {
+            AuthorizeKeyResponse::new(AuthorizeKey {
                 key: Key {
                     expiry: U40::from(0),
                     keyType: KeyType::P256,
@@ -259,14 +258,11 @@ mod tests {
                         "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                     )),
                 },
-                permissions: vec![PermissionResponse {
-                    id: B256::ZERO,
-                    permission: Permission::Call(CallPermission {
-                        to: Address::ZERO,
-                        selector: fixed_bytes!("0xa9059cbb")
-                    })
-                },],
-            }
+                permissions: vec![Permission::Call(CallPermission {
+                    to: Address::ZERO,
+                    selector: fixed_bytes!("0xa9059cbb"),
+                })],
+            })
         );
     }
 }
