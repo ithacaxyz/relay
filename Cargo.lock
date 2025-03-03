@@ -4106,7 +4106,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-kms",
- "base64 0.21.7",
+ "base64 0.22.1",
  "clap",
  "dashmap",
  "dotenv",
