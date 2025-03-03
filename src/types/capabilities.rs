@@ -54,13 +54,6 @@ pub struct AuthorizeKeyResponse {
     permissions: Vec<Permission>,
 }
 
-impl AuthorizeKeyResponse {
-    /// Create a new response.
-    pub fn new(key: AuthorizeKey) -> Self {
-        Self { hash: key.key.key_hash(), key: key.key, permissions: key.permissions }
-    }
-}
-
 /// Represents key permissions.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(tag = "type")]
@@ -216,49 +209,54 @@ mod tests {
 
     #[test]
     fn serialize_authorize_key_response() {
-        let key = AuthorizeKeyResponse::new(AuthorizeKey {
-            key: Key {
-                expiry: U40::from(0),
-                keyType: KeyType::P256,
-                isSuperAdmin: true,
-                publicKey: Bytes::from(fixed_bytes!(
-                    "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-                )),
-            },
+        let key = Key {
+            expiry: U40::from(0),
+            keyType: KeyType::P256,
+            isSuperAdmin: true,
+            publicKey: Bytes::from(fixed_bytes!(
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            )),
+        };
+        let resp = AuthorizeKeyResponse {
+            hash: key.key_hash(),
+            key,
             permissions: vec![Permission::Call(CallPermission {
                 to: Address::ZERO,
                 selector: fixed_bytes!("0xa9059cbb"),
             })],
-        });
+        };
 
         assert_eq!(
-            serde_json::to_string(&key).unwrap(),
-            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+            serde_json::to_string(&resp).unwrap(),
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9\","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         );
     }
 
     #[test]
     fn deserialize_authorize_key_response() {
-        let key = serde_json::from_str::<AuthorizeKeyResponse>(
+        let resp = serde_json::from_str::<AuthorizeKeyResponse>(
             r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         ).unwrap();
 
+        let key = Key {
+            expiry: U40::from(0),
+            keyType: KeyType::P256,
+            isSuperAdmin: true,
+            publicKey: Bytes::from(fixed_bytes!(
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            )),
+        };
+
         assert_eq!(
-            key,
-            AuthorizeKeyResponse::new(AuthorizeKey {
-                key: Key {
-                    expiry: U40::from(0),
-                    keyType: KeyType::P256,
-                    isSuperAdmin: true,
-                    publicKey: Bytes::from(fixed_bytes!(
-                        "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-                    )),
-                },
+            resp,
+            AuthorizeKeyResponse {
+                hash: key.key_hash(),
+                key,
                 permissions: vec![Permission::Call(CallPermission {
                     to: Address::ZERO,
                     selector: fixed_bytes!("0xa9059cbb"),
                 })],
-            })
+            }
         );
     }
 }
