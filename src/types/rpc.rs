@@ -1,5 +1,6 @@
 use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature, U256};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use super::{
     Key, KeyType, PartialUserOp, SignedQuote,
@@ -178,6 +179,7 @@ pub struct SendPreparedCallsSignature {
     #[serde(rename = "type")]
     key_type: KeyType,
     /// Signature value.
+    #[serde(deserialize_with = "deserialize_signature")]
     value: PrimitiveSignature,
 }
 
@@ -194,6 +196,7 @@ pub struct UpgradeAccountParameters {
     /// Context of the prepared call bundle.
     context: PrepareCallsContext,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
+    #[serde(deserialize_with = "deserialize_signature")]
     signature: PrimitiveSignature,
 }
 
@@ -202,6 +205,15 @@ pub struct UpgradeAccountParameters {
 pub struct UpgradeAccountResponse {
     /// Call bundles that were executed.
     bundles: Vec<SendPreparedCallsResponse>,
+}
+
+fn deserialize_signature<'de, D>(deserializer: D) -> Result<PrimitiveSignature, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    PrimitiveSignature::from_str(&s).map_err(Error::custom)
 }
 
 #[cfg(test)]
@@ -213,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_send_prepared_calls_signature() {
-        let serialized = r#"{"publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","type":"p256","value":{"r":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","s":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","yParity":"0x0","v":"0x0"}}"#;
+        let serialized = r#"{"publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","type":"p256","value":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00"}"#;
         let signature = serde_json::from_str::<SendPreparedCallsSignature>(serialized).unwrap();
         assert_eq!(
             signature.public_key,
@@ -221,6 +233,9 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(signature.key_type, KeyType::P256);
-        assert_eq!(signature.value, PrimitiveSignature::from_str("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00").unwrap());
+        assert_eq!(
+            signature.value,
+            PrimitiveSignature::from_str("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00").unwrap()
+        );
     }
 }
