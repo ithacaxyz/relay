@@ -42,14 +42,24 @@ use crate::{
     price::PriceOracle,
     signers::DynSigner,
     types::{
-        Account, Action, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens, KeyType,
-        KeyWith712Signer, PartialAction, Quote, Signature, SignedQuote, UserOp,
+        Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR, Entry,
+        EntryPoint, FeeTokens, GetKeysParameters, GetKeysResponse, KeyType, KeyWith712Signer,
+        PartialAction, PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters,
+        PrepareUpgradeAccountResponse, Quote, SendPreparedCallsParameters, SendPreparedCallsResponse,
+        Signature, SignedQuote, UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
     },
 };
 
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
+    /// Initialize an account.
+    #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
+    async fn create_account(
+        &self,
+        parameters: CreateAccountParameters,
+    ) -> RpcResult<CreateAccountResponse>;
+
     /// Get all supported fee tokens by chain.
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
     async fn fee_tokens(&self) -> RpcResult<FeeTokens>;
@@ -63,6 +73,23 @@ pub trait RelayApi {
         authorization_address: Option<Address>,
         key: KeyType,
     ) -> RpcResult<SignedQuote>;
+
+    /// Get all keys for an account.
+    #[method(name = "getKeys", aliases = ["wallet_getKeys"])]
+    async fn get_keys(&self, parameters: GetKeysParameters) -> RpcResult<GetKeysResponse>;
+
+    // todo: rewrite
+    /// Prepares a call bundle for a user.
+    #[method(name = "prepareCalls", aliases = ["wallet_prepareCalls"])]
+    async fn prepare_calls(&self, parameters: PrepareCallsParameters) -> RpcResult<PrepareCallsResponse>;
+
+    // todo: rewrite
+    /// Prepares an EOA to be upgraded.
+    #[method(name = "prepareUpgradeAccount", aliases = ["wallet_prepareUpgradeAccount"])]
+    async fn prepare_upgrade_account(
+        &self,
+        parameters: PrepareUpgradeAccountParameters,
+    ) -> RpcResult<PrepareUpgradeAccountResponse>;
 
     // todo: rewrite
     /// Send a sponsored transaction.
@@ -86,6 +113,22 @@ pub trait RelayApi {
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<TxHash>;
+
+    // todo: rewrite
+    /// Send a signed call bundle.
+    #[method(name = "sendPreparedCalls", aliases = ["wallet_sendPreparedCalls"])]
+    async fn send_prepared_calls(
+        &self,
+        parameters: SendPreparedCallsParameters,
+    ) -> RpcResult<SendPreparedCallsResponse>;
+
+    // todo: rewrite
+    /// Upgrade an account.
+    #[method(name = "upgradeAccount", aliases = ["wallet_upgradeAccount"])]
+    async fn upgrade_account(
+        &self,
+        parameters: UpgradeAccountParameters,
+    ) -> RpcResult<UpgradeAccountResponse>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -119,6 +162,13 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
+    async fn create_account(
+        &self,
+        _parameters: CreateAccountParameters,
+    ) -> RpcResult<CreateAccountResponse> {
+        todo!()
+    }
+
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
     }
@@ -258,6 +308,24 @@ impl RelayApiServer for Relay {
             .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
 
         Ok(quote.into_signed(sig))
+    }
+
+    async fn get_keys(&self, _parameters: GetKeysParameters) -> RpcResult<GetKeysResponse> {
+        todo!()
+    }
+
+    async fn prepare_calls(
+        &self,
+        _parameters: PrepareCallsParameters,
+    ) -> RpcResult<PrepareCallsResponse> {
+        todo!()
+    }
+
+    async fn prepare_upgrade_account(
+        &self,
+        _parameters: PrepareUpgradeAccountParameters,
+    ) -> RpcResult<PrepareUpgradeAccountResponse> {
+        todo!()
     }
 
     async fn send_action(
@@ -415,6 +483,20 @@ impl RelayApiServer for Relay {
             .map(|pending| *pending.tx_hash())
             .inspect_err(|err| warn!(?err, "Error adding sponsored tx to pool"))
             .map_err(SendActionError::from)?)
+    }
+
+    async fn send_prepared_calls(
+        &self,
+        _parameters: SendPreparedCallsParameters,
+    ) -> RpcResult<SendPreparedCallsResponse> {
+        todo!()
+    }
+
+    async fn upgrade_account(
+        &self,
+        _parameters: UpgradeAccountParameters,
+    ) -> RpcResult<UpgradeAccountResponse> {
+        todo!()
     }
 }
 

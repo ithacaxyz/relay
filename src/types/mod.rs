@@ -32,6 +32,9 @@ pub use signed::*;
 mod quote;
 pub use quote::*;
 
+mod rpc;
+pub use rpc::*;
+
 mod token;
 pub use token::*;
 
