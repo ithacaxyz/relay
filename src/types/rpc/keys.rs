@@ -8,17 +8,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetKeysParameters {
     /// Address of the account to get the keys for.
-    address: Address,
+    pub address: Address,
 }
 
 /// Account key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetKeyResponse {
     /// Key hash.
-    hash: B256,
+    pub hash: B256,
     /// Key.
     #[serde(flatten)]
-    key: Key,
+    pub key: Key,
 }
 
 /// Response for `wallet_getKeys`.

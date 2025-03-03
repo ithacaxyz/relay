@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsParameters {
     /// Call bundle to prepare.
-    calls: Vec<Call>,
+    pub calls: Vec<Call>,
     /// Target chain ID.
-    chain_id: ChainId,
+    pub chain_id: ChainId,
     /// Address of the account to prepare the call bundle for.
-    from: Address,
+    pub from: Address,
     /// Request capabilities.
-    capabilities: PrepareCallsCapabilities,
+    pub capabilities: PrepareCallsCapabilities,
 }
 
 /// Generic helper for key capabilities.
@@ -37,7 +37,7 @@ pub struct KeyCapabilities<A> {
 pub struct PrepareCallsCapabilities {
     /// Extra request values.
     pub meta: Meta,
-    /// Key apabilities.
+    /// Key capabilities.
     #[serde(flatten)]
     pub key_capabilities: KeyCapabilities<AuthorizeKey>,
 }
@@ -50,23 +50,23 @@ pub type PrepareCallsResponseCapabilities = KeyCapabilities<AuthorizeKeyResponse
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
     /// Chain ID the calls were prepared for.
-    chain_id: ChainId,
+    pub chain_id: ChainId,
     /// Context.
-    context: PrepareCallsContext,
+    pub context: PrepareCallsContext,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
-    digest: B256,
+    pub digest: B256,
     /// Capabilities response.
-    capabilities: PrepareCallsResponseCapabilities,
+    pub capabilities: PrepareCallsResponseCapabilities,
 }
 
 /// Context for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrepareCallsContext {
     /// Signed [`Quote`].
-    quote: SignedQuote,
+    pub quote: SignedQuote,
     /// Partial [`UserOp`].
-    op: PartialUserOp,
+    pub op: PartialUserOp,
 }
 
 /// Request parameters for `wallet_sendPreparedCalls`.
@@ -74,11 +74,11 @@ pub struct PrepareCallsContext {
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
     /// Chain ID the calls are being submitted to.
-    chain_id: ChainId,
+    pub chain_id: ChainId,
     /// Context of the prepared call bundle.
-    context: PrepareCallsContext,
+    pub context: PrepareCallsContext,
     /// Signature values.
-    signature: SendPreparedCallsSignature,
+    pub signature: SendPreparedCallsSignature,
 }
 
 /// Signature.
@@ -86,17 +86,17 @@ pub struct SendPreparedCallsParameters {
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsSignature {
     /// Public key that generated the signature.
-    public_key: Bytes,
+    pub public_key: Bytes,
     /// Type of key that generated the signature.
     #[serde(rename = "type")]
-    key_type: KeyType,
+    pub key_type: KeyType,
     /// Signature value.
-    value: PrimitiveSignature,
+    pub value: PrimitiveSignature,
 }
 
 /// Response for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsResponse {
     /// Bundle identifier.
-    id: String,
+    pub id: String,
 }

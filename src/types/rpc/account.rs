@@ -5,11 +5,11 @@ use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse};
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
 
-/// Capabilities for `wallet_createAccount` request and response.
+/// Generic capabilities for account creation shared between request and response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountCapabilities<T> {
-    /// Authorize keys on the account.
+    /// Authorized keys on the account.
     pub authorize_keys: Vec<T>,
     /// Contract address to delegate to.
     pub delegation: Address,
@@ -17,11 +17,10 @@ pub struct AccountCapabilities<T> {
 
 /// Capabilities for `wallet_createAccount` request.
 pub type CreateAccountCapabilities = AccountCapabilities<AuthorizeKey>;
-
 /// Capabilities for `wallet_createAccount` response.
 pub type CreateAccountResponseCapabilities = AccountCapabilities<AuthorizeKeyResponse>;
 
-/// Common `wallet_createAccount` parameters for request and responses.
+/// Common parameters for `wallet_createAccount` shared between request and response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountCommon<T> {
