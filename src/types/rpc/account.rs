@@ -65,8 +65,6 @@ pub struct PrepareUpgradeAccountParameters {
     address: Address,
     /// Chain ID to initialize the account on.
     chain_id: ChainId,
-    /// Contract address to delegate to.
-    delegation: Address,
     /// Capabilities.
     capabilities: CreateAccountCapabilities,
 }
