@@ -1,7 +1,6 @@
 //! RPC key-related request and response types.
 
-use crate::types::Key;
-use alloy::primitives::{Address, B256};
+use alloy::primitives::Address;
 use serde::{Deserialize, Serialize};
 
 /// Request parameters for `wallet_getKeys`.

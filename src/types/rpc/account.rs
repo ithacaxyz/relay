@@ -1,6 +1,6 @@
 //! RPC account-related request and response types.
 
-use super::{PrepareCallsContext, PrepareCallsResponse, SendPreparedCallsResponse};
+use super::{PrepareCallsContext, SendPreparedCallsResponse};
 use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse};
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
