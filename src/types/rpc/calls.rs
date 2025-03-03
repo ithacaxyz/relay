@@ -1,9 +1,8 @@
 //! RPC calls-related request and response types.
 
-use super::PrepareCallsResponseCapabilities;
 use crate::types::{
     Call, KeyType, PartialUserOp, SignedQuote,
-    capabilities::{AuthorizeKey, Meta, RevokeKey},
+    capabilities::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey},
 };
 use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
@@ -22,17 +21,29 @@ pub struct PrepareCallsParameters {
     capabilities: PrepareCallsCapabilities,
 }
 
+/// Generic helper for key capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyCapabilities<A> {
+    /// Keys to authorize on the account.
+    pub authorize_keys: Option<Vec<A>>,
+    /// Keys to revoke from the account.
+    pub revoke_keys: Option<Vec<RevokeKey>>,
+}
+
 /// Capabilities for `wallet_prepareCalls` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
-    /// Keys to authorize on the account.
-    authorize_keys: Option<Vec<AuthorizeKey>>,
     /// Extra request values.
-    meta: Meta,
-    /// Keys to revoke from the account.
-    revoke_keys: Option<Vec<RevokeKey>>,
+    pub meta: Meta,
+    /// Key apabilities.
+    #[serde(flatten)]
+    pub key_capabilities: KeyCapabilities<AuthorizeKey>,
 }
+
+/// Capabilities for `wallet_prepareCalls` response.
+pub type PrepareCallsResponseCapabilities = KeyCapabilities<AuthorizeKeyResponse>;
 
 /// Response for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

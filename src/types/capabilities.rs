@@ -114,9 +114,6 @@ impl RevokeKey {
     }
 }
 
-/// Represents a key revocation response.
-pub type RevokeKeyResponse = RevokeKey;
-
 #[cfg(test)]
 mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};

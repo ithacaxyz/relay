@@ -1,7 +1,7 @@
 //! RPC account-related request and response types.
 
 use super::{PrepareCallsContext, PrepareCallsResponse, SendPreparedCallsResponse};
-use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse, RevokeKeyResponse};
+use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse};
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
 
@@ -43,16 +43,6 @@ pub struct CreateAccountResponse {
     /// `wallet_createAccount` response parameters.
     #[serde(flatten)]
     pub account: CreateAccountCommon<CreateAccountResponseCapabilities>,
-}
-
-/// Capabilities for `wallet_prepareCalls` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrepareCallsResponseCapabilities {
-    /// Keys that were authorized on the account.
-    pub authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
-    /// Keys that were revoked from the account.
-    pub revoke_keys: Option<Vec<RevokeKeyResponse>>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
