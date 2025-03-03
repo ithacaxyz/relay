@@ -86,21 +86,50 @@ pub struct SpendPermission {
     token: Address,
 }
 
+/// Represents extra request values.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Meta {
+    /// ERC20 token to pay for the gas of the calls.
+    /// If `None`, the native token will be used.
+    fee_token: Option<Address>,
+    /// Key (hash) that will be used to sign the request.
+    key_hash: B256,
+    /// Nonce.
+    nonce: U256,
+}
+
+/// Represents a key revocation request.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokeKey {
+    /// Key hash to revoke.
+    hash: B256,
+}
+
+impl RevokeKey {
+    /// Transform into a call.
+    pub fn into_call(self, eoa: Address) -> Call {
+        Call::revoke(eoa, self.hash)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{Address, Bytes, U256, fixed_bytes};
+    use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
         Call,
         Delegation::SpendPeriod,
         KeyType, U40,
         capabilities::{
-            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Key, Permission, SpendPermission,
+            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Key, Permission, RevokeKey,
+            SpendPermission,
         },
     };
 
     #[test]
-    fn test_into_calls() {
+    fn test_authorize_into_calls() {
         let key = AuthorizeKey {
             key: Key {
                 expiry: U40::from(0),
@@ -260,5 +289,15 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn test_revoke_key_into_call() {
+        let address = Address::random();
+        let hash = B256::random();
+
+        let revoke = RevokeKey { hash };
+
+        assert_eq!(revoke.into_call(address), Call::revoke(address, hash));
     }
 }
