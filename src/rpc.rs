@@ -43,11 +43,11 @@ use crate::{
     signers::DynSigner,
     types::{
         Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR,
-        Entry, EntryPoint, FeeTokens, GetKeysParameters, GetKeysResponse, KeyType,
-        KeyWith712Signer, PartialAction, PrepareCallsParameters, PrepareCallsResponse,
-        PrepareUpgradeAccountParameters, Quote,
+        Entry, EntryPoint, FeeTokens, GetKeysParameters, KeyType, KeyWith712Signer, PartialAction,
+        PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters, Quote,
         SendPreparedCallsParameters, SendPreparedCallsResponse, Signature, SignedQuote,
         UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
+        capabilities::AuthorizeKeyResponse,
     },
 };
 
@@ -100,7 +100,8 @@ pub trait RelayApi {
 
     /// Get all keys for an account.
     #[method(name = "getKeys", aliases = ["wallet_getKeys"])]
-    async fn get_keys(&self, parameters: GetKeysParameters) -> RpcResult<GetKeysResponse>;
+    async fn get_keys(&self, parameters: GetKeysParameters)
+    -> RpcResult<Vec<AuthorizeKeyResponse>>;
 
     // todo: rewrite
     /// Prepares a call bundle for a user.
@@ -471,7 +472,10 @@ impl RelayApiServer for Relay {
         todo!()
     }
 
-    async fn get_keys(&self, _parameters: GetKeysParameters) -> RpcResult<GetKeysResponse> {
+    async fn get_keys(
+        &self,
+        _parameters: GetKeysParameters,
+    ) -> RpcResult<Vec<AuthorizeKeyResponse>> {
         todo!()
     }
 

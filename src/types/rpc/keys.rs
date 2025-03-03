@@ -10,16 +10,3 @@ pub struct GetKeysParameters {
     /// Address of the account to get the keys for.
     pub address: Address,
 }
-
-/// Account key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetKeyResponse {
-    /// Key hash.
-    pub hash: B256,
-    /// Key.
-    #[serde(flatten)]
-    pub key: Key,
-}
-
-/// Response for `wallet_getKeys`.
-pub type GetKeysResponse = Vec<GetKeyResponse>;
