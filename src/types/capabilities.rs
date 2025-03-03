@@ -95,10 +95,10 @@ pub struct Meta {
     /// ERC20 token to pay for the gas of the calls.
     /// If `None`, the native token will be used.
     fee_token: Option<Address>,
+    /// Key (hash) that will be used to sign the request.
+    key_hash: B256,
     /// Nonce.
     nonce: U256,
-    /// Public key that will be used to sign the request.
-    public_key: B256,
 }
 
 /// Represents a key revocation request.
