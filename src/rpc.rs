@@ -45,7 +45,7 @@ use crate::{
         Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR,
         Entry, EntryPoint, FeeTokens, GetKeysParameters, GetKeysResponse, KeyType,
         KeyWith712Signer, PartialAction, PrepareCallsParameters, PrepareCallsResponse,
-        PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse, Quote,
+        PrepareUpgradeAccountParameters, Quote,
         SendPreparedCallsParameters, SendPreparedCallsResponse, Signature, SignedQuote,
         UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
     },
@@ -116,7 +116,7 @@ pub trait RelayApi {
     async fn prepare_upgrade_account(
         &self,
         parameters: PrepareUpgradeAccountParameters,
-    ) -> RpcResult<PrepareUpgradeAccountResponse>;
+    ) -> RpcResult<PrepareCallsResponse>;
 
     // todo: rewrite
     /// Send a signed call bundle.
@@ -485,7 +485,7 @@ impl RelayApiServer for Relay {
     async fn prepare_upgrade_account(
         &self,
         _parameters: PrepareUpgradeAccountParameters,
-    ) -> RpcResult<PrepareUpgradeAccountResponse> {
+    ) -> RpcResult<PrepareCallsResponse> {
         todo!()
     }
 

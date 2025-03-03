@@ -56,9 +56,6 @@ pub struct PrepareUpgradeAccountParameters {
     pub capabilities: CreateAccountCapabilities,
 }
 
-/// Response for `wallet_prepareUpgradeAccount`.
-pub type PrepareUpgradeAccountResponse = PrepareCallsResponse;
-
 /// Request parameters for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
