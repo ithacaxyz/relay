@@ -84,51 +84,68 @@ impl<P: Provider> Account<P> {
     }
 }
 
-/// Initializes a new account with the given delegation and digest.
+/// PREP account based on <https://blog.biconomy.io/prep-deep-dive/>.
 ///
-/// The digest is a hash of the [`UserOp`] used to initialize the account.
-///
-/// This generates a new EOA address and a signed authorization for the account using the Provably
-/// Rootless EIP-7702 Proxy method, which is an application of Nick's Method to EIP-7702.
-///
-/// The authorization item is the signed tuple `(0, delegation, 0)`, where `r` is derived by taking
-/// the lower 160 bits of the hash of the initialization data, `s` is the hash of `r`, and
-/// `y_parity` is always `0`.
-///
-/// The `r` value is used as an integrity check in the smart contract to prevent front running, and
-/// the `s` value being the hash of `r` should reasonably prove that the private key is unknown.
-///
-/// Finding the associated private key for the signature would take `2^159` operations given the
-/// predefined prefix (or trillions of years with the most powerful supercomputers available
-/// today).
-///
-/// See <https://blog.biconomy.io/prep-deep-dive/>
-pub fn initialize(delegation: Address, digest: B256) -> (Address, SignedAuthorization, u8) {
-    // we mine until we have a valid `r`, `s` combination
-    let mut salt = [0u8; 32];
-    loop {
-        let mut hasher = Keccak256::new();
-        hasher.update(digest);
-        hasher.update(salt);
-        let hash = hasher.finalize();
+/// Read [`PREPAccount::initialize`] for more information on how it is generated.
+#[derive(Debug)]
+pub struct PREPAccount {
+    /// EOA generated address.
+    pub eoa: Address,
+    /// Signed 7702 authorization.
+    pub signed_authorization: SignedAuthorization,
+    /// Salt used to generate the EOA.
+    pub salt: u8,
+}
 
-        let pre_r: U256 = hash.into();
-        let r: U256 = (pre_r << 96) >> 96;
-        let s = keccak256(r.to_be_bytes::<32>());
+impl PREPAccount {
+    /// Initializes a new account with the given delegation and digest.
+    ///
+    /// The digest is a hash of the [`UserOp`] used to initialize the account.
+    ///
+    /// This generates a new EOA address and a signed authorization for the account using the
+    /// Provably Rootless EIP-7702 Proxy method, which is an application of Nick's Method to
+    /// EIP-7702.
+    ///
+    /// The authorization item is the signed tuple `(0, delegation, 0)`, where `r` is derived by
+    /// taking the lower 160 bits of the hash of the initialization data, `s` is the hash of
+    /// `r`, and `y_parity` is always `0`.
+    ///
+    /// The `r` value is used as an integrity check in the smart contract to prevent front running,
+    /// and the `s` value being the hash of `r` should reasonably prove that the private key is
+    /// unknown.
+    ///
+    /// Finding the associated private key for the signature would take `2^159` operations given the
+    /// predefined prefix (or trillions of years with the most powerful supercomputers available
+    /// today).
+    ///
+    /// See <https://blog.biconomy.io/prep-deep-dive/>
+    pub fn initialize(delegation: Address, digest: B256) -> Self {
+        // we mine until we have a valid `r`, `s` combination
+        let mut salt = [0u8; 32];
+        loop {
+            let mut hasher = Keccak256::new();
+            hasher.update(digest);
+            hasher.update(salt);
+            let hash: U256 = hasher.finalize().into();
 
-        let auth = SignedAuthorization::new_unchecked(
-            Authorization { chain_id: U256::ZERO, address: delegation, nonce: 0 },
-            0,
-            r,
-            s.into(),
-        );
+            // Take only the lower 160bits
+            let r: U256 = (hash << 96) >> 96;
+            let s = keccak256(r.to_be_bytes::<32>());
 
-        if let Ok(eoa) = auth.recover_authority() {
-            return (eoa, auth, salt[31]);
+            let signed_authorization = SignedAuthorization::new_unchecked(
+                Authorization { chain_id: U256::ZERO, address: delegation, nonce: 0 },
+                0,
+                r,
+                s.into(),
+            );
+
+            if let Ok(eoa) = signed_authorization.recover_authority() {
+                return Self { eoa, signed_authorization, salt: salt[31] };
+            }
+
+            // u8 should be enough to find it.
+            salt[31] += 1;
         }
-
-        // u8 should be enough to find it.
-        salt[31] += 1;
     }
 }
 
@@ -142,7 +159,7 @@ mod tests {
         let cases = [(Address::ZERO, B256::ZERO), (Address::random(), B256::random())];
 
         for (address, digest) in cases {
-            initialize(address, digest);
+            PREPAccount::initialize(address, digest);
         }
     }
 
@@ -163,8 +180,8 @@ mod tests {
         }];
 
         for Case { target, target_salt, delegation, digest } in cases {
-            let (prep_eoa, _, prep_salt) = initialize(delegation, digest);
-            assert_eq!((target, target_salt), (prep_eoa, prep_salt))
+            let acc = PREPAccount::initialize(delegation, digest);
+            assert_eq!((target, target_salt), (acc.eoa, acc.salt))
         }
     }
 }
