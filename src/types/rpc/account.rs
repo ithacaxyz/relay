@@ -5,33 +5,35 @@ use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse};
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
 
-/// Generic capabilities for account creation shared between request and response.
+/// Capabilities for `wallet_createAccount` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AccountCapabilities<T> {
-    /// Authorized keys on the account.
-    pub authorize_keys: Vec<T>,
+pub struct CreateAccountCapabilities {
+    /// Keys to authorize on the account.
+    pub authorize_keys: Vec<AuthorizeKey>,
     /// Contract address to delegate to.
     pub delegation: Address,
 }
 
-/// Capabilities for `wallet_createAccount` request.
-pub type CreateAccountCapabilities = AccountCapabilities<AuthorizeKey>;
 /// Capabilities for `wallet_createAccount` response.
-pub type CreateAccountResponseCapabilities = AccountCapabilities<AuthorizeKeyResponse>;
-
-/// Common parameters for `wallet_createAccount` shared between request and response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateAccountCommon<T> {
-    /// Chain ID to initialize the account on.
-    pub chain_id: ChainId,
-    /// Capabilities.
-    pub capabilities: T,
+pub struct CreateAccountResponseCapabilities {
+    /// Keys that were authorized on the account.
+    pub authorize_keys: Vec<AuthorizeKeyResponse>,
+    /// Contract address the account was delegated to.
+    pub delegation: Address,
 }
 
 /// Request parameters for `wallet_createAccount`.
-pub type CreateAccountParameters = CreateAccountCommon<CreateAccountCapabilities>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAccountParameters {
+    /// Chain ID to initialize the account on.
+    pub chain_id: ChainId,
+    /// Capabilities.
+    pub capabilities: CreateAccountCapabilities,
+}
 
 /// Response for `wallet_createAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,9 +41,10 @@ pub type CreateAccountParameters = CreateAccountCommon<CreateAccountCapabilities
 pub struct CreateAccountResponse {
     /// Address of the initialized account.
     pub address: Address,
-    /// `wallet_createAccount` response parameters.
-    #[serde(flatten)]
-    pub account: CreateAccountCommon<CreateAccountResponseCapabilities>,
+    /// Chain ID to initialize the account on.
+    pub chain_id: ChainId,
+    /// Capabilities.
+    pub capabilities: CreateAccountResponseCapabilities,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.

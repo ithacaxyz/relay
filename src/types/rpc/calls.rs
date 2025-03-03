@@ -21,29 +21,27 @@ pub struct PrepareCallsParameters {
     pub capabilities: PrepareCallsCapabilities,
 }
 
-/// Generic helper for key capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyCapabilities<A> {
-    /// Keys to authorize on the account.
-    pub authorize_keys: Option<Vec<A>>,
-    /// Keys to revoke from the account.
-    pub revoke_keys: Option<Vec<RevokeKey>>,
-}
-
 /// Capabilities for `wallet_prepareCalls` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
+    /// Keys to authorize on the account.
+    pub authorize_keys: Option<Vec<AuthorizeKey>>,
     /// Extra request values.
     pub meta: Meta,
-    /// Key capabilities.
-    #[serde(flatten)]
-    pub key_capabilities: KeyCapabilities<AuthorizeKey>,
+    /// Keys to revoke from the account.
+    pub revoke_keys: Option<Vec<RevokeKey>>,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
-pub type PrepareCallsResponseCapabilities = KeyCapabilities<AuthorizeKeyResponse>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareCallsResponseCapabilities {
+    /// Keys that were authorized on the account.
+    pub authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
+    /// Keys that were revoked from the account.
+    pub revoke_keys: Option<Vec<RevokeKey>>,
+}
 
 /// Response for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
