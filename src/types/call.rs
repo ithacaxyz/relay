@@ -5,6 +5,7 @@ use alloy::{
     sol,
     sol_types::SolCall,
 };
+use serde::{Deserialize, Serialize};
 
 use super::{
     Delegation::{SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall},
@@ -14,7 +15,7 @@ use super::{
 
 sol! {
     /// ERC-7579 call struct.
-    #[derive(Debug, Default, PartialEq)]
+    #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
     struct Call {
         /// The call target.
         address target;
