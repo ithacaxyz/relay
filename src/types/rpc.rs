@@ -204,6 +204,7 @@ pub struct UpgradeAccountResponse {
     bundles: Vec<SendPreparedCallsResponse>,
 }
 
+#[cfg(test)]
 mod tests {
     use alloy::primitives::{Bytes, PrimitiveSignature};
     use std::str::FromStr;
