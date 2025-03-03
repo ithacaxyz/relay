@@ -5,12 +5,6 @@ use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse, RevokeKeyRe
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
 
-/// Capabilities for `wallet_createAccount` request.
-pub type CreateAccountCapabilities = AccountCapabilities<AuthorizeKey>;
-
-/// Capabilities for `wallet_createAccount` response.
-pub type CreateAccountResponseCapabilities = AccountCapabilities<AuthorizeKeyResponse>;
-
 /// Capabilities for `wallet_createAccount` request and response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,26 +15,34 @@ pub struct AccountCapabilities<T> {
     pub delegation: Address,
 }
 
-/// Request parameters for `wallet_createAccount`.
+/// Capabilities for `wallet_createAccount` request.
+pub type CreateAccountCapabilities = AccountCapabilities<AuthorizeKey>;
+
+/// Capabilities for `wallet_createAccount` response.
+pub type CreateAccountResponseCapabilities = AccountCapabilities<AuthorizeKeyResponse>;
+
+/// Common `wallet_createAccount` parameters for request and responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateAccountParameters {
+pub struct CreateAccountCommon<T> {
     /// Chain ID to initialize the account on.
-    chain_id: ChainId,
-    /// Request capabilities.
-    capabilities: CreateAccountCapabilities,
+    pub chain_id: ChainId,
+    /// Capabilities.
+    pub capabilities: T,
 }
+
+/// Request parameters for `wallet_createAccount`.
+pub type CreateAccountParameters = CreateAccountCommon<CreateAccountCapabilities>;
 
 /// Response for `wallet_createAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountResponse {
     /// Address of the initialized account.
-    address: Address,
-    /// Chain ID the account was initialized on.
-    chain_id: ChainId,
-    /// Capabilities.
-    capabilities: CreateAccountResponseCapabilities,
+    pub address: Address,
+    /// `wallet_createAccount` response parameters.
+    #[serde(flatten)]
+    pub account: CreateAccountCommon<CreateAccountResponseCapabilities>,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
@@ -48,9 +50,9 @@ pub struct CreateAccountResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponseCapabilities {
     /// Keys that were authorized on the account.
-    authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
+    pub authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
     /// Keys that were revoked from the account.
-    revoke_keys: Option<Vec<RevokeKeyResponse>>,
+    pub revoke_keys: Option<Vec<RevokeKeyResponse>>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
@@ -58,11 +60,11 @@ pub struct PrepareCallsResponseCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareUpgradeAccountParameters {
     /// Address of the EOA to upgrade.
-    address: Address,
+    pub address: Address,
     /// Chain ID to initialize the account on.
-    chain_id: ChainId,
+    pub chain_id: ChainId,
     /// Capabilities.
-    capabilities: CreateAccountCapabilities,
+    pub capabilities: CreateAccountCapabilities,
 }
 
 /// Response for `wallet_prepareUpgradeAccount`.
@@ -72,14 +74,14 @@ pub type PrepareUpgradeAccountResponse = PrepareCallsResponse;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
     /// Context of the prepared call bundle.
-    context: PrepareCallsContext,
+    pub context: PrepareCallsContext,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
-    signature: PrimitiveSignature,
+    pub signature: PrimitiveSignature,
 }
 
 /// Response for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeAccountResponse {
     /// Call bundles that were executed.
-    bundles: Vec<SendPreparedCallsResponse>,
+    pub bundles: Vec<SendPreparedCallsResponse>,
 }
