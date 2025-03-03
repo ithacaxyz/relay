@@ -5,6 +5,22 @@ use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse, RevokeKeyRe
 use alloy::primitives::{Address, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
 
+/// Capabilities for `wallet_createAccount` request.
+pub type CreateAccountCapabilities = AccountCapabilities<AuthorizeKey>;
+
+/// Capabilities for `wallet_createAccount` response.
+pub type CreateAccountResponseCapabilities = AccountCapabilities<AuthorizeKeyResponse>;
+
+/// Capabilities for `wallet_createAccount` request and response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountCapabilities<T> {
+    /// Authorize keys on the account.
+    pub authorize_keys: Vec<T>,
+    /// Contract address to delegate to.
+    pub delegation: Address,
+}
+
 /// Request parameters for `wallet_createAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,16 +29,6 @@ pub struct CreateAccountParameters {
     chain_id: ChainId,
     /// Request capabilities.
     capabilities: CreateAccountCapabilities,
-}
-
-/// Capabilities for `wallet_createAccount` request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateAccountCapabilities {
-    /// Keys to authorize on the account.
-    authorize_keys: Vec<AuthorizeKey>,
-    /// Contract address to delegate to.
-    delegation: Address,
 }
 
 /// Response for `wallet_createAccount`.
@@ -35,16 +41,6 @@ pub struct CreateAccountResponse {
     chain_id: ChainId,
     /// Capabilities.
     capabilities: CreateAccountResponseCapabilities,
-}
-
-/// Capabilities for `wallet_createAccount` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateAccountResponseCapabilities {
-    /// Keys that were authorized on the account.
-    authorize_keys: Vec<AuthorizeKeyResponse>,
-    /// Contract address the account was delegated to.
-    delegation: Address,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
