@@ -1,16 +1,16 @@
 //! Ithaca Relay ERC-5792 capabilities.
 
-use alloy::primitives::{Address, FixedBytes, U256};
+use alloy::primitives::{Address, B256, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
 use super::{Call, Delegation::SpendPeriod, Key};
 
-/// Represents a key authorization.
+/// Represents a key authorization request.
 ///
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
@@ -42,8 +42,18 @@ impl AuthorizeKey {
     }
 }
 
+/// Represents a key authorization response.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct AuthorizeKeyResponse {
+    /// Key hash.
+    hash: B256,
+    /// The key to authorize or modify permissions for.
+    #[serde(flatten)]
+    authorize_key: AuthorizeKey,
+}
+
 /// Represents key permissions.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(tag = "type")]
 pub enum Permission {
     /// Call permission.
@@ -84,7 +94,9 @@ mod tests {
         Call,
         Delegation::SpendPeriod,
         KeyType, U40,
-        capabilities::{AuthorizeKey, CallPermission, Key, Permission, SpendPermission},
+        capabilities::{
+            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Key, Permission, SpendPermission,
+        },
     };
 
     #[test]
@@ -191,5 +203,62 @@ mod tests {
             .unwrap(),
             CallPermission { to: Address::ZERO, selector: fixed_bytes!("0xa9059cbb") }
         )
+    }
+
+    #[test]
+    fn serialize_authorize_key_response() {
+        let key = Key {
+            expiry: U40::from(0),
+            keyType: KeyType::P256,
+            isSuperAdmin: true,
+            publicKey: Bytes::from(fixed_bytes!(
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            )),
+        };
+        let resp = AuthorizeKeyResponse {
+            hash: key.key_hash(),
+            authorize_key: AuthorizeKey {
+                key,
+                permissions: vec![Permission::Call(CallPermission {
+                    to: Address::ZERO,
+                    selector: fixed_bytes!("0xa9059cbb"),
+                })],
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_string(&resp).unwrap(),
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+        );
+    }
+
+    #[test]
+    fn deserialize_authorize_key_response() {
+        let resp = serde_json::from_str::<AuthorizeKeyResponse>(
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+        ).unwrap();
+
+        let key = Key {
+            expiry: U40::from(0),
+            keyType: KeyType::P256,
+            isSuperAdmin: true,
+            publicKey: Bytes::from(fixed_bytes!(
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            )),
+        };
+
+        assert_eq!(
+            resp,
+            AuthorizeKeyResponse {
+                hash: key.key_hash(),
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: vec![Permission::Call(CallPermission {
+                        to: Address::ZERO,
+                        selector: fixed_bytes!("0xa9059cbb"),
+                    })]
+                },
+            }
+        );
     }
 }
