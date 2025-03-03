@@ -10,7 +10,7 @@ use super::{Call, Delegation::SpendPeriod, Key};
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
@@ -49,9 +49,7 @@ pub struct AuthorizeKeyResponse {
     hash: B256,
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
-    key: Key,
-    /// The permissions for the key.
-    permissions: Vec<Permission>,
+    authorize_key: AuthorizeKey,
 }
 
 /// Represents key permissions.
@@ -251,11 +249,13 @@ mod tests {
         };
         let resp = AuthorizeKeyResponse {
             hash: key.key_hash(),
-            key,
-            permissions: vec![Permission::Call(CallPermission {
-                to: Address::ZERO,
-                selector: fixed_bytes!("0xa9059cbb"),
-            })],
+            authorize_key: AuthorizeKey {
+                key,
+                permissions: vec![Permission::Call(CallPermission {
+                    to: Address::ZERO,
+                    selector: fixed_bytes!("0xa9059cbb"),
+                })],
+            },
         };
 
         assert_eq!(
@@ -283,11 +283,13 @@ mod tests {
             resp,
             AuthorizeKeyResponse {
                 hash: key.key_hash(),
-                key,
-                permissions: vec![Permission::Call(CallPermission {
-                    to: Address::ZERO,
-                    selector: fixed_bytes!("0xa9059cbb"),
-                })],
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: vec![Permission::Call(CallPermission {
+                        to: Address::ZERO,
+                        selector: fixed_bytes!("0xa9059cbb"),
+                    })]
+                },
             }
         );
     }
