@@ -1,8 +1,9 @@
 use Delegation::DelegationInstance;
 use alloy::{
-    primitives::Address,
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, B256, Keccak256, U256, keccak256},
     providers::Provider,
-    rpc::types::state::StateOverride,
+    rpc::types::{Authorization, state::StateOverride},
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
@@ -90,5 +91,107 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(entrypoint.ENTRY_POINT)
+    }
+}
+
+/// PREP account based on <https://blog.biconomy.io/prep-deep-dive/>.
+///
+/// Read [`PREPAccount::initialize`] for more information on how it is generated.
+#[derive(Debug)]
+pub struct PREPAccount {
+    /// EOA generated address.
+    pub eoa: Address,
+    /// Signed 7702 authorization.
+    pub signed_authorization: SignedAuthorization,
+    /// Salt used to generate the EOA.
+    pub salt: u8,
+}
+
+impl PREPAccount {
+    /// Initializes a new account with the given delegation and digest.
+    ///
+    /// The digest is a hash of the [`UserOp`] used to initialize the account.
+    ///
+    /// This generates a new EOA address and a signed authorization for the account using the
+    /// Provably Rootless EIP-7702 Proxy method, which is an application of Nick's Method to
+    /// EIP-7702.
+    ///
+    /// The authorization item is the signed tuple `(0, delegation, 0)`, where `r` is derived by
+    /// taking the lower 160 bits of the hash of the initialization data, `s` is the hash of
+    /// `r`, and `y_parity` is always `0`.
+    ///
+    /// The `r` value is used as an integrity check in the smart contract to prevent front running,
+    /// and the `s` value being the hash of `r` should reasonably prove that the private key is
+    /// unknown.
+    ///
+    /// Finding the associated private key for the signature would take `2^159` operations given the
+    /// predefined prefix (or trillions of years with the most powerful supercomputers available
+    /// today).
+    ///
+    /// See <https://blog.biconomy.io/prep-deep-dive/>
+    pub fn initialize(delegation: Address, digest: B256) -> Self {
+        // we mine until we have a valid `r`, `s` combination
+        let mut salt = [0u8; 32];
+        loop {
+            let mut hasher = Keccak256::new();
+            hasher.update(digest);
+            hasher.update(salt);
+            let hash: U256 = hasher.finalize().into();
+
+            // Take only the lower 160bits
+            let r: U256 = (hash << 96) >> 96;
+            let s = keccak256(r.to_be_bytes::<32>());
+
+            let signed_authorization = SignedAuthorization::new_unchecked(
+                Authorization { chain_id: U256::ZERO, address: delegation, nonce: 0 },
+                0,
+                r,
+                s.into(),
+            );
+
+            if let Ok(eoa) = signed_authorization.recover_authority() {
+                return Self { eoa, signed_authorization, salt: salt[31] };
+            }
+
+            // u8 should be enough to find it.
+            salt[31] += 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{address, b256};
+
+    #[test]
+    fn initialize_prep() {
+        let cases = [(Address::ZERO, B256::ZERO), (Address::random(), B256::random())];
+
+        for (address, digest) in cases {
+            PREPAccount::initialize(address, digest);
+        }
+    }
+
+    #[test]
+    fn initialize_solidity() {
+        struct Case {
+            target: Address,
+            target_salt: u8,
+            delegation: Address,
+            digest: B256,
+        }
+
+        let cases = [Case {
+            target: address!("0xfE1D536604feB43A980dA073161B7cF09F3fd969"),
+            target_salt: 0u8,
+            delegation: address!("0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9"),
+            digest: b256!("0x16f3f8d8870eecad098c9634fa7e635e4bb8526f633e0f3333b5627de0626a23"),
+        }];
+
+        for Case { target, target_salt, delegation, digest } in cases {
+            let acc = PREPAccount::initialize(delegation, digest);
+            assert_eq!((target, target_salt), (acc.eoa, acc.salt))
+        }
     }
 }
