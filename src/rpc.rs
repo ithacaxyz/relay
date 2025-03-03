@@ -42,11 +42,12 @@ use crate::{
     price::PriceOracle,
     signers::DynSigner,
     types::{
-        Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR, Entry,
-        EntryPoint, FeeTokens, GetKeysParameters, GetKeysResponse, KeyType, KeyWith712Signer,
-        PartialAction, PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters,
-        PrepareUpgradeAccountResponse, Quote, SendPreparedCallsParameters, SendPreparedCallsResponse,
-        Signature, SignedQuote, UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
+        Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR,
+        Entry, EntryPoint, FeeTokens, GetKeysParameters, GetKeysResponse, KeyType,
+        KeyWith712Signer, PartialAction, PrepareCallsParameters, PrepareCallsResponse,
+        PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse, Quote,
+        SendPreparedCallsParameters, SendPreparedCallsResponse, Signature, SignedQuote,
+        UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
     },
 };
 
@@ -81,7 +82,10 @@ pub trait RelayApi {
     // todo: rewrite
     /// Prepares a call bundle for a user.
     #[method(name = "prepareCalls", aliases = ["wallet_prepareCalls"])]
-    async fn prepare_calls(&self, parameters: PrepareCallsParameters) -> RpcResult<PrepareCallsResponse>;
+    async fn prepare_calls(
+        &self,
+        parameters: PrepareCallsParameters,
+    ) -> RpcResult<PrepareCallsResponse>;
 
     // todo: rewrite
     /// Prepares an EOA to be upgraded.
