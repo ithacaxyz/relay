@@ -1,6 +1,5 @@
 use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature, U256};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 use super::{
     Key, KeyType, PartialUserOp, SignedQuote,
@@ -179,7 +178,6 @@ pub struct SendPreparedCallsSignature {
     #[serde(rename = "type")]
     key_type: KeyType,
     /// Signature value.
-    #[serde(deserialize_with = "deserialize_signature")]
     value: PrimitiveSignature,
 }
 
@@ -196,7 +194,6 @@ pub struct UpgradeAccountParameters {
     /// Context of the prepared call bundle.
     context: PrepareCallsContext,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
-    #[serde(deserialize_with = "deserialize_signature")]
     signature: PrimitiveSignature,
 }
 
@@ -207,35 +204,38 @@ pub struct UpgradeAccountResponse {
     bundles: Vec<SendPreparedCallsResponse>,
 }
 
-fn deserialize_signature<'de, D>(deserializer: D) -> Result<PrimitiveSignature, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let s = String::deserialize(deserializer)?;
-    PrimitiveSignature::from_str(&s).map_err(Error::custom)
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{Bytes, PrimitiveSignature};
-    use std::str::FromStr;
-
     use crate::types::{KeyType, SendPreparedCallsSignature};
+    use alloy::primitives::{PrimitiveSignature, b256, bytes};
 
     #[test]
     fn test_deserialize_send_prepared_calls_signature() {
-        let serialized = r#"{"publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","type":"p256","value":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00"}"#;
-        let signature = serde_json::from_str::<SendPreparedCallsSignature>(serialized).unwrap();
-        assert_eq!(
-            signature.public_key,
-            Bytes::from_str("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                .unwrap()
+        let r = b256!("0x840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565");
+        let s = b256!("0x25e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1");
+        let public_key =
+            bytes!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        let y_parity = false;
+
+        let serialized = format!(
+            r#"
+        {{
+            "publicKey": "{public_key}",
+            "type": "p256",
+            "value": {{
+                "r": "{r}",
+                "s": "{s}",
+                "yParity": "{}"
+            }}
+        }}
+        "#,
+            y_parity as u8
         );
-        assert_eq!(signature.key_type, KeyType::P256);
-        assert_eq!(
-            signature.value,
-            PrimitiveSignature::from_str("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00").unwrap()
-        );
+
+        let deserialized: SendPreparedCallsSignature = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.public_key, public_key);
+        assert_eq!(deserialized.key_type, KeyType::P256);
+        assert_eq!(deserialized.value, PrimitiveSignature::from_scalars_and_parity(r, s, y_parity));
     }
 }
