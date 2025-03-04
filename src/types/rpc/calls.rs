@@ -48,7 +48,7 @@ pub struct PrepareCallsResponseCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
     /// The [`SignedQuote`] of the prepared call bundle.
-    pub quote: SignedQuote,
+    pub context: SignedQuote,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
@@ -61,7 +61,7 @@ pub struct PrepareCallsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
     /// The [`SignedQuote`] of the prepared call bundle.
-    pub quote: SignedQuote,
+    pub context: SignedQuote,
     /// Signature values.
     pub signature: SendPreparedCallsSignature,
 }

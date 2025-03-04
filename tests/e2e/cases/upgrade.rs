@@ -47,7 +47,7 @@ async fn upgrade_account(env: &Environment, authorize_keys: Vec<AuthorizeKey>) -
     let response = env
         .relay_endpoint
         .upgrade_account(UpgradeAccountParameters {
-            quote: response.quote,
+            context: response.context,
             signature,
             authorization,
         })

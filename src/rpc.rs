@@ -550,7 +550,7 @@ impl RelayApiServer for Relay {
         };
 
         let response = PrepareCallsResponse {
-            quote,
+            context: quote,
             digest,
             capabilities: PrepareCallsResponseCapabilities {
                 authorize_keys: Some(
@@ -580,12 +580,12 @@ impl RelayApiServer for Relay {
         &self,
         request: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse> {
-        let mut op = request.quote.ty().op.clone();
+        let mut op = request.context.ty().op.clone();
 
         // Ensure that we have a signed delegation and its address matches the quote's.
-        if request.quote.ty().authorization_address != Some(request.authorization.address) {
+        if request.context.ty().authorization_address != Some(request.authorization.address) {
             return Err(UpgradeAccountError::InvalidAuthAddress {
-                expected: request.quote.ty().authorization_address.expect("should exist"),
+                expected: request.context.ty().authorization_address.expect("should exist"),
                 got: request.authorization.address,
             }
             .into());
@@ -597,8 +597,8 @@ impl RelayApiServer for Relay {
         // Broadcast transaction with UserOp
         let tx_hash = self
             .send_action(
-                Action { op, chain_id: request.quote.ty().chain_id },
-                request.quote,
+                Action { op, chain_id: request.context.ty().chain_id },
+                request.context,
                 Some(request.authorization),
             )
             .await?;

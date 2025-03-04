@@ -82,7 +82,7 @@ pub struct PrepareUpgradeAccountParameters {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
     /// The [`SignedQuote`] of the prepared call bundle.
-    pub quote: SignedQuote,
+    pub context: SignedQuote,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
     pub signature: PrimitiveSignature,
     /// Signed authorization.
