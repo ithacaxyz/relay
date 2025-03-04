@@ -542,7 +542,10 @@ impl RelayApiServer for Relay {
                 .op
                 .as_eip712()
                 .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
-            let domain = entrypoint.eip712_domain(quote.ty().op.is_multichain()).await.unwrap();
+            let domain = entrypoint
+                .eip712_domain(quote.ty().op.is_multichain())
+                .await
+                .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
             payload.eip712_signing_hash(&domain)
         };
 
@@ -580,16 +583,11 @@ impl RelayApiServer for Relay {
         let mut op = request.quote.ty().op.clone();
 
         // Ensure that we have a signed delegation and its address matches the quote's.
-        if request.quote.ty().authorization_address.is_none()
-            || request
-                .quote
-                .ty()
-                .authorization_address
-                .is_some_and(|addr| addr != request.authorization.address)
-        {
-            return Err(UpgradeAccountError::InvalidAuthAddress(
-                request.quote.ty().authorization_address,
-            )
+        if request.quote.ty().authorization_address != Some(request.authorization.address) {
+            return Err(UpgradeAccountError::InvalidAuthAddress {
+                expected: request.quote.ty().authorization_address.expect("should exist"),
+                got: request.authorization.address,
+            }
             .into());
         }
 

@@ -191,9 +191,14 @@ pub enum UpgradeAccountError {
     /// Missing required token address.
     #[error("missing token address")]
     MissingFeeToken,
-    /// Invalid or missing delegation address.
-    #[error("invalid or missing delegation address: {0:?}")]
-    InvalidAuthAddress(Option<Address>),
+    /// Invalid authorization item address.
+    #[error("invalid auth item, expected {expected}, got {got}")]
+    InvalidAuthAddress {
+        /// The address expected.
+        expected: Address,
+        /// The address in the authorization item.
+        got: Address,
+    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
