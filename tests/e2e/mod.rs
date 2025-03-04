@@ -202,6 +202,7 @@ pub async fn prepare_action_request(
         paymentPerGas: quote.ty().amount / U256::from(quote.ty().gas_estimate.op),
         combinedGas: U256::from(quote.ty().gas_estimate.op),
         signature: bytes!(""),
+        initData: bytes!(""),
     };
 
     let entry = Entry::new(env.entrypoint, env.provider.root());
