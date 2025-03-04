@@ -184,3 +184,35 @@ impl From<CallError> for EstimateFeeError {
         }
     }
 }
+
+/// Errors returned by `wallet_prepareUpgradeAccount` and `wallet_upgradeAccount`
+#[derive(Debug, thiserror::Error)]
+pub enum UpgradeAccountError {
+    /// Missing required token address.
+    #[error("missing token address")]
+    MissingFeeToken,
+    /// Invalid or missing delegation address.
+    #[error("invalid or missing delegation address: {0:?}")]
+    InvalidAuthAddress(Option<Address>),
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// An internal error occurred.
+    #[error(transparent)]
+    InternalError(#[from] eyre::Error),
+}
+
+impl From<UpgradeAccountError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(error: UpgradeAccountError) -> Self {
+        jsonrpsee::types::error::ErrorObject::owned::<()>(
+            match error {
+                UpgradeAccountError::InternalError(_) | UpgradeAccountError::RpcError(_) => {
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
+                }
+                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            },
+            error.to_string(),
+            None,
+        )
+    }
+}
