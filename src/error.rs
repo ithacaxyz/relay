@@ -221,3 +221,12 @@ impl From<UpgradeAccountError> for jsonrpsee::types::error::ErrorObject<'static>
         )
     }
 }
+
+/// Converts from [`eyre::Report`] into [`jsonrpsee::types::error::ErrorObject`].
+pub fn from_eyre_error(err: eyre::Report) -> jsonrpsee::types::error::ErrorObject<'static> {
+    jsonrpsee::types::error::ErrorObject::owned::<()>(
+        jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+        err.to_string(),
+        None,
+    )
+}

@@ -1,12 +1,10 @@
 //! Prepare calls related end-to-end test cases
 
-use std::str::FromStr;
-
 use crate::e2e::{MockErc20, cases::upgrade::upgrade_account, environment::Environment};
 use alloy::{
     primitives::{Address, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
-    sol_types::SolCall,
+    sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
 use relay::{
@@ -15,10 +13,11 @@ use relay::{
     types::{
         Call, KeyType, KeyWith712Signer, PrepareCallsCapabilities, PrepareCallsParameters,
         PrepareCallsResponse, SendPreparedCallsParameters, SendPreparedCallsResponse,
-        SendPreparedCallsSignature,
+        SendPreparedCallsSignature, Signature,
         capabilities::{AuthorizeKey, Meta},
     },
 };
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_with_upgraded_account() -> eyre::Result<()> {
@@ -67,7 +66,15 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .await?;
 
         // Sign UserOp digest
-        let signature = signer.sign_payload_hash(digest).await?;
+        // todo: innerSignature once estimateFee (or equivalent) is aware of which is key is to
+        // sign.
+        let signature = Signature {
+            innerSignature: signer.sign_payload_hash(digest).await?,
+            keyHash: signer.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
 
         // Submit signed call
         let SendPreparedCallsResponse { id } = env
