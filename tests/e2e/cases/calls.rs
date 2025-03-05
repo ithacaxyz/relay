@@ -31,7 +31,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
         .collect::<(Vec<_>, Vec<_>)>();
 
     // Upgrade environment EOA signer with the above admin keys.
-    let env = Environment::setup().await?;
+    let env = Environment::setup_with_upgraded().await?;
     upgrade_account(&env, keys.clone()).await;
 
     // Every key will sign a ERC20 transfer
@@ -51,8 +51,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![erc20_transfer.clone()],
                 chain_id: env.chain_id,
-                // It's an upgraded account, so it's the eoa_signer
-                from: env.eoa_signer.address(),
+                from: env.eoa.address(),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: None, // todo: add test authorize "inline"
                     revoke_keys: None,

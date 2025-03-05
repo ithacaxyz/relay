@@ -1,0 +1,64 @@
+use alloy::{
+    primitives::{Address, U256},
+    sol_types::SolCall,
+};
+use relay::{
+    signers::DynSigner,
+    types::{Call, IDelegation::authorizeCall, KeyWith712Signer, PREPAccount},
+};
+
+/// Kind of EOA: PREP or Upgraded.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum EoaKind {
+    Upgraded(DynSigner),
+    Prep { init_data: Vec<Call>, admin_key: KeyWith712Signer, account: PREPAccount },
+}
+
+impl EoaKind {
+    /// Create a new [`EoaKind`] with [`DynSigner`].
+    pub fn create_upgraded(signer: DynSigner) -> Self {
+        Self::Upgraded(signer)
+    }
+
+    /// Create a new [`EoaKind`] with [`PREPAccount`].
+    pub fn create_prep(admin_key: KeyWith712Signer, delegation: Address) -> Self {
+        let init_data = vec![Call {
+            target: Address::ZERO,
+            value: U256::ZERO,
+            data: authorizeCall { key: admin_key.key().clone() }.abi_encode().into(),
+        }];
+
+        let account =
+            PREPAccount::initialize(delegation, PREPAccount::calculate_digest(&init_data));
+
+        Self::Prep { admin_key, init_data, account }
+    }
+
+    /// Returns a reference to the inner [DynSigner] when dealing with an upgraded account.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if it's not an upgraded account.
+    pub fn root_signer(&self) -> &DynSigner {
+        match self {
+            EoaKind::Upgraded(dyn_signer) => dyn_signer,
+            EoaKind::Prep { init_data, admin_key, account } => {
+                panic!("eoa is not an upgraded account")
+            }
+        }
+    }
+
+    /// Whether self is a PREP account.
+    pub fn is_prep(&self) -> bool {
+        matches!(self, Self::Prep { .. })
+    }
+
+    /// Returns [Address].
+    pub fn address(&self) -> Address {
+        match self {
+            EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),
+            EoaKind::Prep { account, .. } => account.address,
+        }
+    }
+}

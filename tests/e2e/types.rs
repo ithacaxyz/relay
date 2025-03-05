@@ -90,7 +90,7 @@ impl AuthKind {
 
         Ok(auth_struct.into_signed(
             self.signer()
-                .unwrap_or(&env.eoa_signer)
+                .unwrap_or(env.eoa.root_signer())
                 .sign_hash(&auth_hash)
                 .await
                 .wrap_err("Auth signing failed")?,

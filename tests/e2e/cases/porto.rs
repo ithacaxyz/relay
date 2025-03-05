@@ -24,7 +24,7 @@ async fn behavior_delegation() -> Result<()> {
             // Authorize key (delegation provided in the call)
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -64,7 +64,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             // Authorize admin key
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -76,12 +76,12 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: another_key.key_hash(),
@@ -93,7 +93,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
                         .into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setSpendLimitCall {
                             keyHash: another_key.key_hash(),
@@ -156,12 +156,12 @@ async fn behavior_spend_limits() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setSpendLimitCall {
                             keyHash: key.key_hash(),
@@ -226,7 +226,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             // Authorize admin key
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -239,12 +239,12 @@ async fn execution_guard_target_scope() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: another_key.key_hash(),
@@ -308,7 +308,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             // Authorize admin key
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -321,12 +321,12 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: another_key.key_hash(),
@@ -422,7 +422,7 @@ async fn execution_guard_default() -> Result<()> {
             // Authorize admin key with delegation
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -434,12 +434,12 @@ async fn execution_guard_default() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: another_key.key_hash(),
@@ -518,7 +518,7 @@ async fn delegated_false_eoa_key_to_authorize_p256() -> Result<()> {
             // Send authorize call (EOA signs; delegation parameter provided)
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -564,7 +564,7 @@ async fn delegated_true_eoa_key_to_authorize_p256() -> Result<()> {
             // Then authorize the new key (signed by EOA)
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -610,7 +610,7 @@ async fn key_p256_key_to_authorize_p256() -> Result<()> {
             // Authorize first key using EOA
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -620,7 +620,7 @@ async fn key_p256_key_to_authorize_p256() -> Result<()> {
             // Authorize a second (P256) key using the first key
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                 }],
@@ -668,7 +668,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             // Authorize the admin key (P256)
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -680,12 +680,12 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             TxContext {
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: session_key.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
@@ -740,7 +740,7 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
             // Authorize the first key (P256)
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key.clone() }.abi_encode().into(),
                 }],
@@ -750,7 +750,7 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
             // Authorize the second key (WebCryptoP256) using the first key
             TxContext {
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: another_key.clone() }.abi_encode().into(),
                 }],
