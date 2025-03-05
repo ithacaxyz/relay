@@ -161,10 +161,15 @@ impl UserOp {
     /// Only some fields are hashed.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
+        hasher.update([self.is_multichain() as u8]);
         hasher.update(self.eoa);
         hasher.update(&self.executionData);
         hasher.update(self.nonce.to_be_bytes::<32>());
+        hasher.update(self.payer);
         hasher.update(self.paymentToken);
+        hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
+        hasher.update(self.paymentPerGas.to_be_bytes::<32>());
+        hasher.update(self.combinedGas.to_be_bytes::<32>());
         hasher.finalize()
     }
 }

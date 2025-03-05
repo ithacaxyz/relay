@@ -25,8 +25,9 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, PartialAction, PartialUserOp,
-        Signature, SignedQuote, U40, UserOp, WebAuthnP256,
+        Action, CreateAccountCapabilities, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType,
+        PartialAction, PartialUserOp, PrepareUpgradeAccountParameters, Signature, SignedQuote, U40,
+        UpgradeAccountParameters, UserOp, WebAuthnP256,
     },
 };
 
@@ -190,20 +191,7 @@ pub async fn prepare_action_request(
     }
 
     let quote = quote?;
-    let mut op = UserOp {
-        eoa: env.eoa_signer.address(),
-        executionData: execution_data.clone(),
-        nonce: U256::from(tx_num),
-        payer: Address::ZERO,
-        paymentToken: env.erc20,
-        paymentRecipient: Address::ZERO,
-        paymentAmount: quote.ty().amount,
-        paymentMaxAmount: quote.ty().amount,
-        paymentPerGas: quote.ty().amount / U256::from(quote.ty().gas_estimate.op),
-        combinedGas: U256::from(quote.ty().gas_estimate.op),
-        signature: bytes!(""),
-        initData: bytes!(""),
-    };
+    let mut op = quote.ty().op.clone();
 
     let entry = Entry::new(env.entrypoint, env.provider.root());
     let payload = op.as_eip712()?;

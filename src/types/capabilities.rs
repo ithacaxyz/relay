@@ -3,7 +3,7 @@
 use alloy::primitives::{Address, B256, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
-use super::{Call, Delegation::SpendPeriod, Key};
+use super::{Call, Delegation::SpendPeriod, Key, KeyType};
 
 /// Represents a key authorization request.
 ///
@@ -39,6 +39,16 @@ impl AuthorizeKey {
         }));
 
         (Call::authorize(eoa, self.key), calls)
+    }
+
+    /// Returns the inner [`KeyType`].
+    pub fn key_type(&self) -> KeyType {
+        self.key.keyType
+    }
+
+    /// Convert `self` into [`AuthorizeKeyResponse`].
+    pub fn into_response(self) -> AuthorizeKeyResponse {
+        AuthorizeKeyResponse { hash: self.key.key_hash(), authorize_key: self }
     }
 }
 

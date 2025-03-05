@@ -19,10 +19,10 @@ use alloy::{
     network::{
         Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TransactionBuilder7702,
     },
-    primitives::{Address, Bytes, TxHash, U256, map::AddressMap},
+    primitives::{Address, Bytes, TxHash, U256, bytes, map::AddressMap},
     providers::{Provider, fillers::NonceManager},
     rpc::types::{TransactionRequest, state::AccountOverride},
-    sol_types::{SolCall, SolValue},
+    sol_types::{SolCall, SolStruct, SolValue},
     transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
@@ -31,20 +31,21 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     chains::Chains,
     config::QuoteConfig,
     constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
-    error::{EstimateFeeError, SendActionError},
+    error::{EstimateFeeError, SendActionError, UpgradeAccountError},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
     signers::DynSigner,
     types::{
         Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR,
         Entry, EntryPoint, FeeTokens, GetKeysParameters, KeyType, KeyWith712Signer, PartialAction,
-        PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters, Quote,
+        PartialUserOp, PrepareCallsParameters, PrepareCallsResponse,
+        PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters, Quote,
         SendPreparedCallsParameters, SendPreparedCallsResponse, Signature, SignedQuote,
         UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
         capabilities::AuthorizeKeyResponse,
@@ -272,6 +273,10 @@ impl RelayApiServer for Relay {
 
         debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
 
+        // Fill combinedGas and empty dummy signature
+        op.combinedGas = U256::from(gas_estimate.op);
+        op.signature = bytes!("");
+
         // Get paymentPerGas
         // TODO: only handles eth as native fee token
         let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
@@ -286,13 +291,11 @@ impl RelayApiServer for Relay {
         op.paymentAmount = op.paymentPerGas * op.combinedGas;
         op.paymentMaxAmount = op.paymentAmount;
 
-        // todo: this is just a mock, we should add actual amounts
         let quote = Quote {
-            token: token.address,
-            amount: op.paymentPerGas * U256::from(gas_estimate.tx),
-            gas_estimate,
+            chain_id: request.chain_id,
+            op,
+            tx_gas: gas_estimate.tx,
             native_fee_estimate,
-            digest: op.digest(),
             ttl: SystemTime::now()
                 .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
@@ -352,7 +355,7 @@ impl RelayApiServer for Relay {
             )
             .to(entrypoint)
             .from(tx_signer_address)
-            .gas_limit(quote.ty().gas_estimate.tx)
+            .gas_limit(quote.ty().tx_gas)
             .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
             .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
 
@@ -393,24 +396,6 @@ impl RelayApiServer for Relay {
             {
                 return Err(SendActionError::EoaNotDelegated(request.op.eoa).into());
             }
-        }
-
-        // check that the payment amount matches whats in the quote
-        if quote.ty().amount != request.op.paymentAmount {
-            return Err(SendActionError::InvalidFeeAmount {
-                expected: quote.ty().amount,
-                got: request.op.paymentAmount,
-            }
-            .into());
-        }
-
-        // check that digest of the userop is the same as in the quote
-        if quote.ty().digest != request.op.digest() {
-            return Err(SendActionError::InvalidOpDigest {
-                expected: quote.ty().digest,
-                got: request.op.digest(),
-            }
-            .into());
         }
 
         // this can be done by just verifying the signature & userop hash against the rfq
@@ -488,9 +473,115 @@ impl RelayApiServer for Relay {
 
     async fn prepare_upgrade_account(
         &self,
-        _parameters: PrepareUpgradeAccountParameters,
+        request: PrepareUpgradeAccountParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        todo!()
+        let provider = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+
+        // Generate all calls that will authorize keys and set their permissions
+        let calls = request
+            .capabilities
+            .authorize_keys
+            .iter()
+            .flat_map(|key| {
+                let (authorize_call, permissions_calls) = key.clone().into_calls(request.address);
+                std::iter::once(authorize_call).chain(permissions_calls)
+            })
+            .collect::<Vec<_>>();
+
+        // Call estimateFee to give us a quote with a complete userOp that the user can sign
+        let quote = self
+            .estimate_fee(
+                PartialAction {
+                    op: PartialUserOp {
+                        eoa: request.address,
+                        executionData: calls.abi_encode().into(),
+                        // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
+                        nonce: U256::ZERO,
+                    },
+                    chain_id: request.chain_id,
+                },
+                request.capabilities.fee_token.ok_or(UpgradeAccountError::MissingFeeToken)?,
+                Some(request.capabilities.delegation),
+                request
+                    .capabilities
+                    .authorize_keys
+                    .first()
+                    .map(|k| k.key_type())
+                    .unwrap_or(KeyType::Secp256k1),
+            )
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to create a quote.",
+                );
+            })?;
+
+        // Calculate the eip712 digest that the user will need to sign.
+        let digest = {
+            let overrides = AddressMap::from_iter([(
+                quote.ty().op.eoa,
+                // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
+                AccountOverride {
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    code: Some(request.capabilities.delegation).map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    }),
+                    ..Default::default()
+                },
+            )]);
+
+            // get the account as if it was delegated so we can obtain the entrypoint address.
+            let account =
+                Account::new(quote.ty().op.eoa, provider.clone()).with_overrides(overrides.clone());
+            let entrypoint_address = account
+                .entrypoint()
+                .await
+                .inspect_err(|err| {
+                    error!(
+                        %err,
+                        "Failed to obtain entrypoint from account.",
+                    );
+                })
+                .map_err(UpgradeAccountError::from)?;
+            let entrypoint =
+                Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
+
+            // calculate eip712 signing hash
+            let payload = quote
+                .ty()
+                .op
+                .as_eip712()
+                .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
+            let domain = entrypoint
+                .eip712_domain(quote.ty().op.is_multichain())
+                .await
+                .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
+            payload.eip712_signing_hash(&domain)
+        };
+
+        let response = PrepareCallsResponse {
+            context: quote,
+            digest,
+            capabilities: PrepareCallsResponseCapabilities {
+                authorize_keys: Some(
+                    request
+                        .capabilities
+                        .authorize_keys
+                        .into_iter()
+                        .map(|key| key.into_response())
+                        .collect::<Vec<_>>(),
+                )
+                .filter(|keys| !keys.is_empty()),
+                revoke_keys: None,
+            },
+        };
+
+        Ok(response)
     }
 
     async fn send_prepared_calls(
@@ -502,9 +593,43 @@ impl RelayApiServer for Relay {
 
     async fn upgrade_account(
         &self,
-        _parameters: UpgradeAccountParameters,
+        request: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse> {
-        todo!()
+        let mut op = request.context.ty().op.clone();
+
+        // Ensure that we have a signed delegation and its address matches the quote's.
+        if request.context.ty().authorization_address != Some(request.authorization.address) {
+            return Err(UpgradeAccountError::InvalidAuthAddress {
+                expected: request.context.ty().authorization_address.expect("should exist"),
+                got: request.authorization.address,
+            }
+            .into());
+        }
+
+        // Fill UserOp with the user signature.
+        op.signature = request.signature.as_bytes().into();
+
+        // Broadcast transaction with UserOp
+        let tx_hash = self
+            .send_action(
+                Action { op, chain_id: request.context.ty().chain_id },
+                request.context,
+                Some(request.authorization),
+            )
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to submit upgrade account transaction.",
+                );
+            })?;
+
+        // TODO: for now it's fine, but this will change in the future.
+        let response = UpgradeAccountResponse {
+            bundles: vec![SendPreparedCallsResponse { id: tx_hash.to_string() }],
+        };
+
+        Ok(response)
     }
 }
 

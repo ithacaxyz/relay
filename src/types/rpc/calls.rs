@@ -1,7 +1,7 @@
 //! RPC calls-related request and response types.
 
 use crate::types::{
-    Call, KeyType, PartialUserOp, SignedQuote,
+    Call, KeyType, SignedQuote,
     capabilities::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey},
 };
 use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature};
@@ -47,10 +47,8 @@ pub struct PrepareCallsResponseCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
-    /// Chain ID the calls were prepared for.
-    pub chain_id: ChainId,
-    /// Context.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
@@ -58,23 +56,12 @@ pub struct PrepareCallsResponse {
     pub capabilities: PrepareCallsResponseCapabilities,
 }
 
-/// Context for `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrepareCallsContext {
-    /// Signed [`Quote`].
-    pub quote: SignedQuote,
-    /// Partial [`UserOp`].
-    pub op: PartialUserOp,
-}
-
 /// Request parameters for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
-    /// Chain ID the calls are being submitted to.
-    pub chain_id: ChainId,
-    /// Context of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Signature values.
     pub signature: SendPreparedCallsSignature,
 }
