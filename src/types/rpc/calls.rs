@@ -4,7 +4,7 @@ use crate::types::{
     Call, KeyType, SignedQuote,
     capabilities::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey},
 };
-use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature};
+use alloy::primitives::{Address, B256, Bytes, ChainId};
 use serde::{Deserialize, Serialize};
 
 /// Request parameters for `wallet_prepareCalls`.
@@ -76,7 +76,7 @@ pub struct SendPreparedCallsSignature {
     #[serde(rename = "type")]
     pub key_type: KeyType,
     /// Signature value.
-    pub value: PrimitiveSignature,
+    pub value: Bytes,
 }
 
 /// Response for `wallet_sendPreparedCalls`.

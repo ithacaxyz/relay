@@ -290,6 +290,18 @@ impl KeyWith712Signer {
     ) -> eyre::Result<Bytes> {
         self.signer.sign_payload_hash(payload.eip712_signing_hash(domain)).await
     }
+
+    /// Returns a reference to the inner [`Key`].
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+}
+
+#[async_trait::async_trait]
+impl Eip712PayLoadSigner for KeyWith712Signer {
+    async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
+        Ok(self.signer.sign_payload_hash(payload_hash).await?)
+    }
 }
 
 impl Deref for KeyWith712Signer {

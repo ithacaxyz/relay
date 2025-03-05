@@ -15,7 +15,10 @@ use relay::{
 };
 use std::str::FromStr;
 
-async fn upgrade_account(env: &Environment, authorize_keys: Vec<AuthorizeKey>) -> eyre::Result<()> {
+pub async fn upgrade_account(
+    env: &Environment,
+    authorize_keys: Vec<AuthorizeKey>,
+) -> eyre::Result<()> {
     let mut response = env
         .relay_endpoint
         .prepare_upgrade_account(PrepareUpgradeAccountParameters {
