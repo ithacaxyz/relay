@@ -14,9 +14,9 @@ use super::{Call, Delegation::SpendPeriod, Key, KeyType};
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
-    key: Key,
+    pub key: Key,
     /// The permissions for the key.
-    permissions: Vec<Permission>,
+    pub permissions: Vec<Permission>,
 }
 
 impl AuthorizeKey {
@@ -102,11 +102,11 @@ pub struct SpendPermission {
 pub struct Meta {
     /// ERC20 token to pay for the gas of the calls.
     /// If `None`, the native token will be used.
-    fee_token: Option<Address>,
+    pub fee_token: Option<Address>,
     /// Key (hash) that will be used to sign the request.
-    key_hash: B256,
+    pub key_hash: B256,
     /// Nonce.
-    nonce: U256,
+    pub nonce: U256,
 }
 
 /// Represents a key revocation request.

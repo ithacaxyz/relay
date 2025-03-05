@@ -22,7 +22,7 @@ use alloy::{
     primitives::{Address, Bytes, TxHash, U256, bytes, map::AddressMap},
     providers::{Provider, fillers::NonceManager},
     rpc::types::{TransactionRequest, state::AccountOverride},
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolValue},
     transports::TransportErrorKind,
 };
 use futures_util::TryFutureExt;
@@ -37,7 +37,8 @@ use crate::{
     chains::Chains,
     config::QuoteConfig,
     constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
-    error::{EstimateFeeError, SendActionError, UpgradeAccountError},
+    eip712::compute_eip712_digest,
+    error::{EstimateFeeError, SendActionError, UpgradeAccountError, from_eyre_error},
     nonce::MultiChainNonceManager,
     price::PriceOracle,
     signers::DynSigner,
@@ -466,9 +467,80 @@ impl RelayApiServer for Relay {
 
     async fn prepare_calls(
         &self,
-        _parameters: PrepareCallsParameters,
+        request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        todo!()
+        let provider = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+
+        // Generate all calls that will authorize keys and set their permissions
+        let authorize_calls =
+            request.capabilities.authorize_keys.iter().flatten().flat_map(|key| {
+                let (authorize_call, permissions_calls) = key.clone().into_calls(request.from);
+                std::iter::once(authorize_call).chain(permissions_calls)
+            });
+
+        // todo: fetch them from somewhere.
+        let revoke_keys = None;
+
+        // Merges authorize calls with requested ones.
+        // todo: merge from wallet_createAccount once it's implemented
+        let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
+
+        // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
+        // todo: pass key with permissions to estimate_fee instead of keyType
+        let key = KeyType::WebAuthnP256;
+
+        // Call estimateFee to give us a quote with a complete userOp that the user can sign
+        let quote = self
+            .estimate_fee(
+                PartialAction {
+                    op: PartialUserOp {
+                        eoa: request.from,
+                        executionData: all_calls.abi_encode().into(),
+                        nonce: request.capabilities.meta.nonce,
+                    },
+                    chain_id: request.chain_id,
+                },
+                request.capabilities.meta.fee_token.ok_or(UpgradeAccountError::MissingFeeToken)?,
+                None,
+                key,
+            )
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to create a quote.",
+                );
+            })?;
+
+        // Calculate the eip712 digest that the user will need to sign.
+        // todo: if we are handling wallet_createAccount we need to pass a delegation address here
+        let digest = compute_eip712_digest(&quote.ty().op, &provider, None)
+            .await
+            .map_err(from_eyre_error)?;
+
+        let response = PrepareCallsResponse {
+            context: quote,
+            digest,
+            capabilities: PrepareCallsResponseCapabilities {
+                authorize_keys: Some(
+                    request
+                        .capabilities
+                        .authorize_keys
+                        .into_iter()
+                        .flatten()
+                        .map(|key| key.into_response())
+                        .collect::<Vec<_>>(),
+                )
+                .filter(|keys| !keys.is_empty()),
+                revoke_keys,
+            },
+        };
+
+        Ok(response)
     }
 
     async fn prepare_upgrade_account(
@@ -522,47 +594,10 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let digest = {
-            let overrides = AddressMap::from_iter([(
-                quote.ty().op.eoa,
-                // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
-                AccountOverride {
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    code: Some(request.capabilities.delegation).map(|addr| {
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    }),
-                    ..Default::default()
-                },
-            )]);
-
-            // get the account as if it was delegated so we can obtain the entrypoint address.
-            let account =
-                Account::new(quote.ty().op.eoa, provider.clone()).with_overrides(overrides.clone());
-            let entrypoint_address = account
-                .entrypoint()
+        let digest =
+            compute_eip712_digest(&quote.ty().op, &provider, Some(request.capabilities.delegation))
                 .await
-                .inspect_err(|err| {
-                    error!(
-                        %err,
-                        "Failed to obtain entrypoint from account.",
-                    );
-                })
-                .map_err(UpgradeAccountError::from)?;
-            let entrypoint =
-                Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
-
-            // calculate eip712 signing hash
-            let payload = quote
-                .ty()
-                .op
-                .as_eip712()
-                .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
-            let domain = entrypoint
-                .eip712_domain(quote.ty().op.is_multichain())
-                .await
-                .map_err(|err| UpgradeAccountError::InternalError(err.into()))?;
-            payload.eip712_signing_hash(&domain)
-        };
+                .map_err(UpgradeAccountError::InternalError)?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -586,9 +621,32 @@ impl RelayApiServer for Relay {
 
     async fn send_prepared_calls(
         &self,
-        _parameters: SendPreparedCallsParameters,
+        request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
-        todo!()
+        let mut op = request.context.ty().op.clone();
+
+        // Fill UserOp with the user signature.
+        op.signature = request.signature.value;
+
+        // Broadcast transaction with UserOp
+        let tx_hash = self
+            .send_action(
+                Action { op, chain_id: request.context.ty().chain_id },
+                request.context,
+                None,
+            )
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to submit upgrade account transaction.",
+                );
+            })?;
+
+        // todo: for now it's fine, but this will change in the future.
+        let response = SendPreparedCallsResponse { id: tx_hash.to_string() };
+
+        Ok(response)
     }
 
     async fn upgrade_account(
