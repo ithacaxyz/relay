@@ -499,7 +499,8 @@ impl RelayApiServer for Relay {
                     op: PartialUserOp {
                         eoa: request.address,
                         executionData: calls.abi_encode().into(),
-                        nonce: U256::ZERO, // todo: should be?
+                        // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
+                        nonce: U256::ZERO,
                     },
                     chain_id: request.chain_id,
                 },

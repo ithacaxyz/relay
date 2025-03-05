@@ -84,6 +84,7 @@ pub struct UpgradeAccountParameters {
     /// The [`SignedQuote`] of the prepared call bundle.
     pub context: SignedQuote,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
+    #[serde(with = "crate::serde::signature")]
     pub signature: PrimitiveSignature,
     /// Signed authorization.
     pub authorization: SignedAuthorization,
