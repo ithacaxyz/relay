@@ -24,7 +24,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
             vec![
                 TxContext {
                     calls: vec![Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: key.clone() }.abi_encode().into(),
                     }],
@@ -59,14 +59,14 @@ async fn invalid_auth_nonce() -> Result<()> {
     run_e2e(|env| {
         vec![TxContext {
             calls: vec![Call {
-                target: env.eoa_signer.address(),
+                target: env.eoa.address(),
                 value: U256::ZERO,
                 data: authorizeCall {
                     key: Key {
                         expiry: Default::default(),
                         keyType: KeyType::Secp256k1,
                         isSuperAdmin: true,
-                        publicKey: env.eoa_signer.address().abi_encode().into(),
+                        publicKey: env.eoa.address().abi_encode().into(),
                     },
                 }
                 .abi_encode()
@@ -89,14 +89,14 @@ async fn invalid_auth_signature() -> Result<()> {
     run_e2e(|env| {
         vec![TxContext {
             calls: vec![Call {
-                target: env.eoa_signer.address(),
+                target: env.eoa.address(),
                 value: U256::ZERO,
                 data: authorizeCall {
                     key: Key {
                         expiry: Default::default(),
                         keyType: KeyType::Secp256k1,
                         isSuperAdmin: true,
-                        publicKey: env.eoa_signer.address().abi_encode().into(),
+                        publicKey: env.eoa.address().abi_encode().into(),
                     },
                 }
                 .abi_encode()
@@ -113,17 +113,17 @@ async fn invalid_auth_signature() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_quote_check() -> Result<()> {
-    let env = Environment::setup().await?;
+    let env = Environment::setup_with_upgraded().await?;
     let tx = TxContext {
         calls: vec![Call {
-            target: env.eoa_signer.address(),
+            target: env.eoa.address(),
             value: U256::ZERO,
             data: authorizeCall {
                 key: Key {
                     expiry: Default::default(),
                     keyType: KeyType::Secp256k1,
                     isSuperAdmin: true,
-                    publicKey: env.eoa_signer.address().abi_encode().into(),
+                    publicKey: env.eoa.address().abi_encode().into(),
                 },
             }
             .abi_encode()
@@ -161,7 +161,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
             TxContext {
                 expected: ExpectedOutcome::Pass,
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key1.clone() }.abi_encode().into(),
                 }],
@@ -170,7 +170,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
             TxContext {
                 expected: ExpectedOutcome::Pass,
                 calls: vec![Call {
-                    target: env.eoa_signer.address(),
+                    target: env.eoa.address(),
                     value: U256::ZERO,
                     data: authorizeCall { key: key2.clone() }.abi_encode().into(),
                 }],
@@ -208,12 +208,12 @@ async fn spend_limits() -> Result<()> {
                 expected: ExpectedOutcome::Pass,
                 calls: vec![
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: authorizeCall { key: key1.clone() }.abi_encode().into(),
                     },
                     Call {
-                        target: env.eoa_signer.address(),
+                        target: env.eoa.address(),
                         value: U256::ZERO,
                         data: Delegation::setSpendLimitCall {
                             keyHash: key1.key_hash(),

@@ -4,6 +4,7 @@
 mod cases;
 mod constants;
 mod environment;
+mod eoa;
 mod types;
 
 pub use constants::*;
@@ -46,7 +47,7 @@ pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
     F: FnOnce(&Environment) -> Vec<TxContext<'a>>,
 {
-    let mut env = Environment::setup().await?;
+    let mut env = Environment::setup_with_upgraded().await?;
     let txs = build_txs(&env);
     for (nonce, tx) in txs.into_iter().enumerate() {
         process_tx(nonce, tx, &env).await?;
@@ -99,7 +100,7 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
             }
 
             if let Some(auth) = authorization {
-                if env.provider.get_code_at(env.eoa_signer.address()).await?
+                if env.provider.get_code_at(env.eoa.address()).await?
                     != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
                     return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
@@ -159,7 +160,7 @@ pub async fn prepare_action_request(
     env: &Environment,
 ) -> eyre::Result<Option<ActionRequest>> {
     let execution_data: Bytes = tx.calls.abi_encode().into();
-    let nonce = env.provider.get_transaction_count(env.eoa_signer.address()).await?;
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
     let authorization =
         if let Some(auth) = tx.auth.as_ref() { Some(auth.sign(env, nonce).await?) } else { None };
 
@@ -170,7 +171,7 @@ pub async fn prepare_action_request(
         .estimate_fee(
             PartialAction {
                 op: PartialUserOp {
-                    eoa: env.eoa_signer.address(),
+                    eoa: env.eoa.address(),
                     executionData: execution_data.clone(),
                     nonce: U256::from(tx_num),
                 },
@@ -198,7 +199,8 @@ pub async fn prepare_action_request(
     let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
 
     op.signature = if tx.key.is_none() {
-        env.eoa_signer
+        env.eoa
+            .root_signer()
             .sign_payload_hash(payload.eip712_signing_hash(&domain))
             .await
             .wrap_err("Signing failed")?

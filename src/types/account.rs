@@ -1,3 +1,4 @@
+use super::Call;
 use Delegation::DelegationInstance;
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -5,6 +6,7 @@ use alloy::{
     providers::Provider,
     rpc::types::{Authorization, state::StateOverride},
     sol,
+    sol_types::{SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
 use serde::{Deserialize, Serialize};
@@ -100,7 +102,7 @@ impl<P: Provider> Account<P> {
 #[derive(Debug)]
 pub struct PREPAccount {
     /// EOA generated address.
-    pub eoa: Address,
+    pub address: Address,
     /// Signed 7702 authorization.
     pub signed_authorization: SignedAuthorization,
     /// Salt used to generate the EOA.
@@ -150,19 +152,37 @@ impl PREPAccount {
             );
 
             if let Ok(eoa) = signed_authorization.recover_authority() {
-                return Self { eoa, signed_authorization, salt: salt[31] };
+                return Self { address: eoa, signed_authorization, salt: salt[31] };
             }
 
             // u8 should be enough to find it.
             salt[31] += 1;
         }
     }
+
+    /// Returns the expected PREP digest from a list of [`Call`].
+    pub fn calculate_digest(calls: &[Call]) -> B256 {
+        let mut hashed_calls = Vec::with_capacity(calls.len());
+        let mut target_padded = [0u8; 32];
+        for call in calls {
+            target_padded[12..].copy_from_slice(call.target.as_slice());
+
+            let mut hasher = Keccak256::new();
+            hasher.update(call.eip712_type_hash().as_slice());
+            hasher.update(target_padded);
+            hasher.update(call.value.to_be_bytes::<32>());
+            hasher.update(keccak256(&call.data));
+            hashed_calls.push(hasher.finalize());
+        }
+
+        keccak256(hashed_calls.abi_encode_packed())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, b256};
+    use alloy::primitives::{address, b256, bytes};
 
     #[test]
     fn initialize_prep() {
@@ -191,7 +211,30 @@ mod tests {
 
         for Case { target, target_salt, delegation, digest } in cases {
             let acc = PREPAccount::initialize(delegation, digest);
-            assert_eq!((target, target_salt), (acc.eoa, acc.salt))
+            assert_eq!((target, target_salt), (acc.address, acc.salt))
         }
+    }
+
+    #[test]
+    fn prep_digest() {
+        assert_eq!(
+            PREPAccount::calculate_digest(&[
+                Call {
+                    target: address!("0x100000000000000000636f6e736F6c652E6C6f67"),
+                    value: U256::from(2_000_000_000_000_000_000u64),
+                    data: bytes!(
+                        "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+                    )
+                },
+                Call {
+                    target: address!("0x200000000000000000636f6e736F6c652E6C6f67"),
+                    value: U256::from(4_000_000_000_000_000_000u64),
+                    data: bytes!(
+                        "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+                    )
+                }
+            ]),
+            b256!("0x7d758e41b107c29709e836a1519a50e1d848efbdc99192330685086158f3655d")
+        );
     }
 }

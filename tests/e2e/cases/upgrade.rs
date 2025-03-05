@@ -22,7 +22,7 @@ pub async fn upgrade_account(
     let mut response = env
         .relay_endpoint
         .prepare_upgrade_account(PrepareUpgradeAccountParameters {
-            address: env.eoa_signer.address(),
+            address: env.eoa.address(),
             chain_id: env.chain_id,
             capabilities: UpgradeAccountCapabilities {
                 authorize_keys,
@@ -33,17 +33,21 @@ pub async fn upgrade_account(
         .await?;
 
     // Sign UserOp digest
-    let signature = env.eoa_signer.sign_hash(&response.digest).await?;
+    let signature = env.eoa.root_signer().sign_hash(&response.digest).await?;
 
     // Sign 7702 delegation
     let authorization = alloy::eips::eip7702::Authorization {
         chain_id: U256::from(0),
         address: env.delegation,
-        nonce: env.provider.get_transaction_count(env.eoa_signer.address()).await?,
+        nonce: env.provider.get_transaction_count(env.eoa.address()).await?,
     };
     let authorization_hash = authorization.signature_hash();
     let authorization = authorization.into_signed(
-        env.eoa_signer.sign_hash(&authorization_hash).await.wrap_err("Auth signing failed")?,
+        env.eoa
+            .root_signer()
+            .sign_hash(&authorization_hash)
+            .await
+            .wrap_err("Auth signing failed")?,
     );
 
     // Upgrade account.
@@ -70,5 +74,5 @@ pub async fn upgrade_account(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_upgrade() -> eyre::Result<()> {
-    upgrade_account(&Environment::setup().await?, vec![]).await
+    upgrade_account(&Environment::setup_with_upgraded().await?, vec![]).await
 }
