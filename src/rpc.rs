@@ -31,7 +31,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     chains::Chains,
@@ -513,7 +513,13 @@ impl RelayApiServer for Relay {
                     .map(|k| k.key_type())
                     .unwrap_or(KeyType::Secp256k1),
             )
-            .await?;
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to create a quote.",
+                );
+            })?;
 
         // Calculate the eip712 digest that the user will need to sign.
         let digest = {
@@ -532,8 +538,16 @@ impl RelayApiServer for Relay {
             // get the account as if it was delegated so we can obtain the entrypoint address.
             let account =
                 Account::new(quote.ty().op.eoa, provider.clone()).with_overrides(overrides.clone());
-            let entrypoint_address =
-                account.entrypoint().await.map_err(UpgradeAccountError::from)?;
+            let entrypoint_address = account
+                .entrypoint()
+                .await
+                .inspect_err(|err| {
+                    error!(
+                        %err,
+                        "Failed to obtain entrypoint from account.",
+                    );
+                })
+                .map_err(UpgradeAccountError::from)?;
             let entrypoint =
                 Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
 
@@ -602,7 +616,13 @@ impl RelayApiServer for Relay {
                 request.context,
                 Some(request.authorization),
             )
-            .await?;
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to submit upgrade account transaction.",
+                );
+            })?;
 
         // TODO: for now it's fine, but this will change in the future.
         let response = UpgradeAccountResponse {
