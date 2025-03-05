@@ -66,8 +66,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .await?;
 
         // Sign UserOp digest
-        // todo: innerSignature once estimateFee (or equivalent) is aware of which is key is to
-        // sign.
+        // todo: innerSignature once estimateFee (or equivalent) is aware of the key instead of just key type.
         let signature = Signature {
             innerSignature: signer.sign_payload_hash(digest).await?,
             keyHash: signer.key_hash(),

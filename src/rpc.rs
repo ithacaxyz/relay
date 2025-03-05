@@ -482,6 +482,9 @@ impl RelayApiServer for Relay {
                 std::iter::once(authorize_call).chain(permissions_calls)
             });
 
+        // todo: fetch them from somewhere.
+        let revoke_keys = None;
+
         // Merges authorize calls with requested ones.
         // todo: merge from wallet_createAccount once it's implemented
         let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
@@ -533,7 +536,7 @@ impl RelayApiServer for Relay {
                         .collect::<Vec<_>>(),
                 )
                 .filter(|keys| !keys.is_empty()),
-                revoke_keys: None,
+                revoke_keys,
             },
         };
 
