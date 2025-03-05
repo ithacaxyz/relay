@@ -49,6 +49,18 @@ impl EoaKind {
         }
     }
 
+    /// Returns a reference to the inner [KeyWith712Signer] when dealing with a PREP account.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if it's not a PREP account.
+    pub fn prep_signer(&self) -> &KeyWith712Signer {
+        match self {
+            EoaKind::Upgraded(dyn_signer) => panic!("eoa is not a prep account"),
+            EoaKind::Prep { init_data, admin_key, account } => admin_key,
+        }
+    }
+
     /// Whether self is a PREP account.
     pub fn is_prep(&self) -> bool {
         matches!(self, Self::Prep { .. })
