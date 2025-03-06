@@ -55,7 +55,7 @@ tx_buffer = 1000000
 ```
 
 ```toml
-// registry.toml
+# registry.toml
 
 1 = [
     "ETH",
