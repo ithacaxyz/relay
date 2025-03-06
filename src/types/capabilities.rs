@@ -10,7 +10,7 @@ use super::{Call, Delegation::SpendPeriod, Key};
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
@@ -70,7 +70,8 @@ impl<'de> Deserialize<'de> for AuthorizeKey {
 
         Ok(AuthorizeKey { key, permissions })
     }
-  
+}
+
 /// Represents a key authorization response.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct AuthorizeKeyResponse {
