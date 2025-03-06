@@ -42,7 +42,7 @@ use crate::{
     nonce::MultiChainNonceManager,
     price::PriceOracle,
     signers::DynSigner,
-    storage::StorageApi,
+    storage::{RelayStorage, StorageApi},
     types::{
         Account, Action, CreateAccountParameters, CreateAccountResponse,
         CreateAccountResponseCapabilities, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens,
@@ -154,7 +154,7 @@ impl Relay {
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
-        storage: Box<dyn StorageApi>,
+        storage: RelayStorage,
     ) -> Self {
         let inner = RelayInner {
             chains,
@@ -778,5 +778,5 @@ struct RelayInner {
     /// Price oracle.
     price_oracle: PriceOracle,
     /// Storage
-    storage: Box<dyn StorageApi>,
+    storage: RelayStorage,
 }

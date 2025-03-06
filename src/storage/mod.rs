@@ -1,7 +1,34 @@
 //! Relay storage
 
 mod api;
+
+use alloy::primitives::Address;
 pub use api::StorageApi;
 
 mod memory;
-pub use memory::InMemoryStorage;
+
+use crate::types::PREPAccount;
+use std::sync::Arc;
+
+/// Relay storage interface.
+#[derive(Debug, Clone)]
+pub struct RelayStorage {
+    inner: Arc<dyn StorageApi>,
+}
+
+impl RelayStorage {
+    /// Create [`RelayStorage`] with a in-memory backend. Used for testing only.
+    pub fn in_memory() -> Self {
+        Self { inner: Arc::new(memory::InMemoryStorage::default()) }
+    }
+}
+
+impl StorageApi for RelayStorage {
+    fn read_prep(&self, address: &Address) -> Option<PREPAccount> {
+        self.inner.read_prep(address)
+    }
+
+    fn write_prep(&self, account: &PREPAccount) {
+        self.inner.write_prep(account);
+    }
+}
