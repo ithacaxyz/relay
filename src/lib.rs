@@ -15,4 +15,5 @@ pub mod rpc;
 pub mod serde;
 pub mod signers;
 pub mod spawn;
+pub mod storage;
 pub mod types;

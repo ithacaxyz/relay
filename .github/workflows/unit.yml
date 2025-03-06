@@ -50,6 +50,7 @@ jobs:
       - name: Set Odyssey Env
         if: ${{ matrix.variant == 'odyssey_fork' }}
         run: |
+          echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey.ithaca.xyz" >> $GITHUB_ENV
           echo "TEST_ENTRYPOINT=0xB28AF4994867Faf0be7aa6b1bfD6477a0d282410" >> $GITHUB_ENV
           echo "TEST_DELEGATION=0x766dd4f7d39233d0c46e241011e18de4207197d8" >> $GITHUB_ENV

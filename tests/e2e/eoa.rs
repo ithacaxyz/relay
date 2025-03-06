@@ -12,7 +12,7 @@ use relay::{
 #[derive(Debug)]
 pub enum EoaKind {
     Upgraded(DynSigner),
-    Prep { init_data: Vec<Call>, admin_key: KeyWith712Signer, account: PREPAccount },
+    Prep { admin_key: KeyWith712Signer, account: PREPAccount },
 }
 
 impl EoaKind {
@@ -23,19 +23,16 @@ impl EoaKind {
 
     /// Create a new [`EoaKind`] with [`PREPAccount`].
     pub fn create_prep(admin_key: KeyWith712Signer, delegation: Address) -> Self {
-        let init_data = vec![Call {
+        let init_calls = vec![Call {
             target: Address::ZERO,
             value: U256::ZERO,
             data: authorizeCall { key: admin_key.key().clone() }.abi_encode().into(),
         }];
 
-        let account =
-            PREPAccount::initialize(delegation, PREPAccount::calculate_digest(&init_data));
-
-        Self::Prep { admin_key, init_data, account }
+        Self::Prep { admin_key, account: PREPAccount::initialize(delegation, init_calls) }
     }
 
-    /// Returns a reference to the inner [DynSigner] when dealing with an upgraded account.
+    /// Returns a reference to the inner [`DynSigner`] when dealing with an upgraded account.
     ///
     /// # Panics
     ///
@@ -43,9 +40,21 @@ impl EoaKind {
     pub fn root_signer(&self) -> &DynSigner {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer,
-            EoaKind::Prep { init_data, admin_key, account } => {
+            EoaKind::Prep { admin_key, account } => {
                 panic!("eoa is not an upgraded account")
             }
+        }
+    }
+
+    /// Returns a reference to the inner [`KeyWith712Signer`] when dealing with a PREP account.
+    ///
+    /// # Panics
+    ///
+    /// This will panic if it's not a PREP account.
+    pub fn prep_signer(&self) -> &KeyWith712Signer {
+        match self {
+            EoaKind::Upgraded(dyn_signer) => panic!("eoa is not a prep account"),
+            EoaKind::Prep { admin_key, account } => admin_key,
         }
     }
 
@@ -54,7 +63,7 @@ impl EoaKind {
         matches!(self, Self::Prep { .. })
     }
 
-    /// Returns [Address].
+    /// Returns [`Address`].
     pub fn address(&self) -> Address {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),

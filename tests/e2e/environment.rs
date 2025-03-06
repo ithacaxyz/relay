@@ -65,14 +65,14 @@ impl std::fmt::Debug for Environment {
 impl Environment {
     /// Sets up the test environment with a [`PREPAccount`].
     ///
-    /// Read [Self::setup] for more information on setup.
+    /// Read [`Self::setup`] for more information on setup.
     pub async fn setup_with_prep() -> eyre::Result<Self> {
         Self::setup(true).await
     }
 
     /// Sets up the test environment with a upgraded account using [`DynSigner`].
     ///
-    /// Read [Self::setup] for more information on setup.
+    /// Read [`Self::setup`] for more information on setup.
     pub async fn setup_with_upgraded() -> eyre::Result<Self> {
         Self::setup(false).await
     }

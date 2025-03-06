@@ -35,8 +35,6 @@ pub struct CreateAccountResponseCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountParameters {
-    /// Chain ID to initialize the account on.
-    pub chain_id: ChainId,
     /// Capabilities.
     pub capabilities: CreateAccountCapabilities,
 }
@@ -47,8 +45,6 @@ pub struct CreateAccountParameters {
 pub struct CreateAccountResponse {
     /// Address of the initialized account.
     pub address: Address,
-    /// Chain ID to initialize the account on.
-    pub chain_id: ChainId,
     /// Capabilities.
     pub capabilities: CreateAccountResponseCapabilities,
 }

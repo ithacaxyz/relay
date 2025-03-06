@@ -42,14 +42,15 @@ use crate::{
     nonce::MultiChainNonceManager,
     price::PriceOracle,
     signers::DynSigner,
+    storage::{RelayStorage, StorageApi},
     types::{
-        Account, Action, CreateAccountParameters, CreateAccountResponse, ENTRYPOINT_NO_ERROR,
-        Entry, EntryPoint, FeeTokens, GetKeysParameters, KeyType, KeyWith712Signer, PartialAction,
-        PartialUserOp, PrepareCallsParameters, PrepareCallsResponse,
-        PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters, Quote,
-        SendPreparedCallsParameters, SendPreparedCallsResponse, Signature, SignedQuote,
-        UpgradeAccountParameters, UpgradeAccountResponse, UserOp,
-        capabilities::AuthorizeKeyResponse,
+        Account, Action, CreateAccountParameters, CreateAccountResponse,
+        CreateAccountResponseCapabilities, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens,
+        GetKeysParameters, KeyType, KeyWith712Signer, PREPAccount, PartialAction, PartialUserOp,
+        PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
+        PrepareUpgradeAccountParameters, Quote, SendPreparedCallsParameters,
+        SendPreparedCallsResponse, Signature, SignedQuote, UpgradeAccountParameters,
+        UpgradeAccountResponse, UserOp, capabilities::AuthorizeKeyResponse,
     },
 };
 
@@ -153,6 +154,7 @@ impl Relay {
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
+        storage: RelayStorage,
     ) -> Self {
         let inner = RelayInner {
             chains,
@@ -162,6 +164,7 @@ impl Relay {
             quote_signer,
             quote_config,
             price_oracle,
+            storage,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -231,6 +234,7 @@ impl RelayApiServer for Relay {
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(20_000_000),
+            initData: request.op.initData,
             ..Default::default()
         };
 
@@ -453,9 +457,41 @@ impl RelayApiServer for Relay {
 
     async fn create_account(
         &self,
-        _parameters: CreateAccountParameters,
+        request: CreateAccountParameters,
     ) -> RpcResult<CreateAccountResponse> {
-        todo!()
+        // Creating account should have at least one admin key.
+        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
+            return Err(eyre::eyre!("Create account should have one key."))
+                .map_err(from_eyre_error)?;
+        }
+
+        // Generate all calls that will authorize keys and set their permissions
+        let init_calls = request
+            .capabilities
+            .authorize_keys
+            .iter()
+            .flat_map(|key| {
+                let (authorize_call, permissions_calls) = key.clone().into_calls(Address::ZERO);
+                std::iter::once(authorize_call).chain(permissions_calls)
+            })
+            .collect::<Vec<_>>();
+
+        // Store PREPAccount in storage
+        let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
+        self.inner.storage.write_prep(&prep_account).map_err(|err| from_eyre_error(err.into()))?;
+
+        Ok(CreateAccountResponse {
+            address: prep_account.address,
+            capabilities: CreateAccountResponseCapabilities {
+                authorize_keys: request
+                    .capabilities
+                    .authorize_keys
+                    .into_iter()
+                    .map(|key| key.into_response())
+                    .collect::<Vec<_>>(),
+                delegation: prep_account.signed_authorization.address,
+            },
+        })
     }
 
     async fn get_keys(
@@ -486,12 +522,31 @@ impl RelayApiServer for Relay {
         let revoke_keys = None;
 
         // Merges authorize calls with requested ones.
-        // todo: merge from wallet_createAccount once it's implemented
         let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
 
         // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
         // todo: pass key with permissions to estimate_fee instead of keyType
         let key = KeyType::WebAuthnP256;
+
+        // Find if the address is delegated or if we have a PREPAccount in storage that can use to
+        // delegate.
+        let maybe_prep =
+            provider.get_code_at(request.from).await.map_err(SendActionError::from).and_then(
+                |code| {
+                    if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+                        || code[..] == EIP7702_CLEARED_DELEGATION
+                    {
+                        return self
+                            .inner
+                            .storage
+                            .read_prep(&request.from)
+                            .map_err(|err| SendActionError::InternalError(err.into()))?
+                            .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
+                            .map(Some);
+                    }
+                    Ok(None)
+                },
+            )?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self
@@ -501,11 +556,15 @@ impl RelayApiServer for Relay {
                         eoa: request.from,
                         executionData: all_calls.abi_encode().into(),
                         nonce: request.capabilities.meta.nonce,
+                        initData: maybe_prep
+                            .as_ref()
+                            .map(|acc| acc.init_data())
+                            .unwrap_or_default(),
                     },
                     chain_id: request.chain_id,
                 },
                 request.capabilities.meta.fee_token.ok_or(UpgradeAccountError::MissingFeeToken)?,
-                None,
+                maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
                 key,
             )
             .await
@@ -517,10 +576,13 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        // todo: if we are handling wallet_createAccount we need to pass a delegation address here
-        let digest = compute_eip712_digest(&quote.ty().op, &provider, None)
-            .await
-            .map_err(from_eyre_error)?;
+        let digest = compute_eip712_digest(
+            &quote.ty().op,
+            &provider,
+            maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
+        )
+        .await
+        .map_err(from_eyre_error)?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -573,6 +635,7 @@ impl RelayApiServer for Relay {
                         executionData: calls.abi_encode().into(),
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
                         nonce: U256::ZERO,
+                        initData: bytes!(""),
                     },
                     chain_id: request.chain_id,
                 },
@@ -628,12 +691,23 @@ impl RelayApiServer for Relay {
         // Fill UserOp with the user signature.
         op.signature = request.signature.value;
 
+        // If there's initData we need to fetch the signed authorization from storage.
+        let authorization = if op.initData.is_empty() {
+            None
+        } else {
+            self.inner
+                .storage
+                .read_prep(&op.eoa)
+                .map(|opt| opt.map(|acc| acc.signed_authorization))
+                .map_err(|err| from_eyre_error(err.into()))?
+        };
+
         // Broadcast transaction with UserOp
         let tx_hash = self
             .send_action(
                 Action { op, chain_id: request.context.ty().chain_id },
                 request.context,
-                None,
+                authorization,
             )
             .await
             .inspect_err(|err| {
@@ -708,4 +782,6 @@ struct RelayInner {
     quote_config: QuoteConfig,
     /// Price oracle.
     price_oracle: PriceOracle,
+    /// Storage
+    storage: RelayStorage,
 }
