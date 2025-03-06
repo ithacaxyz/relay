@@ -540,6 +540,7 @@ impl RelayApiServer for Relay {
                             .inner
                             .storage
                             .read_prep(&request.from)
+                            .map_err(|err| SendActionError::InternalError(err.into()))?
                             .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
                             .map(Some);
                     }
@@ -691,9 +692,15 @@ impl RelayApiServer for Relay {
         op.signature = request.signature.value;
 
         // If there's initData we need to fetch the signed authorization from storage.
-        let authorization = (!op.initData.is_empty())
-            .then(|| self.inner.storage.read_prep(&op.eoa).map(|acc| acc.signed_authorization))
-            .flatten();
+        let authorization = if op.initData.is_empty() {
+            None
+        } else {
+            self.inner
+                .storage
+                .read_prep(&op.eoa)
+                .map(|opt| opt.map(|acc| acc.signed_authorization))
+                .map_err(|err| from_eyre_error(err.into()))?
+        };
 
         // Broadcast transaction with UserOp
         let tx_hash = self

@@ -24,11 +24,11 @@ impl RelayStorage {
 }
 
 impl StorageApi for RelayStorage {
-    fn read_prep(&self, address: &Address) -> Option<PREPAccount> {
+    fn read_prep(&self, address: &Address) -> api::Result<Option<PREPAccount>> {
         self.inner.read_prep(address)
     }
 
-    fn write_prep(&self, account: &PREPAccount) -> Result<(), StorageError> {
+    fn write_prep(&self, account: &PREPAccount) -> api::Result<()> {
         self.inner.write_prep(account)
     }
 }

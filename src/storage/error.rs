@@ -1,6 +1,6 @@
 use alloy::primitives::Address;
 
-/// Errors returned by [`Storage`]
+/// Errors returned by [`Storage`].
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     /// The PREPAccount already exists.
