@@ -478,9 +478,9 @@ impl RelayApiServer for Relay {
 
         // Store PREPAccount in storage
         let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
-        self.inner.storage.write_prep(&prep_account);
+        self.inner.storage.write_prep(&prep_account).map_err(|err| from_eyre_error(err.into()))?;
 
-        let response = CreateAccountResponse {
+        Ok(CreateAccountResponse {
             address: prep_account.address,
             capabilities: CreateAccountResponseCapabilities {
                 authorize_keys: request
@@ -491,9 +491,7 @@ impl RelayApiServer for Relay {
                     .collect::<Vec<_>>(),
                 delegation: prep_account.signed_authorization.address,
             },
-        };
-
-        Ok(response)
+        })
     }
 
     async fn get_keys(

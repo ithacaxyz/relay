@@ -32,7 +32,7 @@ impl EoaKind {
         Self::Prep { admin_key, account: PREPAccount::initialize(delegation, init_calls) }
     }
 
-    /// Returns a reference to the inner [DynSigner] when dealing with an upgraded account.
+    /// Returns a reference to the inner [`DynSigner`] when dealing with an upgraded account.
     ///
     /// # Panics
     ///
@@ -46,7 +46,7 @@ impl EoaKind {
         }
     }
 
-    /// Returns a reference to the inner [KeyWith712Signer] when dealing with a PREP account.
+    /// Returns a reference to the inner [`KeyWith712Signer`] when dealing with a PREP account.
     ///
     /// # Panics
     ///
@@ -63,7 +63,7 @@ impl EoaKind {
         matches!(self, Self::Prep { .. })
     }
 
-    /// Returns [Address].
+    /// Returns [`Address`].
     pub fn address(&self) -> Address {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),

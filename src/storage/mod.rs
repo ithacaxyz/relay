@@ -1,13 +1,13 @@
 //! Relay storage
 
 mod api;
-
-use alloy::primitives::Address;
 pub use api::StorageApi;
-
+mod error;
+pub use error::StorageError;
 mod memory;
 
 use crate::types::PREPAccount;
+use alloy::primitives::Address;
 use std::sync::Arc;
 
 /// Relay storage interface.
@@ -28,7 +28,7 @@ impl StorageApi for RelayStorage {
         self.inner.read_prep(address)
     }
 
-    fn write_prep(&self, account: &PREPAccount) {
-        self.inner.write_prep(account);
+    fn write_prep(&self, account: &PREPAccount) -> Result<(), StorageError> {
+        self.inner.write_prep(account)
     }
 }
