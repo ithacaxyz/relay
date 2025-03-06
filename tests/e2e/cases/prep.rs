@@ -25,10 +25,9 @@ async fn prep_account() -> eyre::Result<()> {
     let env = Environment::setup_with_prep().await?;
 
     // This will create an account request
-    let CreateAccountResponse { address, chain_id, capabilities } = env
+    let CreateAccountResponse { address, capabilities } = env
         .relay_endpoint
         .create_account(CreateAccountParameters {
-            chain_id: env.chain_id,
             capabilities: CreateAccountCapabilities {
                 authorize_keys: vec![AuthorizeKey {
                     key: env.eoa.prep_signer().key().clone(),
@@ -40,7 +39,7 @@ async fn prep_account() -> eyre::Result<()> {
         })
         .await?;
 
-    // todo: assert that a createAccount exists.
+    // todo: assert that a createAccount reference exists.
 
     // Address is fully reproducible with the same admin key.
     assert!(address == env.eoa.address());

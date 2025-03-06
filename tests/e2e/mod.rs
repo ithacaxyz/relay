@@ -174,6 +174,7 @@ pub async fn prepare_action_request(
                     eoa: env.eoa.address(),
                     executionData: execution_data.clone(),
                     nonce: U256::from(tx_num),
+                    initData: bytes!(""),
                 },
                 chain_id: env.chain_id,
             },

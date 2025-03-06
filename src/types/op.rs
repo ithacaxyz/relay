@@ -106,6 +106,10 @@ sol! {
         bytes executionData;
         /// Per delegated EOA.
         uint256 nonce;
+        /// Optional data for `initPREP` on the delegation.
+        ///
+        /// Excluded from signature.
+        bytes initData;
     }
 }
 

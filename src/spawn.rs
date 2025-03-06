@@ -7,6 +7,7 @@ use crate::{
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
+    storage::InMemoryStorage,
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
@@ -93,6 +94,7 @@ pub async fn try_spawn(
         config.quote,
         price_oracle,
         FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
+        Box::new(InMemoryStorage::default()),
     )
     .into_rpc();
 

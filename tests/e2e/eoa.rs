@@ -12,7 +12,7 @@ use relay::{
 #[derive(Debug)]
 pub enum EoaKind {
     Upgraded(DynSigner),
-    Prep { init_data: Vec<Call>, admin_key: KeyWith712Signer, account: PREPAccount },
+    Prep { admin_key: KeyWith712Signer, account: PREPAccount },
 }
 
 impl EoaKind {
@@ -29,10 +29,9 @@ impl EoaKind {
             data: authorizeCall { key: admin_key.key().clone() }.abi_encode().into(),
         }];
 
-        let account =
-            PREPAccount::initialize(delegation, PREPAccount::calculate_digest(&init_data));
+        let account = PREPAccount::initialize(delegation, init_data.clone());
 
-        Self::Prep { admin_key, init_data, account }
+        Self::Prep { admin_key, account }
     }
 
     /// Returns a reference to the inner [DynSigner] when dealing with an upgraded account.
@@ -43,7 +42,7 @@ impl EoaKind {
     pub fn root_signer(&self) -> &DynSigner {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer,
-            EoaKind::Prep { init_data, admin_key, account } => {
+            EoaKind::Prep { admin_key, account } => {
                 panic!("eoa is not an upgraded account")
             }
         }
@@ -57,7 +56,7 @@ impl EoaKind {
     pub fn prep_signer(&self) -> &KeyWith712Signer {
         match self {
             EoaKind::Upgraded(dyn_signer) => panic!("eoa is not a prep account"),
-            EoaKind::Prep { init_data, admin_key, account } => admin_key,
+            EoaKind::Prep { admin_key, account } => admin_key,
         }
     }
 
