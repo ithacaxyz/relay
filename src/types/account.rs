@@ -133,8 +133,8 @@ impl PREPAccount {
     /// today).
     ///
     /// See <https://blog.biconomy.io/prep-deep-dive/>
-    pub fn initialize(delegation: Address, init_data: Vec<Call>) -> Self {
-        let digest = Self::calculate_digest(&init_data);
+    pub fn initialize(delegation: Address, init_calls: Vec<Call>) -> Self {
+        let digest = Self::calculate_digest(&init_calls);
 
         // we mine until we have a valid `r`, `s` combination
         let mut salt = [0u8; 32];
@@ -156,12 +156,7 @@ impl PREPAccount {
             );
 
             if let Ok(eoa) = signed_authorization.recover_authority() {
-                return Self {
-                    address: eoa,
-                    signed_authorization,
-                    salt: salt[31],
-                    init_calls: init_data,
-                };
+                return Self { address: eoa, signed_authorization, salt: salt[31], init_calls };
             }
 
             // u8 should be enough to find it.

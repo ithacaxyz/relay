@@ -23,15 +23,13 @@ impl EoaKind {
 
     /// Create a new [`EoaKind`] with [`PREPAccount`].
     pub fn create_prep(admin_key: KeyWith712Signer, delegation: Address) -> Self {
-        let init_data = vec![Call {
+        let init_calls = vec![Call {
             target: Address::ZERO,
             value: U256::ZERO,
             data: authorizeCall { key: admin_key.key().clone() }.abi_encode().into(),
         }];
 
-        let account = PREPAccount::initialize(delegation, init_data.clone());
-
-        Self::Prep { admin_key, account }
+        Self::Prep { admin_key, account: PREPAccount::initialize(delegation, init_calls) }
     }
 
     /// Returns a reference to the inner [DynSigner] when dealing with an upgraded account.

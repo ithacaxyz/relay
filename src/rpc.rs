@@ -466,7 +466,7 @@ impl RelayApiServer for Relay {
         }
 
         // Generate all calls that will authorize keys and set their permissions
-        let init_data = request
+        let init_calls = request
             .capabilities
             .authorize_keys
             .iter()
@@ -476,9 +476,8 @@ impl RelayApiServer for Relay {
             })
             .collect::<Vec<_>>();
 
-        let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_data);
-
         // Store PREPAccount in storage
+        let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
         self.inner.storage.write_prep(&prep_account);
 
         let response = CreateAccountResponse {
@@ -525,7 +524,6 @@ impl RelayApiServer for Relay {
         let revoke_keys = None;
 
         // Merges authorize calls with requested ones.
-        // todo: merge from wallet_createAccount once it's implemented
         let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
 
         // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
@@ -579,7 +577,6 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        // todo: if we are handling wallet_createAccount we need to pass a delegation address here
         let digest = compute_eip712_digest(
             &quote.ty().op,
             &provider,
