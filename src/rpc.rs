@@ -554,10 +554,9 @@ impl RelayApiServer for Relay {
                         eoa: request.from,
                         executionData: all_calls.abi_encode().into(),
                         nonce: request.capabilities.meta.nonce,
-                        // todo: initData: abi.encode(initCalls, abi.encodePacked(t.saltAndDelegation))
                         initData: maybe_prep
                             .as_ref()
-                            .map(|acc| acc.init_data.abi_encode().into())
+                            .map(|acc| acc.init_data())
                             .unwrap_or_default(),
                     },
                     chain_id: request.chain_id,
@@ -576,9 +575,13 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         // todo: if we are handling wallet_createAccount we need to pass a delegation address here
-        let digest = compute_eip712_digest(&quote.ty().op, &provider, maybe_prep.as_ref().map(|acc| acc.signed_authorization.address))
-            .await
-            .map_err(from_eyre_error)?;
+        let digest = compute_eip712_digest(
+            &quote.ty().op,
+            &provider,
+            maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
+        )
+        .await
+        .map_err(from_eyre_error)?;
 
         let response = PrepareCallsResponse {
             context: quote,

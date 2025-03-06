@@ -2,7 +2,7 @@ use super::Call;
 use Delegation::DelegationInstance;
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Keccak256, U256, keccak256},
+    primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
     providers::Provider,
     rpc::types::{Authorization, state::StateOverride},
     sol,
@@ -108,7 +108,7 @@ pub struct PREPAccount {
     /// Salt used to generate the EOA.
     pub salt: u8,
     /// Initialization calls.
-    pub init_data: Vec<Call>,
+    pub init_calls: Vec<Call>,
 }
 
 impl PREPAccount {
@@ -156,7 +156,12 @@ impl PREPAccount {
             );
 
             if let Ok(eoa) = signed_authorization.recover_authority() {
-                return Self { address: eoa, signed_authorization, salt: salt[31], init_data };
+                return Self {
+                    address: eoa,
+                    signed_authorization,
+                    salt: salt[31],
+                    init_calls: init_data,
+                };
             }
 
             // u8 should be enough to find it.
@@ -181,64 +186,93 @@ impl PREPAccount {
 
         keccak256(hashed_calls.abi_encode_packed())
     }
+
+    /// Return the ABI encoded initData.
+    pub fn init_data(&self) -> Bytes {
+        PREPInitData {
+            calls: self.init_calls.clone(),
+            saltAndDelegation: self.salt_and_delegation().abi_encode_packed().into(),
+        }
+        .abi_encode_params()
+        .into()
+    }
+
+    /// Return saltAndDelegation.
+    ///
+    /// `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
+    fn salt_and_delegation(&self) -> B256 {
+        let mut salt_and_delegation = [0u8; 32];
+        salt_and_delegation[11] = self.salt;
+        salt_and_delegation[12..].copy_from_slice(self.signed_authorization.address.as_slice());
+        B256::from(salt_and_delegation)
+    }
+}
+
+sol! {
+    struct PREPInitData {
+        Call[] calls;
+        bytes saltAndDelegation;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, b256, bytes};
+    use alloy::{
+        primitives::{address, b256, bytes},
+        uint,
+    };
 
-    // #[test]
-    // fn initialize_prep() {
-    //     let cases = [(Address::ZERO, B256::ZERO), (Address::random(), B256::random())];
-
-    //     for (address, digest) in cases {
-    //         PREPAccount::initialize(address, digest);
-    //     }
-    // }
-
-    // #[test]
-    // fn initialize_solidity() {
-    //     struct Case {
-    //         target: Address,
-    //         target_salt: u8,
-    //         delegation: Address,
-    //         digest: B256,
-    //     }
-
-    //     let cases = [Case {
-    //         target: address!("0xfE1D536604feB43A980dA073161B7cF09F3fd969"),
-    //         target_salt: 0u8,
-    //         delegation: address!("0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9"),
-    //         digest: b256!("0x16f3f8d8870eecad098c9634fa7e635e4bb8526f633e0f3333b5627de0626a23"),
-    //     }];
-
-    //     for Case { target, target_salt, delegation, digest } in cases {
-    //         let acc = PREPAccount::initialize(delegation, digest);
-    //         assert_eq!((target, target_salt), (acc.address, acc.salt))
-    //     }
-    // }
+    const INIT_CALLS: [Call; 2] = [
+        Call {
+            target: address!("0x100000000000000000636f6e736F6c652E6C6f67"),
+            value: uint!(2000000000000000000_U256),
+            data: bytes!(
+                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+            ),
+        },
+        Call {
+            target: address!("0x200000000000000000636f6e736F6c652E6C6f67"),
+            value: uint!(4000000000000000000_U256),
+            data: bytes!(
+                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+            ),
+        },
+    ];
 
     #[test]
-    fn prep_digest() {
-        assert_eq!(
-            PREPAccount::calculate_digest(&[
-                Call {
-                    target: address!("0x100000000000000000636f6e736F6c652E6C6f67"),
-                    value: U256::from(2_000_000_000_000_000_000u64),
-                    data: bytes!(
-                        "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
-                    )
-                },
-                Call {
-                    target: address!("0x200000000000000000636f6e736F6c652E6C6f67"),
-                    value: U256::from(4_000_000_000_000_000_000u64),
-                    data: bytes!(
-                        "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
-                    )
-                }
-            ]),
-            b256!("0x7d758e41b107c29709e836a1519a50e1d848efbdc99192330685086158f3655d")
-        );
+    fn initialize_solidity() {
+        struct Case {
+            target: Address,
+            target_salt: u8,
+            delegation: Address,
+            digest: B256,
+            salt_and_delegation: Bytes,
+            init_data: Bytes,
+        }
+
+        let cases = [Case {
+            target: address!("0xb09bfcd43c9e0e2eb7c25484dcb852257e3989c8"),
+            target_salt: 3u8,
+            delegation: address!("0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9"),
+            digest: b256!("0x7d758e41b107c29709e836a1519a50e1d848efbdc99192330685086158f3655d"),
+            salt_and_delegation: bytes!(
+                "0x0000000000000000000000035991a2df15a8f6a256d3ec51e99254cd3fb576a9"
+            ),
+            init_data: bytes!(
+                "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000003e00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000100000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000003782dace9d90000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000035991a2df15a8f6a256d3ec51e99254cd3fb576a9"
+            ),
+        }];
+
+        for Case { target, target_salt, delegation, digest, salt_and_delegation, init_data } in
+            cases
+        {
+            let acc = PREPAccount::initialize(delegation, INIT_CALLS.to_vec());
+            assert_eq!(digest, PREPAccount::calculate_digest(&INIT_CALLS));
+            assert_eq!(target, acc.address);
+            assert_eq!(target_salt, acc.salt);
+            assert_eq!(&salt_and_delegation, acc.salt_and_delegation().as_slice());
+            assert_eq!(init_data, acc.init_data());
+        }
     }
 }
