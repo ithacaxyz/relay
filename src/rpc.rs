@@ -534,17 +534,22 @@ impl RelayApiServer for Relay {
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
-        let code = provider.get_code_at(request.from).await.map_err(SendActionError::from)?;
-        let maybe_prep = if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-            || code[..] == EIP7702_CLEARED_DELEGATION
-        {
-            match self.inner.storage.read_prep(&request.from) {
-                Some(prep_account) => Some(prep_account),
-                None => return Err(SendActionError::EoaNotDelegated(request.from).into()),
-            }
-        } else {
-            None
-        };
+        let maybe_prep =
+            provider.get_code_at(request.from).await.map_err(SendActionError::from).and_then(
+                |code| {
+                    if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+                        || code[..] == EIP7702_CLEARED_DELEGATION
+                    {
+                        return self
+                            .inner
+                            .storage
+                            .read_prep(&request.from)
+                            .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
+                            .map(Some);
+                    }
+                    Ok(None)
+                },
+            )?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self

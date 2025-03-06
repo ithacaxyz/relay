@@ -187,7 +187,7 @@ impl PREPAccount {
         keccak256(hashed_calls.abi_encode_packed())
     }
 
-    /// Return the ABI encoded initData.
+    /// Return the ABI encoded `initData`.
     pub fn init_data(&self) -> Bytes {
         PREPInitData {
             calls: self.init_calls.clone(),
@@ -197,7 +197,7 @@ impl PREPAccount {
         .into()
     }
 
-    /// Return saltAndDelegation.
+    /// Return `saltAndDelegation`.
     ///
     /// `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
     fn salt_and_delegation(&self) -> B256 {
