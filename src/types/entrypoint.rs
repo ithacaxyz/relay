@@ -1,11 +1,11 @@
 use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, Bytes, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
-    sol_types::{SolError, SolValue},
+    sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ sol! {
             returns (bytes4 err);
 
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
+        #[derive(Debug)]
         function simulateExecute2(bytes calldata encodedUserOp) public payable virtual;
 
         /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
@@ -110,28 +111,22 @@ impl<P: Provider> Entry<P> {
             .overrides(self.overrides.clone())
             .await;
 
-        match ret {
-            Err(alloy::contract::Error::TransportError(err)) => {
-                let revert_data = err.as_error_resp().and_then(|res| res.as_revert_data());
+        if ret.is_ok() {
+            return Err(TransportErrorKind::custom_str("could not simulate op").into());
+        }
 
-                if let Ok(result) = EntryPoint::SimulationResult2::abi_decode(
-                    revert_data.as_deref().unwrap_or(&Bytes::default()),
-                    false,
-                ) {
-                    if result.err != ENTRYPOINT_NO_ERROR {
-                        Err(CallError::OpRevert { revert_reason: result.err.into() })
-                    } else {
-                        // todo: sanitize this as a malicious contract can make us panic
-                        Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
-                    }
-                } else if let Some(data) = revert_data {
-                    Err(CallError::OpRevert { revert_reason: data })
-                } else {
-                    Err(TransportErrorKind::custom_str("could not simulate op").into())
-                }
+        let err = ret.unwrap_err();
+        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult2>() {
+            if result.err != ENTRYPOINT_NO_ERROR {
+                Err(CallError::OpRevert { revert_reason: result.err.into() })
+            } else {
+                // todo: sanitize this as a malicious contract can make us panic
+                Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
-            Err(err) => Err(TransportErrorKind::custom(err).into()),
-            Ok(_) => Err(TransportErrorKind::custom_str("could not simulate op").into()),
+        } else if let Some(data) = err.as_revert_data() {
+            Err(CallError::OpRevert { revert_reason: data })
+        } else {
+            Err(TransportErrorKind::custom(err).into())
         }
     }
 
