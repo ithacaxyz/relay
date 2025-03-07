@@ -29,8 +29,10 @@ use relay::{
     signers::Eip712PayLoadSigner,
     types::{
         Action, CreateAccountCapabilities, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType,
-        PartialAction, PartialUserOp, PrepareUpgradeAccountParameters, Signature, SignedQuote, U40,
-        UpgradeAccountParameters, UserOp, WebAuthnP256, capabilities::AuthorizeKey,
+        PartialAction, PartialUserOp, PrepareCallsCapabilities, PrepareCallsParameters,
+        PrepareCallsResponse, PrepareUpgradeAccountParameters, Signature, SignedQuote, U40,
+        UpgradeAccountParameters, UserOp, WebAuthnP256,
+        capabilities::{AuthorizeKey, Meta},
     },
 };
 
@@ -38,8 +40,6 @@ use relay::{
 pub struct ActionRequest {
     /// Action request.
     action: Action,
-    /// Authorization item.
-    authorization: Option<SignedAuthorization>,
     /// Signed quote.
     quote: SignedQuote,
 }
@@ -165,16 +165,14 @@ where
 ///    - Verifies transaction status matches expectations
 ///    - Confirms UserOp success by checking nonce invalidation
 async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Result<()> {
-    let Some(ActionRequest { action, authorization, quote }) =
-        prepare_action_request(tx_num, &tx, env).await?
-    else {
+    let Some(ActionRequest { action, quote }) = prepare_calls(tx_num, &tx, env).await? else {
         // We had an expected failure so we should exit.
         return Ok(());
     };
 
     let op_nonce = action.op.nonce;
-    let tx_hash = env.relay_endpoint.send_action(action, quote, authorization.clone()).await;
-    verify_submission(tx_hash.map_err(Into::into), tx, tx_num, authorization, op_nonce, env).await
+    let tx_hash = env.relay_endpoint.send_action(action, quote, None).await;
+    verify_submission(tx_hash.map_err(Into::into), tx, tx_num, None, op_nonce, env).await
 }
 
 async fn verify_submission(
@@ -262,70 +260,48 @@ async fn verify_submission(
 ///    - Signs with EOA signer
 ///    - For nonce 0: uses raw signature
 ///    - For other nonces: wraps signature with key information
-pub async fn prepare_action_request(
+pub async fn prepare_calls(
     tx_num: usize,
     tx: &TxContext<'_>,
     env: &Environment,
 ) -> eyre::Result<Option<ActionRequest>> {
-    let execution_data: Bytes = tx.calls.abi_encode().into();
-    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
-    let authorization =
-        if let Some(auth) = tx.auth.as_ref() { Some(auth.sign(env, nonce).await?) } else { None };
+    let signer = tx.key.expect("should have key");
 
-    let key_type = tx.key.as_ref().map(|k| k.keyType).unwrap_or(KeyType::Secp256k1);
-
-    let quote = env
+    let response = env
         .relay_endpoint
-        .estimate_fee(
-            PartialAction {
-                op: PartialUserOp {
-                    eoa: env.eoa.address(),
-                    executionData: execution_data.clone(),
+        .prepare_calls(PrepareCallsParameters {
+            from: env.eoa.address(),
+            calls: tx.calls.clone(),
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: Some(tx.authorization_keys.clone()).filter(|keys| keys.is_empty()),
+                revoke_keys: None,
+                meta: Meta {
+                    fee_token: Some(env.erc20),
+                    key_hash: signer.key_hash(),
                     nonce: U256::from(tx_num),
-                    initData: bytes!(""),
                 },
-                chain_id: env.chain_id,
             },
-            env.erc20,
-            authorization.as_ref().map(|auth| *auth.address()),
-            key_type,
-        )
+        })
         .await;
 
-    if quote.is_err() {
+    if response.is_err() {
         if tx.expected.failed_estimate() {
             return Ok(None);
         } else {
-            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {quote:?}"));
+            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {response:?}"));
         }
     }
 
-    let quote = quote?;
+    let PrepareCallsResponse { context: quote, digest, capabilities } = response?;
     let mut op = quote.ty().op.clone();
+    op.signature = Signature {
+        innerSignature: signer.sign_payload_hash(digest).await.wrap_err("Signing failed")?,
+        keyHash: signer.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
 
-    let entry = Entry::new(env.entrypoint, env.provider.root());
-    let payload = op.as_eip712()?;
-    let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
-
-    op.signature = if tx.key.is_none() {
-        env.eoa
-            .root_signer()
-            .sign_payload_hash(payload.eip712_signing_hash(&domain))
-            .await
-            .wrap_err("Signing failed")?
-    } else {
-        let key = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
-        Signature {
-            innerSignature: key
-                .sign_typed_data(&payload, &domain)
-                .await
-                .wrap_err("Signing failed")?,
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into()
-    };
-
-    Ok(Some(ActionRequest { action: Action { op, chain_id: env.chain_id }, authorization, quote }))
+    Ok(Some(ActionRequest { action: Action { op, chain_id: env.chain_id }, quote }))
 }

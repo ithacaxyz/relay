@@ -3,15 +3,16 @@
 use crate::e2e::{AuthKind, environment::Environment};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{B256, TxHash, U256},
+    primitives::{Address, B256, TxHash, U256},
     providers::{PendingTransactionBuilder, Provider},
 };
 use eyre::WrapErr;
 use relay::{
     rpc::RelayApiClient,
     types::{
-        CreateAccountCapabilities, Entry, PrepareUpgradeAccountParameters,
-        UpgradeAccountCapabilities, UpgradeAccountParameters, capabilities::AuthorizeKey,
+        CreateAccountCapabilities, Entry, KeyType, KeyWith712Signer,
+        PrepareUpgradeAccountParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
+        capabilities::AuthorizeKey,
     },
 };
 use std::str::FromStr;
@@ -65,6 +66,53 @@ pub async fn upgrade_account(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_upgrade() -> eyre::Result<()> {
-    upgrade_account(&Environment::setup_with_upgraded().await?, &[], AuthKind::Auth).await?;
+    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    upgrade_account(
+        &Environment::setup_with_upgraded().await?,
+        &[key.to_authorized()],
+        AuthKind::Auth,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_auth_quote_check() -> eyre::Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let mut env = Environment::setup_with_upgraded().await?;
+
+    let mut response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            chain_id: env.chain_id,
+            capabilities: UpgradeAccountCapabilities {
+                authorize_keys: vec![key.to_authorized()],
+                delegation: env.delegation,
+                fee_token: Some(env.erc20),
+            },
+        })
+        .await?;
+
+    // Sign UserOp digest
+    let signature = env.eoa.root_signer().sign_hash(&response.digest).await?;
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+
+    // Change delegation that we are signing so it's a mismatch.
+    env.delegation = Address::random();
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Upgrade account.
+    let response = env
+        .relay_endpoint
+        .upgrade_account(UpgradeAccountParameters {
+            context: response.context,
+            signature,
+            authorization: authorization.clone(),
+        })
+        .await;
+
+    assert!(response.is_err());
+
     Ok(())
 }

@@ -249,10 +249,12 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
 /// porto test: "default"
 #[tokio::test(flavor = "multi_thread")]
 async fn send_default() -> Result<()> {
-    run_e2e_upgraded(&|env| {
+    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    run_e2e(|env| {
         vec![
             // Delegate (empty calls with auth)
             TxContext {
+                authorization_keys: vec![key.to_authorized()],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -264,6 +266,7 @@ async fn send_default() -> Result<()> {
                     Address::ZERO,
                     U256::from(100000000000000u64),
                 )],
+                key: Some(&key),
                 expected: ExpectedOutcome::Pass,
                 ..Default::default()
             },
@@ -322,18 +325,21 @@ async fn execution_guard_default() -> Result<()> {
 /// porto test: "default" (prepare & sendPrepared)
 #[tokio::test(flavor = "multi_thread")]
 async fn prepare_send_prepared_default() -> Result<()> {
-    run_e2e_upgraded(&|env| {
+    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    run_e2e(|env| {
         vec![
             // Delegate
             TxContext {
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
+                authorization_keys: vec![key.to_authorized()],
                 ..Default::default()
             },
             // Prepared transfer call (simulating prepare then sendPrepared)
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
+                key: Some(&key),
                 ..Default::default()
             },
         ]
