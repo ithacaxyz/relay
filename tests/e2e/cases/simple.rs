@@ -82,7 +82,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
     let key1 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
     let key2 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
 
-    run_e2e(|env| {
+    run_e2e_prep(&|env| {
         vec![
             TxContext {
                 expected: ExpectedOutcome::Pass,

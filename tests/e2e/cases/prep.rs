@@ -2,6 +2,7 @@
 
 use crate::e2e::{
     MockErc20, cases::upgrade::upgrade_account, environment::Environment, eoa::EoaKind,
+    send_prepared_calls,
 };
 use alloy::{
     primitives::{Address, B256, TxHash, U256},
@@ -86,20 +87,9 @@ pub async fn prep_account(
     .into();
 
     // Submit signed call
-    let SendPreparedCallsResponse { id } = env
-        .relay_endpoint
-        .send_prepared_calls(SendPreparedCallsParameters {
-            context,
-            signature: SendPreparedCallsSignature {
-                public_key: env.eoa.prep_signer().key().publicKey.clone(),
-                key_type: env.eoa.prep_signer().key().keyType,
-                value: signature,
-            },
-        })
-        .await?;
+    let tx_hash = send_prepared_calls(env, env.eoa.prep_signer(), signature, context).await?;
 
     // Check that transaction has been successful.
-    let tx_hash = B256::from_str(&id)?;
     let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
         .get_receipt()
         .await
