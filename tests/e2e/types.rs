@@ -1,13 +1,18 @@
+use std::ops::Deref;
+
 use super::environment::Environment;
+use MockErc20::MockErc20Calls;
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, U256},
+    primitives::{Address, Bytes, U256},
+    providers::Provider,
     sol,
+    sol_types::{SolCall, SolValue},
 };
 use eyre::WrapErr;
 use relay::{
     signers::{DynSigner, P256Signer},
-    types::{Call, Key, KeyType, KeyWith712Signer},
+    types::{Call, Key, KeyType, KeyWith712Signer, capabilities::AuthorizeKey},
 };
 
 /// Represents the expected outcome of a test case execution
@@ -45,7 +50,7 @@ impl ExpectedOutcome {
 }
 
 /// Represents the type of authorization needed for a test case
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AuthKind {
     /// Use sequential nonce for authorization
     Auth,
@@ -107,11 +112,13 @@ pub struct TxContext<'a> {
     pub expected: ExpectedOutcome,
     /// Optional authorization.
     pub auth: Option<AuthKind>,
-    /// Optional Key.
+    /// Optional Key that will sign the UserOp
     pub key: Option<&'a KeyWith712Signer>,
+    /// List of keys to authorize that will be converted to calls on top of the UserOp.
+    pub authorization_keys: Vec<AuthorizeKey>,
 }
 
-sol! {
+alloy::sol! {
     #[sol(rpc)]
     interface MockErc20 {
         constructor(string memory name_, string memory symbol_, uint8 decimals_) {

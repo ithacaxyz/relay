@@ -1,6 +1,6 @@
 //! Prepare calls related end-to-end test cases
 
-use crate::e2e::{MockErc20, cases::upgrade::upgrade_account, environment::Environment};
+use crate::e2e::{AuthKind, MockErc20, cases::upgrade::upgrade_account, environment::Environment};
 use alloy::{
     primitives::{Address, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
@@ -32,7 +32,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
 
     // Upgrade environment EOA signer with the above admin keys.
     let env = Environment::setup_with_upgraded().await?;
-    upgrade_account(&env, keys.clone()).await;
+    upgrade_account(&env, &keys, AuthKind::Auth).await;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {

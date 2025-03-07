@@ -6,7 +6,9 @@ use alloy::{
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256, address},
-    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
+    providers::{
+        DynProvider, Provider, ProviderBuilder, RootProvider, WalletProvider, ext::AnvilApi,
+    },
     rpc::types::TransactionRequest,
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
@@ -127,18 +129,20 @@ impl Environment {
         };
 
         // Load signers.
-        let relay_signer = DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), None)
-            .await
-            .wrap_err("Relay signer load failed")?;
+        let deployer = DynSigner::load(
+            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
+            None,
+        )
+        .await
+        .wrap_err("Relay signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(relay_signer.0.clone()))
+            .wallet(EthereumWallet::from(deployer.0.clone()))
             .on_http(endpoint.clone());
 
         // Get or deploy mock contracts.
-        let (delegation, entrypoint, erc20s) =
-            get_or_deploy_contracts(&provider, &relay_signer).await?;
+        let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
 
         let eoa = if is_prep {
             // Generate a random admin key from a random key type.
@@ -160,16 +164,7 @@ impl Environment {
             )
         };
 
-        for erc20 in &erc20s {
-            // Mint tokens for both signers.
-            for addr in [relay_signer.address(), eoa.address()] {
-                MockErc20::new(*erc20, &provider)
-                    .mint(addr, U256::from(100e18))
-                    .send()
-                    .await
-                    .wrap_err("Minting failed")?;
-            }
-        }
+        mint_erc20s(&erc20s, &[eoa.address()], &provider).await?;
 
         // Ensure our registry has our tokens
         let chain_id = provider.get_chain_id().await?;
@@ -214,10 +209,28 @@ impl Environment {
     }
 }
 
+/// Mint ERC20s into the addresses.
+pub async fn mint_erc20s<P: Provider>(
+    erc20s: &[Address],
+    addresses: &[Address],
+    provider: P,
+) -> Result<(), eyre::Error> {
+    for erc20 in erc20s {
+        // Mint tokens for both signers.
+        for addr in addresses {
+            MockErc20::new(*erc20, &provider)
+                .mint(*addr, U256::from(100e18))
+                .send()
+                .await
+                .wrap_err("Minting failed")?;
+        }
+    }
+    Ok(())
+}
+
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider>(
     provider: &P,
-    relay_signer: &DynSigner,
 ) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
