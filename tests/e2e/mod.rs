@@ -38,7 +38,8 @@ use relay::{
 };
 use std::str::FromStr;
 
-/// Executes all transactions from the test case.
+/// Executes all transactions from the test case with both [`run_e2e_upgraded`] and
+/// [`run_e2e_prep`].
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
     F: Fn(&Environment) -> Vec<TxContext<'a>>,
