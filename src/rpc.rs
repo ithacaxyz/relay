@@ -258,7 +258,7 @@ impl RelayApiServer for Relay {
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
             entrypoint.simulate_execute(&op).map_err(EstimateFeeError::from),
-            provider.estimate_eip1559_fees(None).map_err(EstimateFeeError::from)
+            provider.estimate_eip1559_fees().map_err(EstimateFeeError::from)
         )?;
 
         // for 7702 designations there is an additional gas charge
@@ -420,7 +420,7 @@ impl RelayApiServer for Relay {
 
         // try eth_call before committing to send the actual transaction
         provider
-            .call(&tx)
+            .call(tx.clone())
             .await
             .and_then(|res| {
                 EntryPoint::executeCall::abi_decode_returns(&res, true)
