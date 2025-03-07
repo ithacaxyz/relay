@@ -617,6 +617,13 @@ impl RelayApiServer for Relay {
             .get(request.chain_id)
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
 
+        // Upgrading account should have at least one authorize admin key since
+        // `wallet_prepareCalls` only accepts non-root keys.
+        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
+            return Err(eyre::eyre!("Upgrade account should have one admin authorization key."))
+                .map_err(from_eyre_error)?;
+        }
+
         // Generate all calls that will authorize keys and set their permissions
         let calls = request
             .capabilities

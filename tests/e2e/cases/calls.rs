@@ -1,6 +1,9 @@
 //! Prepare calls related end-to-end test cases
 
-use crate::e2e::{AuthKind, MockErc20, cases::upgrade::upgrade_account, environment::Environment};
+use crate::e2e::{
+    AuthKind, MockErc20, cases::upgrade::upgrade_account, environment::Environment,
+    send_prepared_calls,
+};
 use alloy::{
     primitives::{Address, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
@@ -76,20 +79,9 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
         .into();
 
         // Submit signed call
-        let SendPreparedCallsResponse { id } = env
-            .relay_endpoint
-            .send_prepared_calls(SendPreparedCallsParameters {
-                context,
-                signature: SendPreparedCallsSignature {
-                    public_key: signer.key().publicKey.clone(),
-                    key_type: signer.key().keyType,
-                    value: signature,
-                },
-            })
-            .await?;
+        let tx_hash = send_prepared_calls(&env, signer, signature, context).await?;
 
         // Check that transaction has been successful.
-        let tx_hash = B256::from_str(&id)?;
         let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
             .get_receipt()
             .await

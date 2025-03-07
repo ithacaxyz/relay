@@ -1,6 +1,10 @@
 use std::ops::Deref;
 
-use super::environment::Environment;
+use super::{
+    cases::{prep_account, upgrade_account},
+    check_bundle,
+    environment::{Environment, mint_erc20s},
+};
 use MockErc20::MockErc20Calls;
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -116,6 +120,53 @@ pub struct TxContext<'a> {
     pub key: Option<&'a KeyWith712Signer>,
     /// List of keys to authorize that will be converted to calls on top of the UserOp.
     pub authorization_keys: Vec<AuthorizeKey>,
+}
+
+impl<'a> TxContext<'a> {
+    /// Creates a PREPAccount from the first [`TxContext`] of a test case.
+    pub async fn prep_account(
+        &mut self,
+        env: &mut Environment,
+        tx_num: usize,
+    ) -> Result<(), eyre::Error> {
+        /// Ensure that there is always at least one admin key.
+        self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
+
+        // If we add more authorization_keys, the EOA address init data will be different, so we
+        // need to mint fake tokens into our generated EOA.
+        let before = env.eoa.address();
+        let tx_hash = prep_account(env, &self.calls, &self.authorization_keys).await;
+        if before != env.eoa.address() {
+            mint_erc20s(&[env.erc20, env.erc20_alt], &[env.eoa.address()], &env.provider).await?;
+        }
+
+        // Check test expectations
+        let op_nonce = U256::ZERO; // first transaction
+        check_bundle(tx_hash, self, tx_num, None, op_nonce, &*env).await?;
+
+        Ok(())
+    }
+
+    /// Upgrades an account from the first [`TxContext`] of a test case.
+    ///
+    /// Since upgrade account cannot bundle a list of [`Call`], it returns them so they can be
+    /// bundled for the following transaction.
+    pub async fn upgrade_account(
+        &self,
+        env: &Environment,
+        tx_num: usize,
+    ) -> Result<Vec<Call>, eyre::Error> {
+        let (tx_hash, authorization) =
+            upgrade_account(env, &self.authorization_keys, self.auth.clone().expect("should have"))
+                .await
+                .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
+
+        // Check test expectations
+        let op_nonce = U256::ZERO; // first transaction
+        check_bundle(tx_hash, self, tx_num, authorization, op_nonce, env).await?;
+
+        Ok(self.calls.clone())
+    }
 }
 
 alloy::sol! {

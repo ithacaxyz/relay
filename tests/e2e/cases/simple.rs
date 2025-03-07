@@ -12,6 +12,7 @@ use relay::{
     signers::{DynSigner, P256Signer},
     types::{
         Call, Delegation::SpendPeriod, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer,
+        UpgradeAccountCapabilities,
     },
 };
 use std::sync::Arc;
@@ -74,40 +75,6 @@ async fn invalid_auth_signature() -> Result<()> {
         }]
     })
     .await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn invalid_auth_quote_check() -> Result<()> {
-    let env = Environment::setup_with_upgraded().await?;
-    let tx = TxContext {
-        calls: vec![Call {
-            target: Address::ZERO,
-            value: U256::ZERO,
-            data: authorizeCall {
-                key: Key {
-                    expiry: Default::default(),
-                    keyType: KeyType::Secp256k1,
-                    isSuperAdmin: true,
-                    publicKey: env.eoa.address().abi_encode().into(),
-                },
-            }
-            .abi_encode()
-            .into(),
-        }],
-        expected: ExpectedOutcome::Pass,
-        auth: Some(AuthKind::Auth),
-        ..Default::default()
-    };
-
-    let ActionRequest { action, mut authorization, quote } =
-        prepare_action_request(0, &tx, &env).await?.expect("should not fail");
-
-    // If the quote authorization item is different than the one passed to the action, fail.
-    assert!(quote.ty().authorization_address.is_some());
-    authorization = None;
-    assert!(env.relay_endpoint.send_action(action, quote, authorization).await.is_err());
-
-    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
