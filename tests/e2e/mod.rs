@@ -2,13 +2,16 @@
 #![allow(unused)]
 
 mod cases;
+mod common_calls;
 mod constants;
 mod environment;
 mod eoa;
 mod types;
 
+use cases::{prep_account, upgrade_account};
 pub use constants::*;
 use environment::*;
+use jsonrpsee::core::RpcResult;
 pub use types::*;
 
 use alloy::{
@@ -28,7 +31,7 @@ use relay::{
     types::{
         Action, CreateAccountCapabilities, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType,
         PartialAction, PartialUserOp, PrepareUpgradeAccountParameters, Signature, SignedQuote, U40,
-        UpgradeAccountParameters, UserOp, WebAuthnP256,
+        UpgradeAccountParameters, UserOp, WebAuthnP256, capabilities::AuthorizeKey,
     },
 };
 
@@ -45,13 +48,109 @@ pub struct ActionRequest {
 /// Executes all transactions from the test case.
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
-    F: FnOnce(&Environment) -> Vec<TxContext<'a>>,
+    F: Fn(&Environment) -> Vec<TxContext<'a>>,
+{
+    run_e2e_upgraded(&build_txs).await?;
+    if std::env::var("TEST_CI_FORK").is_ok() {
+        // Test WILL run on a local envirnonment but it will be skipped in the odyssey_fork CI run.
+        eprintln!("Test skipped until the new contracts are deployed.");
+        return Ok(());
+    } else {
+        run_e2e_prep(&build_txs).await?;
+    }
+    Ok(())
+}
+
+/// Executes all transactions from the test case by using the first tx context to upgrade the
+/// account.
+pub async fn run_e2e_upgraded<'a, F>(build_txs: &F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>>,
 {
     let mut env = Environment::setup_with_upgraded().await?;
     let txs = build_txs(&env);
-    for (nonce, tx) in txs.into_iter().enumerate() {
-        process_tx(nonce, tx, &env).await?;
+
+    let mut first_tx_calls = vec![];
+    for (tx_num, mut tx) in txs.into_iter().enumerate() {
+        if tx_num == 0 {
+            // Upgrade account
+            let (tx_hash, authorization) = upgrade_account(
+                &env,
+                &tx.authorization_keys,
+                tx.auth.clone().expect("should have"),
+            )
+            .await
+            .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
+
+            // Upgrade account does not include Calls, so we batch them into the next one.
+            // Temporary.
+            first_tx_calls = tx.calls.clone();
+
+            // Check test expectations
+            let op_nonce = U256::ZERO; // first transaction
+            verify_submission(tx_hash, tx, tx_num, authorization, op_nonce, &env).await?;
+        } else {
+            tx.calls.splice(
+                0..0,
+                first_tx_calls
+                    .drain(..)
+                    .chain(tx.authorization_keys.iter().flat_map(|key| {
+                        let (authorize_call, permissions_calls) =
+                            key.clone().into_calls(Address::ZERO);
+                        std::iter::once(authorize_call).chain(permissions_calls)
+                    }))
+                    .collect::<Vec<_>>(),
+            );
+            process_tx(tx_num, tx, &env).await?;
+        }
     }
+
+    Ok(())
+}
+
+/// Executes all transactions from the test case by using the first tx context to create a
+/// PREPAccount.
+pub async fn run_e2e_prep<'a, F>(build_txs: &F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>>,
+{
+    let mut env = Environment::setup_with_prep().await?;
+    let txs = build_txs(&env);
+    for (tx_num, mut tx) in txs.into_iter().enumerate() {
+        if tx_num == 0 {
+            // Should always have at least one.
+            tx.authorization_keys.push(env.eoa.prep_signer().to_authorized());
+
+            // PREP account
+            let before = env.eoa.address();
+            let tx_hash = prep_account(&mut env, &tx.calls, &tx.authorization_keys).await;
+
+            // If we add more authorization_keys, the EOA address init data will be different, so we
+            // need to mint fake tokens into our generated EOA.
+            if before != env.eoa.address() {
+                mint_erc20s(&[env.erc20, env.erc20_alt], &[env.eoa.address()], &env.provider)
+                    .await?;
+            }
+
+            // Check test expectations
+            let op_nonce = U256::ZERO; // first transaction
+            verify_submission(tx_hash, tx, tx_num, None, op_nonce, &env).await?;
+        } else {
+            tx.calls.splice(
+                0..0,
+                tx.authorization_keys
+                    .iter()
+                    .flat_map(|key| {
+                        let (authorize_call, permissions_calls) =
+                            key.clone().into_calls(Address::ZERO);
+                        std::iter::once(authorize_call).chain(permissions_calls)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            process_tx(tx_num, tx, &env).await?;
+        }
+    }
+
     Ok(())
 }
 
@@ -74,9 +173,20 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
         return Ok(());
     };
 
-    let eoa = action.op.eoa;
     let op_nonce = action.op.nonce;
-    match env.relay_endpoint.send_action(action, quote, authorization.clone()).await {
+    let tx_hash = env.relay_endpoint.send_action(action, quote, authorization.clone()).await;
+    verify_submission(tx_hash.map_err(Into::into), tx, tx_num, authorization, op_nonce, env).await
+}
+
+async fn verify_submission(
+    tx_hash: eyre::Result<B256>,
+    tx: TxContext<'_>,
+    tx_num: usize,
+    authorization: Option<SignedAuthorization>,
+    op_nonce: U256,
+    env: &Environment,
+) -> Result<(), eyre::Error> {
+    match tx_hash {
         Ok(tx_hash) => {
             if tx.expected.failed_send() {
                 return Err(
@@ -109,7 +219,7 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
 
             // UserOp has succeeded if the nonce has been invalidated.
             let (seq, err) = Entry::new(env.entrypoint, env.provider.clone())
-                .nonce_status(eoa, op_nonce)
+                .nonce_status(env.eoa.address(), op_nonce)
                 .await?;
             let nonce_invalidated = seq > (U256::from(op_nonce >> 192).to());
             let op_success = err == ENTRYPOINT_NO_ERROR;
@@ -129,8 +239,7 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
             }
             return Err(eyre::eyre!("Send error for transaction {tx_num}: {err}"));
         }
-    }
-
+    };
     Ok(())
 }
 
