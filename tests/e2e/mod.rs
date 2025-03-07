@@ -16,7 +16,7 @@ pub use types::*;
 
 use alloy::{
     dyn_abi::Eip712Domain,
-    eips::eip7702::SignedAuthorization,
+    eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, Bytes, U256, bytes},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
@@ -25,7 +25,6 @@ use alloy::{
 };
 use eyre::{Context, OptionExt, Result};
 use relay::{
-    constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{

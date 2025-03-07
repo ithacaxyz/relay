@@ -1,10 +1,8 @@
 //! EIP-712 related helpers.
 
-use crate::{
-    constants::EIP7702_DELEGATION_DESIGNATOR,
-    types::{Account, Entry, UserOp},
-};
+use crate::types::{Account, Entry, UserOp};
 use alloy::{
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, Bytes, map::AddressMap},
     providers::DynProvider,
     rpc::types::state::AccountOverride,

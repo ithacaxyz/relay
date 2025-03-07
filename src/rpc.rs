@@ -13,7 +13,10 @@ use alloy::{
         Encodable2718,
         eip7702::{
             SignedAuthorization,
-            constants::{PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+            constants::{
+                EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST,
+                PER_EMPTY_ACCOUNT_COST,
+            },
         },
     },
     network::{
@@ -36,7 +39,6 @@ use tracing::{debug, error, warn};
 use crate::{
     chains::Chains,
     config::QuoteConfig,
-    constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     eip712::compute_eip712_digest,
     error::{EstimateFeeError, SendActionError, UpgradeAccountError, from_eyre_error},
     nonce::MultiChainNonceManager,
