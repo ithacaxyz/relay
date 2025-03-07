@@ -107,7 +107,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .simulateExecute2(op.abi_encode().into())
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await;
 
         match ret {
@@ -141,7 +141,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .execute(op.abi_encode().into())
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
@@ -170,7 +170,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .nonceStatus(account, nonce)
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
@@ -185,7 +185,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .eip712Domain()
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 

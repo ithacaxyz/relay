@@ -83,7 +83,7 @@ impl<P: Provider> Account<P> {
             .delegation
             .ENTRY_POINT()
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
         debug!(

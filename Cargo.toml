@@ -8,7 +8,7 @@ path = "src/main.rs"
 name = "relay"
 
 [dependencies]
-alloy = { version = "0.11", features = [
+alloy = { version = "0.12", features = [
     "getrandom",
     "dyn-abi",
     "eip712",
@@ -58,7 +58,7 @@ tracing-subscriber = { version = "0.3.19", features = [
 url = { version = "2.5", features = ["serde"] }
 
 [dev-dependencies]
-alloy = { version = "0.11", features = ["eips", "provider-anvil-node"] }
+alloy = { version = "0.12", features = ["eips", "provider-anvil-node"] }
 dotenv = "0.15"
 
 # Speed up compilation time for dev builds by reducing emitted debug info.
