@@ -14,6 +14,7 @@ pub struct PrepareCallsParameters {
     /// Call bundle to prepare.
     pub calls: Vec<Call>,
     /// Target chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// Address of the account to prepare the call bundle for.
     pub from: Address,
