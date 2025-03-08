@@ -69,6 +69,7 @@ pub struct PrepareUpgradeAccountParameters {
     /// Address of the EOA to upgrade.
     pub address: Address,
     /// Chain ID to initialize the account on.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// Capabilities.
     pub capabilities: UpgradeAccountCapabilities,
