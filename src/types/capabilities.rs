@@ -101,8 +101,10 @@ pub struct SpendPermission {
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
     /// ERC20 token to pay for the gas of the calls.
-    /// If `None`, the native token will be used.
-    pub fee_token: Option<Address>,
+    ///
+    /// Defaults to the native token.
+    #[serde(default)]
+    pub fee_token: Address,
     /// Key (hash) that will be used to sign the request.
     pub key_hash: B256,
     /// Nonce.

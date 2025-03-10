@@ -30,7 +30,7 @@ pub async fn upgrade_account(
             capabilities: UpgradeAccountCapabilities {
                 authorize_keys: authorize_keys.to_vec(),
                 delegation: env.delegation,
-                fee_token: Some(env.erc20),
+                fee_token: env.erc20,
             },
         })
         .await?;
@@ -89,7 +89,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
             capabilities: UpgradeAccountCapabilities {
                 authorize_keys: vec![key.to_authorized()],
                 delegation: env.delegation,
-                fee_token: Some(env.erc20),
+                fee_token: env.erc20,
             },
         })
         .await?;

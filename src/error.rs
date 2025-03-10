@@ -188,9 +188,6 @@ impl From<CallError> for EstimateFeeError {
 /// Errors returned by `wallet_prepareUpgradeAccount` and `wallet_upgradeAccount`
 #[derive(Debug, thiserror::Error)]
 pub enum UpgradeAccountError {
-    /// Missing required token address.
-    #[error("missing token address")]
-    MissingFeeToken,
     /// Invalid authorization item address.
     #[error("invalid auth item, expected {expected}, got {got}")]
     InvalidAuthAddress {
