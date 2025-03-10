@@ -41,7 +41,7 @@ pub struct SpendPermission {
 mod tests {
     use alloy::primitives::{Address, fixed_bytes};
 
-    use crate::types::CallPermission;
+    use crate::types::rpc::CallPermission;
 
     #[test]
     fn deserialize_call_permission() {

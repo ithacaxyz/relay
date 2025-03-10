@@ -91,8 +91,13 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        AuthorizeKey, AuthorizeKeyResponse, Call, CallPermission, Delegation::SpendPeriod, Key,
-        KeyType, Permission, RevokeKey, SpendPermission, U40,
+        Call,
+        Delegation::SpendPeriod,
+        Key, KeyType, U40,
+        rpc::{
+            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Permission, RevokeKey,
+            SpendPermission,
+        },
     };
 
     #[test]

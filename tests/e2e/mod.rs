@@ -28,12 +28,14 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, AuthorizeKey, CreateAccountCapabilities, Delegation, ENTRYPOINT_NO_ERROR, Entry,
-        Key, KeyType, KeyWith712Signer, Meta, PartialAction, PartialUserOp,
-        PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-        PrepareUpgradeAccountParameters, SendPreparedCallsParameters, SendPreparedCallsResponse,
-        SendPreparedCallsSignature, Signature, SignedQuote, U40, UpgradeAccountParameters, UserOp,
-        WebAuthnP256,
+        Action, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, KeyWith712Signer,
+        PartialAction, PartialUserOp, Signature, SignedQuote, U40, UserOp, WebAuthnP256,
+        rpc::{
+            AuthorizeKey, CreateAccountCapabilities, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, SendPreparedCallsSignature,
+            UpgradeAccountParameters,
+        },
     },
 };
 use std::str::FromStr;
