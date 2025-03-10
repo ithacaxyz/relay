@@ -229,18 +229,24 @@ pub async fn mint_erc20s<P: Provider>(
 }
 
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
-async fn get_or_deploy_contracts<P: Provider>(
+async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
 ) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
-    let mock_entrypoint =
-        deploy_contract(&provider, &contracts_path.join("EntryPoint.sol/EntryPoint.json"), None)
-            .await?;
-    let mut delegation =
-        deploy_contract(&provider, &contracts_path.join("Delegation.sol/Delegation.json"), None)
-            .await?;
+    let mock_entrypoint = deploy_contract(
+        &provider,
+        &contracts_path.join("EntryPoint.sol/EntryPoint.json"),
+        Some(provider.default_signer_address().abi_encode().into()),
+    )
+    .await?;
+    let mut delegation = deploy_contract(
+        &provider,
+        &contracts_path.join("Delegation.sol/Delegation.json"),
+        Some(mock_entrypoint.abi_encode().into()),
+    )
+    .await?;
 
     // Entrypoint
     let entrypoint = if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
