@@ -29,7 +29,7 @@ alloy = { version = "0.12", features = [
 alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.5"
-aws-sdk-kms = "1.60"
+aws-sdk-kms = "1.62"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 dashmap = "6.1.0"
