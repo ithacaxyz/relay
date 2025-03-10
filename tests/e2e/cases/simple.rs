@@ -12,7 +12,7 @@ use relay::{
     signers::{DynSigner, P256Signer},
     types::{
         Call, Delegation::SpendPeriod, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer,
-        UpgradeAccountCapabilities,
+        rpc::UpgradeAccountCapabilities,
     },
 };
 use std::sync::Arc;

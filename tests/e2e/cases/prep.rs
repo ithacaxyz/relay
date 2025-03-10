@@ -14,11 +14,13 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        AuthorizeKey, Call, CreateAccountCapabilities, CreateAccountParameters,
-        CreateAccountResponse, KeyType, KeyWith712Signer, Meta, PREPAccount,
-        PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-        SendPreparedCallsParameters, SendPreparedCallsResponse, SendPreparedCallsSignature,
-        Signature,
+        Call, KeyType, KeyWith712Signer, PREPAccount, Signature,
+        rpc::{
+            AuthorizeKey, CreateAccountCapabilities, CreateAccountParameters,
+            CreateAccountResponse, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, SendPreparedCallsParameters, SendPreparedCallsResponse,
+            SendPreparedCallsSignature,
+        },
     },
 };
 use std::str::FromStr;

@@ -1,6 +1,7 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
-    AuthorizeKey, U40,
+    U40,
+    rpc::AuthorizeKey,
 };
 use alloy::{
     dyn_abi::Eip712Domain,
