@@ -30,12 +30,12 @@ jobs:
         with:
           submodules: true
 
-      - name: Install Foundry
+      - name: Install foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
 
-      - name: Build Account
+      - name: Build account
         run: |
           cd tests/account
           forge build
@@ -52,8 +52,8 @@ jobs:
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0xB28AF4994867Faf0be7aa6b1bfD6477a0d282410" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0x766dd4f7d39233d0c46e241011e18de4207197d8" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0xf912273B330722921a09785b4F892895840cf7Ac" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x561e511D21D763a078165EFbA95B1b0D9106f0Ba" >> $GITHUB_ENV
 
       - name: Run tests
         run: |

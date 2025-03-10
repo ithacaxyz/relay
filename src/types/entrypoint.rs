@@ -28,7 +28,7 @@ sol! {
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
         #[derive(Debug)]
-        error SimulationResult2(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+        error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
         /// Executes a single encoded user operation.
         ///
@@ -44,7 +44,7 @@ sol! {
 
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
         #[derive(Debug)]
-        function simulateExecute2(bytes calldata encodedUserOp) public payable virtual;
+        function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
 
         /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
         ///
@@ -106,7 +106,7 @@ impl<P: Provider> Entry<P> {
     pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, CallError> {
         let ret = self
             .entrypoint
-            .simulateExecute2(op.abi_encode().into())
+            .simulateExecute(op.abi_encode().into())
             .call()
             .overrides(self.overrides.clone())
             .await;
@@ -116,7 +116,7 @@ impl<P: Provider> Entry<P> {
         }
 
         let err = ret.unwrap_err();
-        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult2>() {
+        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
             if result.err != ENTRYPOINT_NO_ERROR {
                 Err(CallError::OpRevert { revert_reason: result.err.into() })
             } else {
