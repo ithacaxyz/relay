@@ -16,7 +16,7 @@ use alloy::{
 use eyre::WrapErr;
 use relay::{
     signers::{DynSigner, P256Signer},
-    types::{Call, Key, KeyType, KeyWith712Signer, capabilities::AuthorizeKey},
+    types::{AuthorizeKey, Call, Key, KeyType, KeyWith712Signer},
 };
 
 /// Represents the expected outcome of a test case execution
