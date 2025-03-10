@@ -208,7 +208,7 @@ pub async fn prepare_calls(
                 authorize_keys: Some(tx.authorization_keys.clone()).filter(|keys| !keys.is_empty()),
                 revoke_keys: None,
                 meta: Meta {
-                    fee_token: Some(env.erc20),
+                    fee_token: env.erc20,
                     key_hash: signer.key_hash(),
                     nonce: U256::from(tx_num),
                 },

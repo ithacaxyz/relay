@@ -58,8 +58,10 @@ pub struct UpgradeAccountCapabilities {
     /// Contract address to delegate to.
     pub delegation: Address,
     /// ERC20 token to pay for the gas of the calls.
-    /// If `None`, the native token will be used.
-    pub fee_token: Option<Address>,
+    ///
+    /// Defaults to the native token.
+    #[serde(default)]
+    pub fee_token: Address,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.

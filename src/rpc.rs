@@ -565,7 +565,7 @@ impl RelayApiServer for Relay {
                     },
                     chain_id: request.chain_id,
                 },
-                request.capabilities.meta.fee_token.ok_or(UpgradeAccountError::MissingFeeToken)?,
+                request.capabilities.meta.fee_token,
                 maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
                 key,
             )
@@ -648,7 +648,7 @@ impl RelayApiServer for Relay {
                     },
                     chain_id: request.chain_id,
                 },
-                request.capabilities.fee_token.ok_or(UpgradeAccountError::MissingFeeToken)?,
+                request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
                 request
                     .capabilities
