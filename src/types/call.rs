@@ -18,6 +18,7 @@ sol! {
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
     struct Call {
         /// The call target.
+        #[serde(rename = "to")]
         address target;
         /// Amount of native value to send to the target.
         uint256 value;
