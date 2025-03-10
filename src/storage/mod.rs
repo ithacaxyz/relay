@@ -3,6 +3,7 @@
 mod api;
 pub use api::StorageApi;
 mod error;
+use async_trait::async_trait;
 pub use error::StorageError;
 mod memory;
 
@@ -23,12 +24,13 @@ impl RelayStorage {
     }
 }
 
+#[async_trait]
 impl StorageApi for RelayStorage {
-    fn read_prep(&self, address: &Address) -> api::Result<Option<PREPAccount>> {
-        self.inner.read_prep(address)
+    async fn read_prep(&self, address: &Address) -> api::Result<Option<PREPAccount>> {
+        self.inner.read_prep(address).await
     }
 
-    fn write_prep(&self, account: &PREPAccount) -> api::Result<()> {
-        self.inner.write_prep(account)
+    async fn write_prep(&self, account: &PREPAccount) -> api::Result<()> {
+        self.inner.write_prep(account).await
     }
 }

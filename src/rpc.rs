@@ -483,7 +483,11 @@ impl RelayApiServer for Relay {
 
         // Store PREPAccount in storage
         let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
-        self.inner.storage.write_prep(&prep_account).map_err(|err| from_eyre_error(err.into()))?;
+        self.inner
+            .storage
+            .write_prep(&prep_account)
+            .map_err(|err| from_eyre_error(err.into()))
+            .await?;
 
         Ok(CreateAccountResponse {
             address: prep_account.address,
@@ -535,23 +539,26 @@ impl RelayApiServer for Relay {
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
-        let maybe_prep =
-            provider.get_code_at(request.from).await.map_err(SendActionError::from).and_then(
-                |code| {
-                    if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                        || code[..] == EIP7702_CLEARED_DELEGATION
-                    {
-                        return self
-                            .inner
-                            .storage
-                            .read_prep(&request.from)
-                            .map_err(|err| SendActionError::InternalError(err.into()))?
-                            .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
-                            .map(Some);
-                    }
-                    Ok(None)
-                },
-            )?;
+        let maybe_prep = provider
+            .get_code_at(request.from)
+            .into_future()
+            .map_err(SendActionError::from)
+            .and_then(|code| async move {
+                if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+                    || code[..] == EIP7702_CLEARED_DELEGATION
+                {
+                    return self
+                        .inner
+                        .storage
+                        .read_prep(&request.from)
+                        .await
+                        .map_err(|err| SendActionError::InternalError(err.into()))?
+                        .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
+                        .map(Some);
+                }
+                Ok(None)
+            })
+            .await?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self
@@ -710,6 +717,7 @@ impl RelayApiServer for Relay {
             self.inner
                 .storage
                 .read_prep(&op.eoa)
+                .await
                 .map(|opt| opt.map(|acc| acc.signed_authorization))
                 .map_err(|err| from_eyre_error(err.into()))?
         };
