@@ -46,13 +46,13 @@ use crate::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     types::{
-        Account, Action, CreateAccountParameters, CreateAccountResponse,
+        Account, Action, AuthorizeKeyResponse, CreateAccountParameters, CreateAccountResponse,
         CreateAccountResponseCapabilities, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens,
         GetKeysParameters, KeyType, KeyWith712Signer, PREPAccount, PartialAction, PartialUserOp,
         PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
         PrepareUpgradeAccountParameters, Quote, SendPreparedCallsParameters,
         SendPreparedCallsResponse, Signature, SignedQuote, UpgradeAccountParameters,
-        UpgradeAccountResponse, UserOp, capabilities::AuthorizeKeyResponse,
+        UpgradeAccountResponse, UserOp,
     },
 };
 

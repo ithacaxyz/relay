@@ -1,11 +1,10 @@
 //! RPC calls-related request and response types.
 
-use crate::types::{
-    Call, KeyType, SignedQuote,
-    capabilities::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey},
-};
+use crate::types::{Call, KeyType, SignedQuote};
 use alloy::primitives::{Address, B256, Bytes, ChainId};
 use serde::{Deserialize, Serialize};
+
+use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

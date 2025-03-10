@@ -10,9 +10,8 @@ use eyre::WrapErr;
 use relay::{
     rpc::RelayApiClient,
     types::{
-        CreateAccountCapabilities, Entry, KeyType, KeyWith712Signer,
+        AuthorizeKey, CreateAccountCapabilities, Entry, KeyType, KeyWith712Signer,
         PrepareUpgradeAccountParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
-        capabilities::AuthorizeKey,
     },
 };
 use std::str::FromStr;

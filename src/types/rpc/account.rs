@@ -1,10 +1,7 @@
 //! RPC account-related request and response types.
 
-use super::SendPreparedCallsResponse;
-use crate::types::{
-    SignedQuote,
-    capabilities::{AuthorizeKey, AuthorizeKeyResponse},
-};
+use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
+use crate::types::SignedQuote;
 use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::{Address, ChainId, PrimitiveSignature},
