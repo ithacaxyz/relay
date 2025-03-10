@@ -176,7 +176,7 @@ async fn check_bundle(
                 }
             } else if !tx.expected.failed_user_op() {
                 return Err(eyre::eyre!(
-                    "Transaction succeeded but UserOp failed for transaction {tx_num}",
+                    "Transaction succeeded but UserOp failed for transaction {tx_num}: {err}",
                 ));
             }
         }
