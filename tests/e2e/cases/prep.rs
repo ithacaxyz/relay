@@ -65,8 +65,8 @@ pub async fn prep_account(
             chain_id: env.chain_id,
             from: env.eoa.address(),
             capabilities: PrepareCallsCapabilities {
-                authorize_keys: None,
-                revoke_keys: None,
+                authorize_keys: Vec::new(),
+                revoke_keys: Vec::new(),
                 meta: Meta {
                     fee_token: env.erc20,
                     key_hash: env.eoa.prep_signer().key_hash(),

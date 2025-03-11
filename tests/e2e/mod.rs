@@ -207,8 +207,8 @@ pub async fn prepare_calls(
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
-                authorize_keys: Some(tx.authorization_keys.clone()).filter(|keys| !keys.is_empty()),
-                revoke_keys: None,
+                authorize_keys: tx.authorization_keys.clone(),
+                revoke_keys: Vec::new(),
                 meta: Meta {
                     fee_token: env.erc20,
                     key_hash: signer.key_hash(),
