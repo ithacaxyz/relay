@@ -35,19 +35,19 @@ impl AuthorizeKey {
     /// [`UserOp`] if the key does not already exist.
     ///
     /// The second set of calls is to add call permissions and spending limits to the key.
-    pub fn into_calls(self, eoa: Address) -> (Call, Vec<Call>) {
+    pub fn into_calls(self) -> (Call, Vec<Call>) {
         let mut calls = Vec::new();
 
         calls.extend(self.permissions.into_iter().map(|perm| match perm {
             Permission::Call(perm) => {
-                Call::set_can_execute(eoa, self.key.key_hash(), perm.to, perm.selector, true)
+                Call::set_can_execute(self.key.key_hash(), perm.to, perm.selector, true)
             }
             Permission::Spend(perm) => {
-                Call::set_spend_limit(eoa, self.key.key_hash(), perm.token, perm.period, perm.limit)
+                Call::set_spend_limit(self.key.key_hash(), perm.token, perm.period, perm.limit)
             }
         }));
 
-        (Call::authorize(eoa, self.key), calls)
+        (Call::authorize(self.key), calls)
     }
 
     /// Returns the inner [`KeyType`].
@@ -81,8 +81,8 @@ pub struct RevokeKey {
 
 impl RevokeKey {
     /// Transform into a call.
-    pub fn into_call(self, eoa: Address) -> Call {
-        Call::revoke(eoa, self.hash)
+    pub fn into_call(self) -> Call {
+        Call::revoke(self.hash)
     }
 }
 
@@ -124,14 +124,13 @@ mod tests {
             ],
         };
 
-        let (authorize, calls) = key.clone().into_calls(Address::ZERO);
+        let (authorize, calls) = key.clone().into_calls();
 
-        assert_eq!(authorize, Call::authorize(Address::ZERO, key.clone().key));
+        assert_eq!(authorize, Call::authorize(key.clone().key));
         assert_eq!(calls.len(), 2);
         assert_eq!(
             calls[0],
             Call::set_can_execute(
-                Address::ZERO,
                 key.key.key_hash(),
                 Address::ZERO,
                 fixed_bytes!("0xa9059cbb"),
@@ -141,7 +140,6 @@ mod tests {
         assert_eq!(
             calls[1],
             Call::set_spend_limit(
-                Address::ZERO,
                 key.key.key_hash(),
                 Address::ZERO,
                 SpendPeriod::Day,
@@ -239,11 +237,10 @@ mod tests {
 
     #[test]
     fn test_revoke_key_into_call() {
-        let address = Address::random();
         let hash = B256::random();
 
         let revoke = RevokeKey { hash };
 
-        assert_eq!(revoke.into_call(address), Call::revoke(address, hash));
+        assert_eq!(revoke.into_call(), Call::revoke(hash));
     }
 }

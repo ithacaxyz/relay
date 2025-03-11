@@ -44,7 +44,7 @@ pub async fn prep_account(
     let init_calls = authorize_keys
         .iter()
         .flat_map(|key| {
-            let (authorize_call, permissions_calls) = key.clone().into_calls(Address::ZERO);
+            let (authorize_call, permissions_calls) = key.clone().into_calls();
             std::iter::once(authorize_call).chain(permissions_calls)
         })
         .collect::<Vec<_>>();

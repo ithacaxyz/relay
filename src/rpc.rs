@@ -474,7 +474,7 @@ impl RelayApiServer for Relay {
             .authorize_keys
             .iter()
             .flat_map(|key| {
-                let (authorize_call, permissions_calls) = key.clone().into_calls(Address::ZERO);
+                let (authorize_call, permissions_calls) = key.clone().into_calls();
                 std::iter::once(authorize_call).chain(permissions_calls)
             })
             .collect::<Vec<_>>();
@@ -520,7 +520,7 @@ impl RelayApiServer for Relay {
 
         // Generate all calls that will authorize keys and set their permissions
         let authorize_calls = request.capabilities.authorize_keys.iter().flat_map(|key| {
-            let (authorize_call, permissions_calls) = key.clone().into_calls(request.from);
+            let (authorize_call, permissions_calls) = key.clone().into_calls();
             std::iter::once(authorize_call).chain(permissions_calls)
         });
 
@@ -633,7 +633,7 @@ impl RelayApiServer for Relay {
             .authorize_keys
             .iter()
             .flat_map(|key| {
-                let (authorize_call, permissions_calls) = key.clone().into_calls(request.address);
+                let (authorize_call, permissions_calls) = key.clone().into_calls();
                 std::iter::once(authorize_call).chain(permissions_calls)
             })
             .collect::<Vec<_>>();
