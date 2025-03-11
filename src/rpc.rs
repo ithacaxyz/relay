@@ -292,9 +292,7 @@ impl RelayApiServer for Relay {
         let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
             return Err(EstimateFeeError::UnavailablePrice(token.address).into());
         };
-        let gas_price = U256::from(
-            native_fee_estimate.max_fee_per_gas + native_fee_estimate.max_priority_fee_per_gas,
-        );
+        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
         // Calculate amount with updated paymentPerGas
