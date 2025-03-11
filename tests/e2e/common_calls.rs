@@ -29,16 +29,5 @@ pub fn mint(erc20: Address, a: Address, val: U256) -> Call {
 
 /// Set a daily spend limit.
 pub fn daily_limit(token: Address, limit: U256, key: &Key) -> Call {
-    Call {
-        target: Address::ZERO,
-        value: U256::ZERO,
-        data: Delegation::setSpendLimitCall {
-            keyHash: key.key_hash(),
-            token,
-            period: SpendPeriod::Day,
-            limit,
-        }
-        .abi_encode()
-        .into(),
-    }
+    Call::set_spend_limit(key.key_hash(), token, SpendPeriod::Day, limit)
 }
