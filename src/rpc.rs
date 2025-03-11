@@ -710,6 +710,9 @@ impl RelayApiServer for Relay {
         // Fill UserOp with the user signature.
         op.signature = request.signature.value;
 
+        // Set `paymentAmount`. It is not included into the signature so we need to enforce it here.
+        op.paymentAmount = op.paymentMaxAmount;
+
         // If there's initData we need to fetch the signed authorization from storage.
         let authorization = if op.initData.is_empty() {
             None
