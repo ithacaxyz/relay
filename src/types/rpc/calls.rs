@@ -26,11 +26,13 @@ pub struct PrepareCallsParameters {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
     /// Keys to authorize on the account.
-    pub authorize_keys: Option<Vec<AuthorizeKey>>,
+    #[serde(default)]
+    pub authorize_keys: Vec<AuthorizeKey>,
     /// Extra request values.
     pub meta: Meta,
     /// Keys to revoke from the account.
-    pub revoke_keys: Option<Vec<RevokeKey>>,
+    #[serde(default)]
+    pub revoke_keys: Vec<RevokeKey>,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
@@ -38,9 +40,11 @@ pub struct PrepareCallsCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponseCapabilities {
     /// Keys that were authorized on the account.
-    pub authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
+    #[serde(default)]
+    pub authorize_keys: Vec<AuthorizeKeyResponse>,
     /// Keys that were revoked from the account.
-    pub revoke_keys: Option<Vec<RevokeKey>>,
+    #[serde(default)]
+    pub revoke_keys: Vec<RevokeKey>,
 }
 
 /// Response for `wallet_prepareCalls`.

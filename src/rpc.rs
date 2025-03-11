@@ -521,14 +521,13 @@ impl RelayApiServer for Relay {
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
 
         // Generate all calls that will authorize keys and set their permissions
-        let authorize_calls =
-            request.capabilities.authorize_keys.iter().flatten().flat_map(|key| {
-                let (authorize_call, permissions_calls) = key.clone().into_calls(request.from);
-                std::iter::once(authorize_call).chain(permissions_calls)
-            });
+        let authorize_calls = request.capabilities.authorize_keys.iter().flat_map(|key| {
+            let (authorize_call, permissions_calls) = key.clone().into_calls(request.from);
+            std::iter::once(authorize_call).chain(permissions_calls)
+        });
 
         // todo: fetch them from somewhere.
-        let revoke_keys = None;
+        let revoke_keys = Vec::new();
 
         // Merges authorize calls with requested ones.
         let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
@@ -600,16 +599,12 @@ impl RelayApiServer for Relay {
             context: quote,
             digest,
             capabilities: PrepareCallsResponseCapabilities {
-                authorize_keys: Some(
-                    request
-                        .capabilities
-                        .authorize_keys
-                        .into_iter()
-                        .flatten()
-                        .map(|key| key.into_response())
-                        .collect::<Vec<_>>(),
-                )
-                .filter(|keys| !keys.is_empty()),
+                authorize_keys: request
+                    .capabilities
+                    .authorize_keys
+                    .into_iter()
+                    .map(|key| key.into_response())
+                    .collect::<Vec<_>>(),
                 revoke_keys,
             },
         };
@@ -685,16 +680,13 @@ impl RelayApiServer for Relay {
             context: quote,
             digest,
             capabilities: PrepareCallsResponseCapabilities {
-                authorize_keys: Some(
-                    request
-                        .capabilities
-                        .authorize_keys
-                        .into_iter()
-                        .map(|key| key.into_response())
-                        .collect::<Vec<_>>(),
-                )
-                .filter(|keys| !keys.is_empty()),
-                revoke_keys: None,
+                authorize_keys: request
+                    .capabilities
+                    .authorize_keys
+                    .into_iter()
+                    .map(|key| key.into_response())
+                    .collect::<Vec<_>>(),
+                revoke_keys: Vec::new(),
             },
         };
 
