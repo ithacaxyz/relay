@@ -238,7 +238,7 @@ impl RelayApiServer for Relay {
             paymentToken: token.address,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
-            combinedGas: U256::from(20_000_000),
+            combinedGas: U256::from(100_000_000),
             initData: request.op.initData,
             ..Default::default()
         };
