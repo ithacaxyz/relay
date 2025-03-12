@@ -214,13 +214,12 @@ impl RelayApiServer for Relay {
             )
             .append(
                 request.op.eoa,
-                AccountOverride::default().with_state_diff(key.storage_slots())
+                AccountOverride::default()
+                    .with_state_diff(key.storage_slots())
                     // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(
-                    authorization_address.map(|addr| {
+                    .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    }),
-                ),
+                    })),
             )
             .build();
 
@@ -339,16 +338,18 @@ impl RelayApiServer for Relay {
         request.op.paymentRecipient = tx_signer_address;
 
         // possibly mocking the code for the eoa
-        let overrides = StateOverridesBuilder::with_capacity(1).append( request.op.eoa,
-            AccountOverride::default()
-                // we manually etch the 7702 designator since we do not have a signed auth item
-                .with_code_opt(
-                authorization.as_ref().map(|auth| {
-                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
-                })
+        let overrides = StateOverridesBuilder::with_capacity(1)
+            .append(
+                request.op.eoa,
+                AccountOverride::default()
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(authorization.as_ref().map(|auth| {
+                        Bytes::from(
+                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
+                        )
+                    })),
             )
-        
-        ).build();
+            .build();
 
         // get the account and entrypoint
         let account = Account::new(request.op.eoa, provider.clone()).with_overrides(overrides);
