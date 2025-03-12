@@ -16,4 +16,5 @@ pub mod serde;
 pub mod signers;
 pub mod spawn;
 pub mod storage;
+pub mod transactions;
 pub mod types;

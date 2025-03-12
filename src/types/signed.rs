@@ -23,6 +23,11 @@ impl<T> Signed<T> {
         &self.ty
     }
 
+    /// Returns a mutable reference to the type.
+    pub const fn ty_mut(&mut self) -> &mut T {
+        &mut self.ty
+    }
+
     /// Returns a reference to the signature.
     pub const fn signature(&self) -> &PrimitiveSignature {
         &self.signature

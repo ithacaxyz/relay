@@ -9,27 +9,17 @@
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy::{
-    eips::{
-        Encodable2718,
-        eip7702::{
-            SignedAuthorization,
-            constants::{
-                EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST,
-                PER_EMPTY_ACCOUNT_COST,
-            },
+    eips::eip7702::{
+        SignedAuthorization,
+        constants::{
+            EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST,
+            PER_EMPTY_ACCOUNT_COST,
         },
     },
-    network::{
-        Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TransactionBuilder7702,
-    },
-    primitives::{Address, Bytes, TxHash, U256, bytes},
-    providers::{Provider, fillers::NonceManager},
-    rpc::types::{
-        TransactionRequest,
-        state::{AccountOverride, StateOverridesBuilder},
-    },
-    sol_types::{SolCall, SolValue},
-    transports::TransportErrorKind,
+    primitives::{Address, Bytes, TxHash, U256, bytes, map::AddressMap},
+    providers::Provider,
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
+    sol_types::SolValue,
 };
 use futures_util::TryFutureExt;
 use jsonrpsee::{
@@ -37,21 +27,20 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::{
-    chains::Chains,
+    chains::{Chain, Chains},
     config::QuoteConfig,
     eip712::compute_eip712_digest,
     error::{EstimateFeeError, SendActionError, UpgradeAccountError, from_eyre_error},
-    nonce::MultiChainNonceManager,
     price::PriceOracle,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
+    transactions::RelayTransaction,
     types::{
-        Account, Action, ENTRYPOINT_NO_ERROR, Entry, EntryPoint, FeeTokens, KeyType,
-        KeyWith712Signer, PREPAccount, PartialAction, PartialUserOp, Quote, Signature, SignedQuote,
-        UserOp,
+        Account, Action, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount, PartialAction,
+        PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
             CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
@@ -163,23 +152,14 @@ impl Relay {
     /// Create a new Ithaca relay module.
     pub fn new(
         chains: Chains,
-        tx_signer: EthereumWallet,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
         storage: RelayStorage,
     ) -> Self {
-        let inner = RelayInner {
-            chains,
-            fee_tokens,
-            nonce_manager: MultiChainNonceManager::default(),
-            tx_signer,
-            quote_signer,
-            quote_config,
-            price_oracle,
-            storage,
-        };
+        let inner =
+            RelayInner { chains, fee_tokens, quote_signer, quote_config, price_oracle, storage };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -201,7 +181,8 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .provider;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
         };
@@ -327,21 +308,15 @@ impl RelayApiServer for Relay {
 
     async fn send_action(
         &self,
-        mut request: Action,
+        request: Action,
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<TxHash> {
-        let provider = self
+        let Chain { provider, transactions } = self
             .inner
             .chains
             .get(request.chain_id)
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
-
-        // set payment recipient to us
-        let tx_signer_address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(
-            &self.inner.tx_signer,
-        );
-        request.op.paymentRecipient = tx_signer_address;
 
         // possibly mocking the code for the eoa
         let overrides = StateOverridesBuilder::with_capacity(1)
@@ -362,19 +337,6 @@ impl RelayApiServer for Relay {
         let entrypoint =
             account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
 
-        let mut tx = TransactionRequest::default()
-            .with_chain_id(request.chain_id)
-            .input(
-                EntryPoint::executeCall { encodedUserOp: request.op.abi_encode().into() }
-                    .abi_encode()
-                    .into(),
-            )
-            .to(entrypoint)
-            .from(tx_signer_address)
-            .gas_limit(quote.ty().tx_gas)
-            .max_fee_per_gas(quote.ty().native_fee_estimate.max_fee_per_gas)
-            .max_priority_fee_per_gas(quote.ty().native_fee_estimate.max_priority_fee_per_gas);
-
         // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
             return Err(SendActionError::InvalidAuthItem {
@@ -384,7 +346,7 @@ impl RelayApiServer for Relay {
             .into());
         }
 
-        if let Some(auth) = authorization {
+        if let Some(auth) = &authorization {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
                 return Err(SendActionError::AuthItemNotChainAgnostic.into());
@@ -402,8 +364,6 @@ impl RelayApiServer for Relay {
                 }
                 .into());
             }
-
-            tx.set_authorization_list(vec![auth]);
         } else {
             let code = provider.get_code_at(request.op.eoa).await.map_err(SendActionError::from)?;
 
@@ -429,41 +389,11 @@ impl RelayApiServer for Relay {
             return Err(SendActionError::QuoteExpired.into());
         }
 
-        // try eth_call before committing to send the actual transaction
-        provider
-            .call(tx.clone())
-            .await
-            .and_then(|res| {
-                EntryPoint::executeCall::abi_decode_returns(&res, true)
-                    .map_err(TransportErrorKind::custom)
-            })
-            .map_err(SendActionError::from)
-            .and_then(|result| {
-                if result.err != ENTRYPOINT_NO_ERROR {
-                    return Err(SendActionError::OpRevert { revert_reason: result.err.into() });
-                }
-                Ok(())
-            })?;
+        let tx = RelayTransaction::new(quote, entrypoint, authorization);
+        let id = tx.id;
+        transactions.send_transaction(tx);
 
-        // broadcast the tx
-        tx.set_nonce(
-            self.inner
-                .nonce_manager
-                .get_next_nonce(&provider, tx_signer_address)
-                .await
-                .map_err(|err| SendActionError::InternalError(err.into()))?,
-        );
-        Ok(provider
-            .send_raw_transaction(
-                &tx.build(&self.inner.tx_signer)
-                    .await
-                    .map_err(|err| SendActionError::InternalError(err.into()))?
-                    .encoded_2718(),
-            )
-            .await
-            .map(|pending| *pending.tx_hash())
-            .inspect_err(|err| warn!(?err, "Error adding sponsored tx to pool"))
-            .map_err(SendActionError::from)?)
+        Ok(id)
     }
 
     async fn create_account(
@@ -524,7 +454,8 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .provider;
 
         // Generate all calls that will authorize keys and set their permissions
         let authorize_calls = request.capabilities.authorize_keys.iter().flat_map(|key| {
@@ -626,7 +557,8 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .provider;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
@@ -796,10 +728,6 @@ struct RelayInner {
     chains: Chains,
     /// Supported fee tokens.
     fee_tokens: FeeTokens,
-    /// The nonce manager used to manage transaction nonces.
-    nonce_manager: MultiChainNonceManager,
-    /// The signer used to sign transactions.
-    tx_signer: EthereumWallet,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
     /// Quote related configuration.

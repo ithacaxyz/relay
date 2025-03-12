@@ -10,10 +10,7 @@ use crate::{
     storage::RelayStorage,
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
-use alloy::{
-    network::EthereumWallet,
-    providers::{DynProvider, Provider, ProviderBuilder},
-};
+use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -88,8 +85,7 @@ pub async fn try_spawn(
 
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
-        Chains::new(providers.clone()).await?,
-        EthereumWallet::new(signer.0),
+        Chains::new(providers.clone(), signer).await?,
         quote_signer,
         config.quote,
         price_oracle,
