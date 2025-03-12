@@ -22,9 +22,12 @@ use alloy::{
     network::{
         Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder, TransactionBuilder7702,
     },
-    primitives::{Address, Bytes, TxHash, U256, bytes, map::AddressMap},
+    primitives::{Address, Bytes, TxHash, U256, bytes},
     providers::{Provider, fillers::NonceManager},
-    rpc::types::{TransactionRequest, state::AccountOverride},
+    rpc::types::{
+        TransactionRequest,
+        state::{AccountOverride, StateOverridesBuilder},
+    },
     sol_types::{SolCall, SolValue},
     transports::TransportErrorKind,
 };
@@ -204,24 +207,21 @@ impl RelayApiServer for Relay {
             .map_err(EstimateFeeError::from)?;
 
         // mocking key storage for the eoa, and the balance for the mock signer
-        let overrides = AddressMap::from_iter([
-            (
+        let overrides = StateOverridesBuilder::with_capacity(2)
+            .append(
                 mock_signer_address,
                 AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
-            ),
-            (
+            )
+            .append(
                 request.op.eoa,
-                // todo: we can't use builder api here because we only maybe set the code sometimes https://github.com/alloy-rs/alloy/issues/2062
-                AccountOverride {
-                    state_diff: Some(key.storage_slots()),
+                AccountOverride::default()
+                    .with_state_diff(key.storage_slots())
                     // we manually etch the 7702 designator since we do not have a signed auth item
-                    code: authorization_address.map(|addr| {
+                    .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    }),
-                    ..Default::default()
-                },
-            ),
-        ]);
+                    })),
+            )
+            .build();
 
         // load account and entrypoint
         let account =
@@ -338,16 +338,18 @@ impl RelayApiServer for Relay {
         request.op.paymentRecipient = tx_signer_address;
 
         // possibly mocking the code for the eoa
-        let overrides = AddressMap::from_iter([(
-            request.op.eoa,
-            AccountOverride {
-                // we manually etch the 7702 designator since we do not have a signed auth item
-                code: authorization.as_ref().map(|auth| {
-                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat())
-                }),
-                ..Default::default()
-            },
-        )]);
+        let overrides = StateOverridesBuilder::with_capacity(1)
+            .append(
+                request.op.eoa,
+                AccountOverride::default()
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(authorization.as_ref().map(|auth| {
+                        Bytes::from(
+                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
+                        )
+                    })),
+            )
+            .build();
 
         // get the account and entrypoint
         let account = Account::new(request.op.eoa, provider.clone()).with_overrides(overrides);
