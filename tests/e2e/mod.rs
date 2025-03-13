@@ -256,7 +256,7 @@ pub async fn send_prepared_calls(
             },
         })
         .await
-        .map(|bundle| B256::from_str(&bundle.id).unwrap());
+        .map(|bundle| bundle.id);
 
     response.map_err(Into::into)
 }

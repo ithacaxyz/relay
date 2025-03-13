@@ -55,7 +55,7 @@ pub async fn upgrade_account(
         .await?;
 
     // Check that transaction has been successful.
-    let tx_hash = B256::from_str(&response.bundles[0].id)?;
+    let tx_hash = response.bundles[0].id;
     let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
         .get_receipt()
         .await
