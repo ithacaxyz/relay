@@ -43,7 +43,8 @@ metrics-exporter-prometheus = "0.16"
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["rc"] }
-serde_json = "1.0"
+serde_json = "1"
+serde_repr = "0.1"
 thiserror = "2"
 toml = "*"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }

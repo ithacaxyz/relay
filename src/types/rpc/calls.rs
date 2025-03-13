@@ -1,10 +1,21 @@
 //! RPC calls-related request and response types.
 
 use crate::types::{Call, KeyType, SignedQuote};
-use alloy::primitives::{Address, B256, Bytes, ChainId};
+use alloy::{
+    consensus::Eip658Value,
+    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash},
+};
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
+
+/// An identifier for a call bundle.
+///
+/// This is a unique identifier for a call bundle, which is used to track the status of the bundle.
+///
+/// Clients should treat this as an opaque value and not attempt to parse it.
+pub type BundleId = B256;
 
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,5 +98,53 @@ pub struct SendPreparedCallsSignature {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsResponse {
     /// Bundle identifier.
-    pub id: String,
+    pub id: BundleId,
+}
+
+/// The status code of a call bundle.
+#[derive(Debug, Clone, Serialize_repr, Deserialize_repr, Eq, PartialEq)]
+#[repr(u16)]
+pub enum CallStatusCode {
+    /// The call bundle is pending.
+    Pending = 100,
+    /// The call bundle was confirmed.
+    Confirmed = 200,
+    /// The call bundle failed offchain.
+    Failed = 300,
+    /// The call bundle reverted fully onchain.
+    Reverted = 400,
+    /// The call bundle partially reverted onchain.
+    PartiallyReverted = 500,
+}
+
+/// A receipt for a call bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallReceipt {
+    /// The logs generated in the transaction.
+    logs: Vec<Log>,
+    /// The status of the transaction.
+    status: Eip658Value,
+    /// The block hash the transaction was included in.
+    block_hash: BlockHash,
+    /// The block number the transaction was included in.
+    block_number: BlockNumber,
+    /// The gas used by the transaction.
+    gas_used: u64,
+    /// The transaction hash.
+    transaction_hash: TxHash,
+}
+
+/// The status of a call bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallsStatus {
+    /// The ID of the call bundle.
+    id: BundleId,
+    /// The chain ID the bundle was broadcast on.
+    // TODO: this should not be top-level, but instead be on the receipt object
+    chain_id: ChainId,
+    /// The status of the call bundle.
+    status: CallStatusCode,
+    receipts: Vec<CallReceipt>,
 }

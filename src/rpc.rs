@@ -53,9 +53,9 @@ use crate::{
         KeyWith712Signer, PREPAccount, PartialAction, PartialUserOp, Quote, Signature, SignedQuote,
         UserOp,
         rpc::{
-            AuthorizeKeyResponse, CreateAccountParameters, CreateAccountResponse,
-            CreateAccountResponseCapabilities, GetKeysParameters, PrepareCallsParameters,
-            PrepareCallsResponse, PrepareCallsResponseCapabilities,
+            AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
+            CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
             PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
             SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
         },
@@ -145,6 +145,12 @@ pub trait RelayApi {
         &self,
         parameters: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse>;
+
+    /// Get the status of a call batch that was sent via `send_prepared_calls`.
+    ///
+    /// The identifier of the batch is the value returned from `send_prepared_calls`.
+    #[method(name = "getCallsStatus", aliases = ["wallet_getCallsStatus"])]
+    async fn get_calls_status(&self, parameters: BundleId) -> RpcResult<CallsStatus>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -733,7 +739,7 @@ impl RelayApiServer for Relay {
             })?;
 
         // todo: for now it's fine, but this will change in the future.
-        let response = SendPreparedCallsResponse { id: tx_hash.to_string() };
+        let response = SendPreparedCallsResponse { id: tx_hash };
 
         Ok(response)
     }
@@ -772,11 +778,14 @@ impl RelayApiServer for Relay {
             })?;
 
         // TODO: for now it's fine, but this will change in the future.
-        let response = UpgradeAccountResponse {
-            bundles: vec![SendPreparedCallsResponse { id: tx_hash.to_string() }],
-        };
+        let response =
+            UpgradeAccountResponse { bundles: vec![SendPreparedCallsResponse { id: tx_hash }] };
 
         Ok(response)
+    }
+
+    async fn get_calls_status(&self, _id: BundleId) -> RpcResult<CallsStatus> {
+        todo!()
     }
 }
 
