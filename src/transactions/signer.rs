@@ -104,7 +104,7 @@ impl Signer {
         &self,
         mut tx: RelayTransaction,
     ) -> Result<PendingTransaction, SendTxError> {
-        // St payment recipient to us
+        // Set payment recipient to us
         tx.quote.ty_mut().op.paymentRecipient = self.address();
 
         let mut request: TransactionRequest = tx.build(0).into();
