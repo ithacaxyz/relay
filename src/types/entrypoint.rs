@@ -1,7 +1,7 @@
 use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, FixedBytes, fixed_bytes},
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
@@ -20,6 +20,15 @@ pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
 sol! {
     #[sol(rpc)]
     contract EntryPoint {
+        /// Emitted when a UserOp is executed.
+        ///
+        /// This event is emitted in the `execute` function.
+        /// - `incremented` denotes that `nonce`'s sequence has been incremented to invalidate `nonce`,
+        /// - `err` denotes the resultant error selector.
+        /// If `incremented` is true and `err` is non-zero,
+        /// `err` will be stored for retrieval with `nonceStatus`.
+        event UserOpExecuted(address indexed eoa, uint256 indexed nonce, bool incremented, bytes4 err);
+
         /// For returning the gas used and the error from a simulation.
         ///
         /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
@@ -45,16 +54,6 @@ sol! {
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
         #[derive(Debug)]
         function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
-
-        /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
-        ///
-        /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
-        /// Otherwise, it means `nonce` might still be able to be used.
-        function nonceStatus(address eoa, uint256 nonce)
-            public
-            view
-            virtual
-            returns (uint64 seq, bytes4 err);
 
         /// Returns the EIP712 domain of the entrypoint.
         ///
@@ -145,31 +144,6 @@ impl<P: Provider> Entry<P> {
         } else {
             Ok(())
         }
-    }
-
-    /// Get status of the given nonce.
-    ///
-    /// Returns the current sequence for the sequence key in the given nonce, as well as the status
-    /// of the call.
-    ///
-    /// If the status is not equal to `ENTRYPOINT_NO_ERROR`, it means that the call failed.
-    ///
-    /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
-    /// Otherwise, it means `nonce` might still be able to be used.
-    pub async fn nonce_status(
-        &self,
-        account: Address,
-        nonce: U256,
-    ) -> TransportResult<(u64, FixedBytes<4>)> {
-        let status = self
-            .entrypoint
-            .nonceStatus(account, nonce)
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
-        Ok((status.seq, status.err))
     }
 
     /// Get the [`Eip712Domain`] for this entrypoint.
