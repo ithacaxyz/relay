@@ -2,16 +2,22 @@
 #![allow(unused)]
 
 mod cases;
-mod common_calls;
-mod constants;
-mod environment;
-mod eoa;
-mod types;
-
 use cases::{prep_account, upgrade_account};
+
+mod common_calls;
+
+mod config;
+use config::{AccountConfig, PaymentConfig, TestConfig};
+
+mod constants;
 pub use constants::*;
+
+mod environment;
 use environment::*;
-use jsonrpsee::core::RpcResult;
+
+mod eoa;
+
+mod types;
 pub use types::*;
 
 use alloy::{
@@ -24,11 +30,14 @@ use alloy::{
     uint,
 };
 use eyre::{Context, OptionExt, Result};
+use futures_util::future::{join_all, try_join_all};
+use itertools::{Itertools, iproduct};
+use jsonrpsee::core::RpcResult;
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, KeyWith712Signer,
+        Action, Call, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, KeyWith712Signer,
         PartialAction, PartialUserOp, Signature, SignedQuote, U40, UserOp, WebAuthnP256,
         rpc::{
             AuthorizeKey, CreateAccountCapabilities, Meta, PrepareCallsCapabilities,
@@ -38,64 +47,42 @@ use relay::{
         },
     },
 };
-use std::str::FromStr;
+use std::{future::Future, iter, str::FromStr};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-/// Executes all transactions from the test case with both [`run_e2e_upgraded`] and
-/// [`run_e2e_prep`].
+/// Runs all configurations (both PREP and upgraded account, in both ERC20 and native payment
+/// methods).
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
-    F: Fn(&Environment) -> Vec<TxContext<'a>>,
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    run_e2e_upgraded(&build_txs).await?;
-    if std::env::var("TEST_CI_FORK").is_ok() {
-        // Test WILL run on a local envirnonment but it will be skipped in the odyssey_fork CI run.
-        eprintln!("Test skipped until the new contracts are deployed.");
-        return Ok(());
-    } else {
-        run_e2e_prep(&build_txs).await?;
-    }
-    Ok(())
+    run_configs(build_txs, iproduct!(AccountConfig::iter(), PaymentConfig::iter())).await
 }
 
-/// Executes all transactions from the test case by using the first tx context to upgrade the
-/// account.
-pub async fn run_e2e_upgraded<'a, F>(build_txs: &F) -> Result<()>
+/// Runs only the upgraded account configuration, in both ERC20 and native payment methods.
+pub async fn run_e2e_upgraded<'a, F>(build_txs: F) -> Result<()>
 where
-    F: Fn(&Environment) -> Vec<TxContext<'a>>,
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    let mut env = Environment::setup_with_upgraded().await?;
-    let txs = build_txs(&env);
-
-    let mut first_tx_calls = vec![];
-    for (tx_num, mut tx) in txs.into_iter().enumerate() {
-        if tx_num == 0 {
-            // Since upgrade account cannot bundle a list of `Call`, it returns them so they can
-            // be bundled for the following transaction.
-            first_tx_calls = tx.upgrade_account(&env, tx_num).await?;
-        } else {
-            tx.calls.splice(0..0, first_tx_calls.drain(..));
-            process_tx(tx_num, tx, &env).await?;
-        }
-    }
-
-    Ok(())
+    run_configs(build_txs, iproduct!(iter::once(AccountConfig::Upgraded), PaymentConfig::iter()))
+        .await
 }
 
-/// Executes all transactions from the test case by using the first tx context to create a
-/// PREPAccount.
-pub async fn run_e2e_prep<'a, F>(build_txs: &F) -> Result<()>
+/// Runs a set of test configurations.
+pub async fn run_configs<'a, F>(
+    build_txs: F,
+    configs: impl Iterator<Item = impl Into<TestConfig>>,
+) -> Result<()>
 where
-    F: Fn(&Environment) -> Vec<TxContext<'a>>,
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    let mut env = Environment::setup_with_prep().await?;
-    let txs = build_txs(&env);
-    for (tx_num, mut tx) in txs.into_iter().enumerate() {
-        if tx_num == 0 {
-            tx.prep_account(&mut env, tx_num).await?;
-        } else {
-            process_tx(tx_num, tx, &env).await?;
-        }
-    }
+    let test_cases = configs.into_iter().map(async |config| {
+        let config: TestConfig = config.into();
+        config.run(build_txs).await.with_context(|| format!("Error in config {:?}", config))
+    });
+
+    try_join_all(test_cases).await?;
 
     Ok(())
 }
@@ -210,7 +197,7 @@ pub async fn prepare_calls(
                 authorize_keys: tx.authorization_keys.clone(),
                 revoke_keys: Vec::new(),
                 meta: Meta {
-                    fee_token: env.erc20,
+                    fee_token: env.fee_token,
                     key_hash: signer.key_hash(),
                     nonce: U256::from(tx_num),
                 },

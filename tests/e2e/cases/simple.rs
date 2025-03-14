@@ -47,7 +47,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
-    run_e2e_upgraded(&|env| {
+    run_e2e_upgraded(|env| {
         vec![TxContext {
             authorization_keys: vec![key.to_authorized()],
             expected: ExpectedOutcome::FailSend,
@@ -65,7 +65,7 @@ async fn invalid_auth_signature() -> Result<()> {
         DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
             .await?;
 
-    run_e2e_upgraded(&|env| {
+    run_e2e_upgraded(|env| {
         vec![TxContext {
             authorization_keys: vec![key.to_authorized()],
             expected: ExpectedOutcome::FailSend,
@@ -137,4 +137,30 @@ async fn spend_limits() -> Result<()> {
         ]
     })
     .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_transfer() -> Result<()> {
+    for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
+        let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
+
+        run_e2e(|env| {
+            vec![
+                TxContext {
+                    authorization_keys: vec![key.to_authorized()],
+                    expected: ExpectedOutcome::Pass,
+                    auth: Some(AuthKind::Auth),
+                    ..Default::default()
+                },
+                TxContext {
+                    calls: vec![calls::transfer_native(Address::ZERO, U256::from(10))],
+                    expected: ExpectedOutcome::Pass,
+                    key: Some(&key),
+                    ..Default::default()
+                },
+            ]
+        })
+        .await?;
+    }
+    Ok(())
 }

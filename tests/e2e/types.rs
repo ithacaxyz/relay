@@ -8,8 +8,9 @@ use super::{
 use MockErc20::MockErc20Calls;
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes, TxKind, U256},
     providers::Provider,
+    rpc::types::TransactionRequest,
     sol,
     sol_types::{SolCall, SolValue},
 };
@@ -120,6 +121,8 @@ pub struct TxContext<'a> {
     pub key: Option<&'a KeyWith712Signer>,
     /// List of keys to authorize that will be converted to calls on top of the UserOp.
     pub authorization_keys: Vec<AuthorizeKey>,
+    /// Fee token to be used
+    pub fee_token: Address,
 }
 
 impl<'a> TxContext<'a> {
@@ -133,11 +136,20 @@ impl<'a> TxContext<'a> {
         self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
 
         // If we add more authorization_keys, the EOA address init data will be different, so we
-        // need to mint fake tokens into our generated EOA.
+        // need to mint native and fake tokens into our generated EOA.
         let before = env.eoa.address();
         let tx_hash = prep_account(env, &self.calls, &self.authorization_keys).await;
         if before != env.eoa.address() {
             mint_erc20s(&[env.erc20, env.erc20_alt], &[env.eoa.address()], &env.provider).await?;
+            env.provider
+                .send_transaction(TransactionRequest {
+                    to: Some(TxKind::Call(env.eoa.address())),
+                    value: Some(U256::from(100e18)),
+                    ..Default::default()
+                })
+                .await?
+                .get_receipt()
+                .await?;
         }
 
         // Check test expectations

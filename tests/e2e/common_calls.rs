@@ -1,6 +1,6 @@
 use super::MockErc20;
 use alloy::{
-    primitives::{Address, U256},
+    primitives::{Address, U256, bytes},
     sol_types::SolCall,
 };
 use relay::types::{
@@ -8,6 +8,11 @@ use relay::types::{
     Delegation::{self, SpendPeriod},
     Key,
 };
+
+/// Native transfer value call.
+pub fn transfer_native(recipient: Address, amount: U256) -> Call {
+    Call { target: recipient, value: amount, data: bytes!("") }
+}
 
 /// ERC20 transfer call.
 pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
