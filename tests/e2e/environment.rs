@@ -43,6 +43,7 @@ pub struct Environment {
     pub eoa: EoaKind,
     pub entrypoint: Address,
     pub delegation: Address,
+    pub fee_token: Address,
     pub erc20: Address,
     pub erc20_alt: Address,
     pub chain_id: u64,
@@ -171,6 +172,23 @@ impl Environment {
         let mut registry = CoinRegistry::default();
         registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
 
+        // Fund relay signer and EOA
+        let relay_private_key = RELAY_PRIVATE_KEY.to_string();
+        let relay_signer =
+            DynSigner::load(&relay_private_key, None).await.wrap_err("Relay signer load failed")?;
+
+        for address in [relay_signer.address(), eoa.address()] {
+            provider
+                .send_transaction(TransactionRequest {
+                    to: Some(TxKind::Call(address)),
+                    value: Some(U256::from(1000e18)),
+                    ..Default::default()
+                })
+                .await?
+                .get_receipt()
+                .await?;
+        }
+
         // Start relay service.
         let relay_port = get_available_port()?;
         let relay_handle = try_spawn(
@@ -178,10 +196,10 @@ impl Environment {
                 .with_port(relay_port)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
-                .with_quote_key(RELAY_PRIVATE_KEY.to_string())
-                .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
+                .with_quote_key(relay_private_key.clone())
+                .with_transaction_key(relay_private_key)
                 .with_quote_constant_rate(1.0)
-                .with_fee_tokens(&erc20s)
+                .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_user_op_gas_buffer(100_000), // todo: temp
             registry,
             None,
@@ -200,12 +218,19 @@ impl Environment {
             eoa,
             entrypoint,
             delegation,
+            fee_token: erc20s[0],
             erc20: erc20s[0],
             erc20_alt: erc20s[1],
             chain_id,
             relay_endpoint,
             relay_handle,
         })
+    }
+
+    /// Sets [`Environment::fee_token`] to the native token.
+    pub fn with_native_payment(mut self) -> Self {
+        self.fee_token = Address::ZERO;
+        self
     }
 }
 
