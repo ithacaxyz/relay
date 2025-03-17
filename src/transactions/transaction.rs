@@ -1,11 +1,12 @@
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
+    consensus::{TxEip1559, TxEip7702, TypedTransaction},
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, U256},
     sol_types::{SolCall, SolValue},
 };
 
+/// Transaction type used by relay.
 #[derive(Debug, Clone)]
 pub struct RelayTransaction {
     /// Id of the transaction.
@@ -83,11 +84,4 @@ pub enum TransactionStatus {
     Confirmed(B256),
     /// Failed to broadcast the transaction.
     Failed,
-}
-
-/// Transaction that has been broadcasted.
-#[derive(Debug, Clone)]
-pub struct SentTransaction {
-    pub tx: RelayTransaction,
-    pub pending: TxEnvelope,
 }

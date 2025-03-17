@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
     /// Message to send a transaction.
-    SendTransaction(RelayTransaction),
+    SendTransaction(Box<RelayTransaction>),
     /// Message to get the status of a given transaction.
     GetStatus(B256, oneshot::Sender<Option<TransactionStatus>>),
 }
@@ -29,7 +29,7 @@ pub struct TransactionServiceHandle {
 impl TransactionServiceHandle {
     /// Sends a transaction.
     pub fn send_transaction(&self, tx: RelayTransaction) {
-        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx));
+        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(Box::new(tx)));
     }
 
     /// Fetches the status of a transaction.
@@ -92,7 +92,7 @@ impl Future for TransactionService {
         while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
             match action {
                 TransactionServiceMessage::SendTransaction(tx) => {
-                    this.send_transaction(tx);
+                    this.send_transaction(*tx);
                 }
                 TransactionServiceMessage::GetStatus(id, tx) => {
                     let _ = tx.send(this.statuses.get(&id).copied());

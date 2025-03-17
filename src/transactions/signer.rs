@@ -1,11 +1,11 @@
-use super::transaction::{RelayTransaction, SentTransaction, TransactionStatus};
+use super::transaction::{RelayTransaction, TransactionStatus};
 use crate::{
     signers::DynSigner,
     types::{ENTRYPOINT_NO_ERROR, EntryPoint},
 };
 use alloy::{
-    consensus::{Transaction, TxEnvelope, TypedTransaction},
-    eips::Encodable2718,
+    consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
+    eips::{BlockId, Encodable2718},
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, Bytes},
     providers::{
@@ -22,6 +22,7 @@ use alloy::{
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
+use tracing::error;
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +83,10 @@ pub struct Signer {
     provider: DynProvider,
     /// Inner [`EthereumWallet`] used to sign transactions.
     wallet: EthereumWallet,
+    /// Cached chain id of the provider.
+    chain_id: u64,
+    /// Estimated block time.
+    block_time: Duration,
     /// Nonce of thes signer.
     nonce: Arc<Mutex<u64>>,
 }
@@ -91,9 +96,25 @@ impl Signer {
     pub async fn new(provider: DynProvider, signer: DynSigner) -> TransportResult<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
-        let nonce = provider.get_transaction_count(address).pending().await?;
 
-        Ok(Self { provider, wallet, nonce: Arc::new(Mutex::new(nonce)) })
+        let (nonce, chain_id, latest) = tokio::try_join!(
+            provider.get_transaction_count(address).pending(),
+            provider.get_chain_id(),
+            provider.get_block(BlockId::latest())
+        )?;
+
+        let block_time = {
+            let latest = latest.ok_or(RpcError::NullResp)?;
+            let length = 1000.min(latest.header.number - 1);
+            let start = provider
+                .get_block(BlockId::number(latest.header.number - length))
+                .await?
+                .ok_or(RpcError::NullResp)?;
+
+            Duration::from_millis(1000 * latest.header.timestamp - start.header.timestamp / length)
+        };
+
+        Ok(Self { provider, wallet, chain_id, block_time, nonce: Arc::new(Mutex::new(nonce)) })
     }
 
     /// Returns the signer address.
@@ -101,23 +122,10 @@ impl Signer {
         NetworkWallet::<Ethereum>::default_signer_address(&self.wallet)
     }
 
-    /// Broadcasts a given transaction.
-    async fn broadcast_transaction(&self, tx: TypedTransaction) -> Result<TxEnvelope, SignerError> {
-        // Sign the transaction.
-        let signed =
-            NetworkWallet::<Ethereum>::sign_transaction_from(&self.wallet, self.address(), tx)
-                .await?;
-
-        let _ = self.provider.send_raw_transaction(&signed.encoded_2718()).await?;
-        Ok(signed)
-    }
-
-    /// Signs and sends a transaction.
-    async fn send_transaction(
+    async fn validate_transaction(
         &self,
         mut tx: RelayTransaction,
-        status_tx: &mut mpsc::UnboundedSender<TransactionStatus>,
-    ) -> Result<SentTransaction, SignerError> {
+    ) -> Result<RelayTransaction, SignerError> {
         // Set payment recipient to us
         tx.quote.ty_mut().op.paymentRecipient = self.address();
 
@@ -141,19 +149,18 @@ impl Signer {
                 Ok(())
             })?;
 
-        // Choose nonce for the transaction.
-        let nonce = {
-            let mut nonce = self.nonce.lock().await;
-            let current_nonce = *nonce;
-            *nonce += 1;
-            current_nonce
-        };
+        Ok(tx)
+    }
 
-        // Sign and send the transaction.
-        let signed = self.broadcast_transaction(tx.build(nonce)).await?;
-        let _ = status_tx.send(TransactionStatus::Pending(*signed.tx_hash()));
+    /// Broadcasts a given transaction.
+    async fn send_transaction(&self, tx: TypedTransaction) -> Result<TxEnvelope, SignerError> {
+        // Sign the transaction.
+        let signed =
+            NetworkWallet::<Ethereum>::sign_transaction_from(&self.wallet, self.address(), tx)
+                .await?;
 
-        Ok(SentTransaction { tx, pending: signed })
+        let _ = self.provider.send_raw_transaction(&signed.encoded_2718()).await?;
+        Ok(signed)
     }
 
     /// Waits for a pending transaction to be confirmed.
@@ -162,11 +169,9 @@ impl Signer {
     /// bumping the fees.
     async fn watch_transaction(
         &self,
-        tx: &mut SentTransaction,
+        pending: &mut TxEnvelope,
         status_tx: &mut mpsc::UnboundedSender<TransactionStatus>,
     ) -> Result<(), SignerError> {
-        let SentTransaction { tx: _, pending } = tx;
-
         let mut retries = 0;
 
         loop {
@@ -174,7 +179,7 @@ impl Signer {
                 .provider
                 .watch_pending_transaction(
                     PendingTransactionConfig::new(*pending.tx_hash())
-                        .with_timeout(Some(Duration::from_secs(1))),
+                        .with_timeout(Some(self.block_time * 2)),
                 )
                 .await?;
 
@@ -221,7 +226,7 @@ impl Signer {
                     _ => {}
                 };
 
-                *pending = self.broadcast_transaction(typed).await?;
+                *pending = self.send_transaction(typed).await?;
                 let _ = status_tx.send(TransactionStatus::Pending(*pending.tx_hash()));
             } else if !self
                 .provider
@@ -242,16 +247,71 @@ impl Signer {
         &self,
         tx: RelayTransaction,
         mut status_tx: mpsc::UnboundedSender<TransactionStatus>,
-    ) -> Result<SentTransaction, SignerError> {
-        let mut sent = self.send_transaction(tx, &mut status_tx).await.inspect_err(|_| {
-            let _ = status_tx.send(TransactionStatus::Failed);
-        })?;
+    ) -> Result<(), SignerError> {
+        let tx = self.validate_transaction(tx).await?;
 
-        self.watch_transaction(&mut sent, &mut status_tx).await.inspect_err(|_| {
-            let _ = status_tx.send(TransactionStatus::Failed);
-        })?;
+        // Choose nonce for the transaction.
+        let nonce = {
+            let mut nonce = self.nonce.lock().await;
+            let current_nonce = *nonce;
+            *nonce += 1;
+            current_nonce
+        };
 
-        Ok(sent)
+        let Ok(mut sent) = self.send_transaction(tx.build(nonce)).await else {
+            let _ = status_tx.send(TransactionStatus::Failed);
+
+            let mut lock = self.nonce.lock().await;
+            if *lock == nonce + 1 {
+                // If no other transaction occupied the next nonce, we can just re-use it next time.
+                *lock = nonce;
+                return Ok(());
+            } else {
+                // Otherwise, we need to close the nonce gap.
+                drop(lock);
+                return self.close_nonce_gap(nonce).await;
+            }
+        };
+        let _ = status_tx.send(TransactionStatus::Pending(*sent.tx_hash()));
+
+        if self.watch_transaction(&mut sent, &mut status_tx).await.is_err() {
+            let _ = status_tx.send(TransactionStatus::Failed);
+            return self.close_nonce_gap(nonce).await;
+        }
+
+        Ok(())
+    }
+
+    /// Closes the nonce gap by sending a dummy transaction to the signer.
+    ///
+    /// This can be called in 2 cases:
+    ///     1. We failed to send a transaction. This is very unlikely, and if happens, hard to
+    ///        recover as it most likely signals critical KMS or RPC failure.
+    ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
+    ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
+    async fn close_nonce_gap(&self, nonce: u64) -> Result<(), SignerError> {
+        let fee_estimate = self.provider.estimate_eip1559_fees().await?;
+        let tx = TypedTransaction::Eip1559(TxEip1559 {
+            chain_id: self.chain_id,
+            nonce,
+            to: self.address().into(),
+            gas_limit: 21000,
+            max_priority_fee_per_gas: fee_estimate.max_priority_fee_per_gas,
+            max_fee_per_gas: fee_estimate.max_fee_per_gas,
+            ..Default::default()
+        });
+
+        let tx = self.send_transaction(tx).await?;
+        // Give transaction 10 blocks to be mined.
+        self.provider
+            .watch_pending_transaction(
+                PendingTransactionConfig::new(*tx.tx_hash())
+                    .with_timeout(Some(self.block_time * 10)),
+            )
+            .await?
+            .await?;
+
+        Ok(())
     }
 
     /// Spawns a new [`Signer`].
