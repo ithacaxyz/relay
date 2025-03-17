@@ -3,7 +3,7 @@
 use super::{StorageApi, StorageError, api::Result};
 use crate::{
     transactions::{PendingTransaction, TransactionStatus},
-    types::{PREPAccount, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -12,22 +12,22 @@ use dashmap::{DashMap, Entry};
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
-    accounts: DashMap<Address, PREPAccount>,
+    accounts: DashMap<Address, CreatableAccount>,
     pending_transactions: DashMap<BundleId, PendingTransaction>,
     statuses: DashMap<BundleId, TransactionStatus>,
 }
 
 #[async_trait]
 impl StorageApi for InMemoryStorage {
-    async fn read_prep(&self, address: &Address) -> Result<Option<PREPAccount>> {
+    async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>> {
         Ok(self.accounts.get(address).map(|acc| (*acc).clone()))
     }
 
-    async fn write_prep(&self, account: &PREPAccount) -> Result<()> {
-        match self.accounts.entry(account.address) {
-            Entry::Occupied(_) => Err(StorageError::AccountAlreadyExists(account.address)),
+    async fn write_prep(&self, account: CreatableAccount) -> Result<()> {
+        match self.accounts.entry(account.prep.address) {
+            Entry::Occupied(_) => Err(StorageError::AccountAlreadyExists(account.prep.address)),
             Entry::Vacant(entry) => {
-                entry.insert(account.clone());
+                entry.insert(account);
                 Ok(())
             }
         }

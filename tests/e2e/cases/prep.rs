@@ -5,7 +5,7 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, B256, TxHash, U256},
+    primitives::{Address, B256, TxHash, U256, keccak256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
@@ -16,10 +16,10 @@ use relay::{
     types::{
         Call, KeyType, KeyWith712Signer, PREPAccount, Signature,
         rpc::{
-            AuthorizeKey, CreateAccountCapabilities, CreateAccountParameters,
-            CreateAccountResponse, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, SendPreparedCallsParameters, SendPreparedCallsResponse,
-            SendPreparedCallsSignature,
+            AuthorizeKey, CreateAccountParameters, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
+            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, SendPreparedCallsSignature,
         },
     },
 };
@@ -30,31 +30,29 @@ pub async fn prep_account(
     calls: &[Call],
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
-    // This will create an account request
-    let CreateAccountResponse { address, capabilities } = env
+    // This will fetch a valid PREPAccount that the user will need to sign over the address
+    let PrepareCreateAccountResponse { capabilities, account: server_account } = env
         .relay_endpoint
-        .create_account(CreateAccountParameters {
-            capabilities: CreateAccountCapabilities {
+        .prepare_create_account(PrepareCreateAccountParameters {
+            capabilities: PrepareCreateAccountCapabilities {
                 authorize_keys: authorize_keys.to_vec(),
                 delegation: env.delegation,
             },
         })
         .await?;
 
-    let init_calls = authorize_keys
-        .iter()
-        .flat_map(|key| {
-            let (authorize_call, permissions_calls) = key.clone().into_calls();
-            std::iter::once(authorize_call).chain(permissions_calls)
-        })
-        .collect::<Vec<_>>();
-
-    match &mut env.eoa {
+    let id_signatures = match &mut env.eoa {
         EoaKind::Upgraded(dyn_signer) => unreachable!(),
         EoaKind::Prep { admin_key, account } => {
-            *account = PREPAccount::initialize(env.delegation, init_calls);
+            account.prep = server_account.clone();
+            account.id_signatures.clone()
         }
-    }
+    };
+
+    // Send the PREPAccount with its key identifiers and signatures
+    env.relay_endpoint
+        .create_account(CreateAccountParameters { account: server_account, id_signatures })
+        .await?;
 
     // todo: assert that a createAccount reference exists
 

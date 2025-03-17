@@ -18,7 +18,7 @@ use relay::{
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]
 async fn behavior_delegation() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize key (delegation provided in the call)
@@ -44,7 +44,7 @@ async fn behavior_delegation() -> Result<()> {
 /// porto test: "behavior: spend limit + execution guard"
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_spend_limit_and_guard() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
@@ -100,7 +100,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
 /// porto test: "behavior: spend limits"
 #[tokio::test(flavor = "multi_thread")]
 async fn behavior_spend_limits() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             TxContext {
@@ -140,7 +140,7 @@ async fn behavior_spend_limits() -> Result<()> {
 /// porto test: "behavior: target scope"
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_target_scope() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
     run_e2e(|env| {
@@ -195,7 +195,7 @@ async fn execution_guard_target_scope() -> Result<()> {
 /// porto test: "behavior: target scope + selector"
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_target_scope_selector() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
@@ -249,7 +249,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
 /// porto test: "default"
 #[tokio::test(flavor = "multi_thread")]
 async fn send_default() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Delegate (empty calls with auth)
@@ -279,7 +279,7 @@ async fn send_default() -> Result<()> {
 /// porto test: "default" (execution guard)
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_default() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
@@ -325,7 +325,7 @@ async fn execution_guard_default() -> Result<()> {
 /// porto test: "default" (prepare & sendPrepared)
 #[tokio::test(flavor = "multi_thread")]
 async fn prepare_send_prepared_default() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Delegate
@@ -351,7 +351,7 @@ async fn prepare_send_prepared_default() -> Result<()> {
 /// porto test: "delegated: false, key: EOA, keyToAuthorize: P256"
 #[tokio::test(flavor = "multi_thread")]
 async fn delegated_false_eoa_key_to_authorize_p256() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Send authorize call (EOA signs; delegation parameter provided)
@@ -377,7 +377,7 @@ async fn delegated_false_eoa_key_to_authorize_p256() -> Result<()> {
 /// porto test: "delegated: true, key: EOA, keyToAuthorize: P256"
 #[tokio::test(flavor = "multi_thread")]
 async fn delegated_true_eoa_key_to_authorize_p256() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize the new key (signed by EOA)
@@ -403,8 +403,8 @@ async fn delegated_true_eoa_key_to_authorize_p256() -> Result<()> {
 /// porto test: "key: P256, keyToAuthorize: P256"
 #[tokio::test(flavor = "multi_thread")]
 async fn key_p256_key_to_authorize_p256() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
-    let another_key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let another_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize first key
@@ -437,7 +437,7 @@ async fn key_p256_key_to_authorize_p256() -> Result<()> {
 /// porto test: "key: P256, keyToAuthorize: P256 (session)"
 #[tokio::test(flavor = "multi_thread")]
 async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     // Create a session key (using P256 again)
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
@@ -485,7 +485,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
 /// porto test: "key: P256, keyToAuthorize: WebCryptoP256"
 #[tokio::test(flavor = "multi_thread")]
 async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let another_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e(|env| {
         vec![

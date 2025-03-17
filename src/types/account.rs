@@ -194,7 +194,7 @@ impl<P: Provider> Account<P> {
 /// PREP account based on <https://blog.biconomy.io/prep-deep-dive/>.
 ///
 /// Read [`PREPAccount::initialize`] for more information on how it is generated.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct PREPAccount {
     /// EOA generated address.
     pub address: Address,
@@ -295,6 +295,11 @@ impl PREPAccount {
         salt_and_delegation[11] = self.salt;
         salt_and_delegation[12..].copy_from_slice(self.signed_authorization.address.as_slice());
         B256::from(salt_and_delegation)
+    }
+
+    /// Verifies that the current account is valid.
+    pub fn is_valid(&self) -> bool {
+        self == &Self::initialize(self.address, self.init_calls.clone())
     }
 }
 

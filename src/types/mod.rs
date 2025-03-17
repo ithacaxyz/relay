@@ -41,5 +41,8 @@ pub use call::*;
 mod webauthn;
 pub use webauthn::*;
 
+mod storage;
+pub use storage::*;
+
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;

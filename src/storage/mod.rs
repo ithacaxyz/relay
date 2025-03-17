@@ -3,15 +3,15 @@
 mod api;
 pub use api::StorageApi;
 mod error;
-use async_trait::async_trait;
 pub use error::StorageError;
 mod memory;
 
 use crate::{
     transactions::{PendingTransaction, TransactionStatus},
-    types::{PREPAccount, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Relay storage interface.
@@ -29,11 +29,11 @@ impl RelayStorage {
 
 #[async_trait]
 impl StorageApi for RelayStorage {
-    async fn read_prep(&self, address: &Address) -> api::Result<Option<PREPAccount>> {
+    async fn read_prep(&self, address: &Address) -> api::Result<Option<CreatableAccount>> {
         self.inner.read_prep(address).await
     }
 
-    async fn write_prep(&self, account: &PREPAccount) -> api::Result<()> {
+    async fn write_prep(&self, account: CreatableAccount) -> api::Result<()> {
         self.inner.write_prep(account).await
     }
 

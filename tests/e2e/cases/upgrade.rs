@@ -12,7 +12,7 @@ use relay::{
     types::{
         Entry, KeyType, KeyWith712Signer,
         rpc::{
-            AuthorizeKey, CreateAccountCapabilities, PrepareUpgradeAccountParameters,
+            AuthorizeKey, PrepareCreateAccountCapabilities, PrepareUpgradeAccountParameters,
             UpgradeAccountCapabilities, UpgradeAccountParameters,
         },
     },
@@ -68,7 +68,7 @@ pub async fn upgrade_account(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_upgrade() -> eyre::Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account(
         &Environment::setup_with_upgraded().await?,
         &[key.to_authorized()],
@@ -80,7 +80,7 @@ async fn basic_upgrade() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_quote_check() -> eyre::Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let mut env = Environment::setup_with_upgraded().await?;
 
     let mut response = env

@@ -39,14 +39,15 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, Action, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount, PartialAction,
-        PartialUserOp, Quote, Signature, SignedQuote, UserOp,
+        Account, Action, CreatableAccount, Entry, FeeTokens, KeyType, KeyWith712Signer,
+        PREPAccount, PartialAction, PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
-            CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
-            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
-            SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
+            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCallsResponseCapabilities, PrepareCreateAccountParameters,
+            PrepareCreateAccountResponse, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
+            UpgradeAccountResponse,
         },
     },
 };
@@ -91,12 +92,16 @@ pub trait RelayApi {
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<TxHash>;
 
+    /// Prepares an account for the user.
+    #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
+    async fn prepare_create_account(
+        &self,
+        parameters: PrepareCreateAccountParameters,
+    ) -> RpcResult<PrepareCreateAccountResponse>;
+
     /// Initialize an account.
     #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
-    async fn create_account(
-        &self,
-        parameters: CreateAccountParameters,
-    ) -> RpcResult<CreateAccountResponse>;
+    async fn create_account(&self, parameters: CreateAccountParameters) -> RpcResult<()>;
 
     /// Get all keys for an account.
     #[method(name = "getKeys", aliases = ["wallet_getKeys"])]
@@ -394,10 +399,10 @@ impl RelayApiServer for Relay {
         return Err(SendActionError::InternalError(eyre::eyre!("Transaction failed")).into());
     }
 
-    async fn create_account(
+    async fn prepare_create_account(
         &self,
-        request: CreateAccountParameters,
-    ) -> RpcResult<CreateAccountResponse> {
+        request: PrepareCreateAccountParameters,
+    ) -> RpcResult<PrepareCreateAccountResponse> {
         // Creating account should have at least one admin key.
         if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
             return Err(eyre::eyre!("Create account should have one key."))
@@ -415,26 +420,24 @@ impl RelayApiServer for Relay {
             })
             .collect::<Vec<_>>();
 
-        // Store PREPAccount in storage
-        let prep_account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
+        Ok(PrepareCreateAccountResponse {
+            account: PREPAccount::initialize(request.capabilities.delegation, init_calls),
+            capabilities: request.capabilities.into_response(),
+        })
+    }
+
+    async fn create_account(&self, request: CreateAccountParameters) -> RpcResult<()> {
+        // todo verify account is valid
+        // todo signature validation
+        // todo check onchain if IDs already exists and are empty
+
         self.inner
             .storage
-            .write_prep(&prep_account)
+            .write_prep(CreatableAccount::new(request.account, request.id_signatures))
             .map_err(|err| from_eyre_error(err.into()))
             .await?;
 
-        Ok(CreateAccountResponse {
-            address: prep_account.address,
-            capabilities: CreateAccountResponseCapabilities {
-                authorize_keys: request
-                    .capabilities
-                    .authorize_keys
-                    .into_iter()
-                    .map(|key| key.into_response())
-                    .collect::<Vec<_>>(),
-                delegation: prep_account.signed_authorization.address,
-            },
-        })
+        Ok(())
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
@@ -463,6 +466,7 @@ impl RelayApiServer for Relay {
                 authorize_key: AuthorizeKey {
                     key,
                     permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                    id_signature: None,
                 },
             })
             .collect())
@@ -480,6 +484,7 @@ impl RelayApiServer for Relay {
             .provider;
 
         // Generate all calls that will authorize keys and set their permissions
+        // todo: admin or webauthn require Some(signed identifier)
         let authorize_calls = request.capabilities.authorize_keys.iter().flat_map(|key| {
             let (authorize_call, permissions_calls) = key.clone().into_calls();
             std::iter::once(authorize_call).chain(permissions_calls)
@@ -528,13 +533,13 @@ impl RelayApiServer for Relay {
                         nonce: request.capabilities.meta.nonce,
                         initData: maybe_prep
                             .as_ref()
-                            .map(|acc| acc.init_data())
+                            .map(|acc| acc.prep.init_data())
                             .unwrap_or_default(),
                     },
                     chain_id: request.chain_id,
                 },
                 request.capabilities.meta.fee_token,
-                maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
+                maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
                 key,
             )
             .await
@@ -586,6 +591,7 @@ impl RelayApiServer for Relay {
         }
 
         // Generate all calls that will authorize keys and set their permissions
+        // todo: admin or webauthn require Some(signed identifier)
         let calls = request
             .capabilities
             .authorize_keys
@@ -668,7 +674,7 @@ impl RelayApiServer for Relay {
                 .storage
                 .read_prep(&op.eoa)
                 .await
-                .map(|opt| opt.map(|acc| acc.signed_authorization))
+                .map(|opt| opt.map(|acc| acc.prep.signed_authorization))
                 .map_err(|err| from_eyre_error(err.into()))?
         };
 

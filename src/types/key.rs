@@ -310,12 +310,12 @@ impl KeyWith712Signer {
 
     /// Returns a [`AuthorizeKey`] equivalent.
     pub fn to_authorized(&self) -> AuthorizeKey {
-        AuthorizeKey { key: self.key.clone(), permissions: vec![] }
+        self.to_permissioned_authorized(vec![])
     }
 
     /// Returns a [`AuthorizeKey`] equivalent with set permissions.
     pub fn to_permissioned_authorized(&self, permissions: Vec<Permission>) -> AuthorizeKey {
-        AuthorizeKey { key: self.key.clone(), permissions }
+        AuthorizeKey { key: self.key.clone(), permissions, id_signature: None }
     }
 }
 
@@ -332,6 +332,16 @@ impl Deref for KeyWith712Signer {
     fn deref(&self) -> &Self::Target {
         &self.key
     }
+}
+
+/// Key hash with its signature over the PREP account address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyHashWithID {
+    /// Key hash
+    pub hash: B256,
+    /// Signature over the PREP account address.
+    pub id_signature: Bytes,
 }
 
 /// The offset for storage slots in the Porto delegation contract.

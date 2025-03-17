@@ -1,49 +1,73 @@
 //! RPC account-related request and response types.
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
-use crate::types::SignedQuote;
+use crate::types::{KeyHashWithID, PREPAccount, SignedQuote};
 use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::{Address, ChainId, PrimitiveSignature},
 };
 use serde::{Deserialize, Serialize};
 
-/// Capabilities for `wallet_createAccount` request.
+/// Capabilities for `wallet_prepareCreateAccount` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateAccountCapabilities {
+pub struct PrepareCreateAccountCapabilities {
     /// Keys to authorize on the account.
     pub authorize_keys: Vec<AuthorizeKey>,
     /// Contract address to delegate to.
     pub delegation: Address,
 }
 
-/// Capabilities for `wallet_createAccount` response.
+impl PrepareCreateAccountCapabilities {
+    /// Turns into [PrepareCreateAccountResponseCapabilities]
+    pub fn into_response(self) -> PrepareCreateAccountResponseCapabilities {
+        PrepareCreateAccountResponseCapabilities {
+            authorize_keys: self
+                .authorize_keys
+                .into_iter()
+                .map(|key| key.into_response())
+                .collect::<Vec<_>>(),
+            delegation: self.delegation,
+        }
+    }
+}
+
+/// Capabilities for `wallet_prepareCreateAccount` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateAccountResponseCapabilities {
+pub struct PrepareCreateAccountResponseCapabilities {
     /// Keys that were authorized on the account.
     pub authorize_keys: Vec<AuthorizeKeyResponse>,
     /// Contract address the account was delegated to.
     pub delegation: Address,
 }
 
+/// Request parameters for `wallet_prepareCreateAccount`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareCreateAccountParameters {
+    /// Capabilities.
+    pub capabilities: PrepareCreateAccountCapabilities,
+}
+
+/// Response for `wallet_prepareCreateAccount`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareCreateAccountResponse {
+    /// Initializable account.
+    pub account: PREPAccount,
+    /// Capabilities.
+    pub capabilities: PrepareCreateAccountResponseCapabilities,
+}
+
 /// Request parameters for `wallet_createAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountParameters {
-    /// Capabilities.
-    pub capabilities: CreateAccountCapabilities,
-}
-
-/// Response for `wallet_createAccount`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateAccountResponse {
-    /// Address of the initialized account.
-    pub address: Address,
-    /// Capabilities.
-    pub capabilities: CreateAccountResponseCapabilities,
+    /// Initializable account.
+    pub account: PREPAccount,
+    /// List of signatures over the PREPAddress.
+    pub id_signatures: Vec<KeyHashWithID>,
 }
 
 /// Capabilities for `wallet_createAccount` request.
