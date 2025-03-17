@@ -8,7 +8,13 @@ use alloy::{
     eips::Encodable2718,
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, Bytes},
-    providers::{DynProvider, PendingTransactionConfig, PendingTransactionError, Provider},
+    providers::{
+        DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
+        utils::{
+            EIP1559_FEE_ESTIMATION_PAST_BLOCKS, EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+            Eip1559Estimator,
+        },
+    },
     rpc::types::TransactionRequest,
     sol_types::SolCall,
     transports::{RpcError, TransportErrorKind, TransportResult},
@@ -30,6 +36,10 @@ pub enum SignerError {
     /// The transaction was dropped.
     #[error("transaction was dropped")]
     TxDropped,
+
+    /// The growth of the gas fees exceeded the amount we are ready to pay
+    #[error("fees to high")]
+    FeesTooHigh,
 
     /// Error occurred while signing transaction.
     #[error(transparent)]
@@ -177,16 +187,32 @@ impl Signer {
                 return Err(SignerError::TxDropped);
             }
 
-            let fee_estimate = self.provider.estimate_eip1559_fees().await?;
+            let fee_history = self
+                .provider
+                .get_fee_history(
+                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                    Default::default(),
+                    &[EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+                )
+                .await?;
+
+            let last_base_fee = fee_history.latest_block_base_fee().unwrap_or_default();
+
+            let fee_estimate = Eip1559Estimator::default()
+                .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
 
             // TODO: figure out a more reasonable condition here or whether we should just always
             // set max_priority_fee = max_fee
             if fee_estimate.max_priority_fee_per_gas
                 > pending.max_priority_fee_per_gas().unwrap_or(pending.max_fee_per_gas()) * 11 / 10
             {
-                // fees went up, assume we need to bump them
-                let new_tip_cap =
-                    pending.max_fee_per_gas().max(fee_estimate.max_priority_fee_per_gas);
+                // Fees went up, assume we need to bump them
+                let new_tip_cap = fee_estimate.max_priority_fee_per_gas;
+
+                // Ensure we can afford the bump given the current base fee
+                if (pending.max_fee_per_gas() - last_base_fee) < new_tip_cap {
+                    return Err(SignerError::FeesTooHigh);
+                }
 
                 let mut typed = TypedTransaction::from(pending.clone());
                 match &mut typed {

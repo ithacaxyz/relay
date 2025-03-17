@@ -16,7 +16,7 @@ use alloy::{
             PER_EMPTY_ACCOUNT_COST,
         },
     },
-    primitives::{Address, Bytes, TxHash, U256, bytes, map::AddressMap},
+    primitives::{Address, Bytes, TxHash, U256, bytes},
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
