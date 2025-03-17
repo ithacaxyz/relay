@@ -1,13 +1,9 @@
 use super::{
-    SendTxError,
+    SignerHandle,
     signer::Signer,
-    transaction::{
-        DroppedTransaction, PendingTransaction, RelayTransaction, SentTransaction,
-        TransactionStatus,
-    },
+    transaction::{RelayTransaction, TransactionStatus},
 };
 use alloy::primitives::B256;
-use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -44,30 +40,17 @@ impl TransactionServiceHandle {
     }
 }
 
-/// Future that signs and sends a transaction. Returns [`PendingTransaction`] on success and
-/// [`SendTxError`] on failure.
-type InFlightTransactionFuture =
-    Pin<Box<dyn Future<Output = Result<PendingTransaction, SendTxError>> + Send>>;
-
-/// Future awaiting a pending transaction outcome. Returns [`SentTransaction`] on success and
-/// [`DroppedTransaction`] on failure.
-type PendingTransactionFuture =
-    Pin<Box<dyn Future<Output = Result<SentTransaction, DroppedTransaction>> + Send>>;
-
 /// Service handing transactions.
 #[derive(Debug)]
 pub struct TransactionService {
-    /// Signer used to send transactions.
-    signer: Signer,
+    /// Handle to a signer responsible for broadcasting transactions.
+    signer: SignerHandle,
 
     /// Incoming messages for the service.
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
 
-    /// Transactions being broadcasted.
-    in_flight_transactions: FuturesUnordered<InFlightTransactionFuture>,
-
-    /// Pending transactions that has been broadcasted.
-    pending_transactions: FuturesUnordered<PendingTransactionFuture>,
+    /// Pending transactions that are being handled by signer.
+    pending_transactions: HashMap<B256, mpsc::UnboundedReceiver<TransactionStatus>>,
 
     /// [`RelayTransaction::id`] -> [`TransactionStatus`] mapping.
     statuses: HashMap<B256, TransactionStatus>,
@@ -75,12 +58,11 @@ pub struct TransactionService {
 
 impl TransactionService {
     /// Creates a new [`TransactionService`].
-    pub fn new(signer: Signer) -> (Self, TransactionServiceHandle) {
+    pub fn new(signer: SignerHandle) -> (Self, TransactionServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let this = Self {
             signer,
             command_rx,
-            in_flight_transactions: Default::default(),
             pending_transactions: Default::default(),
             statuses: HashMap::new(),
         };
@@ -90,41 +72,14 @@ impl TransactionService {
 
     /// Creates a new [`TransactionService`] and spawns it.
     pub fn spawn(signer: Signer) -> TransactionServiceHandle {
-        let (this, handle) = Self::new(signer);
+        let (this, handle) = Self::new(signer.spawn());
         tokio::spawn(this);
         handle
     }
 
     fn send_transaction(&mut self, tx: RelayTransaction) {
         self.statuses.insert(tx.id, TransactionStatus::InFlight);
-
-        let signer = self.signer.clone();
-        self.in_flight_transactions
-            .push(Box::pin(async move { signer.send_transaction(tx.clone()).await }));
-    }
-
-    fn on_sent_transaction(&mut self, tx: PendingTransaction) {
-        self.statuses.insert(tx.tx.tx.id, TransactionStatus::Pending(tx.tx.tx_hash));
-        self.pending_transactions.push(Box::pin(async move {
-            let PendingTransaction { tx, handle } = tx;
-            match handle.await {
-                Ok(_) => Ok(tx),
-                Err(error) => Err(DroppedTransaction { tx, error }),
-            }
-        }));
-    }
-
-    fn on_confirmed_transaction(&mut self, tx: SentTransaction) {
-        self.statuses.insert(tx.tx.id, TransactionStatus::Confirmed(tx.tx_hash));
-    }
-
-    fn on_failed_send(&mut self, error: SendTxError) {
-        let SendTxError { kind, tx, nonce } = error;
-        self.statuses.insert(tx.id, TransactionStatus::Failed);
-    }
-
-    fn on_dropped_transaction(&mut self, tx: DroppedTransaction) {
-        self.statuses.insert(tx.tx.tx.id, TransactionStatus::Failed);
+        self.pending_transactions.insert(tx.id, self.signer.send_transaction(tx));
     }
 }
 
@@ -145,19 +100,17 @@ impl Future for TransactionService {
             }
         }
 
-        while let Poll::Ready(Some(result)) = this.in_flight_transactions.poll_next_unpin(cx) {
-            match result {
-                Ok(tx) => this.on_sent_transaction(tx),
-                Err(err) => this.on_failed_send(err),
+        this.pending_transactions.retain(|id, rx| {
+            while let Poll::Ready(status_opt) = rx.poll_recv(cx) {
+                if let Some(status) = status_opt {
+                    this.statuses.insert(*id, status);
+                } else {
+                    return false;
+                }
             }
-        }
 
-        while let Poll::Ready(Some(result)) = this.pending_transactions.poll_next_unpin(cx) {
-            match result {
-                Ok(tx) => this.on_confirmed_transaction(tx),
-                Err(dropped) => this.on_dropped_transaction(dropped),
-            }
-        }
+            true
+        });
 
         Poll::Pending
     }

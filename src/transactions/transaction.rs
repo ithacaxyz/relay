@@ -1,9 +1,8 @@
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, TypedTransaction},
+    consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, U256},
-    providers::PendingTransactionError,
     sol_types::{SolCall, SolValue},
 };
 
@@ -73,9 +72,10 @@ impl RelayTransaction {
 }
 
 /// Status of a transaction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum TransactionStatus {
     /// Transaction is being broadcasted.
+    #[default]
     InFlight,
     /// Transaction is pending.
     Pending(B256),
@@ -89,18 +89,5 @@ pub enum TransactionStatus {
 #[derive(Debug, Clone)]
 pub struct SentTransaction {
     pub tx: RelayTransaction,
-    pub nonce: u64,
-    pub tx_hash: B256,
-}
-
-#[derive(Debug)]
-pub struct PendingTransaction {
-    pub tx: SentTransaction,
-    pub handle: alloy::providers::PendingTransaction,
-}
-
-#[derive(Debug)]
-pub struct DroppedTransaction {
-    pub tx: SentTransaction,
-    pub error: PendingTransactionError,
+    pub pending: TxEnvelope,
 }
