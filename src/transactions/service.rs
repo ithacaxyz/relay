@@ -18,6 +18,8 @@ pub enum TransactionServiceMessage {
     SendTransaction(Box<RelayTransaction>),
     /// Message to get the status of a given transaction.
     GetStatus(B256, oneshot::Sender<Option<TransactionStatus>>),
+    /// Message to subscribe to the status of a given transaction.
+    SubscribeStatus(B256, mpsc::UnboundedSender<TransactionStatus>),
 }
 
 /// Handle to communicate with the [`TransactionService`].
@@ -38,6 +40,13 @@ impl TransactionServiceHandle {
         let _ = self.command_tx.send(TransactionServiceMessage::GetStatus(id, tx));
         rx
     }
+
+    /// Subscribes to the status of a transaction.
+    pub fn subscribe_status(&self, id: B256) -> mpsc::UnboundedReceiver<TransactionStatus> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let _ = self.command_tx.send(TransactionServiceMessage::SubscribeStatus(id, tx));
+        rx
+    }
 }
 
 /// Service handing transactions.
@@ -54,6 +63,9 @@ pub struct TransactionService {
 
     /// [`RelayTransaction::id`] -> [`TransactionStatus`] mapping.
     statuses: HashMap<B256, TransactionStatus>,
+
+    /// Subscriptions to transaction status updates.
+    subscriptions: HashMap<B256, Vec<mpsc::UnboundedSender<TransactionStatus>>>,
 }
 
 impl TransactionService {
@@ -65,6 +77,7 @@ impl TransactionService {
             command_rx,
             pending_transactions: Default::default(),
             statuses: HashMap::new(),
+            subscriptions: Default::default(),
         };
 
         (this, TransactionServiceHandle { command_tx })
@@ -97,14 +110,26 @@ impl Future for TransactionService {
                 TransactionServiceMessage::GetStatus(id, tx) => {
                     let _ = tx.send(this.statuses.get(&id).copied());
                 }
+                TransactionServiceMessage::SubscribeStatus(id, tx) => {
+                    if let Some(status) = this.statuses.get(&id) {
+                        let _ = tx.send(*status);
+                    }
+                    this.subscriptions.entry(id).or_default().push(tx);
+                }
             }
         }
 
         this.pending_transactions.retain(|id, rx| {
             while let Poll::Ready(status_opt) = rx.poll_recv(cx) {
                 if let Some(status) = status_opt {
+                    if let Some(txs) = this.subscriptions.get(id) {
+                        for tx in txs {
+                            let _ = tx.send(status);
+                        }
+                    }
                     this.statuses.insert(*id, status);
                 } else {
+                    this.subscriptions.remove(id);
                     return false;
                 }
             }

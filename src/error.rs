@@ -150,6 +150,13 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     }
 }
 
+impl SendActionError {
+    /// Create an internal error.
+    pub fn internal<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
+        Self::InternalError(err.into())
+    }
+}
+
 /// Price oracle related errors
 #[derive(Debug, thiserror::Error)]
 pub enum PriceOracleError {

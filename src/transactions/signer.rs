@@ -248,7 +248,10 @@ impl Signer {
         tx: RelayTransaction,
         mut status_tx: mpsc::UnboundedSender<TransactionStatus>,
     ) -> Result<(), SignerError> {
-        let tx = self.validate_transaction(tx).await?;
+        let Ok(tx) = self.validate_transaction(tx).await else {
+            let _ = status_tx.send(TransactionStatus::Failed);
+            return Ok(());
+        };
 
         // Choose nonce for the transaction.
         let nonce = {
@@ -261,16 +264,17 @@ impl Signer {
         let Ok(mut sent) = self.send_transaction(tx.build(nonce)).await else {
             let _ = status_tx.send(TransactionStatus::Failed);
 
-            let mut lock = self.nonce.lock().await;
-            if *lock == nonce + 1 {
-                // If no other transaction occupied the next nonce, we can just re-use it next time.
-                *lock = nonce;
-                return Ok(());
-            } else {
-                // Otherwise, we need to close the nonce gap.
-                drop(lock);
-                return self.close_nonce_gap(nonce).await;
+            // If no other transaction occupied the next nonce, we can just reset it.
+            {
+                let mut lock = self.nonce.lock().await;
+                if *lock == nonce + 1 {
+                    *lock = nonce;
+                    return Ok(());
+                }
             }
+
+            // Otherwise, we need to close the nonce gap.
+            return self.close_nonce_gap(nonce).await;
         };
         let _ = status_tx.send(TransactionStatus::Pending(*sent.tx_hash()));
 

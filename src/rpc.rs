@@ -37,7 +37,7 @@ use crate::{
     price::PriceOracle,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
-    transactions::RelayTransaction,
+    transactions::{RelayTransaction, TransactionStatus},
     types::{
         Account, Action, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
@@ -393,7 +393,21 @@ impl RelayApiServer for Relay {
         let id = tx.id;
         transactions.send_transaction(tx);
 
-        Ok(id)
+        // Wait for the transaction hash.
+        // TODO: get rid of it and use wallet_getCallsStatus instead. This might not work well if we
+        // resubmit transaction with a higher fee.
+        let mut rx = transactions.subscribe_status(id);
+        while let Some(status) = rx.recv().await {
+            match status {
+                TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
+                    return Ok(hash);
+                }
+                TransactionStatus::InFlight => continue,
+                TransactionStatus::Failed => break,
+            }
+        }
+
+        return Err(SendActionError::InternalError(eyre::eyre!("Transaction failed")).into());
     }
 
     async fn create_account(
