@@ -403,7 +403,7 @@ impl RelayApiServer for Relay {
                     return Ok(hash);
                 }
                 TransactionStatus::InFlight => continue,
-                TransactionStatus::Failed => break,
+                TransactionStatus::Failed(err) => return Err(SendActionError::internal(err).into()),
             }
         }
 
@@ -647,9 +647,9 @@ impl RelayApiServer for Relay {
 
     async fn send_prepared_calls(
         &self,
-        request: SendPreparedCallsParameters,
+        mut request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
-        let mut op = request.context.ty().op.clone();
+        let op = &mut request.context.ty_mut().op;
 
         // Fill UserOp with the user signature.
         op.signature = request.signature.value;
@@ -672,7 +672,7 @@ impl RelayApiServer for Relay {
         // Broadcast transaction with UserOp
         let tx_hash = self
             .send_action(
-                Action { op, chain_id: request.context.ty().chain_id },
+                Action { op: op.clone(), chain_id: request.context.ty().chain_id },
                 request.context,
                 authorization,
             )
@@ -692,10 +692,8 @@ impl RelayApiServer for Relay {
 
     async fn upgrade_account(
         &self,
-        request: UpgradeAccountParameters,
+        mut request: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse> {
-        let mut op = request.context.ty().op.clone();
-
         // Ensure that we have a signed delegation and its address matches the quote's.
         if request.context.ty().authorization_address != Some(request.authorization.address) {
             return Err(UpgradeAccountError::InvalidAuthAddress {
@@ -705,13 +703,15 @@ impl RelayApiServer for Relay {
             .into());
         }
 
+        let op = &mut request.context.ty_mut().op;
+
         // Fill UserOp with the user signature.
         op.signature = request.signature.as_bytes().into();
 
         // Broadcast transaction with UserOp
         let tx_hash = self
             .send_action(
-                Action { op, chain_id: request.context.ty().chain_id },
+                Action { op: op.clone(), chain_id: request.context.ty().chain_id },
                 request.context,
                 Some(request.authorization),
             )

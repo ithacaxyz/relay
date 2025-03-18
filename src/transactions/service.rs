@@ -108,11 +108,11 @@ impl Future for TransactionService {
                     this.send_transaction(*tx);
                 }
                 TransactionServiceMessage::GetStatus(id, tx) => {
-                    let _ = tx.send(this.statuses.get(&id).copied());
+                    let _ = tx.send(this.statuses.get(&id).cloned());
                 }
                 TransactionServiceMessage::SubscribeStatus(id, tx) => {
                     if let Some(status) = this.statuses.get(&id) {
-                        let _ = tx.send(*status);
+                        let _ = tx.send(status.clone());
                     }
                     this.subscriptions.entry(id).or_default().push(tx);
                 }
@@ -124,7 +124,7 @@ impl Future for TransactionService {
                 if let Some(status) = status_opt {
                     if let Some(txs) = this.subscriptions.get(id) {
                         for tx in txs {
-                            let _ = tx.send(status);
+                            let _ = tx.send(status.clone());
                         }
                     }
                     this.statuses.insert(*id, status);

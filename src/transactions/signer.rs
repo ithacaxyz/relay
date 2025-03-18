@@ -132,6 +132,7 @@ impl Signer {
         let mut request: TransactionRequest = tx.build(0).into();
         // Unset nonce to avoid race condition.
         request.nonce = None;
+        request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
         self.provider
@@ -248,9 +249,12 @@ impl Signer {
         tx: RelayTransaction,
         mut status_tx: mpsc::UnboundedSender<TransactionStatus>,
     ) -> Result<(), SignerError> {
-        let Ok(tx) = self.validate_transaction(tx).await else {
-            let _ = status_tx.send(TransactionStatus::Failed);
-            return Ok(());
+        let tx = match self.validate_transaction(tx).await {
+            Ok(tx) => tx,
+            Err(err) => {
+                let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
+                return Ok(());
+            }
         };
 
         // Choose nonce for the transaction.
@@ -261,25 +265,28 @@ impl Signer {
             current_nonce
         };
 
-        let Ok(mut sent) = self.send_transaction(tx.build(nonce)).await else {
-            let _ = status_tx.send(TransactionStatus::Failed);
+        let mut sent = match self.send_transaction(tx.build(nonce)).await {
+            Ok(sent) => sent,
+            Err(err) => {
+                let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
 
-            // If no other transaction occupied the next nonce, we can just reset it.
-            {
-                let mut lock = self.nonce.lock().await;
-                if *lock == nonce + 1 {
-                    *lock = nonce;
-                    return Ok(());
+                // If no other transaction occupied the next nonce, we can just reset it.
+                {
+                    let mut lock = self.nonce.lock().await;
+                    if *lock == nonce + 1 {
+                        *lock = nonce;
+                        return Ok(());
+                    }
                 }
-            }
 
-            // Otherwise, we need to close the nonce gap.
-            return self.close_nonce_gap(nonce).await;
+                // Otherwise, we need to close the nonce gap.
+                return self.close_nonce_gap(nonce).await;
+            }
         };
         let _ = status_tx.send(TransactionStatus::Pending(*sent.tx_hash()));
 
-        if self.watch_transaction(&mut sent, &mut status_tx).await.is_err() {
-            let _ = status_tx.send(TransactionStatus::Failed);
+        if let Err(err) = self.watch_transaction(&mut sent, &mut status_tx).await {
+            let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
             return self.close_nonce_gap(nonce).await;
         }
 
@@ -326,7 +333,7 @@ impl Signer {
     }
 
     /// Converts [`Signer`] into a future.
-    pub async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
+    async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
         let mut pending = FuturesUnordered::new();
 
         loop {
@@ -338,7 +345,7 @@ impl Signer {
                         }
                     }
                 },
-                _ = pending.next() => {}
+                Some(_) = pending.next() => {}
             }
         }
     }

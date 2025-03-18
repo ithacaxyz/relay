@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
     consensus::{TxEip1559, TxEip7702, TypedTransaction},
@@ -73,7 +75,7 @@ impl RelayTransaction {
 }
 
 /// Status of a transaction.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub enum TransactionStatus {
     /// Transaction is being broadcasted.
     #[default]
@@ -83,5 +85,5 @@ pub enum TransactionStatus {
     /// Transaction has been confirmed.
     Confirmed(B256),
     /// Failed to broadcast the transaction.
-    Failed,
+    Failed(Arc<dyn std::error::Error + Send + Sync>),
 }
