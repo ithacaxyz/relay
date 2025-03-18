@@ -1,3 +1,5 @@
+use crate::types::rpc::BundleId;
+
 use super::{
     SignerHandle,
     signer::Signer,
@@ -59,13 +61,13 @@ pub struct TransactionService {
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
 
     /// Pending transactions that are being handled by signer.
-    pending_transactions: HashMap<B256, mpsc::UnboundedReceiver<TransactionStatus>>,
+    pending_transactions: HashMap<BundleId, mpsc::UnboundedReceiver<TransactionStatus>>,
 
     /// [`RelayTransaction::id`] -> [`TransactionStatus`] mapping.
-    statuses: HashMap<B256, TransactionStatus>,
+    statuses: HashMap<BundleId, TransactionStatus>,
 
     /// Subscriptions to transaction status updates.
-    subscriptions: HashMap<B256, Vec<mpsc::UnboundedSender<TransactionStatus>>>,
+    subscriptions: HashMap<BundleId, Vec<mpsc::UnboundedSender<TransactionStatus>>>,
 }
 
 impl TransactionService {

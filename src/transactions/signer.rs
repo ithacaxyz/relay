@@ -103,6 +103,7 @@ impl Signer {
             provider.get_block(BlockId::latest())
         )?;
 
+        // Heuristically estimate the block time.
         let block_time = {
             let latest = latest.ok_or(RpcError::NullResp)?;
             let length = 1000.min(latest.header.number - 1);
@@ -111,7 +112,9 @@ impl Signer {
                 .await?
                 .ok_or(RpcError::NullResp)?;
 
-            Duration::from_millis(1000 * latest.header.timestamp - start.header.timestamp / length)
+            Duration::from_millis(
+                1000 * (latest.header.timestamp - start.header.timestamp) / length,
+            )
         };
 
         Ok(Self { provider, wallet, chain_id, block_time, nonce: Arc::new(Mutex::new(nonce)) })
