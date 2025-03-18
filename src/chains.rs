@@ -6,33 +6,51 @@ use alloy::{
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
 
+use crate::{
+    signers::DynSigner,
+    transactions::{Signer, TransactionService, TransactionServiceHandle},
+};
+
+/// A single supported chain.
+#[derive(Debug, Clone)]
+pub struct Chain {
+    /// Provider for the chain.
+    pub provider: DynProvider,
+    /// Handle to the transaction service.
+    pub transactions: TransactionServiceHandle,
+}
+
 /// A collection of providers for different chains.
 pub struct Chains {
     /// The providers for each chain.
-    providers: HashMap<ChainId, DynProvider>,
+    chains: HashMap<ChainId, Chain>,
 }
 
 impl Chains {
     /// Creates a new instance of [`Chains`].
-    pub async fn new(providers: Vec<DynProvider>) -> TransportResult<Self> {
-        let providers = HashMap::from_iter(
-            futures_util::future::try_join_all(providers.into_iter().map(|provider| async move {
-                Ok::<_, RpcError<TransportErrorKind>>((provider.get_chain_id().await?, provider))
+    pub async fn new(providers: Vec<DynProvider>, tx_signer: DynSigner) -> TransportResult<Self> {
+        let chains = HashMap::from_iter(
+            futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
+                let signer = Signer::new(provider.clone(), tx_signer.clone()).await?;
+                let transactions = TransactionService::spawn(signer);
+
+                let chain_id = provider.get_chain_id().await?;
+                Ok::<_, RpcError<TransportErrorKind>>((chain_id, Chain { provider, transactions }))
             }))
             .await?,
         );
 
-        Ok(Self { providers })
+        Ok(Self { chains })
     }
 
     /// Get a provider for a given chain ID.
-    pub fn get(&self, chain_id: ChainId) -> Option<DynProvider> {
-        self.providers.get(&chain_id).cloned()
+    pub fn get(&self, chain_id: ChainId) -> Option<Chain> {
+        self.chains.get(&chain_id).cloned()
     }
 }
 
 impl std::fmt::Debug for Chains {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Chains").field("providers", &self.providers.keys()).finish()
+        f.debug_struct("Chains").field("providers", &self.chains.keys()).finish()
     }
 }
