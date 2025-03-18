@@ -116,4 +116,4 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 
 ## Deploying
 
-A docker image is built and pushed to AWS ECR when a git tag (`vx.y.z`) is pushed to the repository. The image triggers an AWS AppRunner deployment.
+A docker image is built and pushed to GitHub Packages (`ghcr.io/ithacaxyz/relay`) when a git tag (`vx.y.z`) is pushed to the repository. The image triggers an Argo CD Image Updater deployment.
