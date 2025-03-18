@@ -37,8 +37,10 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Call, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, KeyWith712Signer,
-        PartialAction, PartialUserOp, Signature, SignedQuote, U40, UserOp, WebAuthnP256,
+        Action, Call, Delegation, ENTRYPOINT_NO_ERROR, Entry,
+        EntryPoint::UserOpExecuted,
+        Key, KeyType, KeyWith712Signer, PartialAction, PartialUserOp, Signature, SignedQuote, U40,
+        UserOp, WebAuthnP256,
         rpc::{
             AuthorizeKey, CreateAccountCapabilities, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters,
@@ -154,18 +156,16 @@ async fn check_bundle(
             }
 
             // UserOp has succeeded if the nonce has been invalidated.
-            let (seq, err) = Entry::new(env.entrypoint, env.provider.clone())
-                .nonce_status(env.eoa.address(), op_nonce)
-                .await?;
-            let nonce_invalidated = seq > (U256::from(op_nonce >> 192).to());
-            let op_success = err == ENTRYPOINT_NO_ERROR;
-            if nonce_invalidated && op_success {
-                if tx.expected.failed_user_op() {
-                    return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
-                }
-            } else if !tx.expected.failed_user_op() {
+            let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
+                event.incremented && event.err == ENTRYPOINT_NO_ERROR
+            } else {
+                false
+            };
+            if success && tx.expected.failed_user_op() {
+                return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
+            } else if !success && !tx.expected.failed_user_op() {
                 return Err(eyre::eyre!(
-                    "Transaction succeeded but UserOp failed for transaction {tx_num}: {err}",
+                    "Transaction succeeded but UserOp failed for transaction {tx_num}",
                 ));
             }
         }
