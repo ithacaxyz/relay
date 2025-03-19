@@ -285,7 +285,7 @@ impl Signer {
 
                 tx.sent = self.send_transaction(typed).await?;
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
-                self.storage.write_pending_transaction(&tx).await?;
+                self.storage.write_pending_transaction(tx).await?;
             } else if !self
                 .provider
                 .get_transaction_by_hash(tx.tx_hash())
