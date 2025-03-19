@@ -2,7 +2,9 @@
 
 mod api;
 pub use api::StorageApi;
+
 mod memory;
+mod pg;
 
 use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
@@ -10,6 +12,7 @@ use crate::{
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
+use sqlx::PgPool;
 use std::sync::Arc;
 
 /// Relay storage interface.
@@ -19,9 +22,14 @@ pub struct RelayStorage {
 }
 
 impl RelayStorage {
-    /// Create [`RelayStorage`] with a in-memory backend. Used for testing only.
+    /// Create [`RelayStorage`] with a in-memory backend.
     pub fn in_memory() -> Self {
         Self { inner: Arc::new(memory::InMemoryStorage::default()) }
+    }
+
+    /// Create a [`RelayStorage`] with a PostgreSQL backend.
+    pub fn pg(pool: PgPool) -> Self {
+        Self { inner: Arc::new(pg::PgStorage::new(pool)) }
     }
 }
 
@@ -35,7 +43,7 @@ impl StorageApi for RelayStorage {
         self.inner.write_prep(account).await
     }
 
-    async fn read_accounts_from_id(&self, id: &KeyID) -> api::Result<Option<Vec<Address>>> {
+    async fn read_accounts_from_id(&self, id: &KeyID) -> api::Result<Vec<Address>> {
         self.inner.read_accounts_from_id(id).await
     }
 

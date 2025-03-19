@@ -5,7 +5,9 @@ use alloy::{
     primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
     sol_types::{SolCall, SolValue},
 };
-use std::{sync::Arc, time::Instant};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 wrap_fixed_bytes! {
     /// An id of the transaction being handled by the relay.
@@ -18,7 +20,7 @@ wrap_fixed_bytes! {
 }
 
 /// Transaction type used by relay.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayTransaction {
     /// Id of the transaction.
     pub id: TxId,
@@ -114,7 +116,7 @@ pub struct PendingTransaction {
     /// Signer that signed the transaction.
     pub signer: Address,
     /// Time at which we've received this transaction.
-    pub received_at: Instant,
+    pub received_at: DateTime<Utc>,
 }
 
 impl PendingTransaction {

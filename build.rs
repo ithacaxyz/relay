@@ -5,6 +5,14 @@ use vergen::{BuildBuilder, CargoBuilder, Emitter};
 use vergen_git2::Git2Builder;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // In some cases when making changes to embedded migrations, such as adding a new migration
+    // without changing any Rust source files, `cargo build` doesn't do anything.
+    //
+    // This is because the ability to tell the compiler to watch external changes from a proc macro
+    // is very limited.
+    println!("cargo:rerun-if-changed=migrations");
+
+    // Vergen stuff
     let build = BuildBuilder::default().build_timestamp(true).build()?;
     let cargo = CargoBuilder::default().features(true).target_triple(true).build()?;
     let gitcl =

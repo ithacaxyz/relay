@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update txs set status = $1 where tx_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "tx_status",
+            "kind": {
+              "Enum": [
+                "inflight",
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3dfb6b5e67050d361d40444031b247d9ad67ce219fa241e614f3ac15e39afc9"
+}

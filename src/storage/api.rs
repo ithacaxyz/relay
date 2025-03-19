@@ -22,7 +22,7 @@ pub trait StorageApi: Debug + Send + Sync {
     async fn write_prep(&self, account: CreatableAccount) -> Result<()>;
 
     /// Reads all account addresses associated with a ID.
-    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Option<Vec<Address>>>;
+    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>>;
 
     /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;

@@ -20,6 +20,7 @@ use jsonrpsee::server::{
     RpcServiceBuilder, Server, ServerHandle, middleware::http::ProxyGetRequestLayer,
 };
 use metrics_exporter_prometheus::PrometheusHandle;
+use sqlx::PgPool;
 use std::{path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
@@ -68,6 +69,16 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
 pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<RelayHandle> {
     let registry = Arc::new(registry);
 
+    // construct db
+    let storage = if let Some(db_url) = config.database_url {
+        let pool = PgPool::connect(&db_url).await?;
+        sqlx::migrate!().run(&pool).await?;
+
+        RelayStorage::pg(pool)
+    } else {
+        RelayStorage::in_memory()
+    };
+
     // construct provider
     let signers = futures_util::future::try_join_all(
         config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)),
@@ -105,7 +116,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let storage = RelayStorage::in_memory();
     let chains = Chains::new(providers.clone(), signers, storage.clone()).await?;
 
     // todo: avoid all this darn cloning

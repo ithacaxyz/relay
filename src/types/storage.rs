@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use crate::types::{KeyHashWithID, PREPAccount};
 
 /// CreateAccount request that can be reused across chains.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatableAccount {
     /// PREP account.
     pub prep: PREPAccount,
