@@ -169,13 +169,13 @@ impl<P: Provider> Account<P> {
     /// Returns a list of all permissions for the given key set.
     pub async fn permissions(
         &self,
-        key_hashes: Vec<B256>,
+        key_hashes: impl Iterator<Item = B256>,
     ) -> TransportResult<Vec<(Vec<SpendPermission>, Vec<CallPermission>)>> {
         debug!(eoa = %self.delegation.address(), "Fetching permissions");
 
         let permissions = self
             .delegation
-            .spendAndExecuteInfos(key_hashes)
+            .spendAndExecuteInfos(key_hashes.collect())
             .call()
             .overrides(self.overrides.clone())
             .await

@@ -1,7 +1,7 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
     U40,
-    rpc::AuthorizeKey,
+    rpc::{AuthorizeKey, Permission},
 };
 use alloy::{
     dyn_abi::Eip712Domain,
@@ -303,6 +303,11 @@ impl KeyWith712Signer {
     /// Returns a [`AuthorizeKey`] equivalent.
     pub fn to_authorized(&self) -> AuthorizeKey {
         AuthorizeKey { key: self.key.clone(), permissions: vec![] }
+    }
+
+    /// Returns a [`AuthorizeKey`] equivalent.
+    pub fn to_permissioned_authorized(&self, permissions: Vec<Permission>) -> AuthorizeKey {
+        AuthorizeKey { key: self.key.clone(), permissions }
     }
 }
 

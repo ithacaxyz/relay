@@ -26,7 +26,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use std::{sync::Arc, time::SystemTime};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 use tracing::{debug, error};
 
 use crate::{
@@ -42,11 +42,12 @@ use crate::{
         Account, Action, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
-            AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
+            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
             CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
-            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
-            SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
+            Permission, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
+            UpgradeAccountResponse,
         },
     },
 };
@@ -451,11 +452,44 @@ impl RelayApiServer for Relay {
         })
     }
 
-    async fn get_keys(
-        &self,
-        _parameters: GetKeysParameters,
-    ) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        todo!()
+    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
+        let account = Account::new(
+            request.address,
+            self.inner
+                .chains
+                .get(request.chain_id)
+                .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+                .provider,
+        );
+
+        // Get all keys from account
+        let keys = account.keys().await.map_err(EstimateFeeError::from)?; // todo error handling
+
+        // Get all permissions from non admin keys
+        let non_admin_keys =
+            keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash);
+
+        let mut permissions = non_admin_keys
+            .clone()
+            .zip(account.permissions(non_admin_keys).await.map_err(EstimateFeeError::from)?) // todo error handling
+            .collect::<HashMap<_, _>>();
+
+        Ok(keys
+            .into_iter()
+            .map(|(hash, key)| {
+                let permissions = if let Some((spends, executes)) = permissions.remove(&hash) {
+                    spends
+                        .into_iter()
+                        .map(Permission::Spend)
+                        .chain(executes.into_iter().map(Permission::Call))
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                AuthorizeKeyResponse { hash, authorize_key: AuthorizeKey { key, permissions } }
+            })
+            .collect())
     }
 
     async fn prepare_calls(
