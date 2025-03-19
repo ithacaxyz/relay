@@ -1,7 +1,6 @@
-use alloy::primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::types::Delegation::SpendPeriod;
+use crate::types::{CallPermission, Delegation::SpendPermission};
 
 /// Represents key permissions.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -15,33 +14,10 @@ pub enum Permission {
     Spend(SpendPermission),
 }
 
-/// Represents call permissions.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CallPermission {
-    /// The selector of the function this permission applies to.
-    #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]
-    pub selector: FixedBytes<4>,
-    /// The address of the contract this permission applies to.
-    pub to: Address,
-}
-
-/// Represents spend permissions.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SpendPermission {
-    /// The spending limit.
-    pub limit: U256,
-    /// The spending period.
-    pub period: SpendPeriod,
-    /// The token address.
-    #[serde(default)]
-    pub token: Address,
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::types::CallPermission;
     use alloy::primitives::{Address, fixed_bytes};
-
-    use crate::types::rpc::CallPermission;
 
     #[test]
     fn deserialize_call_permission() {

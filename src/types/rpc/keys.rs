@@ -91,13 +91,10 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        Call,
-        Delegation::SpendPeriod,
+        Call, CallPermission,
+        Delegation::{SpendPeriod, SpendPermission},
         Key, KeyType, U40,
-        rpc::{
-            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Permission, RevokeKey,
-            SpendPermission,
-        },
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey},
     };
 
     #[test]
@@ -120,6 +117,10 @@ mod tests {
                     limit: U256::from(1000),
                     period: SpendPeriod::Day,
                     token: Address::ZERO,
+                    spent: U256::ZERO,
+                    lastUpdated: U256::ZERO,
+                    currentSpent: U256::ZERO,
+                    current: U256::ZERO,
                 }),
             ],
         };
@@ -168,6 +169,10 @@ mod tests {
                     limit: U256::from(1000),
                     period: SpendPeriod::Day,
                     token: Address::ZERO,
+                    spent: U256::ZERO,
+                    lastUpdated: U256::ZERO,
+                    currentSpent: U256::ZERO,
+                    current: U256::ZERO,
                 }),
             ],
         };

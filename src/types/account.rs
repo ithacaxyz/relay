@@ -1,12 +1,14 @@
-use super::Call;
-use Delegation::DelegationInstance;
+use crate::types::IDelegation;
+
+use super::{Call, Key};
+use Delegation::{DelegationInstance, SpendPermission};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
+    primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256},
     providers::Provider,
-    rpc::types::{Authorization, state::StateOverride},
+    rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
-    sol_types::{SolStruct, SolValue},
+    sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
 use serde::{Deserialize, Serialize};
@@ -35,6 +37,28 @@ sol! {
             Year
         }
 
+
+        /// Information about a spend.
+        /// All timestamp related values are Unix timestamps in seconds.
+        #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+        struct SpendPermission {
+            /// Address of the token. `address(0)` denotes native token.
+            #[serde(default)]
+            address token;
+            /// The type of period.
+            SpendPeriod period;
+            /// The maximum spend limit for the period.
+            uint256 limit;
+            /// The amount spent in the last updated period.
+            uint256 spent;
+            /// The start of the last updated period.
+            uint256 lastUpdated;
+            /// The amount spent in the current period.
+            uint256 currentSpent;
+            /// The start of the current period.
+            uint256 current;
+        }
+
         /// Set a limited amount of `token` that `keyHash` can spend per `period`.
         function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)
             public
@@ -51,7 +75,24 @@ sol! {
 
         /// Sets the ability of a key hash to execute a call with a function selector.
         function setCanExecute(bytes32 keyHash, address target, bytes4 fnSel, bool can);
+
+        /// Returns spend and execute infos for each provided key hash in the same order.
+        ///
+        /// canExecute elements are packed as (`target`, `fnSel`):
+        /// - `target` is in the upper 20 bytes.
+        /// - `fnSel` is in the lower 4 bytes.
+        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendPermission[][] memory spend, bytes32[][] memory canExecute);
     }
+}
+
+/// Represents a granted allowance to execute a specific function on a target contract.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CallPermission {
+    /// The target contract's address.
+    pub to: Address,
+    /// The 4-byte selector of the allowed function.
+    #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]
+    pub selector: FixedBytes<4>,
 }
 
 /// A Porto account.
@@ -93,6 +134,70 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(entrypoint.ENTRY_POINT)
+    }
+
+    /// Returns a list of all non expired keys as (KeyHash, Key) tuples.
+    pub async fn keys(&self) -> TransportResult<Vec<(B256, Key)>> {
+        debug!(eoa = %self.delegation.address(), "Fetching keys");
+
+        let keys = self
+            .delegation
+            .provider()
+            .call(TransactionRequest {
+                to: Some((*self.delegation.address()).into()),
+                input: IDelegation::getKeysCall::SELECTOR.to_vec().into(),
+                ..Default::default()
+            })
+            .overrides(self.overrides.clone())
+            .await
+            .and_then(|r| {
+                IDelegation::getKeysCall::abi_decode_returns(&r, true)
+                    .map_err(TransportErrorKind::custom)
+            })?;
+
+        let keys = keys.keyHashes.into_iter().zip(keys.keys).collect();
+
+        debug!(
+            eoa = %self.delegation.address(),
+            keys = ?keys,
+            "Fetched keys"
+        );
+
+        Ok(keys)
+    }
+
+    /// Returns a list of all permissions for the given key set.
+    pub async fn permissions(
+        &self,
+        key_hashes: Vec<B256>,
+    ) -> TransportResult<Vec<(Vec<SpendPermission>, Vec<CallPermission>)>> {
+        debug!(eoa = %self.delegation.address(), "Fetching permissions");
+
+        let permissions = self
+            .delegation
+            .spendAndExecuteInfos(key_hashes)
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok(permissions
+            .spend
+            .into_iter()
+            .zip(permissions.canExecute)
+            .map(|(spends, executes)| {
+                (
+                    spends,
+                    executes
+                        .into_iter()
+                        .map(|data| CallPermission {
+                            to: Address::from_slice(&data[12..]),
+                            selector: FixedBytes::from_slice(&data[..4]),
+                        })
+                        .collect(),
+                )
+            })
+            .collect())
     }
 }
 

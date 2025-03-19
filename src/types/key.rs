@@ -78,6 +78,9 @@ sol! {
 
         /// Revokes the key.
         function revoke(bytes32 keyHash) public virtual onlyThis;
+
+        /// Returns arrays of all (non-expired) authorized keys and their hashes.
+        function getKeys() returns (Key[] memory keys, bytes32[] memory keyHashes);
     }
 }
 
