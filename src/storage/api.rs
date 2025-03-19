@@ -5,7 +5,7 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus},
     types::{PREPAccount, rpc::BundleId},
 };
-use alloy::primitives::{Address, B256};
+use alloy::primitives::Address;
 use async_trait::async_trait;
 use std::fmt::Debug;
 
