@@ -83,14 +83,16 @@ pub async fn try_spawn(
         );
     }
 
+    let storage = RelayStorage::in_memory();
+
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
-        Chains::new(providers.clone(), signer).await?,
+        Chains::new(providers.clone(), signer, storage.clone()).await?,
         quote_signer,
         config.quote,
         price_oracle,
         FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
-        RelayStorage::in_memory(),
+        storage.clone(),
     )
     .into_rpc();
 

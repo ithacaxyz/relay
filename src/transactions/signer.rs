@@ -1,7 +1,8 @@
-use super::transaction::{RelayTransaction, TransactionStatus};
+use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus};
 use crate::{
     signers::DynSigner,
-    types::{ENTRYPOINT_NO_ERROR, EntryPoint},
+    storage::{RelayStorage, StorageApi, StorageError},
+    types::{ENTRYPOINT_NO_ERROR, EntryPoint, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
@@ -20,7 +21,12 @@ use alloy::{
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{sync::Arc, time::Duration};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -50,6 +56,10 @@ pub enum SignerError {
     #[error(transparent)]
     Rpc(#[from] RpcError<TransportErrorKind>),
 
+    /// Storage error.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+
     /// Other errors.
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -68,12 +78,14 @@ impl From<PendingTransactionError> for SignerError {
 #[derive(Debug, Clone)]
 pub enum SignerMessage {
     /// Message to send a transaction.
-    SendTransaction {
-        /// The transaction to send.
-        tx: RelayTransaction,
-        /// A channel to send transaction status updates to.
-        status_tx: mpsc::UnboundedSender<TransactionStatus>,
-    },
+    SendTransaction(RelayTransaction),
+}
+
+/// Event emitted by the [`Signer`].
+#[derive(Debug)]
+pub enum SignerEvent {
+    /// Status update for a transaction.
+    TransactionStatus(BundleId, TransactionStatus),
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -89,11 +101,19 @@ pub struct Signer {
     block_time: Duration,
     /// Nonce of thes signer.
     nonce: Arc<Mutex<u64>>,
+    /// Channel to send signer events to.
+    events_tx: mpsc::UnboundedSender<SignerEvent>,
+    /// Underlying storage.
+    storage: RelayStorage,
 }
 
 impl Signer {
     /// Creates a new [`Signer`].
-    pub async fn new(provider: DynProvider, signer: DynSigner) -> TransportResult<Self> {
+    pub async fn spawn(
+        provider: DynProvider,
+        signer: DynSigner,
+        storage: RelayStorage,
+    ) -> TransportResult<SignerHandle> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
 
@@ -117,12 +137,45 @@ impl Signer {
             )
         };
 
-        Ok(Self { provider, wallet, chain_id, block_time, nonce: Arc::new(Mutex::new(nonce)) })
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+        let this = Self {
+            provider,
+            wallet,
+            chain_id,
+            block_time,
+            nonce: Arc::new(Mutex::new(nonce)),
+            events_tx,
+            storage,
+        };
+
+        let loaded_transactions = this
+            .storage
+            .read_pending_transactions(this.address(), this.chain_id)
+            .await
+            .expect("failed to read pending transactions");
+
+        tokio::spawn(this.into_future(command_rx, loaded_transactions));
+
+        Ok(SignerHandle { command_tx, events_rx })
     }
 
     /// Returns the signer address.
     pub fn address(&self) -> Address {
         NetworkWallet::<Ethereum>::default_signer_address(&self.wallet)
+    }
+
+    /// Sends a transaction status update.
+    async fn update_tx_status(
+        &self,
+        tx: BundleId,
+        status: TransactionStatus,
+    ) -> Result<(), StorageError> {
+        self.storage.write_transaction_status(tx, &status).await?;
+        let _ = self.events_tx.send(SignerEvent::TransactionStatus(tx, status));
+
+        Ok(())
     }
 
     async fn validate_transaction(
@@ -171,10 +224,9 @@ impl Signer {
     ///
     /// Receives a mutable reference to [`SentTransaction`] and might potentially modify it when
     /// bumping the fees.
-    async fn watch_transaction(
+    async fn watch_transaction_inner(
         &self,
-        pending: &mut TxEnvelope,
-        status_tx: &mut mpsc::UnboundedSender<TransactionStatus>,
+        tx: &mut PendingTransaction,
     ) -> Result<(), SignerError> {
         let mut retries = 0;
 
@@ -182,13 +234,14 @@ impl Signer {
             let handle = self
                 .provider
                 .watch_pending_transaction(
-                    PendingTransactionConfig::new(*pending.tx_hash())
+                    PendingTransactionConfig::new(tx.tx_hash())
                         .with_timeout(Some(self.block_time * 2)),
                 )
                 .await?;
 
             if handle.await.is_ok() {
-                let _ = status_tx.send(TransactionStatus::Confirmed(*pending.tx_hash()));
+                self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx.tx_hash())).await?;
+                self.storage.remove_pending_transaction(tx.id()).await?;
                 return Ok(());
             }
 
@@ -213,49 +266,59 @@ impl Signer {
             // TODO: figure out a more reasonable condition here or whether we should just always
             // set max_priority_fee = max_fee
             if fee_estimate.max_priority_fee_per_gas
-                > pending.max_priority_fee_per_gas().unwrap_or(pending.max_fee_per_gas()) * 11 / 10
+                > tx.sent.max_priority_fee_per_gas().unwrap_or(tx.sent.max_fee_per_gas()) * 11 / 10
             {
                 // Fees went up, assume we need to bump them
                 let new_tip_cap = fee_estimate.max_priority_fee_per_gas;
 
                 // Ensure we can afford the bump given the current base fee
-                if (pending.max_fee_per_gas() - last_base_fee) < new_tip_cap {
+                if (tx.sent.max_fee_per_gas() - last_base_fee) < new_tip_cap {
                     return Err(SignerError::FeesTooHigh);
                 }
 
-                let mut typed = TypedTransaction::from(pending.clone());
+                let mut typed = TypedTransaction::from(tx.sent.clone());
                 match &mut typed {
                     TypedTransaction::Eip1559(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
                     TypedTransaction::Eip7702(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
                     _ => {}
                 };
 
-                *pending = self.send_transaction(typed).await?;
-                let _ = status_tx.send(TransactionStatus::Pending(*pending.tx_hash()));
+                tx.sent = self.send_transaction(typed).await?;
+                self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
+                self.storage.write_pending_transaction(&tx).await?;
             } else if !self
                 .provider
-                .get_transaction_by_hash(*pending.tx_hash())
+                .get_transaction_by_hash(tx.tx_hash())
                 .await
                 .is_ok_and(|tx| tx.is_some())
             {
                 // The transaction was dropped, try to rebroadcast it.
-                let _ = self.provider.send_raw_transaction(&pending.encoded_2718()).await?;
+                let _ = self.provider.send_raw_transaction(&tx.sent.encoded_2718()).await?;
                 retries += 1;
             }
         }
     }
 
+    /// Awaits the given [`PendingTransaction`] and watches it for status updates.
+    async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
+        if let Err(err) = self.watch_transaction_inner(&mut tx).await {
+            self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
+            self.storage.remove_pending_transaction(tx.tx.id).await?;
+            return self.close_nonce_gap(tx.sent.nonce()).await;
+        }
+
+        Ok(())
+    }
+
     /// Broadcasts a given transaction and waits for it to be confirmed, notifying `status_tx` on
     /// each status update.
-    async fn send_and_watch_transaction(
-        &self,
-        tx: RelayTransaction,
-        mut status_tx: mpsc::UnboundedSender<TransactionStatus>,
-    ) -> Result<(), SignerError> {
+    async fn send_and_watch_transaction(&self, tx: RelayTransaction) -> Result<(), SignerError> {
+        let tx_id = tx.id;
+
         let tx = match self.validate_transaction(tx).await {
             Ok(tx) => tx,
             Err(err) => {
-                let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
+                self.update_tx_status(tx_id, TransactionStatus::Failed(Arc::new(err))).await?;
                 return Ok(());
             }
         };
@@ -268,10 +331,10 @@ impl Signer {
             current_nonce
         };
 
-        let mut sent = match self.send_transaction(tx.build(nonce)).await {
+        let sent = match self.send_transaction(tx.build(nonce)).await {
             Ok(sent) => sent,
             Err(err) => {
-                let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
+                self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
 
                 // If no other transaction occupied the next nonce, we can just reset it.
                 {
@@ -286,14 +349,12 @@ impl Signer {
                 return self.close_nonce_gap(nonce).await;
             }
         };
-        let _ = status_tx.send(TransactionStatus::Pending(*sent.tx_hash()));
+        let tx = PendingTransaction { tx, sent, signer: self.address() };
 
-        if let Err(err) = self.watch_transaction(&mut sent, &mut status_tx).await {
-            let _ = status_tx.send(TransactionStatus::Failed(Arc::new(err)));
-            return self.close_nonce_gap(nonce).await;
-        }
+        self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
+        self.storage.write_pending_transaction(&tx).await?;
 
-        Ok(())
+        self.watch_transaction(tx).await
     }
 
     /// Closes the nonce gap by sending a dummy transaction to the signer.
@@ -328,23 +389,26 @@ impl Signer {
         Ok(())
     }
 
-    /// Spawns a new [`Signer`].
-    pub fn spawn(self) -> SignerHandle {
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        tokio::spawn(self.into_future(command_rx));
-        SignerHandle { command_tx }
-    }
-
     /// Converts [`Signer`] into a future.
-    async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
-        let mut pending = FuturesUnordered::new();
+    async fn into_future(
+        self,
+        mut command_rx: mpsc::UnboundedReceiver<SignerMessage>,
+        loaded_transactions: Vec<PendingTransaction>,
+    ) {
+        let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
+            FuturesUnordered::new();
+
+        // Watch pending transactions that were loaded from storage
+        for tx in loaded_transactions {
+            pending.push(Box::pin(self.watch_transaction(tx)));
+        }
 
         loop {
             tokio::select! {
                 command = command_rx.recv() => if let Some(command) = command {
                     match command {
-                        SignerMessage::SendTransaction { tx, status_tx } => {
-                            pending.push(self.send_and_watch_transaction(tx, status_tx))
+                        SignerMessage::SendTransaction(tx) => {
+                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
                         }
                     }
                 },
@@ -355,19 +419,20 @@ impl Signer {
 }
 
 /// Handle to interact with [`Signer`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SignerHandle {
     command_tx: mpsc::UnboundedSender<SignerMessage>,
+    events_rx: mpsc::UnboundedReceiver<SignerEvent>,
 }
 
 impl SignerHandle {
     /// Sends a [`SignerMessage::SendTransaction`] to the [`Signer`].
-    pub fn send_transaction(
-        &self,
-        tx: RelayTransaction,
-    ) -> mpsc::UnboundedReceiver<TransactionStatus> {
-        let (status_tx, status_rx) = mpsc::unbounded_channel();
-        let _ = self.command_tx.send(SignerMessage::SendTransaction { tx, status_tx });
-        status_rx
+    pub fn send_transaction(&self, tx: RelayTransaction) {
+        let _ = self.command_tx.send(SignerMessage::SendTransaction(tx));
+    }
+
+    /// Polls for a signer event.
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<SignerEvent>> {
+        self.events_rx.poll_recv(cx)
     }
 }

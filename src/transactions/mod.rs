@@ -5,4 +5,4 @@ pub use service::*;
 mod signer;
 pub use signer::*;
 mod transaction;
-pub use transaction::{RelayTransaction, TransactionStatus};
+pub use transaction::{PendingTransaction, RelayTransaction, TransactionStatus};
