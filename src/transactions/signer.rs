@@ -303,7 +303,7 @@ impl Signer {
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
         if let Err(err) = self.watch_transaction_inner(&mut tx).await {
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
-            self.storage.remove_pending_transaction(tx.tx.id).await?;
+            self.storage.remove_pending_transaction(tx.id()).await?;
             return self.close_nonce_gap(tx.sent.nonce()).await;
         }
 
