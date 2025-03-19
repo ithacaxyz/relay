@@ -27,7 +27,7 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Removes a pending transaction from storage.
     async fn remove_pending_transaction(&self, tx_id: BundleId) -> Result<()>;
 
-    /// Reads a pending transaction from storage.
+    /// Reads pending transactions for the given signer and chain id from storage.
     async fn read_pending_transactions(
         &self,
         signer: Address,
