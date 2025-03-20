@@ -14,7 +14,10 @@ use relay::{
         CallPermission,
         Delegation::{SpendInfo, SpendPeriod},
         KeyType, KeyWith712Signer,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, GetKeysParameters, Permission, SpendPermission},
+        rpc::{
+            AccountResponse, AuthorizeKey, AuthorizeKeyResponse, GetAccountsParameters,
+            GetKeysParameters, Permission, SpendPermission,
+        },
     },
 };
 
@@ -43,7 +46,28 @@ async fn register_id() -> eyre::Result<()> {
         // Ensure ID -> (KeyHash, Address[]) matches
         let (key_hash, addresses) = accounts.try_decode().unwrap();
         assert_eq!(key_hash, admin_key_hash);
-        assert_eq!(&addresses, &[account.prep.address])
+        assert_eq!(&addresses, &[account.prep.address]);
+
+        // wallet_getAccounts should return the address and authorized keys from this ID
+        let response = env
+            .relay_endpoint
+            .get_accounts(GetAccountsParameters {
+                id,
+                chain_id: env.chain_id,
+                registry: env.entrypoint,
+            })
+            .await?;
+
+        assert_eq!(
+            response,
+            vec![AccountResponse {
+                address: account.prep.address,
+                keys: vec![AuthorizeKeyResponse {
+                    hash: admin_key_hash,
+                    authorize_key: admin_key.to_authorized(),
+                }]
+            }]
+        )
     } else {
         unreachable!();
     }

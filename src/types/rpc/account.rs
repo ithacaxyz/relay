@@ -116,3 +116,23 @@ pub struct UpgradeAccountResponse {
     /// Call bundles that were executed.
     pub bundles: Vec<SendPreparedCallsResponse>,
 }
+
+/// Request parameters for `wallet_getAccounts`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAccountsParameters {
+    /// Key identifier.
+    pub id: Address,
+    /// Chain ID.
+    pub chain_id: ChainId,
+    /// Entrypoint or account registry address.
+    pub registry: Address,
+}
+
+/// A response item from `wallet_getAccounts`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountResponse {
+    /// Address of the account.
+    pub address: Address,
+    /// Authorized keys belonging to the account.
+    pub keys: Vec<AuthorizeKeyResponse>,
+}
