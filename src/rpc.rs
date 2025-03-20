@@ -8,6 +8,7 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
+use crate::types::AccountRegistry::AccountRegistryInstance;
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -20,8 +21,9 @@ use alloy::{
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
+    transports::TransportErrorKind,
 };
-use futures_util::TryFutureExt;
+use futures_util::{TryFutureExt, future::try_join_all};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -42,12 +44,12 @@ use crate::{
         Account, Action, CreatableAccount, Entry, FeeTokens, KeyType, KeyWith712Signer,
         PREPAccount, PartialAction, PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
-            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
-            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
-            PrepareCallsResponseCapabilities, PrepareCreateAccountParameters,
-            PrepareCreateAccountResponse, PrepareUpgradeAccountParameters,
-            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
-            UpgradeAccountResponse,
+            AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
+            CreateAccountParameters, GetAccountsParameters, GetKeysParameters,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
+            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
+            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
+            SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
         },
     },
 };
@@ -102,6 +104,13 @@ pub trait RelayApi {
     /// Initialize an account.
     #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
     async fn create_account(&self, parameters: CreateAccountParameters) -> RpcResult<()>;
+
+    /// Get all accounts from an ID.
+    #[method(name = "getAccounts", aliases = ["wallet_getAccounts"])]
+    async fn get_accounts(
+        &self,
+        parameters: GetAccountsParameters,
+    ) -> RpcResult<Vec<AccountResponse>>;
 
     /// Get all keys for an account.
     #[method(name = "getKeys", aliases = ["wallet_getKeys"])]
@@ -439,6 +448,36 @@ impl RelayApiServer for Relay {
 
         Ok(())
     }
+    async fn get_accounts(
+        &self,
+        request: GetAccountsParameters,
+    ) -> RpcResult<Vec<AccountResponse>> {
+        let provider = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
+            .provider;
+
+        let (_, addresses) = AccountRegistryInstance::new(request.registry, provider)
+            .idInfo(request.id)
+            .call()
+            .await
+            .map_err(TransportErrorKind::custom)
+            .map_err(EstimateFeeError::from)? // todo error handling
+            .try_decode()
+            .ok_or_else(|| from_eyre_error(eyre::eyre!("invalid registry key data")))?; // todo error handling squared
+
+        try_join_all(addresses.iter().map(async |addr| {
+            Ok(AccountResponse {
+                address: *addr,
+                keys: self
+                    .get_keys(GetKeysParameters { address: *addr, chain_id: request.chain_id })
+                    .await?,
+            })
+        }))
+        .await
+    }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
         let account = Account::new(
@@ -493,9 +532,6 @@ impl RelayApiServer for Relay {
         // todo: fetch them from somewhere.
         let revoke_keys = Vec::new();
 
-        // Merges authorize calls with requested ones.
-        let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
-
         // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
         // todo: pass key with permissions to estimate_fee instead of keyType
         let key = KeyType::WebAuthnP256;
@@ -522,6 +558,16 @@ impl RelayApiServer for Relay {
                 Ok(None)
             })
             .await?;
+
+        // Merges authorize, registry(from prepareAccount) and requested calls.
+        let all_calls = authorize_calls
+            .chain(maybe_prep.iter().flat_map(|acc| {
+                acc.id_signatures
+                    .iter()
+                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+            }))
+            .chain(request.calls)
+            .collect::<Vec<_>>();
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self

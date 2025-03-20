@@ -1,6 +1,6 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
-    U40,
+    Call, U40,
     rpc::{AuthorizeKey, Permission},
 };
 use IDelegation::getKeysReturn;
@@ -342,6 +342,13 @@ pub struct KeyHashWithID {
     pub hash: B256,
     /// Signature over the PREP account address.
     pub id_signature: Bytes,
+}
+
+impl KeyHashWithID {
+    /// Converts self to [`Call`] given a registry and PREP account address.
+    pub fn to_call(&self, registry: Address, account: Address) -> Call {
+        Call::register_account(registry, self.id_signature.clone(), self.hash.into(), account)
+    }
 }
 
 /// The offset for storage slots in the Porto delegation contract.

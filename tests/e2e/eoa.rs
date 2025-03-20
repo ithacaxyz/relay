@@ -1,6 +1,6 @@
 use alloy::{
     primitives::{Address, B256, U256, keccak256},
-    sol_types::SolCall,
+    sol_types::{SolCall, SolValue},
 };
 use relay::{
     signers::{DynSigner, Eip712PayLoadSigner},
@@ -37,22 +37,18 @@ impl EoaKind {
 
         let prep = PREPAccount::initialize(delegation, init_calls);
 
-        // todo: will change depending on the contracts
-        let hashed_address = keccak256(prep.address);
         let key_hash = admin_key.key_hash();
+        let hash = keccak256((key_hash.abi_encode(), prep.address).abi_encode_sequence());
 
-        let (id, signature) = match admin_key.keyType {
+        let signature = match admin_key.keyType {
             KeyType::P256 => {
                 panic!("P256 can only be a session key.")
             }
             KeyType::WebAuthnP256 => {
                 let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
-                (ephemeral.address(), ephemeral.sign_payload_hash(hashed_address).await?)
+                ephemeral.sign_payload_hash(hash).await?
             }
-            KeyType::Secp256k1 => (
-                Address::from_slice(&admin_key.publicKey[12..]),
-                admin_key.sign_payload_hash(hashed_address).await?,
-            ),
+            KeyType::Secp256k1 => admin_key.sign_payload_hash(hash).await?,
             _ => unreachable!(),
         };
 
