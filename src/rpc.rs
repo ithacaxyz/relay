@@ -26,7 +26,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
 use tracing::{debug, error};
 
 use crate::{
@@ -44,10 +44,9 @@ use crate::{
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
             CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
-            Permission, PrepareCallsParameters, PrepareCallsResponse,
-            PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
-            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
-            UpgradeAccountResponse,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
+            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
+            SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
         },
     },
 };
@@ -466,29 +465,19 @@ impl RelayApiServer for Relay {
         let keys = account.keys().await.map_err(EstimateFeeError::from)?; // todo error handling
 
         // Get all permissions from non admin keys
-        let non_admin_keys =
-            keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash);
-
-        let mut key_to_permissions = non_admin_keys
-            .clone()
-            .zip(account.permissions(non_admin_keys).await.map_err(EstimateFeeError::from)?) // todo error handling
-            .collect::<HashMap<_, _>>();
+        let mut permissioned_keys = account
+            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
+            .await
+            .map_err(EstimateFeeError::from)?; // todo error handling
 
         Ok(keys
             .into_iter()
-            .map(|(hash, key)| {
-                let permissions = key_to_permissions
-                    .remove(&hash)
-                    .map(|(spends, executes)| {
-                        spends
-                            .into_iter()
-                            .map(|permission| Permission::Spend(permission.into()))
-                            .chain(executes.into_iter().map(Permission::Call))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                AuthorizeKeyResponse { hash, authorize_key: AuthorizeKey { key, permissions } }
+            .map(|(hash, key)| AuthorizeKeyResponse {
+                hash,
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                },
             })
             .collect())
     }

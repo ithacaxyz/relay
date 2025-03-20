@@ -1,10 +1,9 @@
+use super::{Call, Key, rpc::Permission};
 use crate::types::IDelegation;
-
-use super::{Call, Key};
-use Delegation::{DelegationInstance, SpendInfo};
+use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256},
+    primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
     providers::Provider,
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
@@ -80,7 +79,29 @@ sol! {
         /// canExecute elements are packed as (`target`, `fnSel`):
         /// - `target` is in the upper 20 bytes.
         /// - `fnSel` is in the lower 4 bytes.
-        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory spend, bytes32[][] memory canExecute);
+        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
+    }
+}
+
+impl spendAndExecuteInfosReturn {
+    /// Converts [`spendAndExecuteInfosReturn`] into a list of [`Permission`] per key.
+    pub fn into_permissions(self) -> Vec<Vec<Permission>> {
+        self.keys_spends
+            .into_iter()
+            .zip(self.keys_executes)
+            .map(|(spends, executes)| {
+                spends
+                    .into_iter()
+                    .map(|spend| Permission::Spend(spend.into()))
+                    .chain(executes.into_iter().map(|data| {
+                        Permission::Call(CallPermission {
+                            to: Address::from_slice(&data[..20]),
+                            selector: FixedBytes::from_slice(&data[28..]),
+                        })
+                    }))
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -168,35 +189,18 @@ impl<P: Provider> Account<P> {
     /// Returns a list of all permissions for the given key set.
     pub async fn permissions(
         &self,
-        key_hashes: impl Iterator<Item = B256>,
-    ) -> TransportResult<Vec<(Vec<SpendInfo>, Vec<CallPermission>)>> {
+        key_hashes: impl Iterator<Item = B256> + Clone,
+    ) -> TransportResult<HashMap<B256, Vec<Permission>>> {
         debug!(eoa = %self.delegation.address(), "Fetching permissions");
 
-        let response = self
+        let permissions = self
             .delegation
-            .spendAndExecuteInfos(key_hashes.collect())
+            .spendAndExecuteInfos(key_hashes.clone().collect())
             .call()
             .overrides(self.overrides.clone())
             .await
-            .map_err(TransportErrorKind::custom)?;
-
-        let permissions = response
-            .spend
-            .into_iter()
-            .zip(response.canExecute)
-            .map(|(spends, executes)| {
-                (
-                    spends,
-                    executes
-                        .into_iter()
-                        .map(|data| CallPermission {
-                            to: Address::from_slice(&data[..20]),
-                            selector: FixedBytes::from_slice(&data[28..]),
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
+            .map_err(TransportErrorKind::custom)?
+            .into_permissions();
 
         debug!(
             eoa = %self.delegation.address(),
@@ -204,7 +208,7 @@ impl<P: Provider> Account<P> {
             "Fetched keys permissions"
         );
 
-        Ok(permissions)
+        Ok(key_hashes.zip(permissions).collect())
     }
 }
 
