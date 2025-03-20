@@ -7,9 +7,9 @@ use relay::{
     rpc::RelayApiClient,
     types::{
         CallPermission,
-        Delegation::{SpendPeriod, SpendPermission},
+        Delegation::{SpendInfo, SpendPeriod},
         KeyType, KeyWith712Signer,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, GetKeysParameters, Permission},
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, GetKeysParameters, Permission, SpendPermission},
     },
 };
 
@@ -25,18 +25,14 @@ async fn get_keys() -> eyre::Result<()> {
 
     // Set session key permissions
     let permissions = vec![
-        Permission::Call(CallPermission {
-            to: env.erc20,
-            selector: MockErc20::transferCall::SELECTOR.into(),
-        }),
         Permission::Spend(SpendPermission {
             limit: U256::from(1000),
             period: SpendPeriod::Day,
             token: env.erc20,
-            spent: U256::ZERO,
-            lastUpdated: U256::ZERO,
-            currentSpent: U256::ZERO,
-            current: U256::ZERO,
+        }),
+        Permission::Call(CallPermission {
+            to: env.erc20,
+            selector: MockErc20::transferCall::SELECTOR.into(),
         }),
     ];
 

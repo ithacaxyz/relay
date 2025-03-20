@@ -94,9 +94,9 @@ mod tests {
 
     use crate::types::{
         Call, CallPermission,
-        Delegation::{SpendPeriod, SpendPermission},
+        Delegation::SpendPeriod,
         Key, KeyType, U40,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey},
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
     #[test]
@@ -119,10 +119,6 @@ mod tests {
                     limit: U256::from(1000),
                     period: SpendPeriod::Day,
                     token: Address::ZERO,
-                    spent: U256::ZERO,
-                    lastUpdated: U256::ZERO,
-                    currentSpent: U256::ZERO,
-                    current: U256::ZERO,
                 }),
             ],
         };
@@ -171,10 +167,6 @@ mod tests {
                     limit: U256::from(1000),
                     period: SpendPeriod::Day,
                     token: Address::ZERO,
-                    spent: U256::ZERO,
-                    lastUpdated: U256::ZERO,
-                    currentSpent: U256::ZERO,
-                    current: U256::ZERO,
                 }),
             ],
         };

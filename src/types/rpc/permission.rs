@@ -1,6 +1,10 @@
+use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{CallPermission, Delegation::SpendPermission};
+use crate::types::{
+    CallPermission,
+    Delegation::{SpendInfo, SpendPeriod},
+};
 
 /// Represents key permissions.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -12,6 +16,24 @@ pub enum Permission {
     /// Spend permission.
     #[serde(rename = "spend")]
     Spend(SpendPermission),
+}
+
+/// Represents spend permissions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SpendPermission {
+    /// The spending limit.
+    pub limit: U256,
+    /// The spending period.
+    pub period: SpendPeriod,
+    /// The token address.
+    #[serde(default)]
+    pub token: Address,
+}
+
+impl From<SpendInfo> for SpendPermission {
+    fn from(permission: SpendInfo) -> Self {
+        Self { limit: permission.limit, period: permission.period, token: permission.token }
+    }
 }
 
 #[cfg(test)]

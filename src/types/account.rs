@@ -1,7 +1,7 @@
 use crate::types::IDelegation;
 
 use super::{Call, Key};
-use Delegation::{DelegationInstance, SpendPermission};
+use Delegation::{DelegationInstance, SpendInfo};
 use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256},
@@ -40,10 +40,9 @@ sol! {
 
         /// Information about a spend.
         /// All timestamp related values are Unix timestamps in seconds.
-        #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
-        struct SpendPermission {
+        #[derive(Debug, Eq, PartialEq)]
+        struct SpendInfo {
             /// Address of the token. `address(0)` denotes native token.
-            #[serde(default)]
             address token;
             /// The type of period.
             SpendPeriod period;
@@ -81,18 +80,18 @@ sol! {
         /// canExecute elements are packed as (`target`, `fnSel`):
         /// - `target` is in the upper 20 bytes.
         /// - `fnSel` is in the lower 4 bytes.
-        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendPermission[][] memory spend, bytes32[][] memory canExecute);
+        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory spend, bytes32[][] memory canExecute);
     }
 }
 
 /// Represents a granted allowance to execute a specific function on a target contract.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CallPermission {
-    /// The target contract's address.
-    pub to: Address,
     /// The 4-byte selector of the allowed function.
     #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]
     pub selector: FixedBytes<4>,
+    /// The target contract's address.
+    pub to: Address,
 }
 
 /// A Porto account.
@@ -170,10 +169,10 @@ impl<P: Provider> Account<P> {
     pub async fn permissions(
         &self,
         key_hashes: impl Iterator<Item = B256>,
-    ) -> TransportResult<Vec<(Vec<SpendPermission>, Vec<CallPermission>)>> {
+    ) -> TransportResult<Vec<(Vec<SpendInfo>, Vec<CallPermission>)>> {
         debug!(eoa = %self.delegation.address(), "Fetching permissions");
 
-        let permissions = self
+        let response = self
             .delegation
             .spendAndExecuteInfos(key_hashes.collect())
             .call()
@@ -181,10 +180,10 @@ impl<P: Provider> Account<P> {
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        Ok(permissions
+        let permissions = response
             .spend
             .into_iter()
-            .zip(permissions.canExecute)
+            .zip(response.canExecute)
             .map(|(spends, executes)| {
                 (
                     spends,
@@ -197,7 +196,15 @@ impl<P: Provider> Account<P> {
                         .collect(),
                 )
             })
-            .collect())
+            .collect();
+
+        debug!(
+            eoa = %self.delegation.address(),
+            permissions = ?permissions,
+            "Fetched keys permissions"
+        );
+
+        Ok(permissions)
     }
 }
 

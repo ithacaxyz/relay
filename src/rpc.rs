@@ -458,7 +458,7 @@ impl RelayApiServer for Relay {
             self.inner
                 .chains
                 .get(request.chain_id)
-                .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+                .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
                 .provider,
         );
 
@@ -469,7 +469,7 @@ impl RelayApiServer for Relay {
         let non_admin_keys =
             keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash);
 
-        let mut permissions = non_admin_keys
+        let mut key_to_permissions = non_admin_keys
             .clone()
             .zip(account.permissions(non_admin_keys).await.map_err(EstimateFeeError::from)?) // todo error handling
             .collect::<HashMap<_, _>>();
@@ -477,15 +477,16 @@ impl RelayApiServer for Relay {
         Ok(keys
             .into_iter()
             .map(|(hash, key)| {
-                let permissions = if let Some((spends, executes)) = permissions.remove(&hash) {
-                    spends
-                        .into_iter()
-                        .map(Permission::Spend)
-                        .chain(executes.into_iter().map(Permission::Call))
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let permissions = key_to_permissions
+                    .remove(&hash)
+                    .map(|(spends, executes)| {
+                        spends
+                            .into_iter()
+                            .map(|permission| Permission::Spend(permission.into()))
+                            .chain(executes.into_iter().map(Permission::Call))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
                 AuthorizeKeyResponse { hash, authorize_key: AuthorizeKey { key, permissions } }
             })
