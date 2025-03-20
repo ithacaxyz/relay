@@ -164,3 +164,64 @@ async fn native_transfer() -> Result<()> {
     }
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spend_limits_bundled() -> Result<()> {
+    let key1 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+
+    run_e2e(|env| {
+        vec![
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                authorization_keys: vec![key1.to_authorized()],
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            // successful transfer that should decrease the daily allowance
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(15), key1.key()),
+                    calls::transfer(env.erc20, Address::ZERO, U256::from(10)),
+                ],
+                key: Some(&key1),
+                ..Default::default()
+            },
+            // overspend transfer should fail
+            TxContext {
+                expected: ExpectedOutcome::FailSend,
+                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                key: Some(&key1),
+                ..Default::default()
+            },
+        ]
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spend_limits_bundle_failure() -> Result<()> {
+    let key1 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+
+    run_e2e(|env| {
+        vec![
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                authorization_keys: vec![key1.to_authorized()],
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            // Bundled overspend should fail
+            TxContext {
+                expected: ExpectedOutcome::FailSend,
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(15), key1.key()),
+                    calls::transfer(env.erc20, Address::ZERO, U256::from(20)),
+                ],
+                key: Some(&key1),
+                ..Default::default()
+            },
+        ]
+    })
+    .await
+}
