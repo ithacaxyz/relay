@@ -16,8 +16,6 @@ use tracing::debug;
 sol! {
     #[sol(rpc)]
     contract Delegation {
-        address public constant ENTRY_POINT;
-
         /// A spend period.
         #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -137,25 +135,6 @@ impl<P: Provider> Account<P> {
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
-    }
-
-    /// Get the entrypoint address for this account.
-    pub async fn entrypoint(&self) -> TransportResult<Address> {
-        debug!(eoa = %self.delegation.address(), "Fetching entrypoint");
-        let entrypoint = self
-            .delegation
-            .ENTRY_POINT()
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
-        debug!(
-            eoa = %self.delegation.address(),
-            entrypoint = %entrypoint.ENTRY_POINT,
-            "Fetched entrypoint"
-        );
-
-        Ok(entrypoint.ENTRY_POINT)
     }
 
     /// Returns a list of all non expired keys as (KeyHash, Key) tuples.

@@ -18,6 +18,8 @@ pub struct RelayConfig {
     pub chain: ChainConfig,
     /// Quote configuration.
     pub quote: QuoteConfig,
+    /// Entrypoint address.
+    pub entrypoint: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -99,6 +101,7 @@ impl Default for RelayConfig {
                 gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
                 ttl: Duration::from_secs(5),
             },
+            entrypoint: Address::ZERO,
             secrets: SecretsConfig::default(),
         }
     }
@@ -174,6 +177,12 @@ impl RelayConfig {
     /// Sets the secret key used to sign transactions.
     pub fn with_transaction_keys(mut self, secret_keys: &[String]) -> Self {
         self.secrets.transaction_keys.extend_from_slice(secret_keys);
+        self
+    }
+
+    /// Sets the entrypoint address.
+    pub fn with_entrypoint(mut self, entrypoint: Address) -> Self {
+        self.entrypoint = entrypoint;
         self
     }
 
