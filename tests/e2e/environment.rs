@@ -203,7 +203,6 @@ impl Environment {
                 .with_user_op_gas_buffer(100_000)
                 .with_tx_gas_buffer(50_000), // todo: temp
             registry,
-            None,
         )
         .await?;
 
