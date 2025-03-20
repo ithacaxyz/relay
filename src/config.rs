@@ -30,6 +30,8 @@ pub struct ServerConfig {
     pub address: IpAddr,
     /// The port to serve the RPC on.
     pub port: u16,
+    /// The port to serve the metrics on.
+    pub metrics_port: u16,
 }
 
 /// Chain configuration.
@@ -86,7 +88,11 @@ pub struct SecretsConfig {
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
-            server: ServerConfig { address: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 9119 },
+            server: ServerConfig {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 9119,
+                metrics_port: 9000,
+            },
             chain: ChainConfig { endpoints: vec![], fee_tokens: vec![] },
             quote: QuoteConfig {
                 constant_rate: None,
@@ -108,6 +114,12 @@ impl RelayConfig {
     /// Sets the port to serve the RPC on.
     pub fn with_port(mut self, port: u16) -> Self {
         self.server.port = port;
+        self
+    }
+
+    /// Sets the port to serve the metrics on.
+    pub fn with_metrics_port(mut self, port: u16) -> Self {
+        self.server.metrics_port = port;
         self
     }
 

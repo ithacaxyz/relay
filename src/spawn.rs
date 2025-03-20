@@ -3,7 +3,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    metrics::{self, MetricsService, RpcMetricsService},
+    metrics::{self, RpcMetricsService},
     price::{PriceFetcher, PriceOracle},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
@@ -13,9 +13,8 @@ use crate::{
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use http::header;
 use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
-use metrics_exporter_prometheus::PrometheusHandle;
 use std::{path::Path, sync::Arc};
-use tower::{ServiceBuilder, layer::layer_fn};
+use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
@@ -24,7 +23,6 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
     args: Args,
     config_path: P,
     registry_path: P,
-    metrics: Option<PrometheusHandle>,
 ) -> eyre::Result<ServerHandle> {
     let config = if !config_path.as_ref().exists() {
         let config = args.merge_relay_config(RelayConfig::default());
@@ -43,15 +41,11 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
         CoinRegistry::load_from_file(&registry_path)?
     };
 
-    try_spawn(config, registry, metrics).await
+    try_spawn(config, registry).await
 }
 
 /// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
-pub async fn try_spawn(
-    config: RelayConfig,
-    registry: CoinRegistry,
-    metrics: Option<PrometheusHandle>,
-) -> eyre::Result<ServerHandle> {
+pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<ServerHandle> {
     let registry = Arc::new(registry);
 
     // construct provider
@@ -94,7 +88,8 @@ pub async fn try_spawn(
     )
     .into_rpc();
 
-    // launch period metric collectors
+    // setup metrics exporter and periodic metric collectors
+    metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
     metrics::spawn_periodic_collectors(signer_addr, config.chain.endpoints).await?;
 
     // http layers
@@ -102,13 +97,11 @@ pub async fn try_spawn(
         .allow_methods(AllowMethods::any())
         .allow_origin(AllowOrigin::any())
         .allow_headers([header::CONTENT_TYPE]);
-    let metrics =
-        metrics.map(|handle| layer_fn(move |service| MetricsService::new(service, handle.clone())));
 
     // start server
     let server = Server::builder()
         .http_only()
-        .set_http_middleware(ServiceBuilder::new().layer(cors).option_layer(metrics))
+        .set_http_middleware(ServiceBuilder::new().layer(cors))
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
         .await?;
