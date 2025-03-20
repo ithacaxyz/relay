@@ -151,6 +151,7 @@ pub struct Relay {
 impl Relay {
     /// Create a new Ithaca relay module.
     pub fn new(
+        entrypoint: Address,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -158,8 +159,15 @@ impl Relay {
         fee_tokens: FeeTokens,
         storage: RelayStorage,
     ) -> Self {
-        let inner =
-            RelayInner { chains, fee_tokens, quote_signer, quote_config, price_oracle, storage };
+        let inner = RelayInner {
+            entrypoint,
+            chains,
+            fee_tokens,
+            quote_signer,
+            quote_config,
+            price_oracle,
+            storage,
+        };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -211,11 +219,8 @@ impl RelayApiServer for Relay {
             .build();
 
         // load account and entrypoint
-        let account =
-            Account::new(request.op.eoa, provider.clone()).with_overrides(overrides.clone());
-        let entrypoint_address = account.entrypoint().await.map_err(EstimateFeeError::from)?;
         let entrypoint =
-            Entry::new(entrypoint_address, provider.clone()).with_overrides(overrides.clone());
+            Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
 
         // fill userop
         let mut op = UserOp {
@@ -318,25 +323,6 @@ impl RelayApiServer for Relay {
             .get(request.chain_id)
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
 
-        // possibly mocking the code for the eoa
-        let overrides = StateOverridesBuilder::with_capacity(1)
-            .append(
-                request.op.eoa,
-                AccountOverride::default()
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(authorization.as_ref().map(|auth| {
-                        Bytes::from(
-                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
-                        )
-                    })),
-            )
-            .build();
-
-        // get the account and entrypoint
-        let account = Account::new(request.op.eoa, provider.clone()).with_overrides(overrides);
-        let entrypoint =
-            account.entrypoint().await.map_err(|err| SendActionError::InternalError(err.into()))?;
-
         // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
             return Err(SendActionError::InvalidAuthItem {
@@ -389,7 +375,7 @@ impl RelayApiServer for Relay {
             return Err(SendActionError::QuoteExpired.into());
         }
 
-        let tx = RelayTransaction::new(quote, entrypoint, authorization);
+        let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
         let mut rx = transactions.send_transaction(tx);
 
         // Wait for the transaction hash.
@@ -560,13 +546,9 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let digest = compute_eip712_digest(
-            &quote.ty().op,
-            &provider,
-            maybe_prep.as_ref().map(|acc| acc.signed_authorization.address),
-        )
-        .await
-        .map_err(from_eyre_error)?;
+        let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
+            .await
+            .map_err(from_eyre_error)?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -645,10 +627,9 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let digest =
-            compute_eip712_digest(&quote.ty().op, &provider, Some(request.capabilities.delegation))
-                .await
-                .map_err(UpgradeAccountError::InternalError)?;
+        let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
+            .await
+            .map_err(UpgradeAccountError::InternalError)?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -760,6 +741,8 @@ impl RelayApiServer for Relay {
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
 struct RelayInner {
+    /// The entrypoint address.
+    entrypoint: Address,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.
