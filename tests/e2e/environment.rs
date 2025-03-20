@@ -25,7 +25,10 @@ use relay::{
     signers::{DynSigner, P256Signer},
     spawn::try_spawn,
     types::{
-        Call, CoinKind, CoinRegistry, IDelegation::authorizeCall, KeyWith712Signer, PREPAccount,
+        Call, CoinKind, CoinRegistry,
+        IDelegation::authorizeCall,
+        KeyWith712Signer, PREPAccount,
+        rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
 use std::{
@@ -232,6 +235,14 @@ impl Environment {
     pub fn with_native_payment(mut self) -> Self {
         self.fee_token = Address::ZERO;
         self
+    }
+
+    /// Gets the on-chain EOA authorized keys.
+    pub async fn get_eoa_authorized_keys(&self) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
+        Ok(self
+            .relay_endpoint
+            .get_keys(GetKeysParameters { address: self.eoa.address(), chain_id: self.chain_id })
+            .await?)
     }
 }
 

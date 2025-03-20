@@ -305,7 +305,7 @@ impl KeyWith712Signer {
         AuthorizeKey { key: self.key.clone(), permissions: vec![] }
     }
 
-    /// Returns a [`AuthorizeKey`] equivalent.
+    /// Returns a [`AuthorizeKey`] equivalent with set permissions.
     pub fn to_permissioned_authorized(&self, permissions: Vec<Permission>) -> AuthorizeKey {
         AuthorizeKey { key: self.key.clone(), permissions }
     }

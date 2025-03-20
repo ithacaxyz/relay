@@ -191,8 +191,8 @@ impl<P: Provider> Account<P> {
                     executes
                         .into_iter()
                         .map(|data| CallPermission {
-                            to: Address::from_slice(&data[12..]),
-                            selector: FixedBytes::from_slice(&data[..4]),
+                            to: Address::from_slice(&data[..20]),
+                            selector: FixedBytes::from_slice(&data[28..]),
                         })
                         .collect(),
                 )
