@@ -1,27 +1,22 @@
 use crate::types::rpc::BundleId;
 
 use super::{
-    SignerHandle,
-    signer::Signer,
+    SignerEvent, SignerHandle,
     transaction::{RelayTransaction, TransactionStatus},
 };
-use alloy::primitives::B256;
+use rand::seq::IndexedRandom;
 use std::{
     collections::HashMap,
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
     /// Message to send a transaction.
-    SendTransaction(Box<RelayTransaction>),
-    /// Message to get the status of a given transaction.
-    GetStatus(B256, oneshot::Sender<Option<TransactionStatus>>),
-    /// Message to subscribe to the status of a given transaction.
-    SubscribeStatus(B256, mpsc::UnboundedSender<TransactionStatus>),
+    SendTransaction(RelayTransaction, mpsc::UnboundedSender<TransactionStatus>),
 }
 
 /// Handle to communicate with the [`TransactionService`].
@@ -32,69 +27,47 @@ pub struct TransactionServiceHandle {
 
 impl TransactionServiceHandle {
     /// Sends a transaction.
-    pub fn send_transaction(&self, tx: RelayTransaction) {
-        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(Box::new(tx)));
-    }
-
-    /// Fetches the status of a transaction.
-    pub fn get_status(&self, id: B256) -> oneshot::Receiver<Option<TransactionStatus>> {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.command_tx.send(TransactionServiceMessage::GetStatus(id, tx));
-        rx
-    }
-
-    /// Subscribes to the status of a transaction.
-    pub fn subscribe_status(&self, id: B256) -> mpsc::UnboundedReceiver<TransactionStatus> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let _ = self.command_tx.send(TransactionServiceMessage::SubscribeStatus(id, tx));
-        rx
+    pub fn send_transaction(
+        &self,
+        tx: RelayTransaction,
+    ) -> mpsc::UnboundedReceiver<TransactionStatus> {
+        let (status_tx, status_rx) = mpsc::unbounded_channel();
+        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
+        status_rx
     }
 }
 
 /// Service handing transactions.
 #[derive(Debug)]
 pub struct TransactionService {
-    /// Handle to a signer responsible for broadcasting transactions.
-    signer: SignerHandle,
+    /// Handles of signers responsible for broadcasting transactions.
+    signers: Vec<SignerHandle>,
 
     /// Incoming messages for the service.
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
 
-    /// Pending transactions that are being handled by signer.
-    pending_transactions: HashMap<BundleId, mpsc::UnboundedReceiver<TransactionStatus>>,
-
-    /// [`RelayTransaction::id`] -> [`TransactionStatus`] mapping.
-    statuses: HashMap<BundleId, TransactionStatus>,
-
     /// Subscriptions to transaction status updates.
-    subscriptions: HashMap<BundleId, Vec<mpsc::UnboundedSender<TransactionStatus>>>,
+    subscriptions: HashMap<BundleId, mpsc::UnboundedSender<TransactionStatus>>,
 }
 
 impl TransactionService {
     /// Creates a new [`TransactionService`].
-    pub fn new(signer: SignerHandle) -> (Self, TransactionServiceHandle) {
+    pub fn new(signers: Vec<SignerHandle>) -> (Self, TransactionServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let this = Self {
-            signer,
-            command_rx,
-            pending_transactions: Default::default(),
-            statuses: HashMap::new(),
-            subscriptions: Default::default(),
-        };
+        let this = Self { signers, command_rx, subscriptions: Default::default() };
 
         (this, TransactionServiceHandle { command_tx })
     }
 
     /// Creates a new [`TransactionService`] and spawns it.
-    pub fn spawn(signer: Signer) -> TransactionServiceHandle {
-        let (this, handle) = Self::new(signer.spawn());
+    pub fn spawn(signers: Vec<SignerHandle>) -> TransactionServiceHandle {
+        let (this, handle) = Self::new(signers);
         tokio::spawn(this);
         handle
     }
 
     fn send_transaction(&mut self, tx: RelayTransaction) {
-        self.statuses.insert(tx.id, TransactionStatus::InFlight);
-        self.pending_transactions.insert(tx.id, self.signer.send_transaction(tx));
+        self.signers.choose(&mut rand::rng()).expect("no signers").send_transaction(tx);
     }
 }
 
@@ -106,38 +79,28 @@ impl Future for TransactionService {
 
         while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
             match action {
-                TransactionServiceMessage::SendTransaction(tx) => {
-                    this.send_transaction(*tx);
-                }
-                TransactionServiceMessage::GetStatus(id, tx) => {
-                    let _ = tx.send(this.statuses.get(&id).cloned());
-                }
-                TransactionServiceMessage::SubscribeStatus(id, tx) => {
-                    if let Some(status) = this.statuses.get(&id) {
-                        let _ = tx.send(status.clone());
-                    }
-                    this.subscriptions.entry(id).or_default().push(tx);
+                TransactionServiceMessage::SendTransaction(tx, status_tx) => {
+                    this.subscriptions.insert(tx.id, status_tx);
+                    this.send_transaction(tx);
                 }
             }
         }
 
-        this.pending_transactions.retain(|id, rx| {
-            while let Poll::Ready(status_opt) = rx.poll_recv(cx) {
-                if let Some(status) = status_opt {
-                    if let Some(txs) = this.subscriptions.get(id) {
-                        for tx in txs {
-                            let _ = tx.send(status.clone());
+        for signer in &mut this.signers {
+            while let Poll::Ready(Some(event)) = signer.poll_recv(cx) {
+                match event {
+                    SignerEvent::TransactionStatus(id, status) => {
+                        if let Some(status_tx) = this.subscriptions.get(&id) {
+                            let _ = status_tx.send(status.clone());
+                        }
+
+                        if status.is_final() {
+                            this.subscriptions.remove(&id);
                         }
                     }
-                    this.statuses.insert(*id, status);
-                } else {
-                    this.subscriptions.remove(id);
-                    return false;
                 }
             }
-
-            true
-        });
+        }
 
         Poll::Pending
     }

@@ -59,8 +59,8 @@ pub struct Args {
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     pub fee_tokens: Vec<Address>,
     /// The secret key to sign transactions with.
-    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_SK")]
-    pub secret_key: String,
+    #[arg(long = "secret-key", value_name = "SECRET_KEY", num_args=1.., value_delimiter = ',', env = "RELAY_SK")]
+    pub secret_keys: Vec<String>,
 }
 
 impl Args {
@@ -77,7 +77,7 @@ impl Args {
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
             .with_quote_key(self.quote_secret_key)
-            .with_transaction_key(self.secret_key)
+            .with_transaction_keys(&self.secret_keys)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
             .with_address(self.address)
@@ -130,7 +130,7 @@ mod tests {
                     quote_ttl: Default::default(),
                     quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
-                    secret_key: key.to_string(),
+                    secret_keys: vec![key.to_string()],
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
                 },

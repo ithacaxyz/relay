@@ -8,6 +8,7 @@ use alloy::{
 
 use crate::{
     signers::DynSigner,
+    storage::RelayStorage,
     transactions::{Signer, TransactionService, TransactionServiceHandle},
 };
 
@@ -28,11 +29,20 @@ pub struct Chains {
 
 impl Chains {
     /// Creates a new instance of [`Chains`].
-    pub async fn new(providers: Vec<DynProvider>, tx_signer: DynSigner) -> TransportResult<Self> {
+    pub async fn new(
+        providers: Vec<DynProvider>,
+        tx_signers: Vec<DynSigner>,
+        storage: RelayStorage,
+    ) -> TransportResult<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
-                let signer = Signer::new(provider.clone(), tx_signer.clone()).await?;
-                let transactions = TransactionService::spawn(signer);
+                let signers =
+                    futures_util::future::try_join_all(tx_signers.clone().into_iter().map(
+                        |tx_signer| Signer::spawn(provider.clone(), tx_signer, storage.clone()),
+                    ))
+                    .await?;
+
+                let transactions = TransactionService::spawn(signers);
 
                 let chain_id = provider.get_chain_id().await?;
                 Ok::<_, RpcError<TransportErrorKind>>((chain_id, Chain { provider, transactions }))

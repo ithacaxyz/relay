@@ -57,6 +57,8 @@ tracing-subscriber = { version = "0.3.19", features = [
     "env-filter",
 ] }
 url = { version = "2.5", features = ["serde"] }
+rand = "0.9"
+itertools = "0.14"
 
 [dev-dependencies]
 alloy = { version = "0.12", features = ["eips", "provider-anvil-node"] }

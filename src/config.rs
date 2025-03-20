@@ -80,7 +80,7 @@ impl QuoteConfig {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SecretsConfig {
     /// The secret key to sign transactions with.
-    pub transaction_key: String,
+    pub transaction_keys: Vec<String>,
     /// The secret key to sign fee quotes with.
     pub quote_key: String,
 }
@@ -167,7 +167,13 @@ impl RelayConfig {
 
     /// Sets the secret key used to sign transactions.
     pub fn with_transaction_key(mut self, secret_key: String) -> Self {
-        self.secrets.transaction_key = secret_key;
+        self.secrets.transaction_keys.push(secret_key);
+        self
+    }
+
+    /// Sets the secret key used to sign transactions.
+    pub fn with_transaction_keys(mut self, secret_keys: &[String]) -> Self {
+        self.secrets.transaction_keys.extend_from_slice(secret_keys);
         self
     }
 
