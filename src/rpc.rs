@@ -21,7 +21,6 @@ use alloy::{
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
-    transports::TransportErrorKind,
 };
 use futures_util::{TryFutureExt, future::try_join_all};
 use jsonrpsee::{
@@ -35,7 +34,7 @@ use crate::{
     chains::{Chain, Chains},
     config::QuoteConfig,
     eip712::compute_eip712_digest,
-    error::{EstimateFeeError, SendActionError, UpgradeAccountError, from_eyre_error},
+    error::{AuthError, KeysError, QuoteError, RelayError, ToRpcResult},
     price::PriceOracle,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -203,17 +202,19 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))
+            .to_params_result()?
             .provider;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
-            return Err(EstimateFeeError::UnsupportedFeeToken(token).into());
+            return Err(QuoteError::UnsupportedFeeToken(token)).to_params_result();
         };
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
         let key = KeyWith712Signer::random_admin(key_type)
-            .and_then(|k| k.ok_or_else(|| EstimateFeeError::UnsupportedKeyType.into()))
-            .map_err(EstimateFeeError::from)?;
+            .map_err(RelayError::from)
+            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))
+            .to_params_result()?;
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = StateOverridesBuilder::with_capacity(2)
@@ -252,14 +253,16 @@ impl RelayApiServer for Relay {
         // sign userop
         let signature = key
             .sign_typed_data(
-                &op.as_eip712().map_err(|err| EstimateFeeError::InternalError(err.into()))?,
+                &op.as_eip712().map_err(RelayError::from).to_rpc_result()?,
                 &entrypoint
                     .eip712_domain(op.is_multichain())
                     .await
-                    .map_err(EstimateFeeError::from)?,
+                    .map_err(RelayError::from)
+                    .to_rpc_result()?,
             )
             .await
-            .map_err(EstimateFeeError::InternalError)?;
+            .map_err(RelayError::from)
+            .to_rpc_result()?;
 
         op.signature =
             Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
@@ -268,9 +271,10 @@ impl RelayApiServer for Relay {
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
-            entrypoint.simulate_execute(&op).map_err(EstimateFeeError::from),
-            provider.estimate_eip1559_fees().map_err(EstimateFeeError::from)
-        )?;
+            entrypoint.simulate_execute(&op).map_err(RelayError::from),
+            provider.estimate_eip1559_fees().map_err(RelayError::from)
+        )
+        .to_rpc_result()?;
 
         // for 7702 designations there is an additional gas charge
         //
@@ -296,7 +300,7 @@ impl RelayApiServer for Relay {
         // Get paymentPerGas
         // TODO: only handles eth as native fee token
         let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
-            return Err(EstimateFeeError::UnavailablePrice(token.address).into());
+            return Err(QuoteError::UnavailablePrice(token.address)).to_rpc_result();
         };
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
@@ -320,7 +324,8 @@ impl RelayApiServer for Relay {
             .quote_signer
             .sign_hash(&quote.digest())
             .await
-            .map_err(|err| EstimateFeeError::InternalError(err.into()))?;
+            .map_err(|err| RelayError::InternalError(err.into()))
+            .to_rpc_result()?;
 
         Ok(quote.into_signed(sig))
     }
@@ -335,42 +340,48 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?;
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))
+            .to_params_result()?;
 
         // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
-            return Err(SendActionError::InvalidAuthItem {
+            return Err(AuthError::InvalidAuthItem {
                 expected: quote.ty().authorization_address,
                 got: authorization.map(|auth| auth.address),
-            }
-            .into());
+            })
+            .to_params_result();
         }
 
         if let Some(auth) = &authorization {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
-                return Err(SendActionError::AuthItemNotChainAgnostic.into());
+                return Err(AuthError::AuthItemNotChainAgnostic).to_params_result();
             }
 
             let expected_nonce = provider
                 .get_transaction_count(request.op.eoa)
                 .await
-                .map_err(SendActionError::from)?;
+                .map_err(RelayError::from)
+                .to_rpc_result()?;
 
             if expected_nonce != auth.nonce {
-                return Err(SendActionError::AuthItemInvalidNonce {
+                return Err(AuthError::AuthItemInvalidNonce {
                     expected: expected_nonce,
                     got: auth.nonce,
-                }
-                .into());
+                })
+                .to_params_result();
             }
         } else {
-            let code = provider.get_code_at(request.op.eoa).await.map_err(SendActionError::from)?;
+            let code = provider
+                .get_code_at(request.op.eoa)
+                .await
+                .map_err(RelayError::from)
+                .to_rpc_result()?;
 
             if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
                 || code[..] == EIP7702_CLEARED_DELEGATION
             {
-                return Err(SendActionError::EoaNotDelegated(request.op.eoa).into());
+                return Err(AuthError::EoaNotDelegated(request.op.eoa)).to_params_result();
             }
         }
 
@@ -380,13 +391,13 @@ impl RelayApiServer for Relay {
             .recover_address()
             .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
-            return Err(SendActionError::InvalidQuoteSignature.into());
+            return Err(QuoteError::InvalidQuoteSignature).to_params_result();
         }
 
         // if we do **not** get an error here, then the quote ttl must be in the past, which means
         // it is expired
         if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
-            return Err(SendActionError::QuoteExpired.into());
+            return Err(QuoteError::QuoteExpired).to_params_result();
         }
 
         let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
@@ -412,11 +423,13 @@ impl RelayApiServer for Relay {
                     return Ok(hash);
                 }
                 TransactionStatus::InFlight => continue,
-                TransactionStatus::Failed(err) => return Err(SendActionError::internal(err).into()),
+                TransactionStatus::Failed(err) => {
+                    return Err(RelayError::InternalError(err.into())).to_rpc_result();
+                }
             }
         }
 
-        return Err(SendActionError::InternalError(eyre::eyre!("Transaction failed")).into());
+        return Err(RelayError::InternalError(eyre::eyre!("Transaction failed"))).to_rpc_result();
     }
 
     async fn prepare_create_account(
@@ -425,8 +438,7 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<PrepareCreateAccountResponse> {
         // Creating account should have at least one admin key.
         if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-            return Err(eyre::eyre!("Create account should have one key."))
-                .map_err(from_eyre_error)?;
+            return Err(KeysError::MissingAdminKey).to_params_result()?;
         }
 
         // Generate all calls that will authorize keys and set their permissions
@@ -453,9 +465,9 @@ impl RelayApiServer for Relay {
 
         self.inner
             .storage
-            .write_prep(CreatableAccount::new(request.context, request.signatures))
-            .map_err(|err| from_eyre_error(err.into()))
-            .await?;
+             .write_prep(CreatableAccount::new(request.account, request.signatures))
+           .await
+            .to_rpc_result()?;
 
         Ok(())
     }
@@ -467,17 +479,19 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))
+            .to_params_result()?
             .provider;
 
         let (_, addresses) = AccountRegistryInstance::new(self.inner.entrypoint, provider)
             .idInfo(request.id)
             .call()
             .await
-            .map_err(TransportErrorKind::custom)
-            .map_err(EstimateFeeError::from)? // todo error handling
-            .try_decode()
-            .ok_or_else(|| from_eyre_error(eyre::eyre!("invalid registry key data")))?; // todo error handling squared
+            .map_err(|err| RelayError::InternalError(err.into()))
+            .and_then(|res| {
+                res.try_decode().ok_or(KeysError::InvalidRegistryData(request.id).into())
+            })
+            .to_rpc_result()?;
 
         try_join_all(addresses.iter().map(async |addr| {
             Ok(AccountResponse {
@@ -496,18 +510,20 @@ impl RelayApiServer for Relay {
             self.inner
                 .chains
                 .get(request.chain_id)
-                .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
+                .ok_or(RelayError::UnsupportedChain(request.chain_id))
+                .to_params_result()?
                 .provider,
         );
 
         // Get all keys from account
-        let keys = account.keys().await.map_err(EstimateFeeError::from)?; // todo error handling
+        let keys = account.keys().await.map_err(RelayError::from).to_rpc_result()?;
 
         // Get all permissions from non admin keys
         let mut permissioned_keys = account
             .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
             .await
-            .map_err(EstimateFeeError::from)?; // todo error handling
+            .map_err(RelayError::from)
+            .to_rpc_result()?;
 
         Ok(keys
             .into_iter()
@@ -530,7 +546,8 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))
+            .to_params_result()?
             .provider;
 
         // Generate all calls that will authorize keys and set their permissions
@@ -552,7 +569,7 @@ impl RelayApiServer for Relay {
         let maybe_prep = provider
             .get_code_at(request.from)
             .into_future()
-            .map_err(SendActionError::from)
+            .map_err(RelayError::from)
             .and_then(|code| async move {
                 if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
                     || code[..] == EIP7702_CLEARED_DELEGATION
@@ -562,13 +579,14 @@ impl RelayApiServer for Relay {
                         .storage
                         .read_prep(&request.from)
                         .await
-                        .map_err(|err| SendActionError::InternalError(err.into()))?
-                        .ok_or_else(|| SendActionError::EoaNotDelegated(request.from))
+                        .map_err(|err| RelayError::InternalError(err.into()))?
+                        .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(request.from)))
                         .map(Some);
                 }
                 Ok(None)
             })
-            .await?;
+            .await
+            .to_rpc_result()?;
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
         let all_calls = authorize_calls
@@ -610,7 +628,8 @@ impl RelayApiServer for Relay {
         // Calculate the eip712 digest that the user will need to sign.
         let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
             .await
-            .map_err(from_eyre_error)?;
+            .map_err(RelayError::from)
+            .to_rpc_result()?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -637,14 +656,14 @@ impl RelayApiServer for Relay {
             .inner
             .chains
             .get(request.chain_id)
-            .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))?
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))
+            .to_params_result()?
             .provider;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
         if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-            return Err(eyre::eyre!("Upgrade account should have one admin authorization key."))
-                .map_err(from_eyre_error)?;
+            return Err(KeysError::MissingAdminKey).to_params_result()?;
         }
 
         // Generate all calls that will authorize keys and set their permissions
@@ -692,7 +711,8 @@ impl RelayApiServer for Relay {
         // Calculate the eip712 digest that the user will need to sign.
         let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
             .await
-            .map_err(UpgradeAccountError::InternalError)?;
+            .map_err(RelayError::from)
+            .to_rpc_result()?;
 
         let response = PrepareCallsResponse {
             context: quote,
@@ -732,7 +752,7 @@ impl RelayApiServer for Relay {
                 .read_prep(&op.eoa)
                 .await
                 .map(|opt| opt.map(|acc| acc.prep.signed_authorization))
-                .map_err(|err| from_eyre_error(err.into()))?
+                .to_rpc_result()?
         };
 
         // Broadcast transaction with UserOp
@@ -762,11 +782,11 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<UpgradeAccountResponse> {
         // Ensure that we have a signed delegation and its address matches the quote's.
         if request.context.ty().authorization_address != Some(request.authorization.address) {
-            return Err(UpgradeAccountError::InvalidAuthAddress {
+            return Err(AuthError::InvalidAuthAddress {
                 expected: request.context.ty().authorization_address.expect("should exist"),
                 got: request.authorization.address,
-            }
-            .into());
+            })
+            .to_params_result();
         }
 
         let op = &mut request.context.ty_mut().op;

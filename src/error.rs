@@ -2,73 +2,24 @@
 
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
-    rpc::types::error::EthRpcErrorCode,
+    transports::TransportErrorKind,
 };
+use core::fmt;
+use jsonrpsee::core::RpcResult;
 
-/// Errors returned by `relay_estimateFee`
+use crate::storage::StorageError;
+
+/// Errors related to 7702 authorizations.
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateFeeError {
-    /// The chain is not supported.
-    #[error("unsupported chain {0}")]
-    UnsupportedChain(ChainId),
-    /// The provided fee token is not supported.
-    #[error("fee token not supported: {0}")]
-    UnsupportedFeeToken(Address),
-    /// The price for fee token is not available.
-    #[error("fee token price not currently available: {0}")]
-    UnavailablePrice(Address),
-    /// The key type is not supported.
-    #[error("only supports `p256`, `webauthnp256` and `secp256k1` key types")]
-    UnsupportedKeyType,
-    /// The userop reverted when estimating gas.
-    #[error("op reverted: {revert_reason}")]
-    OpRevert {
-        /// The error code returned by the entrypoint.
-        revert_reason: Bytes,
+pub enum AuthError {
+    /// Invalid authorization item address.
+    #[error("invalid auth item, expected {expected}, got {got}")]
+    InvalidAuthAddress {
+        /// The address expected.
+        expected: Address,
+        /// The address in the authorization item.
+        got: Address,
     },
-    /// The userop could not be simulated.
-    #[error("the op could not be simulated")]
-    SimulationError,
-    /// An error occurred talking to RPC.
-    #[error(transparent)]
-    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
-    /// An internal error occurred.
-    #[error(transparent)]
-    InternalError(#[from] eyre::Error),
-}
-
-impl From<EstimateFeeError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(error: EstimateFeeError) -> Self {
-        if let EstimateFeeError::OpRevert { ref revert_reason } = error {
-            return jsonrpsee::types::error::ErrorObject::owned::<Bytes>(
-                EthRpcErrorCode::ExecutionError.code(),
-                error.to_string(),
-                Some(revert_reason.clone()),
-            );
-        }
-
-        jsonrpsee::types::error::ErrorObject::owned::<()>(
-            match error {
-                EstimateFeeError::InternalError(_)
-                | EstimateFeeError::SimulationError
-                | EstimateFeeError::RpcError(_)
-                | EstimateFeeError::UnavailablePrice(_) => {
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
-                }
-                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
-            },
-            error.to_string(),
-            None,
-        )
-    }
-}
-
-/// Errors returned by `relay_sendAction`
-#[derive(Debug, thiserror::Error)]
-pub enum SendActionError {
-    /// The chain is not supported.
-    #[error("unsupported chain {0}")]
-    UnsupportedChain(ChainId),
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
     AuthItemNotChainAgnostic,
@@ -80,9 +31,6 @@ pub enum SendActionError {
         /// The nonce in the authorization item.
         got: u64,
     },
-    /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
-    #[error("eoa not delegated: {0}")]
-    EoaNotDelegated(Address),
     /// The quote was signed for a different authorization item.
     #[error("invalid authorization item, expected {expected:?}, got {got:?}")]
     InvalidAuthItem {
@@ -91,6 +39,26 @@ pub enum SendActionError {
         /// The item in the request.
         got: Option<Address>,
     },
+    /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
+    #[error("eoa not delegated: {0}")]
+    EoaNotDelegated(Address),
+}
+
+/// Errors related to quotes.
+#[derive(Debug, thiserror::Error)]
+pub enum QuoteError {
+    /// The quote expired.
+    #[error("quote expired")]
+    QuoteExpired,
+    /// The provided quote was not signed by the relay.
+    #[error("invalid quote signer")]
+    InvalidQuoteSignature,
+    /// The provided fee token is not supported.
+    #[error("fee token not supported: {0}")]
+    UnsupportedFeeToken(Address),
+    /// The price for fee token is not available.
+    #[error("fee token price not currently available: {0}")]
+    UnavailablePrice(Address),
     /// The payment amount in the userop did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
     InvalidFeeAmount {
@@ -99,6 +67,14 @@ pub enum SendActionError {
         /// The amount in the [`UserOp`].
         got: U256,
     },
+}
+
+/// Errors related to user ops.
+#[derive(Debug, thiserror::Error)]
+pub enum UserOpError {
+    /// The userop could not be simulated.
+    #[error("the op could not be simulated")]
+    SimulationError,
     /// The quote was signed for a different userop.
     #[error("invalid op digest, expected {expected}, got {got}")]
     InvalidOpDigest {
@@ -107,102 +83,52 @@ pub enum SendActionError {
         /// The digest of the [`UserOp`].
         got: B256,
     },
-    /// The quote expired.
-    #[error("quote expired")]
-    QuoteExpired,
-    /// The provided quote was not signed by the relay.
-    #[error("invalid quote signer")]
-    InvalidQuoteSignature,
     /// The userop reverted when trying transaction.
     #[error("op reverted: {revert_reason}")]
     OpRevert {
         /// The error code returned by the entrypoint.
         revert_reason: Bytes,
     },
-    /// An error occurred talking to RPC.
-    #[error(transparent)]
-    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
-    /// An internal error occurred.
-    #[error(transparent)]
-    InternalError(#[from] eyre::Error),
 }
 
-impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(error: SendActionError) -> Self {
-        if let SendActionError::OpRevert { ref revert_reason } = error {
-            return jsonrpsee::types::error::ErrorObject::owned::<Bytes>(
-                EthRpcErrorCode::ExecutionError.code(),
-                error.to_string(),
-                Some(revert_reason.clone()),
-            );
-        }
-
-        jsonrpsee::types::error::ErrorObject::owned::<()>(
-            match error {
-                SendActionError::InternalError(_) | SendActionError::RpcError(_) => {
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
-                }
-                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
-            },
-            error.to_string(),
-            None,
-        )
-    }
-}
-
-impl SendActionError {
-    /// Create an internal error.
-    pub fn internal<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
-        Self::InternalError(err.into())
-    }
-}
-
-/// Price oracle related errors
+/// Errors related to authorization keys.
 #[derive(Debug, thiserror::Error)]
-pub enum PriceOracleError {
-    /// An internal error occurred.
-    #[error(transparent)]
-    InternalError(#[from] eyre::Error),
+pub enum KeysError {
+    /// The key type is not supported.
+    #[error("only supports `p256`, `webauthnp256` and `secp256k1` key types")]
+    UnsupportedKeyType,
+    /// Missing at least one admin authorization key.
+    #[error("should have at least one admin authorization key")]
+    MissingAdminKey,
+    /// Invalid account key registry a data.
+    #[error("invalid account key registry a data for ID {0}")]
+    InvalidRegistryData(Address),
 }
 
-/// Errors when performing `eth_call`s and decoding the result.
+/// The overarching error type returned by `relay_estimateFee`.
 #[derive(Debug, thiserror::Error)]
-pub enum CallError {
-    /// The userop reverted when estimating gas.
-    #[error("op reverted: {revert_reason}")]
-    OpRevert {
-        /// The error code returned by the entrypoint.
-        revert_reason: Bytes,
-    },
-    /// An error occurred talking to RPC.
+pub enum RelayError {
+    /// Errors related to 7702 authorizations.
     #[error(transparent)]
-    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    Auth(#[from] AuthError),
+    /// Errors related to quotes.
+    #[error(transparent)]
+    Quote(#[from] QuoteError),
+    /// Errors related to user ops.
+    #[error(transparent)]
+    UserOp(#[from] UserOpError),
+    /// Errors related to authorization keys.
+    #[error(transparent)]
+    Keys(#[from] KeysError),
+    /// Errors related to storage.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+    /// The chain is not supported.
+    #[error("unsupported chain {0}")]
+    UnsupportedChain(ChainId),
     /// An error occurred ABI enc/decoding.
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
-}
-
-impl From<CallError> for EstimateFeeError {
-    fn from(err: CallError) -> Self {
-        match err {
-            CallError::OpRevert { revert_reason } => Self::OpRevert { revert_reason },
-            CallError::RpcError(err) => Self::RpcError(err),
-            CallError::AbiError(err) => Self::InternalError(err.into()),
-        }
-    }
-}
-
-/// Errors returned by `wallet_prepareUpgradeAccount` and `wallet_upgradeAccount`
-#[derive(Debug, thiserror::Error)]
-pub enum UpgradeAccountError {
-    /// Invalid authorization item address.
-    #[error("invalid auth item, expected {expected}, got {got}")]
-    InvalidAuthAddress {
-        /// The address expected.
-        expected: Address,
-        /// The address in the authorization item.
-        got: Address,
-    },
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
@@ -211,26 +137,129 @@ pub enum UpgradeAccountError {
     InternalError(#[from] eyre::Error),
 }
 
-impl From<UpgradeAccountError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(error: UpgradeAccountError) -> Self {
-        jsonrpsee::types::error::ErrorObject::owned::<()>(
-            match error {
-                UpgradeAccountError::InternalError(_) | UpgradeAccountError::RpcError(_) => {
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
-                }
-                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
-            },
-            error.to_string(),
-            None,
-        )
+/// Helper trait to easily convert various `Result` types into [`RpcResult`]
+pub trait ToRpcResult<Ok, Err>: Sized {
+    /// Converts result to [`RpcResult`] by converting error variant to
+    /// [`jsonrpsee::types::error::ErrorObject`]
+    fn to_rpc_result(self) -> RpcResult<Ok>
+    where
+        Err: fmt::Display,
+    {
+        self.map_internal_err(|err| err.to_string())
     }
+
+    /// Converts result to [`RpcResult`] by converting error variant to
+    /// [`jsonrpsee::types::error::ErrorObject`]
+    fn to_params_result(self) -> RpcResult<Ok>
+    where
+        Err: fmt::Display,
+    {
+        self.map_invalid_params_err(|err| err.to_string())
+    }
+
+    /// Converts this type into an [`RpcResult`]
+    fn map_rpc_err<'a, F, M>(self, op: F) -> RpcResult<Ok>
+    where
+        F: FnOnce(Err) -> (i32, M, Option<&'a [u8]>),
+        M: Into<String>;
+
+    /// Converts this type into an [`RpcResult`] with the
+    /// [`jsonrpsee::types::error::INTERNAL_ERROR_CODE`] and the given message.
+    fn map_internal_err<F, M>(self, op: F) -> RpcResult<Ok>
+    where
+        F: FnOnce(Err) -> M,
+        M: Into<String>;
+
+    /// Converts this type into an [`RpcResult`] with the
+    /// [`jsonrpsee::types::error::INVALID_PARAMS_CODE`] and the given message.
+    fn map_invalid_params_err<F, M>(self, op: F) -> RpcResult<Ok>
+    where
+        F: FnOnce(Err) -> M,
+        M: Into<String>;
+
 }
 
-/// Converts from [`eyre::Report`] into [`jsonrpsee::types::error::ErrorObject`].
-pub fn from_eyre_error(err: eyre::Report) -> jsonrpsee::types::error::ErrorObject<'static> {
-    jsonrpsee::types::error::ErrorObject::owned::<()>(
-        jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-        err.to_string(),
-        None,
+/// A macro that implements the `ToRpcResult` for a specific error type
+#[macro_export]
+macro_rules! impl_to_rpc_result {
+    ($err:ty) => {
+        impl<Ok> ToRpcResult<Ok, $err> for Result<Ok, $err> {
+            #[inline]
+            fn map_rpc_err<'a, F, M>(self, op: F) -> jsonrpsee::core::RpcResult<Ok>
+            where
+                F: FnOnce($err) -> (i32, M, Option<&'a [u8]>),
+                M: Into<String>,
+            {
+                match self {
+                    Ok(t) => Ok(t),
+                    Err(err) => {
+                        let (code, msg, data) = op(err);
+                        Err($crate::error::rpc_err(code, msg, data))
+                    }
+                }
+            }
+
+            #[inline]
+            fn map_invalid_params_err<'a, F, M>(self, op: F) -> jsonrpsee::core::RpcResult<Ok>
+            where
+                F: FnOnce($err) -> M,
+                M: Into<String>,
+            {
+                self.map_err(|err| $crate::error::invalid_params_rpc_err(op(err)))
+            }
+
+            #[inline]
+            fn map_internal_err<'a, F, M>(self, op: F) -> jsonrpsee::core::RpcResult<Ok>
+            where
+                F: FnOnce($err) -> M,
+                M: Into<String>,
+            {
+                self.map_err(|err| $crate::error::internal_rpc_err(op(err)))
+            }
+        }
+    };
+}
+
+impl_to_rpc_result!(RelayError);
+impl_to_rpc_result!(AuthError);
+impl_to_rpc_result!(QuoteError);
+impl_to_rpc_result!(UserOpError);
+impl_to_rpc_result!(KeysError);
+impl_to_rpc_result!(StorageError);
+impl_to_rpc_result!(TransportErrorKind);
+
+/// Constructs an invalid params JSON-RPC error.
+pub fn invalid_params_rpc_err(
+    msg: impl Into<String>,
+) -> jsonrpsee::types::error::ErrorObject<'static> {
+    rpc_err(jsonrpsee::types::error::INVALID_PARAMS_CODE, msg, None)
+}
+
+/// Constructs an internal JSON-RPC error.
+pub fn internal_rpc_err(msg: impl Into<String>) -> jsonrpsee::types::error::ErrorObject<'static> {
+    rpc_err(jsonrpsee::types::error::INTERNAL_ERROR_CODE, msg, None)
+}
+
+/// Constructs an internal JSON-RPC error with code and message
+pub fn rpc_error_with_code(
+    code: i32,
+    msg: impl Into<String>,
+) -> jsonrpsee::types::error::ErrorObject<'static> {
+    rpc_err(code, msg, None)
+}
+
+/// Constructs a JSON-RPC error, consisting of `code`, `message` and optional `data`.
+pub fn rpc_err(
+    code: i32,
+    msg: impl Into<String>,
+    data: Option<&[u8]>,
+) -> jsonrpsee::types::error::ErrorObject<'static> {
+    jsonrpsee::types::error::ErrorObject::owned(
+        code,
+        msg.into(),
+        data.map(|data| {
+            jsonrpsee::core::to_json_raw_value(&alloy::primitives::hex::encode_prefixed(data))
+                .expect("serializing String can't fail")
+        }),
     )
 }

@@ -10,7 +10,7 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::CallError;
+use crate::error::{RelayError, UserOpError};
 
 use super::UserOp;
 
@@ -102,7 +102,7 @@ impl<P: Provider> Entry<P> {
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
-    pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, CallError> {
+    pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, RelayError> {
         let ret = self
             .entrypoint
             .simulateExecute(op.abi_encode().into())
@@ -117,20 +117,20 @@ impl<P: Provider> Entry<P> {
         let err = ret.unwrap_err();
         if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
             if result.err != ENTRYPOINT_NO_ERROR {
-                Err(CallError::OpRevert { revert_reason: result.err.into() })
+                Err(UserOpError::OpRevert { revert_reason: result.err.into() }.into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
         } else if let Some(data) = err.as_revert_data() {
-            Err(CallError::OpRevert { revert_reason: data })
+            Err(UserOpError::OpRevert { revert_reason: data }.into())
         } else {
             Err(TransportErrorKind::custom(err).into())
         }
     }
 
     /// Call `EntryPoint.execute` with the provided [`UserOp`].
-    pub async fn execute(&self, op: &UserOp) -> Result<(), CallError> {
+    pub async fn execute(&self, op: &UserOp) -> Result<(), RelayError> {
         let ret = self
             .entrypoint
             .execute(op.abi_encode().into())
@@ -140,7 +140,7 @@ impl<P: Provider> Entry<P> {
             .map_err(TransportErrorKind::custom)?;
 
         if ret.err != ENTRYPOINT_NO_ERROR {
-            Err(CallError::OpRevert { revert_reason: ret.err.into() })
+            Err(UserOpError::OpRevert { revert_reason: ret.err.into() }.into())
         } else {
             Ok(())
         }
