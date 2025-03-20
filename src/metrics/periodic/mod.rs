@@ -27,7 +27,7 @@ pub trait MetricCollector: Debug {
 
 /// Spawns all available periodic metric collectors.
 pub async fn spawn_periodic_collectors(
-    signer: Address,
+    signers: Vec<Address>,
     rpc_urls: Vec<Url>,
 ) -> Result<(), MetricCollectorError> {
     let mut providers_with_url = Vec::with_capacity(rpc_urls.len());
@@ -41,7 +41,7 @@ pub async fn spawn_periodic_collectors(
     }
 
     PeriodicJob::launch_task(
-        BalanceCollector::new(signer, providers_with_chain),
+        BalanceCollector::new(signers, providers_with_chain),
         tokio::time::interval(Duration::from_secs(5)),
     );
 
@@ -69,7 +69,7 @@ mod tests {
 
         // Launches periodic jobs
         spawn_periodic_collectors(
-            address!("0x4242424242424242424242424242424242424242"),
+            vec![address!("0x4242424242424242424242424242424242424242")],
             vec![Url::from_str("http://localhost:8545").unwrap()],
         )
         .await

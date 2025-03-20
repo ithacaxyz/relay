@@ -12,6 +12,7 @@ use crate::{
 };
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use http::header;
+use itertools::Itertools;
 use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{path::Path, sync::Arc};
@@ -55,8 +56,11 @@ pub async fn try_spawn(
     let registry = Arc::new(registry);
 
     // construct provider
-    let signer = DynSigner::load(&config.secrets.transaction_key, None).await?;
-    let signer_addr = signer.address();
+    let signers = futures_util::future::try_join_all(
+        config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)),
+    )
+    .await?;
+    let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
     let providers: Vec<DynProvider> = config
         .chain
@@ -87,7 +91,7 @@ pub async fn try_spawn(
 
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
-        Chains::new(providers.clone(), signer, storage.clone()).await?,
+        Chains::new(providers.clone(), signers, storage.clone()).await?,
         quote_signer,
         config.quote,
         price_oracle,
@@ -97,7 +101,7 @@ pub async fn try_spawn(
     .into_rpc();
 
     // launch period metric collectors
-    metrics::spawn_periodic_collectors(signer_addr, config.chain.endpoints).await?;
+    metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints).await?;
 
     // http layers
     let cors = CorsLayer::new()
@@ -115,7 +119,7 @@ pub async fn try_spawn(
         .build((config.server.address, config.server.port))
         .await?;
     info!(addr = %server.local_addr().unwrap(), "Started relay service");
-    info!("Transaction signer key: {}", signer_addr);
+    info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
 
     Ok(server.start(rpc))

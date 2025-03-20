@@ -4,6 +4,7 @@ use super::{
     SignerEvent, SignerHandle,
     transaction::{RelayTransaction, TransactionStatus},
 };
+use rand::seq::IndexedRandom;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -39,8 +40,8 @@ impl TransactionServiceHandle {
 /// Service handing transactions.
 #[derive(Debug)]
 pub struct TransactionService {
-    /// Handle to a signer responsible for broadcasting transactions.
-    signer: SignerHandle,
+    /// Handles of signers responsible for broadcasting transactions.
+    signers: Vec<SignerHandle>,
 
     /// Incoming messages for the service.
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
@@ -51,22 +52,22 @@ pub struct TransactionService {
 
 impl TransactionService {
     /// Creates a new [`TransactionService`].
-    pub fn new(signer: SignerHandle) -> (Self, TransactionServiceHandle) {
+    pub fn new(signers: Vec<SignerHandle>) -> (Self, TransactionServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let this = Self { signer, command_rx, subscriptions: Default::default() };
+        let this = Self { signers, command_rx, subscriptions: Default::default() };
 
         (this, TransactionServiceHandle { command_tx })
     }
 
     /// Creates a new [`TransactionService`] and spawns it.
-    pub fn spawn(signer: SignerHandle) -> TransactionServiceHandle {
-        let (this, handle) = Self::new(signer);
+    pub fn spawn(signers: Vec<SignerHandle>) -> TransactionServiceHandle {
+        let (this, handle) = Self::new(signers);
         tokio::spawn(this);
         handle
     }
 
     fn send_transaction(&mut self, tx: RelayTransaction) {
-        self.signer.send_transaction(tx);
+        self.signers.choose(&mut rand::rng()).expect("no signers").send_transaction(tx);
     }
 }
 
@@ -85,15 +86,17 @@ impl Future for TransactionService {
             }
         }
 
-        while let Poll::Ready(Some(event)) = this.signer.poll_recv(cx) {
-            match event {
-                SignerEvent::TransactionStatus(id, status) => {
-                    if let Some(status_tx) = this.subscriptions.get(&id) {
-                        let _ = status_tx.send(status.clone());
-                    }
+        for signer in &mut this.signers {
+            while let Poll::Ready(Some(event)) = signer.poll_recv(cx) {
+                match event {
+                    SignerEvent::TransactionStatus(id, status) => {
+                        if let Some(status_tx) = this.subscriptions.get(&id) {
+                            let _ = status_tx.send(status.clone());
+                        }
 
-                    if status.is_final() {
-                        this.subscriptions.remove(&id);
+                        if status.is_final() {
+                            this.subscriptions.remove(&id);
+                        }
                     }
                 }
             }
