@@ -80,12 +80,15 @@ pub async fn setup_exporter(metrics_addr: impl Into<SocketAddr>) {
         return;
     }
 
+    let addr: SocketAddr = metrics_addr.into();
     let (recorder, exporter) = PrometheusBuilder::new()
-        .with_http_listener(metrics_addr)
+        .with_http_listener(addr)
         .upkeep_timeout(Duration::from_secs(5))
         .build()
         .expect("failed to build metrics recorder");
 
-    tokio::spawn(exporter);
     metrics::set_global_recorder(recorder).expect("could not set metrics recorder");
+    tokio::spawn(exporter);
+
+    tracing::info!(target: "relay::spawn", %addr, "Started metrics server")
 }
