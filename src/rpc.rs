@@ -42,7 +42,7 @@ use crate::{
         Account, Action, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
-            AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
+            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CreateAccountParameters,
             CreateAccountResponse, CreateAccountResponseCapabilities, GetKeysParameters,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
             PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
@@ -451,11 +451,35 @@ impl RelayApiServer for Relay {
         })
     }
 
-    async fn get_keys(
-        &self,
-        _parameters: GetKeysParameters,
-    ) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        todo!()
+    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
+        let account = Account::new(
+            request.address,
+            self.inner
+                .chains
+                .get(request.chain_id)
+                .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
+                .provider,
+        );
+
+        // Get all keys from account
+        let keys = account.keys().await.map_err(EstimateFeeError::from)?; // todo error handling
+
+        // Get all permissions from non admin keys
+        let mut permissioned_keys = account
+            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
+            .await
+            .map_err(EstimateFeeError::from)?; // todo error handling
+
+        Ok(keys
+            .into_iter()
+            .map(|(hash, key)| AuthorizeKeyResponse {
+                hash,
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                },
+            })
+            .collect())
     }
 
     async fn prepare_calls(

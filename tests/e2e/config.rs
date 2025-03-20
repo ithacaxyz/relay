@@ -64,7 +64,7 @@ pub enum AccountConfig {
 
 impl AccountConfig {
     /// Set up the environment based on the account type.
-    async fn setup_environment(self) -> eyre::Result<Environment> {
+    pub async fn setup_environment(self) -> eyre::Result<Environment> {
         match self {
             AccountConfig::Prep => Environment::setup_with_prep().await,
             AccountConfig::Upgraded => Environment::setup_with_upgraded().await,
@@ -75,7 +75,7 @@ impl AccountConfig {
     ///
     /// If it's an upgraded account, returns the list of [`Call`] that should be prepended on the
     /// next transaction, since it does not support bundling.
-    async fn handle_first_tx<'a>(
+    pub async fn handle_first_tx<'a>(
         self,
         env: &mut Environment,
         tx_num: usize,

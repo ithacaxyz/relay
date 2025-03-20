@@ -1,8 +1,9 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
     U40,
-    rpc::AuthorizeKey,
+    rpc::{AuthorizeKey, Permission},
 };
+use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
@@ -78,6 +79,16 @@ sol! {
 
         /// Revokes the key.
         function revoke(bytes32 keyHash) public virtual onlyThis;
+
+        /// Returns arrays of all (non-expired) authorized keys and their hashes.
+        function getKeys() returns (Key[] memory keys, bytes32[] memory keyHashes);
+    }
+}
+
+impl getKeysReturn {
+    /// Converts [`getKeysReturn`] into a list of tuples: `Vec<(B256, Key)>`
+    pub fn into_tuples(self) -> impl Iterator<Item = (B256, Key)> {
+        self.keyHashes.into_iter().zip(self.keys)
     }
 }
 
@@ -300,6 +311,11 @@ impl KeyWith712Signer {
     /// Returns a [`AuthorizeKey`] equivalent.
     pub fn to_authorized(&self) -> AuthorizeKey {
         AuthorizeKey { key: self.key.clone(), permissions: vec![] }
+    }
+
+    /// Returns a [`AuthorizeKey`] equivalent with set permissions.
+    pub fn to_permissioned_authorized(&self, permissions: Vec<Permission>) -> AuthorizeKey {
+        AuthorizeKey { key: self.key.clone(), permissions }
     }
 }
 

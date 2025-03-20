@@ -1,6 +1,6 @@
 //! RPC key-related request and response types.
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, ChainId};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{Call, Key, KeyType};
@@ -12,6 +12,8 @@ use super::Permission;
 pub struct GetKeysParameters {
     /// Address of the account to get the keys for.
     pub address: Address,
+    /// Target chain ID.
+    pub chain_id: ChainId,
 }
 
 /// Represents a key authorization request.
@@ -65,10 +67,10 @@ impl AuthorizeKey {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct AuthorizeKeyResponse {
     /// Key hash.
-    hash: B256,
+    pub hash: B256,
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
-    authorize_key: AuthorizeKey,
+    pub authorize_key: AuthorizeKey,
 }
 
 /// Represents a key revocation request.
@@ -91,13 +93,10 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        Call,
+        Call, CallPermission,
         Delegation::SpendPeriod,
         Key, KeyType, U40,
-        rpc::{
-            AuthorizeKey, AuthorizeKeyResponse, CallPermission, Permission, RevokeKey,
-            SpendPermission,
-        },
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
     #[test]
