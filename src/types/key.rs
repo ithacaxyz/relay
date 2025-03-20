@@ -3,6 +3,7 @@ use super::{
     U40,
     rpc::{AuthorizeKey, Permission},
 };
+use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
@@ -81,6 +82,13 @@ sol! {
 
         /// Returns arrays of all (non-expired) authorized keys and their hashes.
         function getKeys() returns (Key[] memory keys, bytes32[] memory keyHashes);
+    }
+}
+
+impl getKeysReturn {
+    /// Converts [`getKeysReturn`] into a list of tuples: `Vec<(B256, Key)>`
+    pub fn into_tuples(self) -> impl Iterator<Item = (B256, Key)> {
+        self.keyHashes.into_iter().zip(self.keys)
     }
 }
 

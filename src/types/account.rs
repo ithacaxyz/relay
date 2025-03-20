@@ -85,6 +85,8 @@ sol! {
 
 impl spendAndExecuteInfosReturn {
     /// Converts [`spendAndExecuteInfosReturn`] into a list of [`Permission`] per key.
+    ///
+    /// On each key, the spend permissions come before the call ones.
     pub fn into_permissions(self) -> Vec<Vec<Permission>> {
         self.keys_spends
             .into_iter()
@@ -163,11 +165,11 @@ impl<P: Provider> Account<P> {
         let keys = self
             .delegation
             .provider()
-            .call(TransactionRequest {
-                to: Some((*self.delegation.address()).into()),
-                input: IDelegation::getKeysCall::SELECTOR.to_vec().into(),
-                ..Default::default()
-            })
+            .call(
+                TransactionRequest::default()
+                    .to(*self.delegation.address())
+                    .input(IDelegation::getKeysCall::SELECTOR.to_vec().into()),
+            )
             .overrides(self.overrides.clone())
             .await
             .and_then(|r| {
@@ -175,15 +177,13 @@ impl<P: Provider> Account<P> {
                     .map_err(TransportErrorKind::custom)
             })?;
 
-        let keys = keys.keyHashes.into_iter().zip(keys.keys).collect();
-
         debug!(
             eoa = %self.delegation.address(),
-            keys = ?keys,
+            keys = ?keys.keys,
             "Fetched keys"
         );
 
-        Ok(keys)
+        Ok(keys.into_tuples().collect())
     }
 
     /// Returns a list of all permissions for the given key set.
