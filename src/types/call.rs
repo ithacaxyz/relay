@@ -8,6 +8,7 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 
 use super::{
+    AccountRegistry,
     Delegation::{SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall},
     IDelegation::{authorizeCall, revokeCall},
     Key,
@@ -79,5 +80,19 @@ impl Call {
         Self::self_call(
             removeSpendLimitCall { keyHash: key_hash, token, period }.abi_encode().into(),
         )
+    }
+
+    /// Create a call to register an account.
+    pub fn register_account(
+        registry: Address,
+        signature: Bytes,
+        data: Bytes,
+        account: Address,
+    ) -> Self {
+        Self {
+            target: registry,
+            value: U256::ZERO,
+            data: AccountRegistry::registerCall { signature, data, account }.abi_encode().into(),
+        }
     }
 }

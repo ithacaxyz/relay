@@ -493,9 +493,6 @@ impl RelayApiServer for Relay {
         // todo: fetch them from somewhere.
         let revoke_keys = Vec::new();
 
-        // Merges authorize calls with requested ones.
-        let all_calls = authorize_calls.chain(request.calls).collect::<Vec<_>>();
-
         // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
         // todo: pass key with permissions to estimate_fee instead of keyType
         let key = KeyType::WebAuthnP256;
@@ -522,6 +519,16 @@ impl RelayApiServer for Relay {
                 Ok(None)
             })
             .await?;
+
+        // Merges authorize, registry(from prepareAccount) and requested calls.
+        let all_calls = authorize_calls
+            .chain(maybe_prep.iter().flat_map(|acc| {
+                acc.id_signatures
+                    .iter()
+                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+            }))
+            .chain(request.calls)
+            .collect::<Vec<_>>();
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self
