@@ -1,10 +1,13 @@
 use alloy::{
-    primitives::{Address, U256},
-    sol_types::SolCall,
+    primitives::{Address, B256, U256, keccak256},
+    sol_types::{SolCall, SolValue},
 };
 use relay::{
-    signers::DynSigner,
-    types::{Call, IDelegation::authorizeCall, KeyWith712Signer, PREPAccount},
+    signers::{DynSigner, Eip712PayLoadSigner},
+    types::{
+        Call, CreatableAccount, IDelegation::authorizeCall, KeyHashWithID, KeyType,
+        KeyWith712Signer, PREPAccount,
+    },
 };
 
 /// Kind of EOA: PREP or Upgraded.
@@ -12,7 +15,7 @@ use relay::{
 #[derive(Debug)]
 pub enum EoaKind {
     Upgraded(DynSigner),
-    Prep { admin_key: KeyWith712Signer, account: PREPAccount },
+    Prep { admin_key: KeyWith712Signer, account: CreatableAccount },
 }
 
 impl EoaKind {
@@ -22,14 +25,40 @@ impl EoaKind {
     }
 
     /// Create a new [`EoaKind`] with [`PREPAccount`].
-    pub fn create_prep(admin_key: KeyWith712Signer, delegation: Address) -> Self {
+    pub async fn create_prep(
+        admin_key: KeyWith712Signer,
+        delegation: Address,
+    ) -> eyre::Result<Self> {
         let init_calls = vec![Call {
             target: Address::ZERO,
             value: U256::ZERO,
             data: authorizeCall { key: admin_key.key().clone() }.abi_encode().into(),
         }];
 
-        Self::Prep { admin_key, account: PREPAccount::initialize(delegation, init_calls) }
+        let prep = PREPAccount::initialize(delegation, init_calls);
+
+        let key_hash = admin_key.key_hash();
+        let hash = keccak256((key_hash.abi_encode(), prep.address).abi_encode_sequence());
+
+        let signature = match admin_key.keyType {
+            KeyType::P256 => {
+                panic!("P256 can only be a session key.")
+            }
+            KeyType::WebAuthnP256 => {
+                let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
+                ephemeral.sign_payload_hash(hash).await?
+            }
+            KeyType::Secp256k1 => admin_key.sign_payload_hash(hash).await?,
+            _ => unreachable!(),
+        };
+
+        Ok(Self::Prep {
+            admin_key,
+            account: CreatableAccount::new(
+                prep,
+                vec![KeyHashWithID { hash: key_hash, id_signature: signature }],
+            ),
+        })
     }
 
     /// Returns a reference to the inner [`DynSigner`] when dealing with an upgraded account.
@@ -40,7 +69,7 @@ impl EoaKind {
     pub fn root_signer(&self) -> &DynSigner {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer,
-            EoaKind::Prep { admin_key, account } => {
+            EoaKind::Prep { .. } => {
                 panic!("eoa is not an upgraded account")
             }
         }
@@ -54,7 +83,7 @@ impl EoaKind {
     pub fn prep_signer(&self) -> &KeyWith712Signer {
         match self {
             EoaKind::Upgraded(dyn_signer) => panic!("eoa is not a prep account"),
-            EoaKind::Prep { admin_key, account } => admin_key,
+            EoaKind::Prep { admin_key, .. } => admin_key,
         }
     }
 
@@ -67,7 +96,7 @@ impl EoaKind {
     pub fn address(&self) -> Address {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),
-            EoaKind::Prep { account, .. } => account.address,
+            EoaKind::Prep { account, .. } => account.prep.address,
         }
     }
 }

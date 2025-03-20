@@ -150,13 +150,14 @@ impl Environment {
 
         let eoa = if is_prep {
             // Generate a random admin key from a random key type.
-            let key_type = [KeyType::P256, KeyType::Secp256k1, KeyType::WebAuthnP256];
-            let random_key_type = key_type[B256::random()[0] as usize % 3];
+            let key_type = [KeyType::Secp256k1, KeyType::WebAuthnP256];
+            let random_key_type = key_type[B256::random()[0] as usize % 2];
 
             EoaKind::create_prep(
                 KeyWith712Signer::random_admin(random_key_type)?.unwrap(),
                 delegation,
             )
+            .await?
         } else {
             EoaKind::create_upgraded(
                 DynSigner::load(

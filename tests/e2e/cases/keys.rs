@@ -43,7 +43,11 @@ async fn get_keys() -> eyre::Result<()> {
             let permissions = if !key.isSuperAdmin { permissions.clone() } else { vec![] };
             AuthorizeKeyResponse {
                 hash: key.key_hash(),
-                authorize_key: AuthorizeKey { key: key.key().clone(), permissions },
+                authorize_key: AuthorizeKey {
+                    key: key.key().clone(),
+                    permissions,
+                    id_signature: None,
+                },
             }
         })
         .collect::<Vec<_>>();

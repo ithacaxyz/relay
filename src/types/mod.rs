@@ -2,6 +2,9 @@
 mod account;
 pub use account::*;
 
+mod account_registry;
+pub use account_registry::*;
+
 mod action;
 pub use action::*;
 
@@ -40,6 +43,9 @@ pub use call::*;
 
 mod webauthn;
 pub use webauthn::*;
+
+mod storage;
+pub use storage::*;
 
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;

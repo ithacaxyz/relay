@@ -26,12 +26,12 @@ use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_with_upgraded_account() -> eyre::Result<()> {
-    let (signers, keys) = [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256]
+    let (signers, keys) = [KeyType::Secp256k1, KeyType::WebAuthnP256]
         .into_iter()
         .map(|key_type| {
             let signer = KeyWith712Signer::random_admin(key_type).unwrap().unwrap();
             let key = signer.key().clone();
-            (signer, AuthorizeKey { key, permissions: vec![] })
+            (signer, AuthorizeKey { key, permissions: vec![], id_signature: None })
         })
         .collect::<(Vec<_>, Vec<_>)>();
 

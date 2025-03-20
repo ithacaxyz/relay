@@ -1,6 +1,6 @@
 //! RPC key-related request and response types.
 
-use alloy::primitives::{Address, B256, ChainId};
+use alloy::primitives::{Address, B256, Bytes, ChainId};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{Call, Key, KeyType};
@@ -28,6 +28,9 @@ pub struct AuthorizeKey {
     pub key: Key,
     /// The permissions for the key.
     pub permissions: Vec<Permission>,
+    /// Signature over the PREPAddress.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_signature: Option<Bytes>,
 }
 
 impl AuthorizeKey {
@@ -121,6 +124,7 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
+            id_signature: None,
         };
 
         let (authorize, calls) = key.clone().into_calls();
@@ -169,6 +173,7 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
+            id_signature: None,
         };
 
         assert_eq!(
@@ -195,6 +200,7 @@ mod tests {
                     to: Address::ZERO,
                     selector: fixed_bytes!("0xa9059cbb"),
                 })],
+                id_signature: None,
             },
         };
 
@@ -228,7 +234,8 @@ mod tests {
                     permissions: vec![Permission::Call(CallPermission {
                         to: Address::ZERO,
                         selector: fixed_bytes!("0xa9059cbb"),
-                    })]
+                    })],
+                    id_signature: None,
                 },
             }
         );

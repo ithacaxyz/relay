@@ -3,7 +3,7 @@
 use super::StorageError;
 use crate::{
     transactions::{PendingTransaction, TransactionStatus},
-    types::{PREPAccount, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -16,10 +16,10 @@ pub type Result<T> = core::result::Result<T, StorageError>;
 #[async_trait]
 pub trait StorageApi: Debug + Send + Sync {
     /// Reads [`PREPAccount`] from storage.
-    async fn read_prep(&self, address: &Address) -> Result<Option<PREPAccount>>;
+    async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>>;
 
     /// Writes [`PREPAccount`] to storage.
-    async fn write_prep(&self, account: &PREPAccount) -> Result<()>;
+    async fn write_prep(&self, account: CreatableAccount) -> Result<()>;
 
     /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;

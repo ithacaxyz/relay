@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
+    for key_type in [KeyType::Secp256k1, KeyType::WebAuthnP256] {
         let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
 
         // The first TX will bundle the prep/upgrade calls
@@ -46,7 +46,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     run_e2e_upgraded(|env| {
         vec![TxContext {
             authorization_keys: vec![key.to_authorized()],
@@ -60,7 +60,7 @@ async fn invalid_auth_nonce() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let dummy_signer =
         DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
             .await?;
@@ -79,8 +79,8 @@ async fn invalid_auth_signature() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
-    let key1 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
-    let key2 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key2 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
     run_e2e(|env| {
         vec![
@@ -109,7 +109,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn spend_limits() -> Result<()> {
-    let key1 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap();
+    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
     run_e2e(|env| {
         vec![
