@@ -3,9 +3,9 @@
 use crate::types::{Account, Entry, UserOp};
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{Address, B256, Bytes, map::AddressMap},
+    primitives::{Address, B256, Bytes},
     providers::DynProvider,
-    rpc::types::state::AccountOverride,
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolStruct,
 };
 use tracing::error;
@@ -22,22 +22,19 @@ pub async fn compute_eip712_digest(
     delegation: Option<Address>,
 ) -> eyre::Result<B256> {
     // Create the account override mapping.
-    let overrides = delegation
-        .map(|delegation| {
-            AddressMap::from_iter([(
+    let overrides = StateOverridesBuilder::default()
+        .apply(|overrides| {
+            let Some(delegation) = delegation else { return overrides };
+            overrides.append(
                 op.eoa,
-                // TODO: We can't use the builder API here because we only conditionally set the
-                // code.
-                AccountOverride {
-                    // Manually etch the 7702 designator as we do not have a signed auth item.
-                    code: Some(delegation).map(|addr| {
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    }),
-                    ..Default::default()
-                },
-            )])
+                AccountOverride::default()
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code(Bytes::from(
+                        [&EIP7702_DELEGATION_DESIGNATOR, delegation.as_slice()].concat(),
+                    )),
+            )
         })
-        .unwrap_or_default();
+        .build();
 
     // Create an account instance with the provided overrides.
     let account = Account::new(op.eoa, provider).with_overrides(overrides.clone());
