@@ -194,6 +194,7 @@ impl Environment {
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(relay_port)
+                .with_metrics_port(get_available_port()?)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_quote_key(relay_private_key.clone())
