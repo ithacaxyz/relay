@@ -1,12 +1,14 @@
 //! Relay end-to-end test constants
 
-use super::*;
+use super::{eoa::EoaKind, *};
 use alloy::{
     hex,
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256, address},
-    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
+    providers::{
+        DynProvider, Provider, ProviderBuilder, RootProvider, WalletProvider, ext::AnvilApi,
+    },
     rpc::types::TransactionRequest,
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
@@ -22,7 +24,12 @@ use relay::{
     config::RelayConfig,
     signers::{DynSigner, P256Signer},
     spawn::try_spawn,
-    types::{CoinKind, CoinRegistry},
+    types::{
+        Call, CoinKind, CoinRegistry,
+        IDelegation::authorizeCall,
+        KeyWith712Signer, PREPAccount,
+        rpc::{AuthorizeKeyResponse, GetKeysParameters},
+    },
 };
 use std::{
     net::{Ipv4Addr, TcpListener},
@@ -36,9 +43,10 @@ use url::Url;
 pub struct Environment {
     pub _anvil: Option<AnvilInstance>,
     pub provider: DynProvider,
-    pub eoa_signer: DynSigner,
+    pub eoa: EoaKind,
     pub entrypoint: Address,
     pub delegation: Address,
+    pub fee_token: Address,
     pub erc20: Address,
     pub erc20_alt: Address,
     pub chain_id: u64,
@@ -49,7 +57,8 @@ pub struct Environment {
 impl std::fmt::Debug for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Environment")
-            .field("eoa_signer", &self.eoa_signer.address())
+            .field("is_prep", &self.eoa.address())
+            .field("eoa", &self.eoa.address())
             .field("entrypoint", &self.entrypoint)
             .field("delegation", &self.delegation)
             .field("erc20", &self.erc20)
@@ -60,6 +69,20 @@ impl std::fmt::Debug for Environment {
 }
 
 impl Environment {
+    /// Sets up the test environment with a [`PREPAccount`].
+    ///
+    /// Read [`Self::setup`] for more information on setup.
+    pub async fn setup_with_prep() -> eyre::Result<Self> {
+        Self::setup(true).await
+    }
+
+    /// Sets up the test environment with a upgraded account using [`DynSigner`].
+    ///
+    /// Read [`Self::setup`] for more information on setup.
+    pub async fn setup_with_upgraded() -> eyre::Result<Self> {
+        Self::setup(false).await
+    }
+
     /// Sets up the test environment including Anvil, contracts, and the relay service.
     ///
     /// Available environment variables:
@@ -82,7 +105,7 @@ impl Environment {
     /// TEST_DELEGATION="0xDelegationAddress"
     /// TEST_ERC20="0xYourErc20Address"
     /// ```
-    pub async fn setup() -> eyre::Result<Self> {
+    async fn setup(is_prep: bool) -> eyre::Result<Self> {
         dotenv::dotenv().ok();
 
         // Spawns a local Ethereum node if one is not specified.
@@ -110,44 +133,81 @@ impl Environment {
         };
 
         // Load signers.
-        let relay_signer = DynSigner::load(&RELAY_PRIVATE_KEY.to_string(), None)
-            .await
-            .wrap_err("Relay signer load failed")?;
-        let eoa_signer = DynSigner::load(
-            &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
+        let deployer = DynSigner::load(
+            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
             None,
         )
         .await
-        .wrap_err("EOA signer load failed")?;
+        .wrap_err("Relay signer load failed")?;
 
         // Build provider
         let provider = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(relay_signer.0.clone()))
+            .wallet(EthereumWallet::from(deployer.0.clone()))
             .on_http(endpoint.clone());
 
         // Get or deploy mock contracts.
-        let (delegation, entrypoint, erc20s) =
-            get_or_deploy_contracts(&provider, &relay_signer, &eoa_signer).await?;
+        let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
+
+        let eoa = if is_prep {
+            // Generate a random admin key from a random key type.
+            let key_type = [KeyType::P256, KeyType::Secp256k1, KeyType::WebAuthnP256];
+            let random_key_type = key_type[B256::random()[0] as usize % 3];
+
+            EoaKind::create_prep(
+                KeyWith712Signer::random_admin(random_key_type)?.unwrap(),
+                delegation,
+            )
+        } else {
+            EoaKind::create_upgraded(
+                DynSigner::load(
+                    &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
+                    None,
+                )
+                .await
+                .wrap_err("EOA signer load failed")?,
+            )
+        };
+
+        mint_erc20s(&erc20s, &[eoa.address()], &provider).await?;
 
         // Ensure our registry has our tokens
         let chain_id = provider.get_chain_id().await?;
         let mut registry = CoinRegistry::default();
         registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
 
+        // Fund relay signer and EOA
+        let relay_private_key = RELAY_PRIVATE_KEY.to_string();
+        let relay_signer =
+            DynSigner::load(&relay_private_key, None).await.wrap_err("Relay signer load failed")?;
+
+        for address in [relay_signer.address(), eoa.address()] {
+            provider
+                .send_transaction(TransactionRequest {
+                    to: Some(TxKind::Call(address)),
+                    value: Some(U256::from(1000e18)),
+                    ..Default::default()
+                })
+                .await?
+                .get_receipt()
+                .await?;
+        }
+
         // Start relay service.
         let relay_port = get_available_port()?;
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(relay_port)
+                .with_metrics_port(0)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
-                .with_quote_key(RELAY_PRIVATE_KEY.to_string())
-                .with_transaction_key(RELAY_PRIVATE_KEY.to_string())
+                .with_quote_key(relay_private_key.clone())
+                .with_transaction_key(relay_private_key)
                 .with_quote_constant_rate(1.0)
-                .with_fee_tokens(&erc20s)
-                .with_user_op_gas_buffer(100_000), // todo: temp
+                .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
+                .with_entrypoint(entrypoint)
+                .with_user_op_gas_buffer(100_000)
+                .with_tx_gas_buffer(50_000), // todo: temp
             registry,
-            None,
         )
         .await?;
 
@@ -160,9 +220,10 @@ impl Environment {
         Ok(Self {
             _anvil: anvil,
             provider: provider.erased(),
-            eoa_signer,
+            eoa,
             entrypoint,
             delegation,
+            fee_token: erc20s[0],
             erc20: erc20s[0],
             erc20_alt: erc20s[1],
             chain_id,
@@ -170,35 +231,65 @@ impl Environment {
             relay_handle,
         })
     }
+
+    /// Sets [`Environment::fee_token`] to the native token.
+    pub fn with_native_payment(mut self) -> Self {
+        self.fee_token = Address::ZERO;
+        self
+    }
+
+    /// Gets the on-chain EOA authorized keys.
+    pub async fn get_eoa_authorized_keys(&self) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
+        Ok(self
+            .relay_endpoint
+            .get_keys(GetKeysParameters { address: self.eoa.address(), chain_id: self.chain_id })
+            .await?)
+    }
+}
+
+/// Mint ERC20s into the addresses.
+pub async fn mint_erc20s<P: Provider>(
+    erc20s: &[Address],
+    addresses: &[Address],
+    provider: P,
+) -> Result<(), eyre::Error> {
+    for erc20 in erc20s {
+        // Mint tokens for both signers.
+        for addr in addresses {
+            MockErc20::new(*erc20, &provider)
+                .mint(*addr, U256::from(100e18))
+                .send()
+                .await
+                .wrap_err("Minting failed")?;
+        }
+    }
+    Ok(())
 }
 
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
-async fn get_or_deploy_contracts<P: Provider>(
+async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-    relay_signer: &DynSigner,
-    eoa_signer: &DynSigner,
 ) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
-    let mock_entrypoint =
-        deploy_contract(&provider, &contracts_path.join("EntryPoint.sol/EntryPoint.json"), None)
-            .await?;
-    let mut delegation =
-        deploy_contract(&provider, &contracts_path.join("Delegation.sol/Delegation.json"), None)
-            .await?;
+    let mut entrypoint = deploy_contract(
+        &provider,
+        &contracts_path.join("EntryPoint.sol/EntryPoint.json"),
+        Some(provider.default_signer_address().abi_encode().into()),
+    )
+    .await?;
+    let mut delegation = deploy_contract(
+        &provider,
+        &contracts_path.join("Delegation.sol/Delegation.json"),
+        Some(entrypoint.abi_encode().into()),
+    )
+    .await?;
 
     // Entrypoint
-    let entrypoint = if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
-        Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?
-    } else {
-        let entrypoint = address!("0x307AF7d28AfEE82092aA95D35644898311CA5360");
-        provider
-            .anvil_set_code(entrypoint, provider.get_code_at(mock_entrypoint).await?)
-            .await
-            .wrap_err("Failed to set code")?;
-        entrypoint
-    };
+    if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
+        entrypoint = Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?;
+    }
 
     // Delegation
     if let Ok(address) = std::env::var("TEST_DELEGATION") {
@@ -226,15 +317,6 @@ async fn get_or_deploy_contracts<P: Provider>(
             ),
         )
         .await?;
-
-        // Mint tokens for both signers.
-        for signer in [relay_signer, eoa_signer] {
-            MockErc20::new(erc20, &provider)
-                .mint(signer.address(), U256::from(100e18))
-                .send()
-                .await
-                .wrap_err("Minting failed")?;
-        }
 
         erc20s.push(erc20)
     }

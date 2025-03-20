@@ -2,79 +2,129 @@
 #![allow(unused)]
 
 mod cases;
-mod constants;
-mod environment;
-mod types;
+use cases::{prep_account, upgrade_account};
 
+mod common_calls;
+
+mod config;
+use config::{AccountConfig, PaymentConfig, TestConfig};
+
+mod constants;
 pub use constants::*;
+
+mod environment;
 use environment::*;
+
+mod eoa;
+
+mod types;
 pub use types::*;
 
 use alloy::{
     dyn_abi::Eip712Domain,
-    eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Bytes, U256, bytes},
+    eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
+    primitives::{Address, B256, Bytes, TxHash, U256, bytes},
     providers::{PendingTransactionBuilder, Provider},
     signers::Signer,
     sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
     uint,
 };
 use eyre::{Context, OptionExt, Result};
+use futures_util::future::{join_all, try_join_all};
+use itertools::{Itertools, iproduct};
+use jsonrpsee::core::RpcResult;
 use relay::{
-    constants::EIP7702_DELEGATION_DESIGNATOR,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Delegation, ENTRYPOINT_NO_ERROR, Entry, Key, KeyType, PartialAction, PartialUserOp,
-        Signature, SignedQuote, U40, UserOp, WebAuthnP256,
+        Action, Call, Delegation, ENTRYPOINT_NO_ERROR, Entry,
+        EntryPoint::UserOpExecuted,
+        Key, KeyType, KeyWith712Signer, PartialAction, PartialUserOp, Signature, SignedQuote, U40,
+        UserOp, WebAuthnP256,
+        rpc::{
+            AuthorizeKey, CreateAccountCapabilities, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, SendPreparedCallsSignature,
+            UpgradeAccountParameters,
+        },
     },
 };
+use std::{future::Future, iter, str::FromStr};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-/// Represents the parameters passed to `send_action`
-pub struct ActionRequest {
-    /// Action request.
-    action: Action,
-    /// Authorization item.
-    authorization: Option<SignedAuthorization>,
-    /// Signed quote.
-    quote: SignedQuote,
-}
-
-/// Executes all transactions from the test case.
+/// Runs all configurations (both PREP and upgraded account, in both ERC20 and native payment
+/// methods).
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
-    F: FnOnce(&Environment) -> Vec<TxContext<'a>>,
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    let mut env = Environment::setup().await?;
-    let txs = build_txs(&env);
-    for (nonce, tx) in txs.into_iter().enumerate() {
-        process_tx(nonce, tx, &env).await?;
-    }
+    run_configs(build_txs, iproduct!(AccountConfig::iter(), PaymentConfig::iter())).await
+}
+
+/// Runs only the upgraded account configuration, in both ERC20 and native payment methods.
+pub async fn run_e2e_upgraded<'a, F>(build_txs: F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
+{
+    run_configs(build_txs, iproduct!(iter::once(AccountConfig::Upgraded), PaymentConfig::iter()))
+        .await
+}
+
+/// Runs a set of test configurations.
+pub async fn run_configs<'a, F>(
+    build_txs: F,
+    configs: impl Iterator<Item = impl Into<TestConfig>>,
+) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
+{
+    let test_cases = configs.into_iter().map(async |config| {
+        let config: TestConfig = config.into();
+        config.run(build_txs).await.with_context(|| format!("Error in config {:?}", config))
+    });
+
+    try_join_all(test_cases).await?;
+
     Ok(())
 }
 
 /// Processes a single transaction, returning error on a unexpected failure.
 ///
 /// The process follows these steps:
-/// 1. Obtains a valid authorization (if required), signed quote and action request from
-///    [`prepare_action_request`].
-/// 2. Submits and verifies execution:
-///    - Sends the action to the relay
+/// 1. Obtains a signed quote and UserOp signature from [`prepare_calls`].
+/// 2. Submits and verifies execution with [`send_prepared_calls`].
+///    - Sends the prepared calls and signature to the relay
 ///    - Handles expected send failures
 ///    - Retrieves and checks transaction receipt
 ///    - Verifies transaction status matches expectations
 ///    - Confirms UserOp success by checking nonce invalidation
 async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Result<()> {
-    let Some(ActionRequest { action, authorization, quote }) =
-        prepare_action_request(tx_num, &tx, env).await?
-    else {
+    let signer = tx.key.expect("should have key");
+
+    let Some((signature, quote)) = prepare_calls(tx_num, &tx, signer, env).await? else {
         // We had an expected failure so we should exit.
         return Ok(());
     };
 
-    let eoa = action.op.eoa;
-    let op_nonce = action.op.nonce;
-    match env.relay_endpoint.send_action(action, quote, authorization.clone()).await {
+    let op_nonce = quote.ty().op.nonce;
+
+    // Submit signed call
+    let bundle = send_prepared_calls(env, signer, signature, quote).await;
+
+    check_bundle(bundle, &tx, tx_num, None, op_nonce, env).await
+}
+
+/// Checks that the submitted bundle has had the expected test outcome.
+async fn check_bundle(
+    tx_hash: eyre::Result<B256>,
+    tx: &TxContext<'_>,
+    tx_num: usize,
+    authorization: Option<SignedAuthorization>,
+    op_nonce: U256,
+    env: &Environment,
+) -> Result<(), eyre::Error> {
+    match tx_hash {
         Ok(tx_hash) => {
             if tx.expected.failed_send() {
                 return Err(
@@ -98,7 +148,7 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
             }
 
             if let Some(auth) = authorization {
-                if env.provider.get_code_at(env.eoa_signer.address()).await?
+                if env.provider.get_code_at(env.eoa.address()).await?
                     != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
                     return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
@@ -106,16 +156,14 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
             }
 
             // UserOp has succeeded if the nonce has been invalidated.
-            let (seq, err) = Entry::new(env.entrypoint, env.provider.clone())
-                .nonce_status(eoa, op_nonce)
-                .await?;
-            let nonce_invalidated = seq > (U256::from(op_nonce >> 192).to());
-            let op_success = err == ENTRYPOINT_NO_ERROR;
-            if nonce_invalidated && op_success {
-                if tx.expected.failed_user_op() {
-                    return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
-                }
-            } else if !tx.expected.failed_user_op() {
+            let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
+                event.incremented && event.err == ENTRYPOINT_NO_ERROR
+            } else {
+                false
+            };
+            if success && tx.expected.failed_user_op() {
+                return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
+            } else if !success && !tx.expected.failed_user_op() {
                 return Err(eyre::eyre!(
                     "Transaction succeeded but UserOp failed for transaction {tx_num}",
                 ));
@@ -127,105 +175,75 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
             }
             return Err(eyre::eyre!("Send error for transaction {tx_num}: {err}"));
         }
-    }
-
+    };
     Ok(())
 }
 
-/// Obtains a [`ActionRequest`] if there's no expected test failure, otherwise `None`.
-///
-/// 1. Prepares execution data and authorization (if required):
-///    - Encodes the transaction calls
-///    - Creates and signs an EIP-7702 authorization if specified
-///
-/// 2. Estimates fees through the relay:
-///    - Sends a fee estimation request with the partial user operation
-///    - Handles expected estimation failures
-///
-/// 3. Constructs the full UserOp:
-///    - Sets basic parameters (EOA, execution data, nonce)
-///    - Initializes payment-related fields
-///    - Sets gas parameters based on the quote
-///
-/// 4. Signs the UserOp:
-///    - Creates an EIP-712 digest of the operation
-///    - Signs with EOA signer
-///    - For nonce 0: uses raw signature
-///    - For other nonces: wraps signature with key information
-pub async fn prepare_action_request(
+/// Obtains a [`SignedQuote`] from the relay by calling `wallet_prepare_calls` and signs the
+/// `UserOp`
+pub async fn prepare_calls(
     tx_num: usize,
     tx: &TxContext<'_>,
+    signer: &KeyWith712Signer,
     env: &Environment,
-) -> eyre::Result<Option<ActionRequest>> {
-    let execution_data: Bytes = tx.calls.abi_encode().into();
-    let nonce = env.provider.get_transaction_count(env.eoa_signer.address()).await?;
-    let authorization =
-        if let Some(auth) = tx.auth.as_ref() { Some(auth.sign(env, nonce).await?) } else { None };
-
-    let key_type = tx.key.as_ref().map(|k| k.keyType).unwrap_or(KeyType::Secp256k1);
-
-    let quote = env
+) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
+    let response = env
         .relay_endpoint
-        .estimate_fee(
-            PartialAction {
-                op: PartialUserOp {
-                    eoa: env.eoa_signer.address(),
-                    executionData: execution_data.clone(),
+        .prepare_calls(PrepareCallsParameters {
+            from: env.eoa.address(),
+            calls: tx.calls.clone(),
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: tx.authorization_keys.clone(),
+                revoke_keys: Vec::new(),
+                meta: Meta {
+                    fee_token: env.fee_token,
+                    key_hash: signer.key_hash(),
                     nonce: U256::from(tx_num),
                 },
-                chain_id: env.chain_id,
             },
-            env.erc20,
-            authorization.as_ref().map(|auth| *auth.address()),
-            key_type,
-        )
+        })
         .await;
 
-    if quote.is_err() {
+    if response.is_err() {
         if tx.expected.failed_estimate() {
             return Ok(None);
         } else {
-            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {quote:?}"));
+            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {response:?}"));
         }
     }
 
-    let quote = quote?;
-    let mut op = UserOp {
-        eoa: env.eoa_signer.address(),
-        executionData: execution_data.clone(),
-        nonce: U256::from(tx_num),
-        payer: Address::ZERO,
-        paymentToken: env.erc20,
-        paymentRecipient: Address::ZERO,
-        paymentAmount: quote.ty().amount,
-        paymentMaxAmount: quote.ty().amount,
-        paymentPerGas: quote.ty().amount / U256::from(quote.ty().gas_estimate.op),
-        combinedGas: U256::from(quote.ty().gas_estimate.op),
-        signature: bytes!(""),
-    };
+    let PrepareCallsResponse { context, digest, .. } = response?;
+    let signature = Signature {
+        innerSignature: signer.sign_payload_hash(digest).await.wrap_err("Signing failed")?,
+        keyHash: signer.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
 
-    let entry = Entry::new(env.entrypoint, env.provider.root());
-    let payload = op.as_eip712()?;
-    let domain = entry.eip712_domain(op.is_multichain()).await.unwrap();
+    Ok(Some((signature, context)))
+}
 
-    op.signature = if tx.key.is_none() {
-        env.eoa_signer
-            .sign_payload_hash(payload.eip712_signing_hash(&domain))
-            .await
-            .wrap_err("Signing failed")?
-    } else {
-        let key = tx.key.as_ref().ok_or_eyre("Key should be specified")?;
-        Signature {
-            innerSignature: key
-                .sign_typed_data(&payload, &domain)
-                .await
-                .wrap_err("Signing failed")?,
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into()
-    };
+/// Sends quote and UserOp signature to be broadcasted.
+pub async fn send_prepared_calls(
+    env: &Environment,
+    signer: &KeyWith712Signer,
+    signature: Bytes,
+    quote: SignedQuote,
+) -> eyre::Result<TxHash> {
+    let response = env
+        .relay_endpoint
+        .send_prepared_calls(SendPreparedCallsParameters {
+            context: quote,
+            signature: SendPreparedCallsSignature {
+                public_key: signer.publicKey.clone(),
+                key_type: signer.keyType,
+                value: signature,
+            },
+        })
+        .await
+        .map(|bundle| bundle.id);
 
-    Ok(Some(ActionRequest { action: Action { op, chain_id: env.chain_id }, authorization, quote }))
+    response.map_err(Into::into)
 }

@@ -18,6 +18,8 @@ pub struct RelayConfig {
     pub chain: ChainConfig,
     /// Quote configuration.
     pub quote: QuoteConfig,
+    /// Entrypoint address.
+    pub entrypoint: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -30,6 +32,8 @@ pub struct ServerConfig {
     pub address: IpAddr,
     /// The port to serve the RPC on.
     pub port: u16,
+    /// The port to serve the metrics on.
+    pub metrics_port: u16,
 }
 
 /// Chain configuration.
@@ -78,7 +82,7 @@ impl QuoteConfig {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SecretsConfig {
     /// The secret key to sign transactions with.
-    pub transaction_key: String,
+    pub transaction_keys: Vec<String>,
     /// The secret key to sign fee quotes with.
     pub quote_key: String,
 }
@@ -86,13 +90,18 @@ pub struct SecretsConfig {
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
-            server: ServerConfig { address: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 9119 },
+            server: ServerConfig {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: 9119,
+                metrics_port: 9000,
+            },
             chain: ChainConfig { endpoints: vec![], fee_tokens: vec![] },
             quote: QuoteConfig {
                 constant_rate: None,
                 gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
                 ttl: Duration::from_secs(5),
             },
+            entrypoint: Address::ZERO,
             secrets: SecretsConfig::default(),
         }
     }
@@ -108,6 +117,12 @@ impl RelayConfig {
     /// Sets the port to serve the RPC on.
     pub fn with_port(mut self, port: u16) -> Self {
         self.server.port = port;
+        self
+    }
+
+    /// Sets the port to serve the metrics on.
+    pub fn with_metrics_port(mut self, port: u16) -> Self {
+        self.server.metrics_port = port;
         self
     }
 
@@ -155,7 +170,19 @@ impl RelayConfig {
 
     /// Sets the secret key used to sign transactions.
     pub fn with_transaction_key(mut self, secret_key: String) -> Self {
-        self.secrets.transaction_key = secret_key;
+        self.secrets.transaction_keys.push(secret_key);
+        self
+    }
+
+    /// Sets the secret key used to sign transactions.
+    pub fn with_transaction_keys(mut self, secret_keys: &[String]) -> Self {
+        self.secrets.transaction_keys.extend_from_slice(secret_keys);
+        self
+    }
+
+    /// Sets the entrypoint address.
+    pub fn with_entrypoint(mut self, entrypoint: Address) -> Self {
+        self.entrypoint = entrypoint;
         self
     }
 

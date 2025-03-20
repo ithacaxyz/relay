@@ -55,25 +55,16 @@ tx_buffer = 1000000
 ```
 
 ```toml
-// registry.toml
+# registry.toml
 
 1 = [
     "ETH",
-    [
-    "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    "USDT",
-],
-    [
-    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    "USDC",
-],
+    ["0xdac17f958d2ee523a2206206994597c13d831ec7", "USDT"],
+    ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC"],
 ]
 8453 = [
     "ETH",
-    [
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-    "USDC",
-],
+    ["0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USDC"],
 ]
 ```
 
@@ -125,4 +116,4 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 
 ## Deploying
 
-A docker image is built and pushed to AWS ECR when a git tag (`vx.y.z`) is pushed to the repository. The image triggers an AWS AppRunner deployment.
+A docker image is built and pushed to GitHub Packages (`ghcr.io/ithacaxyz/relay`) when a git tag (`vx.y.z`) is pushed to the repository. The image triggers an Argo CD Image Updater deployment.

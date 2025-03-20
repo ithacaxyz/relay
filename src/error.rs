@@ -150,6 +150,13 @@ impl From<SendActionError> for jsonrpsee::types::error::ErrorObject<'static> {
     }
 }
 
+impl SendActionError {
+    /// Create an internal error.
+    pub fn internal<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
+        Self::InternalError(err.into())
+    }
+}
+
 /// Price oracle related errors
 #[derive(Debug, thiserror::Error)]
 pub enum PriceOracleError {
@@ -183,4 +190,47 @@ impl From<CallError> for EstimateFeeError {
             CallError::AbiError(err) => Self::InternalError(err.into()),
         }
     }
+}
+
+/// Errors returned by `wallet_prepareUpgradeAccount` and `wallet_upgradeAccount`
+#[derive(Debug, thiserror::Error)]
+pub enum UpgradeAccountError {
+    /// Invalid authorization item address.
+    #[error("invalid auth item, expected {expected}, got {got}")]
+    InvalidAuthAddress {
+        /// The address expected.
+        expected: Address,
+        /// The address in the authorization item.
+        got: Address,
+    },
+    /// An error occurred talking to RPC.
+    #[error(transparent)]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// An internal error occurred.
+    #[error(transparent)]
+    InternalError(#[from] eyre::Error),
+}
+
+impl From<UpgradeAccountError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(error: UpgradeAccountError) -> Self {
+        jsonrpsee::types::error::ErrorObject::owned::<()>(
+            match error {
+                UpgradeAccountError::InternalError(_) | UpgradeAccountError::RpcError(_) => {
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE
+                }
+                _ => jsonrpsee::types::error::INVALID_PARAMS_CODE,
+            },
+            error.to_string(),
+            None,
+        )
+    }
+}
+
+/// Converts from [`eyre::Report`] into [`jsonrpsee::types::error::ErrorObject`].
+pub fn from_eyre_error(err: eyre::Report) -> jsonrpsee::types::error::ErrorObject<'static> {
+    jsonrpsee::types::error::ErrorObject::owned::<()>(
+        jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+        err.to_string(),
+        None,
+    )
 }

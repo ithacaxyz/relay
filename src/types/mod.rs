@@ -5,8 +5,6 @@ pub use account::*;
 mod action;
 pub use action::*;
 
-pub mod capabilities;
-
 mod coin;
 pub use coin::*;
 
@@ -32,8 +30,7 @@ pub use signed::*;
 mod quote;
 pub use quote::*;
 
-mod rpc;
-pub use rpc::*;
+pub mod rpc;
 
 mod token;
 pub use token::*;

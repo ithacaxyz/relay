@@ -8,7 +8,7 @@ path = "src/main.rs"
 name = "relay"
 
 [dependencies]
-alloy = { version = "0.11", features = [
+alloy = { version = "0.12", features = [
     "getrandom",
     "dyn-abi",
     "eip712",
@@ -29,8 +29,8 @@ alloy = { version = "0.11", features = [
 alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.5"
-aws-sdk-kms = "1.60"
-base64 = "0.21"
+aws-sdk-kms = "1.62"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 dashmap = "6.1.0"
 eyre = "0.6.12"
@@ -43,7 +43,8 @@ metrics-exporter-prometheus = "0.16"
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["rc"] }
-serde_json = "1.0"
+serde_json = "1"
+serde_repr = "0.1"
 thiserror = "2"
 toml = "*"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
@@ -56,10 +57,15 @@ tracing-subscriber = { version = "0.3.19", features = [
     "env-filter",
 ] }
 url = { version = "2.5", features = ["serde"] }
+rand = "0.9"
+itertools = "0.14"
 
 [dev-dependencies]
-alloy = { version = "0.11", features = ["eips", "provider-anvil-node"] }
+alloy = { version = "0.12", features = ["eips", "provider-anvil-node"] }
 dotenv = "0.15"
+itertools = "0.10"
+strum = "0.27"
+strum_macros = "0.27"
 
 # Speed up compilation time for dev builds by reducing emitted debug info.
 # NOTE: Debuggers may provide less useful information with this setting.

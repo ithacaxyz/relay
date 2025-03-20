@@ -1,10 +1,13 @@
-use Delegation::DelegationInstance;
+use super::{Call, Key, rpc::Permission};
+use crate::types::IDelegation;
+use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Keccak256, U256, keccak256},
+    primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
     providers::Provider,
-    rpc::types::{Authorization, state::StateOverride},
+    rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
+    sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
 };
 use serde::{Deserialize, Serialize};
@@ -13,8 +16,6 @@ use tracing::debug;
 sol! {
     #[sol(rpc)]
     contract Delegation {
-        address public constant ENTRY_POINT;
-
         /// A spend period.
         #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -33,6 +34,27 @@ sol! {
             Year
         }
 
+
+        /// Information about a spend.
+        /// All timestamp related values are Unix timestamps in seconds.
+        #[derive(Debug, Eq, PartialEq)]
+        struct SpendInfo {
+            /// Address of the token. `address(0)` denotes native token.
+            address token;
+            /// The type of period.
+            SpendPeriod period;
+            /// The maximum spend limit for the period.
+            uint256 limit;
+            /// The amount spent in the last updated period.
+            uint256 spent;
+            /// The start of the last updated period.
+            uint256 lastUpdated;
+            /// The amount spent in the current period.
+            uint256 currentSpent;
+            /// The start of the current period.
+            uint256 current;
+        }
+
         /// Set a limited amount of `token` that `keyHash` can spend per `period`.
         function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)
             public
@@ -49,7 +71,48 @@ sol! {
 
         /// Sets the ability of a key hash to execute a call with a function selector.
         function setCanExecute(bytes32 keyHash, address target, bytes4 fnSel, bool can);
+
+        /// Returns spend and execute infos for each provided key hash in the same order.
+        ///
+        /// canExecute elements are packed as (`target`, `fnSel`):
+        /// - `target` is in the upper 20 bytes.
+        /// - `fnSel` is in the lower 4 bytes.
+        function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
     }
+}
+
+impl spendAndExecuteInfosReturn {
+    /// Converts [`spendAndExecuteInfosReturn`] into a list of [`Permission`] per key.
+    ///
+    /// On each key, the spend permissions come before the call ones.
+    pub fn into_permissions(self) -> Vec<Vec<Permission>> {
+        self.keys_spends
+            .into_iter()
+            .zip(self.keys_executes)
+            .map(|(spends, executes)| {
+                spends
+                    .into_iter()
+                    .map(|spend| Permission::Spend(spend.into()))
+                    .chain(executes.into_iter().map(|data| {
+                        Permission::Call(CallPermission {
+                            to: Address::from_slice(&data[..20]),
+                            selector: FixedBytes::from_slice(&data[28..]),
+                        })
+                    }))
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+/// Represents a granted allowance to execute a specific function on a target contract.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CallPermission {
+    /// The 4-byte selector of the allowed function.
+    #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]
+    pub selector: FixedBytes<4>,
+    /// The target contract's address.
+    pub to: Address,
 }
 
 /// A Porto account.
@@ -74,37 +137,73 @@ impl<P: Provider> Account<P> {
         self
     }
 
-    /// Get the entrypoint address for this account.
-    pub async fn entrypoint(&self) -> TransportResult<Address> {
-        debug!(eoa = %self.delegation.address(), "Fetching entrypoint");
-        let entrypoint = self
+    /// Returns a list of all non expired keys as (KeyHash, Key) tuples.
+    pub async fn keys(&self) -> TransportResult<Vec<(B256, Key)>> {
+        debug!(eoa = %self.delegation.address(), "Fetching keys");
+
+        let keys = self
             .delegation
-            .ENTRY_POINT()
-            .call()
-            .overrides(&self.overrides)
+            .provider()
+            .call(
+                TransactionRequest::default()
+                    .to(*self.delegation.address())
+                    .input(IDelegation::getKeysCall::SELECTOR.to_vec().into()),
+            )
+            .overrides(self.overrides.clone())
             .await
-            .map_err(TransportErrorKind::custom)?;
+            .and_then(|r| {
+                IDelegation::getKeysCall::abi_decode_returns(&r, true)
+                    .map_err(TransportErrorKind::custom)
+            })?;
+
         debug!(
             eoa = %self.delegation.address(),
-            entrypoint = %entrypoint.ENTRY_POINT,
-            "Fetched entrypoint"
+            keys = ?keys.keys,
+            "Fetched keys"
         );
 
-        Ok(entrypoint.ENTRY_POINT)
+        Ok(keys.into_tuples().collect())
+    }
+
+    /// Returns a list of all permissions for the given key set.
+    pub async fn permissions(
+        &self,
+        key_hashes: impl Iterator<Item = B256> + Clone,
+    ) -> TransportResult<HashMap<B256, Vec<Permission>>> {
+        debug!(eoa = %self.delegation.address(), "Fetching permissions");
+
+        let permissions = self
+            .delegation
+            .spendAndExecuteInfos(key_hashes.clone().collect())
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?
+            .into_permissions();
+
+        debug!(
+            eoa = %self.delegation.address(),
+            permissions = ?permissions,
+            "Fetched keys permissions"
+        );
+
+        Ok(key_hashes.zip(permissions).collect())
     }
 }
 
 /// PREP account based on <https://blog.biconomy.io/prep-deep-dive/>.
 ///
 /// Read [`PREPAccount::initialize`] for more information on how it is generated.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PREPAccount {
     /// EOA generated address.
-    pub eoa: Address,
+    pub address: Address,
     /// Signed 7702 authorization.
     pub signed_authorization: SignedAuthorization,
     /// Salt used to generate the EOA.
     pub salt: u8,
+    /// Initialization calls.
+    pub init_calls: Vec<Call>,
 }
 
 impl PREPAccount {
@@ -129,7 +228,9 @@ impl PREPAccount {
     /// today).
     ///
     /// See <https://blog.biconomy.io/prep-deep-dive/>
-    pub fn initialize(delegation: Address, digest: B256) -> Self {
+    pub fn initialize(delegation: Address, init_calls: Vec<Call>) -> Self {
+        let digest = Self::calculate_digest(&init_calls);
+
         // we mine until we have a valid `r`, `s` combination
         let mut salt = [0u8; 32];
         loop {
@@ -150,28 +251,84 @@ impl PREPAccount {
             );
 
             if let Ok(eoa) = signed_authorization.recover_authority() {
-                return Self { eoa, signed_authorization, salt: salt[31] };
+                return Self { address: eoa, signed_authorization, salt: salt[31], init_calls };
             }
 
             // u8 should be enough to find it.
             salt[31] += 1;
         }
     }
+
+    /// Returns the expected PREP digest from a list of [`Call`].
+    fn calculate_digest(calls: &[Call]) -> B256 {
+        let mut hashed_calls = Vec::with_capacity(calls.len());
+        let mut target_padded = [0u8; 32];
+        for call in calls {
+            target_padded[12..].copy_from_slice(call.target.as_slice());
+
+            let mut hasher = Keccak256::new();
+            hasher.update(call.eip712_type_hash().as_slice());
+            hasher.update(target_padded);
+            hasher.update(call.value.to_be_bytes::<32>());
+            hasher.update(keccak256(&call.data));
+            hashed_calls.push(hasher.finalize());
+        }
+
+        keccak256(hashed_calls.abi_encode_packed())
+    }
+
+    /// Return the ABI encoded `initData`.
+    pub fn init_data(&self) -> Bytes {
+        PREPInitData {
+            calls: self.init_calls.clone(),
+            saltAndDelegation: self.salt_and_delegation().abi_encode_packed().into(),
+        }
+        .abi_encode_params()
+        .into()
+    }
+
+    /// Return `saltAndDelegation`.
+    ///
+    /// `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
+    fn salt_and_delegation(&self) -> B256 {
+        let mut salt_and_delegation = [0u8; 32];
+        salt_and_delegation[11] = self.salt;
+        salt_and_delegation[12..].copy_from_slice(self.signed_authorization.address.as_slice());
+        B256::from(salt_and_delegation)
+    }
+}
+
+sol! {
+    struct PREPInitData {
+        Call[] calls;
+        bytes saltAndDelegation;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, b256};
+    use alloy::{
+        primitives::{address, b256, bytes},
+        uint,
+    };
 
-    #[test]
-    fn initialize_prep() {
-        let cases = [(Address::ZERO, B256::ZERO), (Address::random(), B256::random())];
-
-        for (address, digest) in cases {
-            PREPAccount::initialize(address, digest);
-        }
-    }
+    const INIT_CALLS: [Call; 2] = [
+        Call {
+            target: address!("0x100000000000000000636f6e736F6c652E6C6f67"),
+            value: uint!(2000000000000000000_U256),
+            data: bytes!(
+                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+            ),
+        },
+        Call {
+            target: address!("0x200000000000000000636f6e736F6c652E6C6f67"),
+            value: uint!(4000000000000000000_U256),
+            data: bytes!(
+                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
+            ),
+        },
+    ];
 
     #[test]
     fn initialize_solidity() {
@@ -180,18 +337,32 @@ mod tests {
             target_salt: u8,
             delegation: Address,
             digest: B256,
+            salt_and_delegation: Bytes,
+            init_data: Bytes,
         }
 
         let cases = [Case {
-            target: address!("0xfE1D536604feB43A980dA073161B7cF09F3fd969"),
-            target_salt: 0u8,
+            target: address!("0xb09bfcd43c9e0e2eb7c25484dcb852257e3989c8"),
+            target_salt: 3u8,
             delegation: address!("0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9"),
-            digest: b256!("0x16f3f8d8870eecad098c9634fa7e635e4bb8526f633e0f3333b5627de0626a23"),
+            digest: b256!("0x7d758e41b107c29709e836a1519a50e1d848efbdc99192330685086158f3655d"),
+            salt_and_delegation: bytes!(
+                "0x0000000000000000000000035991a2df15a8f6a256d3ec51e99254cd3fb576a9"
+            ),
+            init_data: bytes!(
+                "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000003e00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000100000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000003782dace9d90000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000035991a2df15a8f6a256d3ec51e99254cd3fb576a9"
+            ),
         }];
 
-        for Case { target, target_salt, delegation, digest } in cases {
-            let acc = PREPAccount::initialize(delegation, digest);
-            assert_eq!((target, target_salt), (acc.eoa, acc.salt))
+        for Case { target, target_salt, delegation, digest, salt_and_delegation, init_data } in
+            cases
+        {
+            let acc = PREPAccount::initialize(delegation, INIT_CALLS.to_vec());
+            assert_eq!(digest, PREPAccount::calculate_digest(&INIT_CALLS));
+            assert_eq!(target, acc.address);
+            assert_eq!(target_salt, acc.salt);
+            assert_eq!(&salt_and_delegation, acc.salt_and_delegation().as_slice());
+            assert_eq!(init_data, acc.init_data());
         }
     }
 }

@@ -1,11 +1,21 @@
 //! RPC calls-related request and response types.
 
-use crate::types::{
-    Call, KeyType, PartialUserOp, SignedQuote,
-    capabilities::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey},
+use crate::types::{Call, KeyType, SignedQuote};
+use alloy::{
+    consensus::Eip658Value,
+    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash},
 };
-use alloy::primitives::{Address, B256, Bytes, ChainId, PrimitiveSignature};
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+
+use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
+
+/// An identifier for a call bundle.
+///
+/// This is a unique identifier for a call bundle, which is used to track the status of the bundle.
+///
+/// Clients should treat this as an opaque value and not attempt to parse it.
+pub type BundleId = B256;
 
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +24,7 @@ pub struct PrepareCallsParameters {
     /// Call bundle to prepare.
     pub calls: Vec<Call>,
     /// Target chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// Address of the account to prepare the call bundle for.
     pub from: Address,
@@ -26,11 +37,13 @@ pub struct PrepareCallsParameters {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
     /// Keys to authorize on the account.
-    pub authorize_keys: Option<Vec<AuthorizeKey>>,
+    #[serde(default)]
+    pub authorize_keys: Vec<AuthorizeKey>,
     /// Extra request values.
     pub meta: Meta,
     /// Keys to revoke from the account.
-    pub revoke_keys: Option<Vec<RevokeKey>>,
+    #[serde(default)]
+    pub revoke_keys: Vec<RevokeKey>,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
@@ -38,19 +51,19 @@ pub struct PrepareCallsCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponseCapabilities {
     /// Keys that were authorized on the account.
-    pub authorize_keys: Option<Vec<AuthorizeKeyResponse>>,
+    #[serde(default)]
+    pub authorize_keys: Vec<AuthorizeKeyResponse>,
     /// Keys that were revoked from the account.
-    pub revoke_keys: Option<Vec<RevokeKey>>,
+    #[serde(default)]
+    pub revoke_keys: Vec<RevokeKey>,
 }
 
 /// Response for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
-    /// Chain ID the calls were prepared for.
-    pub chain_id: ChainId,
-    /// Context.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
@@ -58,23 +71,12 @@ pub struct PrepareCallsResponse {
     pub capabilities: PrepareCallsResponseCapabilities,
 }
 
-/// Context for `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrepareCallsContext {
-    /// Signed [`Quote`].
-    pub quote: SignedQuote,
-    /// Partial [`UserOp`].
-    pub op: PartialUserOp,
-}
-
 /// Request parameters for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
-    /// Chain ID the calls are being submitted to.
-    pub chain_id: ChainId,
-    /// Context of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Signature values.
     pub signature: SendPreparedCallsSignature,
 }
@@ -89,12 +91,60 @@ pub struct SendPreparedCallsSignature {
     #[serde(rename = "type")]
     pub key_type: KeyType,
     /// Signature value.
-    pub value: PrimitiveSignature,
+    pub value: Bytes,
 }
 
 /// Response for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsResponse {
     /// Bundle identifier.
-    pub id: String,
+    pub id: BundleId,
+}
+
+/// The status code of a call bundle.
+#[derive(Debug, Clone, Serialize_repr, Deserialize_repr, Eq, PartialEq)]
+#[repr(u16)]
+pub enum CallStatusCode {
+    /// The call bundle is pending.
+    Pending = 100,
+    /// The call bundle was confirmed.
+    Confirmed = 200,
+    /// The call bundle failed offchain.
+    Failed = 300,
+    /// The call bundle reverted fully onchain.
+    Reverted = 400,
+    /// The call bundle partially reverted onchain.
+    PartiallyReverted = 500,
+}
+
+/// A receipt for a call bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallReceipt {
+    /// The logs generated in the transaction.
+    logs: Vec<Log>,
+    /// The status of the transaction.
+    status: Eip658Value,
+    /// The block hash the transaction was included in.
+    block_hash: BlockHash,
+    /// The block number the transaction was included in.
+    block_number: BlockNumber,
+    /// The gas used by the transaction.
+    gas_used: u64,
+    /// The transaction hash.
+    transaction_hash: TxHash,
+}
+
+/// The status of a call bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallsStatus {
+    /// The ID of the call bundle.
+    id: BundleId,
+    /// The chain ID the bundle was broadcast on.
+    // TODO: this should not be top-level, but instead be on the receipt object
+    chain_id: ChainId,
+    /// The status of the call bundle.
+    status: CallStatusCode,
+    receipts: Vec<CallReceipt>,
 }

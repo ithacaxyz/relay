@@ -11,6 +11,7 @@ use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 /// Abstraction over local signer or AWS.
+#[derive(Clone)]
 pub struct DynSigner(pub Arc<dyn FullSigner<PrimitiveSignature> + Send + Sync>);
 
 impl fmt::Debug for DynSigner {

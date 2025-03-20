@@ -1,8 +1,11 @@
 //! RPC account-related request and response types.
 
-use super::{PrepareCallsContext, SendPreparedCallsResponse};
-use crate::types::capabilities::{AuthorizeKey, AuthorizeKeyResponse};
-use alloy::primitives::{Address, ChainId, PrimitiveSignature};
+use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
+use crate::types::SignedQuote;
+use alloy::{
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, ChainId, PrimitiveSignature},
+};
 use serde::{Deserialize, Serialize};
 
 /// Capabilities for `wallet_createAccount` request.
@@ -29,8 +32,6 @@ pub struct CreateAccountResponseCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountParameters {
-    /// Chain ID to initialize the account on.
-    pub chain_id: ChainId,
     /// Capabilities.
     pub capabilities: CreateAccountCapabilities,
 }
@@ -41,10 +42,23 @@ pub struct CreateAccountParameters {
 pub struct CreateAccountResponse {
     /// Address of the initialized account.
     pub address: Address,
-    /// Chain ID to initialize the account on.
-    pub chain_id: ChainId,
     /// Capabilities.
     pub capabilities: CreateAccountResponseCapabilities,
+}
+
+/// Capabilities for `wallet_createAccount` request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradeAccountCapabilities {
+    /// Keys to authorize on the account.
+    pub authorize_keys: Vec<AuthorizeKey>,
+    /// Contract address to delegate to.
+    pub delegation: Address,
+    /// ERC20 token to pay for the gas of the calls.
+    ///
+    /// Defaults to the native token.
+    #[serde(default)]
+    pub fee_token: Address,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
@@ -54,18 +68,22 @@ pub struct PrepareUpgradeAccountParameters {
     /// Address of the EOA to upgrade.
     pub address: Address,
     /// Chain ID to initialize the account on.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// Capabilities.
-    pub capabilities: CreateAccountCapabilities,
+    pub capabilities: UpgradeAccountCapabilities,
 }
 
 /// Request parameters for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
-    /// Context of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
+    #[serde(with = "crate::serde::signature")]
     pub signature: PrimitiveSignature,
+    /// Signed authorization.
+    pub authorization: SignedAuthorization,
 }
 
 /// Response for `wallet_upgradeAccount`.

@@ -1,11 +1,11 @@
 use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, Bytes, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, FixedBytes, fixed_bytes},
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
-    sol_types::{SolError, SolValue},
+    sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,15 @@ pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
 sol! {
     #[sol(rpc)]
     contract EntryPoint {
+        /// Emitted when a UserOp is executed.
+        ///
+        /// This event is emitted in the `execute` function.
+        /// - `incremented` denotes that `nonce`'s sequence has been incremented to invalidate `nonce`,
+        /// - `err` denotes the resultant error selector.
+        /// If `incremented` is true and `err` is non-zero,
+        /// `err` will be stored for retrieval with `nonceStatus`.
+        event UserOpExecuted(address indexed eoa, uint256 indexed nonce, bool incremented, bytes4 err);
+
         /// For returning the gas used and the error from a simulation.
         ///
         /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
@@ -28,7 +37,7 @@ sol! {
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
         #[derive(Debug)]
-        error SimulationResult2(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+        error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
         /// Executes a single encoded user operation.
         ///
@@ -43,17 +52,8 @@ sol! {
             returns (bytes4 err);
 
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
-        function simulateExecute2(bytes calldata encodedUserOp) public payable virtual;
-
-        /// Returns the current sequence for the `seqKey` in nonce (i.e. upper 192 bits). Also returns the err for that nonce.
-        ///
-        /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
-        /// Otherwise, it means `nonce` might still be able to be used.
-        function nonceStatus(address eoa, uint256 nonce)
-            public
-            view
-            virtual
-            returns (uint64 seq, bytes4 err);
+        #[derive(Debug)]
+        function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
 
         /// Returns the EIP712 domain of the entrypoint.
         ///
@@ -105,33 +105,27 @@ impl<P: Provider> Entry<P> {
     pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, CallError> {
         let ret = self
             .entrypoint
-            .simulateExecute2(op.abi_encode().into())
+            .simulateExecute(op.abi_encode().into())
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await;
 
-        match ret {
-            Err(alloy::contract::Error::TransportError(err)) => {
-                let revert_data = err.as_error_resp().and_then(|res| res.as_revert_data());
+        if ret.is_ok() {
+            return Err(TransportErrorKind::custom_str("could not simulate op").into());
+        }
 
-                if let Ok(result) = EntryPoint::SimulationResult2::abi_decode(
-                    revert_data.as_deref().unwrap_or(&Bytes::default()),
-                    false,
-                ) {
-                    if result.err != ENTRYPOINT_NO_ERROR {
-                        Err(CallError::OpRevert { revert_reason: result.err.into() })
-                    } else {
-                        // todo: sanitize this as a malicious contract can make us panic
-                        Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
-                    }
-                } else if let Some(data) = revert_data {
-                    Err(CallError::OpRevert { revert_reason: data })
-                } else {
-                    Err(TransportErrorKind::custom_str("could not simulate op").into())
-                }
+        let err = ret.unwrap_err();
+        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
+            if result.err != ENTRYPOINT_NO_ERROR {
+                Err(CallError::OpRevert { revert_reason: result.err.into() })
+            } else {
+                // todo: sanitize this as a malicious contract can make us panic
+                Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
-            Err(err) => Err(TransportErrorKind::custom(err).into()),
-            Ok(_) => Err(TransportErrorKind::custom_str("could not simulate op").into()),
+        } else if let Some(data) = err.as_revert_data() {
+            Err(CallError::OpRevert { revert_reason: data })
+        } else {
+            Err(TransportErrorKind::custom(err).into())
         }
     }
 
@@ -141,7 +135,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .execute(op.abi_encode().into())
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
@@ -152,31 +146,6 @@ impl<P: Provider> Entry<P> {
         }
     }
 
-    /// Get status of the given nonce.
-    ///
-    /// Returns the current sequence for the sequence key in the given nonce, as well as the status
-    /// of the call.
-    ///
-    /// If the status is not equal to `ENTRYPOINT_NO_ERROR`, it means that the call failed.
-    ///
-    /// If `seq > uint64(nonce)`, it means that `nonce` is invalidated.
-    /// Otherwise, it means `nonce` might still be able to be used.
-    pub async fn nonce_status(
-        &self,
-        account: Address,
-        nonce: U256,
-    ) -> TransportResult<(u64, FixedBytes<4>)> {
-        let status = self
-            .entrypoint
-            .nonceStatus(account, nonce)
-            .call()
-            .overrides(&self.overrides)
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
-        Ok((status.seq, status.err))
-    }
-
     /// Get the [`Eip712Domain`] for this entrypoint.
     ///
     /// If `multichain` is `true`, then the chain ID is omitted from the domain.
@@ -185,7 +154,7 @@ impl<P: Provider> Entry<P> {
             .entrypoint
             .eip712Domain()
             .call()
-            .overrides(&self.overrides)
+            .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 

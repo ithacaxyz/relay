@@ -3,4 +3,5 @@
 pub mod duration;
 pub mod fn_selector;
 pub mod key_role;
+pub mod signature;
 pub mod timestamp;

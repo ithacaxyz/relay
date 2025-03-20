@@ -6,7 +6,6 @@ use crate::{
 };
 use alloy::primitives::Address;
 use clap::Parser;
-use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
@@ -36,6 +35,9 @@ pub struct Args {
     /// The port to serve the RPC on.
     #[arg(long = "http.port", value_name = "PORT", default_value_t = 9119)]
     pub port: u16,
+    /// The port to serve the metrics on.
+    #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
+    pub metrics_port: u16,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -57,19 +59,16 @@ pub struct Args {
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     pub fee_tokens: Vec<Address>,
     /// The secret key to sign transactions with.
-    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_SK")]
-    pub secret_key: String,
+    #[arg(long = "secret-key", value_name = "SECRET_KEY", num_args=1.., value_delimiter = ',', env = "RELAY_SK")]
+    pub secret_keys: Vec<String>,
 }
 
 impl Args {
     /// Run the relayer service.
-    pub async fn run(self, metrics_recorder: Option<PrometheusHandle>) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         let config_path = self.config.clone();
         let registry_path = self.registry.clone();
-        try_spawn_with_args(self, &config_path, &registry_path, metrics_recorder)
-            .await?
-            .stopped()
-            .await;
+        try_spawn_with_args(self, &config_path, &registry_path).await?.stopped().await;
 
         Ok(())
     }
@@ -78,11 +77,12 @@ impl Args {
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
             .with_quote_key(self.quote_secret_key)
-            .with_transaction_key(self.secret_key)
+            .with_transaction_keys(&self.secret_keys)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
             .with_address(self.address)
             .with_port(self.port)
+            .with_metrics_port(self.metrics_port)
             .with_quote_ttl(self.quote_ttl)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
@@ -125,17 +125,17 @@ mod tests {
                     registry: registry.clone(),
                     address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: get_available_port().unwrap(),
+                    metrics_port: get_available_port().unwrap(),
                     endpoints: Default::default(),
                     quote_ttl: Default::default(),
                     quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
-                    secret_key: key.to_string(),
+                    secret_keys: vec![key.to_string()],
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
                 },
                 config.clone(),
                 registry.clone(),
-                None,
             )
             .await?;
         }
