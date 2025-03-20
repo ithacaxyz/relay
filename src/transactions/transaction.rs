@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::types::{EntryPoint, SignedQuote};
+use crate::types::{EntryPoint, SignedQuote, rpc::BundleId};
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, TypedTransaction},
+    consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, U256},
     sol_types::{SolCall, SolValue},
@@ -12,7 +12,7 @@ use alloy::{
 #[derive(Debug, Clone)]
 pub struct RelayTransaction {
     /// Id of the transaction.
-    pub id: B256,
+    pub id: BundleId,
     /// [`UserOp`] to send.
     pub quote: SignedQuote,
     /// Destination entrypoint.
@@ -86,4 +86,39 @@ pub enum TransactionStatus {
     Confirmed(B256),
     /// Failed to broadcast the transaction.
     Failed(Arc<dyn std::error::Error + Send + Sync>),
+}
+
+impl TransactionStatus {
+    /// Whether the status is final.
+    pub fn is_final(&self) -> bool {
+        matches!(self, Self::Confirmed(_) | Self::Failed(_))
+    }
+}
+
+/// A [`RelayTransaction`] that has been sent to the network.
+#[derive(Debug, Clone)]
+pub struct PendingTransaction {
+    /// The [`RelayTransaction`] that was sent.
+    pub tx: RelayTransaction,
+    /// Signed [`TxEnvelope`].
+    pub sent: TxEnvelope,
+    /// Signer that signed the transaction.
+    pub signer: Address,
+}
+
+impl PendingTransaction {
+    /// Returns the chain id of the transaction.
+    pub fn chain_id(&self) -> u64 {
+        self.tx.quote.ty().chain_id
+    }
+
+    /// Returns the [`BundleId`] of the transaction.
+    pub fn id(&self) -> BundleId {
+        self.tx.id
+    }
+
+    /// Returns the hash of the transaction.
+    pub fn tx_hash(&self) -> B256 {
+        *self.sent.tx_hash()
+    }
 }

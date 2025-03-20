@@ -390,13 +390,11 @@ impl RelayApiServer for Relay {
         }
 
         let tx = RelayTransaction::new(quote, entrypoint, authorization);
-        let id = tx.id;
-        transactions.send_transaction(tx);
+        let mut rx = transactions.send_transaction(tx);
 
         // Wait for the transaction hash.
         // TODO: get rid of it and use wallet_getCallsStatus instead. This might not work well if we
         // resubmit transaction with a higher fee.
-        let mut rx = transactions.subscribe_status(id);
         while let Some(status) = rx.recv().await {
             match status {
                 TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
