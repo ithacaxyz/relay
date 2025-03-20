@@ -21,7 +21,7 @@ pub struct GetKeysParameters {
 /// If the key does not exist, it is added to the account, along with the permissions.
 ///
 /// If the key already exists, the permissions are updated.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
