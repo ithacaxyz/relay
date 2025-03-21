@@ -1,7 +1,5 @@
-use crate::types::rpc::BundleId;
-
 use super::{
-    SignerEvent, SignerHandle,
+    SignerEvent, SignerHandle, TxId,
     transaction::{RelayTransaction, TransactionStatus},
 };
 use rand::seq::IndexedRandom;
@@ -47,7 +45,7 @@ pub struct TransactionService {
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
 
     /// Subscriptions to transaction status updates.
-    subscriptions: HashMap<BundleId, mpsc::UnboundedSender<TransactionStatus>>,
+    subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
 }
 
 impl TransactionService {

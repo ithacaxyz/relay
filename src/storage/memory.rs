@@ -2,7 +2,7 @@
 
 use super::{StorageApi, StorageError, api::Result};
 use crate::{
-    transactions::{PendingTransaction, TransactionStatus},
+    transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
@@ -13,8 +13,9 @@ use dashmap::{DashMap, Entry};
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
     accounts: DashMap<Address, CreatableAccount>,
-    pending_transactions: DashMap<BundleId, PendingTransaction>,
-    statuses: DashMap<BundleId, TransactionStatus>,
+    pending_transactions: DashMap<TxId, PendingTransaction>,
+    statuses: DashMap<TxId, TransactionStatus>,
+    bundles: DashMap<BundleId, Vec<TxId>>,
 }
 
 #[async_trait]
@@ -38,7 +39,7 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn remove_pending_transaction(&self, tx_id: BundleId) -> Result<()> {
+    async fn remove_pending_transaction(&self, tx_id: TxId) -> Result<()> {
         self.pending_transactions.remove(&tx_id);
         Ok(())
     }
@@ -59,16 +60,21 @@ impl StorageApi for InMemoryStorage {
         Ok(txs)
     }
 
-    async fn write_transaction_status(
-        &self,
-        tx: BundleId,
-        status: &TransactionStatus,
-    ) -> Result<()> {
+    async fn write_transaction_status(&self, tx: TxId, status: &TransactionStatus) -> Result<()> {
         self.statuses.insert(tx, status.clone());
         Ok(())
     }
 
-    async fn read_transaction_status(&self, tx: BundleId) -> Result<Option<TransactionStatus>> {
+    async fn read_transaction_status(&self, tx: TxId) -> Result<Option<TransactionStatus>> {
         Ok(self.statuses.get(&tx).as_deref().cloned())
+    }
+
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
+        self.bundles.entry(bundle).or_default().push(tx);
+        Ok(())
+    }
+
+    async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>> {
+        Ok(self.bundles.get(&bundle).as_deref().cloned().unwrap_or_default())
     }
 }

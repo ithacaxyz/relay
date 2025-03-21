@@ -7,7 +7,7 @@ pub use error::StorageError;
 mod memory;
 
 use crate::{
-    transactions::{PendingTransaction, TransactionStatus},
+    transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
@@ -41,7 +41,7 @@ impl StorageApi for RelayStorage {
         self.inner.write_pending_transaction(tx).await
     }
 
-    async fn remove_pending_transaction(&self, tx_id: BundleId) -> api::Result<()> {
+    async fn remove_pending_transaction(&self, tx_id: TxId) -> api::Result<()> {
         self.inner.remove_pending_transaction(tx_id).await
     }
 
@@ -55,16 +55,21 @@ impl StorageApi for RelayStorage {
 
     async fn write_transaction_status(
         &self,
-        tx: BundleId,
+        tx: TxId,
         status: &TransactionStatus,
     ) -> api::Result<()> {
         self.inner.write_transaction_status(tx, status).await
     }
 
-    async fn read_transaction_status(
-        &self,
-        tx: BundleId,
-    ) -> api::Result<Option<TransactionStatus>> {
+    async fn read_transaction_status(&self, tx: TxId) -> api::Result<Option<TransactionStatus>> {
         self.inner.read_transaction_status(tx).await
+    }
+
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {
+        self.inner.add_bundle_tx(bundle, tx).await
+    }
+
+    async fn get_bundle_transactions(&self, bundle: BundleId) -> api::Result<Vec<TxId>> {
+        self.inner.get_bundle_transactions(bundle).await
     }
 }

@@ -390,6 +390,17 @@ impl RelayApiServer for Relay {
         }
 
         let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
+
+        // TODO: Right now we only support a single transaction per action and per bundle, so we can
+        // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
+        // this is already supported by current storage API.
+        let bundle_id = BundleId(*tx.id);
+        self.inner
+            .storage
+            .add_bundle_tx(bundle_id, tx.id)
+            .await
+            .map_err(SendActionError::internal)?;
+
         let mut rx = transactions.send_transaction(tx);
 
         // Wait for the transaction hash.

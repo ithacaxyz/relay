@@ -1,21 +1,24 @@
 //! RPC calls-related request and response types.
 
+use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::types::{Call, KeyType, SignedQuote};
 use alloy::{
     consensus::Eip658Value,
-    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash},
+    primitives::{
+        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash, wrap_fixed_bytes,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
-
-/// An identifier for a call bundle.
-///
-/// This is a unique identifier for a call bundle, which is used to track the status of the bundle.
-///
-/// Clients should treat this as an opaque value and not attempt to parse it.
-pub type BundleId = B256;
+wrap_fixed_bytes! {
+    /// An identifier for a call bundle.
+    ///
+    /// This is a unique identifier for a call bundle, which is used to track the status of the bundle.
+    ///
+    /// Clients should treat this as an opaque value and not attempt to parse it.
+    pub struct BundleId<32>;
+}
 
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,8 +100,9 @@ pub struct SendPreparedCallsSignature {
 /// Response for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsResponse {
-    /// Bundle identifier.
-    pub id: BundleId,
+    /// Transaction hash.
+    /// TODO: use [`BundleId`] instead
+    pub id: TxHash,
 }
 
 /// The status code of a call bundle.
