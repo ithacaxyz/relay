@@ -51,11 +51,7 @@ async fn register_id() -> eyre::Result<()> {
         // wallet_getAccounts should return the address and authorized keys from this ID
         let response = env
             .relay_endpoint
-            .get_accounts(GetAccountsParameters {
-                id,
-                chain_id: env.chain_id,
-                registry: env.entrypoint,
-            })
+            .get_accounts(GetAccountsParameters { id, chain_id: env.chain_id })
             .await?;
 
         assert_eq!(

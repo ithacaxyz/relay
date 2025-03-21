@@ -55,7 +55,7 @@ pub struct PrepareCreateAccountParameters {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCreateAccountResponse {
     /// Initializable account.
-    pub account: PREPAccount,
+    pub context: PREPAccount,
     /// Capabilities.
     pub capabilities: PrepareCreateAccountResponseCapabilities,
 }
@@ -65,9 +65,9 @@ pub struct PrepareCreateAccountResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountParameters {
     /// Initializable account.
-    pub account: PREPAccount,
+    pub context: PREPAccount,
     /// List of signatures over the PREPAddress.
-    pub id_signatures: Vec<KeyHashWithID>,
+    pub signatures: Vec<KeyHashWithID>,
 }
 
 /// Capabilities for `wallet_createAccount` request.
@@ -124,8 +124,6 @@ pub struct GetAccountsParameters {
     pub id: Address,
     /// Chain ID.
     pub chain_id: ChainId,
-    /// Entrypoint or account registry address.
-    pub registry: Address,
 }
 
 /// A response item from `wallet_getAccounts`.

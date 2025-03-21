@@ -31,7 +31,7 @@ pub async fn prep_account(
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
-    let PrepareCreateAccountResponse { capabilities, account: server_account } = env
+    let PrepareCreateAccountResponse { capabilities, context: server_account } = env
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
@@ -51,7 +51,10 @@ pub async fn prep_account(
 
     // Send the PREPAccount with its key identifiers and signatures
     env.relay_endpoint
-        .create_account(CreateAccountParameters { account: server_account, id_signatures })
+        .create_account(CreateAccountParameters {
+            context: server_account,
+            signatures: id_signatures,
+        })
         .await?;
 
     // todo: assert that a createAccount reference exists
