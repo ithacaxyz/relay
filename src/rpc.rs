@@ -203,10 +203,10 @@ impl RelayApiServer for Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))
-            .to_params_result()?
+            .to_rpc_result()?
             .provider;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
-            return Err(QuoteError::UnsupportedFeeToken(token)).to_params_result();
+            return Err(QuoteError::UnsupportedFeeToken(token)).to_rpc_result();
         };
 
         // create key
@@ -214,7 +214,7 @@ impl RelayApiServer for Relay {
         let key = KeyWith712Signer::random_admin(key_type)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))
-            .to_params_result()?;
+            .to_rpc_result()?;
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = StateOverridesBuilder::with_capacity(2)
@@ -341,7 +341,7 @@ impl RelayApiServer for Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))
-            .to_params_result()?;
+            .to_rpc_result()?;
 
         // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
@@ -349,13 +349,13 @@ impl RelayApiServer for Relay {
                 expected: quote.ty().authorization_address,
                 got: authorization.map(|auth| auth.address),
             })
-            .to_params_result();
+            .to_rpc_result();
         }
 
         if let Some(auth) = &authorization {
             // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
-                return Err(AuthError::AuthItemNotChainAgnostic).to_params_result();
+                return Err(AuthError::AuthItemNotChainAgnostic).to_rpc_result();
             }
 
             let expected_nonce = provider
@@ -369,7 +369,7 @@ impl RelayApiServer for Relay {
                     expected: expected_nonce,
                     got: auth.nonce,
                 })
-                .to_params_result();
+                .to_rpc_result();
             }
         } else {
             let code = provider
@@ -381,7 +381,7 @@ impl RelayApiServer for Relay {
             if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
                 || code[..] == EIP7702_CLEARED_DELEGATION
             {
-                return Err(AuthError::EoaNotDelegated(request.op.eoa)).to_params_result();
+                return Err(AuthError::EoaNotDelegated(request.op.eoa)).to_rpc_result();
             }
         }
 
@@ -391,13 +391,13 @@ impl RelayApiServer for Relay {
             .recover_address()
             .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
-            return Err(QuoteError::InvalidQuoteSignature).to_params_result();
+            return Err(QuoteError::InvalidQuoteSignature).to_rpc_result();
         }
 
         // if we do **not** get an error here, then the quote ttl must be in the past, which means
         // it is expired
         if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
-            return Err(QuoteError::QuoteExpired).to_params_result();
+            return Err(QuoteError::QuoteExpired).to_rpc_result();
         }
 
         let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
@@ -438,7 +438,7 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<PrepareCreateAccountResponse> {
         // Creating account should have at least one admin key.
         if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-            return Err(KeysError::MissingAdminKey).to_params_result()?;
+            return Err(KeysError::MissingAdminKey).to_rpc_result()?;
         }
 
         // Generate all calls that will authorize keys and set their permissions
@@ -480,7 +480,7 @@ impl RelayApiServer for Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))
-            .to_params_result()?
+            .to_rpc_result()?
             .provider;
 
         let (_, addresses) = AccountRegistryInstance::new(self.inner.entrypoint, provider)
@@ -511,7 +511,7 @@ impl RelayApiServer for Relay {
                 .chains
                 .get(request.chain_id)
                 .ok_or(RelayError::UnsupportedChain(request.chain_id))
-                .to_params_result()?
+                .to_rpc_result()?
                 .provider,
         );
 
@@ -547,7 +547,7 @@ impl RelayApiServer for Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))
-            .to_params_result()?
+            .to_rpc_result()?
             .provider;
 
         // Generate all calls that will authorize keys and set their permissions
@@ -657,13 +657,13 @@ impl RelayApiServer for Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))
-            .to_params_result()?
+            .to_rpc_result()?
             .provider;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
         if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-            return Err(KeysError::MissingAdminKey).to_params_result()?;
+            return Err(KeysError::MissingAdminKey).to_rpc_result()?;
         }
 
         // Generate all calls that will authorize keys and set their permissions
@@ -786,7 +786,7 @@ impl RelayApiServer for Relay {
                 expected: request.context.ty().authorization_address.expect("should exist"),
                 got: request.authorization.address,
             })
-            .to_params_result();
+            .to_rpc_result();
         }
 
         let op = &mut request.context.ty_mut().op;
