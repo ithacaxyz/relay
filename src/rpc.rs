@@ -406,11 +406,7 @@ impl RelayApiServer for Relay {
         // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
         // this is already supported by current storage API.
         let bundle_id = BundleId(*tx.id);
-        self.inner
-            .storage
-            .add_bundle_tx(bundle_id, tx.id)
-            .await
-            .map_err(SendActionError::internal)?;
+        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         let mut rx = transactions.send_transaction(tx);
 
@@ -465,8 +461,8 @@ impl RelayApiServer for Relay {
 
         self.inner
             .storage
-             .write_prep(CreatableAccount::new(request.account, request.signatures))
-           .await
+            .write_prep(CreatableAccount::new(request.context, request.signatures))
+            .await
             .to_rpc_result()?;
 
         Ok(())

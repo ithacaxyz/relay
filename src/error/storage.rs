@@ -1,5 +1,5 @@
-use alloy::primitives::Address;
 use super::invalid_params;
+use alloy::primitives::Address;
 
 /// Errors returned by [`Storage`].
 #[derive(Debug, thiserror::Error)]

@@ -2,9 +2,8 @@
 
 use super::{StorageApi, api::Result};
 use crate::{
-    transactions::{PendingTransaction, TransactionStatus, TxId},
     error::StorageError,
-     transactions::{PendingTransaction, TransactionStatus},
+    transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
