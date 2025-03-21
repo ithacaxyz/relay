@@ -430,7 +430,7 @@ impl RelayApiServer for Relay {
             .collect::<Vec<_>>();
 
         Ok(PrepareCreateAccountResponse {
-            account: PREPAccount::initialize(request.capabilities.delegation, init_calls),
+            context: PREPAccount::initialize(request.capabilities.delegation, init_calls),
             capabilities: request.capabilities.into_response(),
         })
     }
@@ -442,7 +442,7 @@ impl RelayApiServer for Relay {
 
         self.inner
             .storage
-            .write_prep(CreatableAccount::new(request.account, request.id_signatures))
+            .write_prep(CreatableAccount::new(request.context, request.signatures))
             .map_err(|err| from_eyre_error(err.into()))
             .await?;
 
@@ -459,7 +459,7 @@ impl RelayApiServer for Relay {
             .ok_or(EstimateFeeError::UnsupportedChain(request.chain_id))? // todo error handling
             .provider;
 
-        let (_, addresses) = AccountRegistryInstance::new(request.registry, provider)
+        let (_, addresses) = AccountRegistryInstance::new(self.inner.entrypoint, provider)
             .idInfo(request.id)
             .call()
             .await
