@@ -1,8 +1,8 @@
-use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus};
+use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId};
 use crate::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi, StorageError},
-    types::{ENTRYPOINT_NO_ERROR, EntryPoint, rpc::BundleId},
+    types::{ENTRYPOINT_NO_ERROR, EntryPoint},
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
@@ -85,7 +85,7 @@ pub enum SignerMessage {
 #[derive(Debug)]
 pub enum SignerEvent {
     /// Status update for a transaction.
-    TransactionStatus(BundleId, TransactionStatus),
+    TransactionStatus(TxId, TransactionStatus),
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -169,7 +169,7 @@ impl Signer {
     /// Sends a transaction status update.
     async fn update_tx_status(
         &self,
-        tx: BundleId,
+        tx: TxId,
         status: TransactionStatus,
     ) -> Result<(), StorageError> {
         self.storage.write_transaction_status(tx, &status).await?;

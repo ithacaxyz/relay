@@ -2,7 +2,7 @@
 
 use super::StorageError;
 use crate::{
-    transactions::{PendingTransaction, TransactionStatus},
+    transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::primitives::Address;
@@ -25,7 +25,7 @@ pub trait StorageApi: Debug + Send + Sync {
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;
 
     /// Removes a pending transaction from storage.
-    async fn remove_pending_transaction(&self, tx_id: BundleId) -> Result<()>;
+    async fn remove_pending_transaction(&self, tx_id: TxId) -> Result<()>;
 
     /// Reads pending transactions for the given signer and chain id from storage.
     async fn read_pending_transactions(
@@ -35,12 +35,14 @@ pub trait StorageApi: Debug + Send + Sync {
     ) -> Result<Vec<PendingTransaction>>;
 
     /// Saves a transaction status.
-    async fn write_transaction_status(
-        &self,
-        tx: BundleId,
-        status: &TransactionStatus,
-    ) -> Result<()>;
+    async fn write_transaction_status(&self, tx: TxId, status: &TransactionStatus) -> Result<()>;
 
     /// Reads a transaction status.
-    async fn read_transaction_status(&self, tx: BundleId) -> Result<Option<TransactionStatus>>;
+    async fn read_transaction_status(&self, tx: TxId) -> Result<Option<TransactionStatus>>;
+
+    /// Adds a transaction to a bundle.
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()>;
+
+    /// Gets all transactions in a bundle.
+    async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>>;
 }

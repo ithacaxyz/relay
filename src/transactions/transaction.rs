@@ -1,18 +1,28 @@
 use std::sync::Arc;
 
-use crate::types::{EntryPoint, SignedQuote, rpc::BundleId};
+use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
     consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
     sol_types::{SolCall, SolValue},
 };
+
+wrap_fixed_bytes! {
+    /// An id of the transaction being handled by the relay.
+    ///
+    /// Id always corresponds to a single on-chain transaction vs a bundle of multiple transactions.
+    ///
+    /// Note: this is different from transaction hash, as the hash corresponding to an id might change.
+    /// The [`TxId`] should never be exposed to a user, use [`crate::types::rpc::BundleId`] instead.
+    pub struct TxId<32>;
+}
 
 /// Transaction type used by relay.
 #[derive(Debug, Clone)]
 pub struct RelayTransaction {
     /// Id of the transaction.
-    pub id: BundleId,
+    pub id: TxId,
     /// [`UserOp`] to send.
     pub quote: SignedQuote,
     /// Destination entrypoint.
@@ -28,7 +38,7 @@ impl RelayTransaction {
         entrypoint: Address,
         authorization: Option<SignedAuthorization>,
     ) -> Self {
-        Self { id: quote.ty().digest(), quote, entrypoint, authorization }
+        Self { id: TxId(quote.ty().digest()), quote, entrypoint, authorization }
     }
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
@@ -113,7 +123,7 @@ impl PendingTransaction {
     }
 
     /// Returns the [`BundleId`] of the transaction.
-    pub fn id(&self) -> BundleId {
+    pub fn id(&self) -> TxId {
         self.tx.id
     }
 
