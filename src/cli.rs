@@ -38,6 +38,9 @@ pub struct Args {
     /// The port to serve the metrics on.
     #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
     pub metrics_port: u16,
+    /// The address of the entrypoint.
+    #[arg(long = "entrypoint", value_name = "ENTRYPOINT")]
+    pub entrypoint: Address,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -84,6 +87,7 @@ impl Args {
             .with_port(self.port)
             .with_metrics_port(self.metrics_port)
             .with_quote_ttl(self.quote_ttl)
+            .with_entrypoint(self.entrypoint)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
     }
@@ -126,6 +130,7 @@ mod tests {
                     address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: get_available_port().unwrap(),
                     metrics_port: get_available_port().unwrap(),
+                    entrypoint: Default::default(),
                     endpoints: Default::default(),
                     quote_ttl: Default::default(),
                     quote_secret_key: key.to_string(),
