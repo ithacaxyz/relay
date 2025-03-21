@@ -1,11 +1,4 @@
 //! Relay error types.
-use alloy::{
-    primitives::{Bytes, ChainId},
-    transports::TransportErrorKind,
-};
-use core::fmt;
-use jsonrpsee::core::RpcResult;
-use thiserror::Error;
 
 mod auth;
 pub use auth::AuthError;
@@ -21,6 +14,14 @@ pub use quote::QuoteError;
 
 mod storage;
 pub use storage::StorageError;
+
+use alloy::{
+    primitives::{Bytes, ChainId},
+    transports::TransportErrorKind,
+};
+use core::fmt;
+use jsonrpsee::core::RpcResult;
+use thiserror::Error;
 
 /// The overarching error type returned by `relay_estimateFee`.
 #[derive(Debug, Error)]
