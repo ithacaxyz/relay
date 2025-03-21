@@ -10,7 +10,10 @@ use crate::{
     storage::RelayStorage,
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
-use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+use alloy::{
+    providers::{DynProvider, Provider, ProviderBuilder},
+    transports::TransportError,
+};
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
@@ -56,13 +59,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     .await?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
-    let providers: Vec<DynProvider> = config
-        .chain
-        .endpoints
-        .iter()
-        .cloned()
-        .map(|url| ProviderBuilder::new().on_http(url).erased())
-        .collect();
+    let providers: Vec<DynProvider> = futures_util::future::try_join_all(
+        config.chain.endpoints.iter().cloned().map(|url| async move {
+            Ok::<_, TransportError>(ProviderBuilder::new().connect(url.as_str()).await?.erased())
+        }),
+    )
+    .await?;
 
     // construct quote signer
     let quote_signer = DynSigner::load(&config.secrets.quote_key, None).await?;
