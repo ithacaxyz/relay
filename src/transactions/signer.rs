@@ -1,4 +1,7 @@
-use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId};
+use super::{
+    metrics::TransactionServiceMetrics,
+    transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+};
 use crate::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi, StorageError},
@@ -25,7 +28,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::sync::mpsc;
 use tracing::error;
@@ -105,6 +108,8 @@ pub struct Signer {
     events_tx: mpsc::UnboundedSender<SignerEvent>,
     /// Underlying storage.
     storage: RelayStorage,
+    /// Metrics of the parent transaction service.
+    metrics: Arc<TransactionServiceMetrics>,
 }
 
 impl Signer {
@@ -113,6 +118,7 @@ impl Signer {
         provider: DynProvider,
         signer: DynSigner,
         storage: RelayStorage,
+        metrics: Arc<TransactionServiceMetrics>,
     ) -> TransportResult<SignerHandle> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -148,6 +154,7 @@ impl Signer {
             nonce: Arc::new(Mutex::new(nonce)),
             events_tx,
             storage,
+            metrics,
         };
 
         let loaded_transactions = this
@@ -301,11 +308,18 @@ impl Signer {
 
     /// Awaits the given [`PendingTransaction`] and watches it for status updates.
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
+        self.metrics.pending.increment(1);
         if let Err(err) = self.watch_transaction_inner(&mut tx).await {
+            self.metrics.pending.decrement(1);
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
             self.storage.remove_pending_transaction(tx.id()).await?;
             return self.close_nonce_gap(tx.sent.nonce()).await;
         }
+
+        self.metrics.confirmation_time.record(
+            SystemTime::now().duration_since(tx.received_at).expect("should never underflow"),
+        );
+        self.metrics.pending.decrement(1);
 
         Ok(())
     }
@@ -349,7 +363,8 @@ impl Signer {
                 return self.close_nonce_gap(nonce).await;
             }
         };
-        let tx = PendingTransaction { tx, sent, signer: self.address() };
+        let tx =
+            PendingTransaction { tx, sent, signer: self.address(), received_at: SystemTime::now() };
 
         self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
         self.storage.write_pending_transaction(&tx).await?;

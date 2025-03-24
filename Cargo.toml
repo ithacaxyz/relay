@@ -61,6 +61,7 @@ rand = "0.9"
 itertools = "0.14"
 derive_more = "2"
 bytes = "1"
+metrics-derive = "0.1"
 
 [dev-dependencies]
 alloy = { version = "0.12", features = ["eips", "provider-anvil-node"] }

@@ -125,7 +125,7 @@ pub struct TxContext<'a> {
     pub fee_token: Address,
 }
 
-impl<'a> TxContext<'a> {
+impl TxContext<'_> {
     /// Creates a PREPAccount from the first [`TxContext`] of a test case.
     pub async fn prep_account(
         &mut self,

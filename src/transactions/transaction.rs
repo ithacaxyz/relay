@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
@@ -114,6 +114,8 @@ pub struct PendingTransaction {
     pub sent: TxEnvelope,
     /// Signer that signed the transaction.
     pub signer: Address,
+    /// Time at which we've received this transaction.
+    pub received_at: SystemTime,
 }
 
 impl PendingTransaction {
