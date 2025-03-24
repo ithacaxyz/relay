@@ -57,6 +57,10 @@ use crate::{
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
+    /// Checks the health of the relay.
+    #[method(name = "health")]
+    async fn health(&self) -> RpcResult<()>;
+
     /// Get all supported fee tokens by chain.
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
     async fn fee_tokens(&self) -> RpcResult<FeeTokens>;
@@ -188,6 +192,10 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
+    async fn health(&self) -> RpcResult<()> {
+        Ok(())
+    }
+
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
     }
