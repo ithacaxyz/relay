@@ -122,11 +122,14 @@ impl CoinGecko {
 
         for (chain, url) in &self.request_urls {
             // Fetch token prices
-            let resp = get(url)
+            let resp = async { get(url).await?.text().await }
                 .await
-                .map_err(|_| QuoteError::UnavailablePriceFeed(*chain))?
-                .text()
-                .await
+                .inspect_err(|err| {
+                    error!(
+                        %err,
+                        "Failed to fetch price from feed.",
+                    );
+                })
                 .map_err(|_| QuoteError::UnavailablePriceFeed(*chain))?;
 
             trace!(response=?resp, "CoinGecko response.");

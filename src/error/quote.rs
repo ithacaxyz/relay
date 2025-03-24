@@ -17,8 +17,8 @@ pub enum QuoteError {
     /// The price for fee token is not available.
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
-    /// The price feed for the coin is not available.
-    #[error("price feed is currently not available for chain: {0}")]
+    /// The chain price feed is not available.
+    #[error("price feed is currently not available on chain: {0}")]
     UnavailablePriceFeed(ChainId),
     /// The payment amount in the userop did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
