@@ -26,7 +26,7 @@ use thiserror::Error;
 pub enum RelayError {
     /// Errors related to 7702 authorizations.
     #[error(transparent)]
-    Auth(#[from] AuthError),
+    Auth(#[from] Box<AuthError>),
     /// Errors related to quotes.
     #[error(transparent)]
     Quote(#[from] QuoteError),
@@ -56,7 +56,7 @@ pub enum RelayError {
 impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: RelayError) -> Self {
         match err {
-            RelayError::Auth(inner) => inner.into(),
+            RelayError::Auth(inner) => (*inner).into(),
             RelayError::Quote(inner) => inner.into(),
             RelayError::UserOp(inner) => inner.into(),
             RelayError::Keys(inner) => inner.into(),

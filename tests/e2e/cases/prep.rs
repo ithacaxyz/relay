@@ -2,16 +2,16 @@
 
 use crate::e2e::{MockErc20, environment::Environment, eoa::EoaKind, send_prepared_calls};
 use alloy::{
-    primitives::{Address, TxHash, U256},
+    primitives::{Address, B256, PrimitiveSignature, TxHash, U256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
 use relay::{
     rpc::RelayApiClient,
-    signers::Eip712PayLoadSigner,
+    signers::{DynSigner, Eip712PayLoadSigner},
     types::{
-        Call, Signature,
+        Call, KeyHashWithID, Signature,
         rpc::{
             AuthorizeKey, CreateAccountParameters, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
@@ -26,38 +26,44 @@ pub async fn prep_account(
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
-    let PrepareCreateAccountResponse {
-        capabilities: _,
-        digests: _,
-        context: server_account,
-        address,
-    } = env
+    let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } = env
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
                 authorize_keys: authorize_keys.to_vec(),
                 delegation: env.delegation,
             },
+            chain_id: env.chain_id,
         })
         .await?;
 
-    assert!(address == server_account.address);
+    assert!(address == context.account.address);
 
-    let id_signatures = match &mut env.eoa {
+    let signatures = match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),
-        EoaKind::Prep { admin_key: _, account } => {
-            account.prep = server_account.clone();
+        EoaKind::Prep { admin_key, account } => {
+            // We need to sign the PREPAccount address with our admin key identifier
+            let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
+            let key_hash = admin_key.key_hash();
+            let id = KeyHashWithID {
+                hash: key_hash,
+                id: ephemeral.address(),
+                signature: PrimitiveSignature::from_raw(
+                    &ephemeral
+                        .sign_payload_hash(admin_key.id_digest(context.account.address))
+                        .await?,
+                )
+                .unwrap(),
+            };
+
+            account.prep = context.account.clone();
+            account.id_signatures = vec![id];
             account.id_signatures.clone()
         }
     };
 
     // Send the PREPAccount with its key identifiers and signatures
-    env.relay_endpoint
-        .create_account(CreateAccountParameters {
-            context: server_account,
-            signatures: id_signatures,
-        })
-        .await?;
+    env.relay_endpoint.create_account(CreateAccountParameters { context, signatures }).await?;
 
     // todo: assert that a createAccount reference exists
 

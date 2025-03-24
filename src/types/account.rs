@@ -300,7 +300,7 @@ impl PREPAccount {
 
     /// Verifies that the current account is valid.
     pub fn is_valid(&self) -> bool {
-        self == &Self::initialize(self.address, self.init_calls.clone())
+        self == &Self::initialize(self.signed_authorization.address, self.init_calls.clone())
     }
 }
 

@@ -8,7 +8,7 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::types::AccountRegistry::AccountRegistryCalls;
+use crate::types::{AccountRegistry::AccountRegistryCalls, rpc::CreateAccountContext};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -17,8 +17,8 @@ use alloy::{
             PER_EMPTY_ACCOUNT_COST,
         },
     },
-    primitives::{Address, Bytes, TxHash, U256, bytes},
-    providers::Provider,
+    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
+    providers::{DynProvider, Provider},
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
@@ -255,6 +255,11 @@ impl Relay {
 
         Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
     }
+
+    /// Returns the chain [`DynProvider`].
+    pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
+        Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
+    }
 }
 
 #[async_trait]
@@ -274,12 +279,7 @@ impl RelayApiServer for Relay {
         authorization_address: Option<Address>,
         key_type: KeyType,
     ) -> RpcResult<SignedQuote> {
-        let provider = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-            .provider;
+        let provider = self.provider(request.chain_id)?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
         };
@@ -417,19 +417,19 @@ impl RelayApiServer for Relay {
             })
             .collect::<Vec<_>>();
 
-        let context = PREPAccount::initialize(request.capabilities.delegation, init_calls);
-        let prep_address = context.address;
+        let account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
+        let prep_address = account.address;
 
         let digests = request
             .capabilities
             .authorize_keys
             .iter()
             .filter(|&k| k.key.isSuperAdmin)
-            .map(|k| k.key.identifier_digest(prep_address))
+            .map(|k| k.key.id_digest(prep_address))
             .collect();
 
         Ok(PrepareCreateAccountResponse {
-            context,
+            context: CreateAccountContext { account, chain_id: request.chain_id },
             address: prep_address,
             digests,
             capabilities: request.capabilities.into_response(),
@@ -437,13 +437,27 @@ impl RelayApiServer for Relay {
     }
 
     async fn create_account(&self, request: CreateAccountParameters) -> RpcResult<()> {
-        // todo verify account is valid
-        // todo signature validation
-        // todo check onchain if IDs already exists and are empty
+        // Ensure PREPAccount and signatures are valid and not empty.
+        request.validate()?;
 
+        // IDs need to either be new in the registry OR have zero accounts associated.
+        let accounts = AccountRegistryCalls::id_infos(
+            request.signatures.iter().map(|s| s.id).collect(),
+            self.inner.entrypoint,
+            self.provider(request.context.chain_id)?,
+        )
+        .await?;
+
+        for (signature, accounts) in request.signatures.iter().zip(accounts) {
+            if accounts.is_some_and(|(_, addresses)| !addresses.is_empty()) {
+                return Err(RelayError::Keys(KeysError::TakenKeyId(signature.id)).into());
+            }
+        }
+
+        // Write to storage to be used on prepareCalls
         self.inner
             .storage
-            .write_prep(CreatableAccount::new(request.context, request.signatures))
+            .write_prep(CreatableAccount::new(request.context.account, request.signatures))
             .await?;
 
         Ok(())
@@ -453,12 +467,7 @@ impl RelayApiServer for Relay {
         &self,
         request: GetAccountsParameters,
     ) -> RpcResult<Vec<AccountResponse>> {
-        let provider = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-            .provider;
+        let provider = self.provider(request.chain_id)?;
 
         let Some((_, addresses)) =
             &AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
@@ -514,12 +523,7 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        let provider = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-            .provider;
+        let provider = self.provider(request.chain_id)?;
 
         // Generate all calls that will authorize keys and set their permissions
         // todo: admin or webauthn require Some(signed identifier)
@@ -551,7 +555,9 @@ impl RelayApiServer for Relay {
                         .read_prep(&request.from)
                         .await
                         .map_err(|err| RelayError::InternalError(err.into()))?
-                        .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(request.from)))
+                        .ok_or_else(|| {
+                            RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
+                        })
                         .map(Some);
                 }
                 Ok(None)
@@ -621,12 +627,7 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareUpgradeAccountParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        let provider = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-            .provider;
+        let provider = self.provider(request.chain_id)?;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.

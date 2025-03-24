@@ -1,11 +1,15 @@
 //! RPC account-related request and response types.
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
-use crate::types::{KeyHashWithID, PREPAccount, SignedQuote};
+use crate::{
+    error::{AuthError, KeysError},
+    types::{Key, KeyHashWithID, PREPAccount, SignedQuote},
+};
 use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, ChainId, PrimitiveSignature},
 };
+use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
 
 /// Capabilities for `wallet_prepareCreateAccount` request.
@@ -48,6 +52,9 @@ pub struct PrepareCreateAccountResponseCapabilities {
 pub struct PrepareCreateAccountParameters {
     /// Capabilities.
     pub capabilities: PrepareCreateAccountCapabilities,
+    /// Chain ID to initialize the account on.
+    #[serde(with = "alloy::serde::quantity")]
+    pub chain_id: ChainId,
 }
 
 /// Response for `wallet_prepareCreateAccount`.
@@ -55,7 +62,7 @@ pub struct PrepareCreateAccountParameters {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCreateAccountResponse {
     /// Initializable account.
-    pub context: PREPAccount,
+    pub context: CreateAccountContext,
     /// Address of the PREPAccount.
     pub address: Address,
     /// Digests that need to be signed by each admin key identifier.
@@ -67,11 +74,54 @@ pub struct PrepareCreateAccountResponse {
 /// Request parameters for `wallet_createAccount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CreateAccountContext {
+    /// Initializable account.
+    pub account: PREPAccount,
+    /// Chain ID to initialize the account on.
+    #[serde(with = "alloy::serde::quantity")]
+    pub chain_id: ChainId,
+}
+
+/// Request context for `wallet_createAccount`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateAccountParameters {
     /// Initializable account.
-    pub context: PREPAccount,
+    pub context: CreateAccountContext,
     /// List of signatures over the PREPAddress.
     pub signatures: Vec<KeyHashWithID>,
+}
+
+impl CreateAccountParameters {
+    /// Validates the PREPAccount and key identifier signatures.
+    pub fn validate(&self) -> RpcResult<()> {
+        // Ensure PREPAccount is well built, since it might not come from the relay.
+        if !self.context.account.is_valid() {
+            return Err(AuthError::InvalidPrep(self.context.account.clone()).into());
+        }
+
+        // Ensure that every key identifier signature is valid and recovers the same id.
+        self.validate_signatures()
+    }
+
+    /// Verifies all signatures against the [`PREPAccount`] address and key identifiers.
+    pub fn validate_signatures(&self) -> RpcResult<()> {
+        if self.signatures.is_empty() {
+            return Err(KeysError::MissingAdminKey.into());
+        }
+
+        for KeyHashWithID { hash, id, signature } in &self.signatures {
+            let digest = Key::id_digest_from_hash(*hash, self.context.account.address);
+            let expected = signature
+                .recover_address_from_prehash(&digest)
+                .map_err(|_| KeysError::InvalidKeyIdSignature(*signature))?;
+
+            if *id != expected {
+                return Err(KeysError::UnexpectedKeyId { expected, got: *id }.into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Capabilities for `wallet_createAccount` request.
