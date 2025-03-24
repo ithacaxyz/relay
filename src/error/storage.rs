@@ -12,7 +12,7 @@ pub enum StorageError {
 impl From<StorageError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: StorageError) -> Self {
         match err {
-            StorageError::AccountAlreadyExists(..) => invalid_params(err),
+            StorageError::AccountAlreadyExists(..) => invalid_params(err.to_string()),
         }
     }
 }

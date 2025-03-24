@@ -44,7 +44,7 @@ impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
             | AuthError::AuthItemNotChainAgnostic
             | AuthError::AuthItemInvalidNonce { .. }
             | AuthError::InvalidAuthItem { .. }
-            | AuthError::EoaNotDelegated(..) => invalid_params(err),
+            | AuthError::EoaNotDelegated(..) => invalid_params(err.to_string()),
         }
     }
 }

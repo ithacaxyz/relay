@@ -1,5 +1,5 @@
 use crate::{
-    error::RelayError,
+    error::{QuoteError, RelayError},
     price::{PriceFetcher, oracle::PriceOracleMessage},
     types::{CoinKind, CoinPair, CoinRegistry},
 };
@@ -124,10 +124,10 @@ impl CoinGecko {
             // Fetch token prices
             let resp = get(url)
                 .await
-                .map_err(|err| RelayError::InternalError(err.into()))?
+                .map_err(|_| QuoteError::UnavailablePriceFeed(*chain))?
                 .text()
                 .await
-                .map_err(|err| RelayError::InternalError(err.into()))?;
+                .map_err(|_| QuoteError::UnavailablePriceFeed(*chain))?;
 
             trace!(response=?resp, "CoinGecko response.");
 

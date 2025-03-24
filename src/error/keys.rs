@@ -19,8 +19,10 @@ pub enum KeysError {
 impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: KeysError) -> Self {
         match err {
-            KeysError::UnsupportedKeyType | KeysError::MissingAdminKey => invalid_params(err),
-            KeysError::InvalidRegistryData(_) => internal_rpc(err),
+            KeysError::UnsupportedKeyType | KeysError::MissingAdminKey => {
+                invalid_params(err.to_string())
+            }
+            KeysError::InvalidRegistryData(_) => internal_rpc(err.to_string()),
         }
     }
 }

@@ -30,8 +30,8 @@ pub enum UserOpError {
 impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: UserOpError) -> Self {
         match err {
-            UserOpError::SimulationError => internal_rpc(err),
-            UserOpError::InvalidOpDigest { .. } => invalid_params(err),
+            UserOpError::SimulationError => internal_rpc(err.to_string()),
+            UserOpError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
             UserOpError::OpRevert { ref revert_reason } => rpc_err(
                 EthRpcErrorCode::ExecutionError.code(),
                 err.to_string(),
