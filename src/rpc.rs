@@ -40,8 +40,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, Action, CreatableAccount, Entry, FeeTokens, KeyType, KeyWith712Signer,
-        PREPAccount, PartialAction, PartialUserOp, Quote, Signature, SignedQuote, UserOp,
+        Account, CreatableAccount, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount,
+        PartialAction, PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
             CreateAccountParameters, GetAccountsParameters, GetKeysParameters,
@@ -73,29 +73,6 @@ pub trait RelayApi {
         authorization_address: Option<Address>,
         key: KeyType,
     ) -> RpcResult<SignedQuote>;
-
-    // todo: rewrite
-    /// Send a sponsored transaction.
-    ///
-    /// The transaction will only be processed if:
-    ///
-    /// - The transaction is an [EIP-7702][eip-7702] transaction.
-    /// - The transaction is an [EIP-1559][eip-1559] transaction to an EOA that is currently
-    ///   delegated to one of the addresses above
-    /// - The value in the transaction is exactly 0.
-    ///
-    /// The service will sign the transaction and inject it into the transaction pool, provided it
-    /// is valid. The nonce is managed by the service.
-    ///
-    /// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
-    /// [eip-1559]: https://eips.ethereum.org/EIPS/eip-1559
-    #[method(name = "sendAction", aliases = ["wallet_sendAction"])]
-    async fn send_action(
-        &self,
-        request: Action,
-        quote: SignedQuote,
-        authorization: Option<SignedAuthorization>,
-    ) -> RpcResult<TxHash>;
 
     /// Prepares an account for the user.
     #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
@@ -186,6 +163,97 @@ impl Relay {
             storage,
         };
         Self { inner: Arc::new(inner) }
+    }
+
+    async fn send_action(
+        &self,
+        quote: SignedQuote,
+        authorization: Option<SignedAuthorization>,
+    ) -> RpcResult<TxHash> {
+        let Chain { provider, transactions } = self
+            .inner
+            .chains
+            .get(quote.ty().chain_id)
+            .ok_or(RelayError::UnsupportedChain(quote.ty().chain_id))?;
+
+        // check that the authorization item matches what's in the quote
+        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
+            return Err(AuthError::InvalidAuthItem {
+                expected: quote.ty().authorization_address,
+                got: authorization.map(|auth| auth.address),
+            }
+            .into());
+        }
+
+        if let Some(auth) = &authorization {
+            // todo: persist auth
+            if !auth.inner().chain_id().is_zero() {
+                return Err(AuthError::AuthItemNotChainAgnostic.into());
+            }
+
+            let expected_nonce = provider
+                .get_transaction_count(quote.ty().op.eoa)
+                .await
+                .map_err(RelayError::from)?;
+
+            if expected_nonce != auth.nonce {
+                return Err(AuthError::AuthItemInvalidNonce {
+                    expected: expected_nonce,
+                    got: auth.nonce,
+                }
+                .into());
+            }
+        } else {
+            let code = provider.get_code_at(quote.ty().op.eoa).await.map_err(RelayError::from)?;
+
+            if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+                || code[..] == EIP7702_CLEARED_DELEGATION
+            {
+                return Err(AuthError::EoaNotDelegated(quote.ty().op.eoa).into());
+            }
+        }
+
+        // this can be done by just verifying the signature & userop hash against the rfq
+        // ticket from `relay_estimateFee`'
+        if !quote
+            .recover_address()
+            .is_ok_and(|address| address == self.inner.quote_signer.address())
+        {
+            return Err(QuoteError::InvalidQuoteSignature.into());
+        }
+
+        // if we do **not** get an error here, then the quote ttl must be in the past, which means
+        // it is expired
+        if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
+            return Err(QuoteError::QuoteExpired.into());
+        }
+
+        let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
+
+        // TODO: Right now we only support a single transaction per action and per bundle, so we can
+        // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
+        // this is already supported by current storage API.
+        let bundle_id = BundleId(*tx.id);
+        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
+
+        let mut rx = transactions.send_transaction(tx);
+
+        // Wait for the transaction hash.
+        // TODO: get rid of it and use wallet_getCallsStatus instead. This might not work well if we
+        // resubmit transaction with a higher fee.
+        while let Some(status) = rx.recv().await {
+            match status {
+                TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
+                    return Ok(hash);
+                }
+                TransactionStatus::InFlight => continue,
+                TransactionStatus::Failed(err) => {
+                    return Err(RelayError::InternalError(err.into()).into());
+                }
+            }
+        }
+
+        Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
     }
 }
 
@@ -329,96 +397,6 @@ impl RelayApiServer for Relay {
         Ok(quote.into_signed(sig))
     }
 
-    async fn send_action(
-        &self,
-        request: Action,
-        quote: SignedQuote,
-        authorization: Option<SignedAuthorization>,
-    ) -> RpcResult<TxHash> {
-        let Chain { provider, transactions } = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
-
-        // check that the authorization item matches what's in the quote
-        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
-            return Err(AuthError::InvalidAuthItem {
-                expected: quote.ty().authorization_address,
-                got: authorization.map(|auth| auth.address),
-            }
-            .into());
-        }
-
-        if let Some(auth) = &authorization {
-            // todo: persist auth
-            if !auth.inner().chain_id().is_zero() {
-                return Err(AuthError::AuthItemNotChainAgnostic.into());
-            }
-
-            let expected_nonce =
-                provider.get_transaction_count(request.op.eoa).await.map_err(RelayError::from)?;
-
-            if expected_nonce != auth.nonce {
-                return Err(AuthError::AuthItemInvalidNonce {
-                    expected: expected_nonce,
-                    got: auth.nonce,
-                }
-                .into());
-            }
-        } else {
-            let code = provider.get_code_at(request.op.eoa).await.map_err(RelayError::from)?;
-
-            if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                || code[..] == EIP7702_CLEARED_DELEGATION
-            {
-                return Err(AuthError::EoaNotDelegated(request.op.eoa).into());
-            }
-        }
-
-        // this can be done by just verifying the signature & userop hash against the rfq
-        // ticket from `relay_estimateFee`'
-        if !quote
-            .recover_address()
-            .is_ok_and(|address| address == self.inner.quote_signer.address())
-        {
-            return Err(QuoteError::InvalidQuoteSignature.into());
-        }
-
-        // if we do **not** get an error here, then the quote ttl must be in the past, which means
-        // it is expired
-        if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
-            return Err(QuoteError::QuoteExpired.into());
-        }
-
-        let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
-
-        // TODO: Right now we only support a single transaction per action and per bundle, so we can
-        // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
-        // this is already supported by current storage API.
-        let bundle_id = BundleId(*tx.id);
-        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
-
-        let mut rx = transactions.send_transaction(tx);
-
-        // Wait for the transaction hash.
-        // TODO: get rid of it and use wallet_getCallsStatus instead. This might not work well if we
-        // resubmit transaction with a higher fee.
-        while let Some(status) = rx.recv().await {
-            match status {
-                TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
-                    return Ok(hash);
-                }
-                TransactionStatus::InFlight => continue,
-                TransactionStatus::Failed(err) => {
-                    return Err(RelayError::InternalError(err.into()).into());
-                }
-            }
-        }
-
-        return Err(RelayError::InternalError(eyre::eyre!("Transaction failed")).into());
-    }
-
     async fn prepare_create_account(
         &self,
         request: PrepareCreateAccountParameters,
@@ -457,6 +435,7 @@ impl RelayApiServer for Relay {
 
         Ok(())
     }
+
     async fn get_accounts(
         &self,
         request: GetAccountsParameters,
@@ -732,14 +711,8 @@ impl RelayApiServer for Relay {
         };
 
         // Broadcast transaction with UserOp
-        let tx_hash = self
-            .send_action(
-                Action { op: op.clone(), chain_id: request.context.ty().chain_id },
-                request.context,
-                authorization,
-            )
-            .await
-            .inspect_err(|err| {
+        let tx_hash =
+            self.send_action(request.context, authorization).await.inspect_err(|err| {
                 error!(
                     %err,
                     "Failed to submit upgrade account transaction.",
@@ -772,11 +745,7 @@ impl RelayApiServer for Relay {
 
         // Broadcast transaction with UserOp
         let tx_hash = self
-            .send_action(
-                Action { op: op.clone(), chain_id: request.context.ty().chain_id },
-                request.context,
-                Some(request.authorization),
-            )
+            .send_action(request.context, Some(request.authorization))
             .await
             .inspect_err(|err| {
                 error!(
