@@ -417,8 +417,21 @@ impl RelayApiServer for Relay {
             })
             .collect::<Vec<_>>();
 
+        let context = PREPAccount::initialize(request.capabilities.delegation, init_calls);
+        let prep_address = context.address;
+
+        let digests = request
+            .capabilities
+            .authorize_keys
+            .iter()
+            .filter(|&k| k.key.isSuperAdmin)
+            .map(|k| k.key.identifier_digest(prep_address))
+            .collect();
+
         Ok(PrepareCreateAccountResponse {
-            context: PREPAccount::initialize(request.capabilities.delegation, init_calls),
+            context,
+            address: prep_address,
+            digests,
             capabilities: request.capabilities.into_response(),
         })
     }

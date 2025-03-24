@@ -4,7 +4,7 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
 use crate::types::{KeyHashWithID, PREPAccount, SignedQuote};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, ChainId, PrimitiveSignature},
+    primitives::{Address, B256, ChainId, PrimitiveSignature},
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,10 @@ pub struct PrepareCreateAccountParameters {
 pub struct PrepareCreateAccountResponse {
     /// Initializable account.
     pub context: PREPAccount,
+    /// Address of the PREPAccount.
+    pub address: Address,
+    /// Digests that need to be signed by each admin key identifier.
+    pub digests: Vec<B256>,
     /// Capabilities.
     pub capabilities: PrepareCreateAccountResponseCapabilities,
 }

@@ -1,8 +1,5 @@
 use crate::e2e::{cases::prep_account, config::AccountConfig, eoa::EoaKind};
-use alloy::{
-    primitives::{PrimitiveSignature, keccak256},
-    sol_types::SolValue,
-};
+use alloy::primitives::PrimitiveSignature;
 use relay::{
     rpc::RelayApiClient,
     types::{
@@ -24,9 +21,7 @@ async fn register_id() -> eyre::Result<()> {
 
         // Generate ID from signature
         let id = signature
-            .recover_address_from_prehash(&keccak256(
-                (admin_key_hash.abi_encode(), account.prep.address).abi_encode_sequence(),
-            ))
+            .recover_address_from_prehash(&admin_key.identifier_digest(account.prep.address))
             .unwrap();
 
         let accounts =
