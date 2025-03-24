@@ -7,7 +7,8 @@ use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
-        Address, B256, Bytes, FixedBytes, Keccak256, U256, bytes::Buf, keccak256, map::B256Map,
+        Address, B256, Bytes, FixedBytes, Keccak256, PrimitiveSignature, U256, bytes::Buf,
+        keccak256, map::B256Map,
     },
     signers::local::LocalSigner,
     sol,
@@ -244,8 +245,13 @@ impl Key {
     }
 
     /// Generates the digest associated with this key identifier.
-    pub fn identifier_digest(&self, prep_address: Address) -> B256 {
-        keccak256((self.key_hash().abi_encode(), prep_address).abi_encode_sequence())
+    pub fn id_digest(&self, prep_address: Address) -> B256 {
+        Self::id_digest_from_hash(self.key_hash(), prep_address)
+    }
+
+    /// Given a key hash, it generates the associated key identifier digest.
+    pub fn id_digest_from_hash(key_hash: B256, prep_address: Address) -> B256 {
+        keccak256((key_hash.abi_encode(), prep_address).abi_encode_sequence())
     }
 }
 
@@ -346,16 +352,24 @@ impl Deref for KeyWith712Signer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyHashWithID {
-    /// Key hash
+    /// Key hash.
     pub hash: B256,
+    /// Key identifier.
+    pub id: Address,
     /// Signature over the PREP account address.
-    pub id_signature: Bytes,
+    #[serde(with = "crate::serde::signature")]
+    pub signature: PrimitiveSignature,
 }
 
 impl KeyHashWithID {
     /// Converts self to [`Call`] given a registry and PREP account address.
     pub fn to_call(&self, registry: Address, account: Address) -> Call {
-        Call::register_account(registry, self.id_signature.clone(), self.hash.into(), account)
+        Call::register_account(
+            registry,
+            self.signature.as_bytes().into(),
+            self.hash.into(),
+            account,
+        )
     }
 }
 

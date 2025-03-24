@@ -1,4 +1,5 @@
 use super::invalid_params;
+use crate::types::PREPAccount;
 use alloy::primitives::Address;
 use thiserror::Error;
 
@@ -35,6 +36,9 @@ pub enum AuthError {
     /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),
+    /// The provided PREPAccount is not valid.
+    #[error("invalid PREPAccount item: {0:?}")]
+    InvalidPrep(PREPAccount),
 }
 
 impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -44,7 +48,15 @@ impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
             | AuthError::AuthItemNotChainAgnostic
             | AuthError::AuthItemInvalidNonce { .. }
             | AuthError::InvalidAuthItem { .. }
+            | AuthError::InvalidPrep { .. }
             | AuthError::EoaNotDelegated(..) => invalid_params(err.to_string()),
         }
+    }
+}
+
+impl AuthError {
+    /// Converts the error to a boxed [`AuthError`].
+    pub fn boxed(self) -> Box<Self> {
+        Box::new(self)
     }
 }

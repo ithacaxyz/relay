@@ -1,5 +1,5 @@
 use alloy::{
-    primitives::{Address, B256, U256},
+    primitives::{Address, B256, PrimitiveSignature, U256},
     sol_types::SolCall,
 };
 use relay::{
@@ -37,17 +37,20 @@ impl EoaKind {
 
         let prep = PREPAccount::initialize(delegation, init_calls);
         let key_hash = admin_key.key_hash();
-        let hash = admin_key.identifier_digest(prep.address);
+        let hash = admin_key.id_digest(prep.address);
 
-        let signature = match admin_key.keyType {
+        let (id, signature) = match admin_key.keyType {
             KeyType::P256 => {
                 panic!("P256 can only be a session key.")
             }
             KeyType::WebAuthnP256 => {
                 let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
-                ephemeral.sign_payload_hash(hash).await?
+                (ephemeral.address(), ephemeral.sign_payload_hash(hash).await?)
             }
-            KeyType::Secp256k1 => admin_key.sign_payload_hash(hash).await?,
+            KeyType::Secp256k1 => (
+                Address::from_slice(&admin_key.publicKey[12..]),
+                admin_key.sign_payload_hash(hash).await?,
+            ),
             _ => unreachable!(),
         };
 
@@ -55,7 +58,11 @@ impl EoaKind {
             admin_key,
             account: CreatableAccount::new(
                 prep,
-                vec![KeyHashWithID { hash: key_hash, id_signature: signature }],
+                vec![KeyHashWithID {
+                    hash: key_hash,
+                    id,
+                    signature: PrimitiveSignature::from_raw(&signature).unwrap(),
+                }],
             ),
         })
     }

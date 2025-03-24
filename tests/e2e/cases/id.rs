@@ -1,5 +1,4 @@
 use crate::e2e::{cases::prep_account, config::AccountConfig, eoa::EoaKind};
-use alloy::primitives::PrimitiveSignature;
 use relay::{
     rpc::RelayApiClient,
     types::{
@@ -16,12 +15,11 @@ async fn register_id() -> eyre::Result<()> {
 
     if let EoaKind::Prep { admin_key, account } = env.eoa {
         let admin_key_hash = admin_key.key_hash();
-        let signature =
-            PrimitiveSignature::from_raw(&account.id_signatures[0].id_signature).unwrap();
 
         // Generate ID from signature
-        let id = signature
-            .recover_address_from_prehash(&admin_key.identifier_digest(account.prep.address))
+        let id = account.id_signatures[0]
+            .signature
+            .recover_address_from_prehash(&admin_key.id_digest(account.prep.address))
             .unwrap();
 
         let (key_hash, addresses) =
