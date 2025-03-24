@@ -1,9 +1,7 @@
-use crate::error::{KeysError, RelayError};
-use alloy::{
-    primitives::{Address, B256},
-    providers::DynProvider,
-    sol,
-};
+use crate::error::RelayError;
+use alloy::{primitives::Address, providers::DynProvider, sol};
+
+use super::KeyHash;
 
 sol! {
     #[sol(rpc)]
@@ -34,28 +32,29 @@ sol! {
 }
 
 impl AccountRegistry::AccountRegistryCalls {
-    /// Returns all accounts with these IDs in a list of tuples: `(B256, Vec<Address>)`.
+    /// Returns all accounts with these IDs in a list of tuples: `Option<(KeyHash, Vec<Address>)>`.
     ///
-    /// Each [`B256`] represents the associated key hash.
+    /// Note: the returned list will always have the same length as `ids`. If any ID does not exist,
+    /// it's returned as `None`.
     pub async fn id_infos(
         ids: Vec<Address>,
         entrypoint: Address,
         provider: DynProvider,
-    ) -> Result<Vec<(B256, Vec<Address>)>, RelayError> {
+    ) -> Result<Vec<Option<(KeyHash, Vec<Address>)>>, RelayError> {
         AccountRegistry::AccountRegistryInstance::new(entrypoint, provider)
             .idInfos(ids.clone())
             .call()
             .await
             .map_err(|err| RelayError::InternalError(err.into()))
-            .and_then(|res| {
-                ids.into_iter()
-                    .zip(res.keyhashes)
+            .map(|res| {
+                res.keyhashes
+                    .into_iter()
                     .zip(res.accounts)
-                    .map(|((id, key_hash), accounts)| {
+                    .map(|(key_hash, accounts)| {
                         if key_hash.len() != 32 {
-                            return Err(RelayError::Keys(KeysError::InvalidRegistryData(id)));
+                            return None;
                         }
-                        Ok((B256::from_slice(&key_hash), accounts))
+                        Some((KeyHash::from_slice(&key_hash), accounts))
                     })
                     .collect()
             })

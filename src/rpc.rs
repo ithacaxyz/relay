@@ -460,10 +460,12 @@ impl RelayApiServer for Relay {
             .ok_or(RelayError::UnsupportedChain(request.chain_id))?
             .provider;
 
-        // Contract call will revert if ID is not found.
-        let (_, addresses) =
+        let Some((_, addresses)) =
             &AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
-                .await?[0];
+                .await?[0]
+        else {
+            return Err(RelayError::Keys(KeysError::InvalidRegistryData(request.id)).into());
+        };
 
         try_join_all(addresses.iter().map(async |addr| {
             Ok(AccountResponse {

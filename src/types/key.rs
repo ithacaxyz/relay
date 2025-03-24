@@ -16,6 +16,9 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use std::{ops::Deref, sync::Arc};
 
+/// Alias type for key hash.
+pub type KeyHash = B256;
+
 sol! {
     /// The type of key.
     #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]

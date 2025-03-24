@@ -28,6 +28,7 @@ async fn register_id() -> eyre::Result<()> {
             AccountRegistryCalls::id_infos(vec![id], env.entrypoint, env.provider)
                 .await?
                 .pop()
+                .unwrap()
                 .unwrap();
 
         // Ensure ID -> (KeyHash, Address[]) matches
