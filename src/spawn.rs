@@ -16,7 +16,9 @@ use alloy::{
 };
 use http::header;
 use itertools::Itertools;
-use jsonrpsee::server::{RpcServiceBuilder, Server, ServerHandle};
+use jsonrpsee::server::{
+    RpcServiceBuilder, Server, ServerHandle, middleware::http::ProxyGetRequestLayer,
+};
 use std::{path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
@@ -110,7 +112,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // start server
     let server = Server::builder()
         .http_only()
-        .set_http_middleware(ServiceBuilder::new().layer(cors))
+        .set_http_middleware(
+            ServiceBuilder::new()
+                .layer(cors)
+                .layer(ProxyGetRequestLayer::new("/health", "health")?),
+        )
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
         .await?;
