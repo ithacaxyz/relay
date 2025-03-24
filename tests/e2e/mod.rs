@@ -1,8 +1,6 @@
 //! Relay end-to-end tests
-#![allow(unused)]
 
 mod cases;
-use cases::{prep_account, upgrade_account};
 
 mod common_calls;
 
@@ -21,37 +19,29 @@ mod types;
 pub use types::*;
 
 use alloy::{
-    dyn_abi::Eip712Domain,
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, B256, Bytes, TxHash, U256, bytes},
+    primitives::{Address, B256, Bytes, TxHash, U256},
     providers::{PendingTransactionBuilder, Provider},
-    signers::Signer,
-    sol_types::{SolCall, SolConstructor, SolEvent, SolStruct, SolValue},
-    uint,
+    sol_types::SolValue,
 };
-use eyre::{Context, OptionExt, Result};
-use futures_util::future::{join_all, try_join_all};
-use itertools::{Itertools, iproduct};
-use jsonrpsee::core::RpcResult;
+use eyre::{Context, Result};
+use futures_util::future::try_join_all;
+use itertools::iproduct;
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Action, Call, Delegation, ENTRYPOINT_NO_ERROR, Entry,
+        Delegation, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        Key, KeyType, KeyWith712Signer, PartialAction, PartialUserOp, Signature, SignedQuote, U40,
-        UserOp, WebAuthnP256,
+        KeyType, KeyWith712Signer, Signature, SignedQuote,
         rpc::{
-            AuthorizeKey, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, PrepareCreateAccountCapabilities,
-            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
-            SendPreparedCallsResponse, SendPreparedCallsSignature, UpgradeAccountParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            SendPreparedCallsParameters, SendPreparedCallsSignature,
         },
     },
 };
-use std::{future::Future, iter, str::FromStr};
+use std::iter;
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 /// Runs all configurations (both PREP and upgraded account, in both ERC20 and native payment
 /// methods).
@@ -121,7 +111,7 @@ async fn check_bundle(
     tx: &TxContext<'_>,
     tx_num: usize,
     authorization: Option<SignedAuthorization>,
-    op_nonce: U256,
+    _op_nonce: U256,
     env: &Environment,
 ) -> Result<(), eyre::Error> {
     match tx_hash {
@@ -147,12 +137,11 @@ async fn check_bundle(
                 return Err(eyre::eyre!("Transaction {tx_num} failed: {receipt:#?}"));
             }
 
-            if let Some(auth) = authorization {
-                if env.provider.get_code_at(env.eoa.address()).await?
+            if authorization.is_some()
+                && env.provider.get_code_at(env.eoa.address()).await?
                     != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
-                {
-                    return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
-                }
+            {
+                return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
             }
 
             // UserOp has succeeded if the nonce has been invalidated.

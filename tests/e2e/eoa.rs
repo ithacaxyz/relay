@@ -82,7 +82,7 @@ impl EoaKind {
     /// This will panic if it's not a PREP account.
     pub fn prep_signer(&self) -> &KeyWith712Signer {
         match self {
-            EoaKind::Upgraded(dyn_signer) => panic!("eoa is not a prep account"),
+            EoaKind::Upgraded(_dyn_signer) => panic!("eoa is not a prep account"),
             EoaKind::Prep { admin_key, .. } => admin_key,
         }
     }

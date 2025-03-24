@@ -1,20 +1,12 @@
 //! Relay simple end-to-end test cases
 
 use crate::e2e::{common_calls as calls, *};
-use alloy::{
-    hex,
-    primitives::{B256, Bytes, FixedBytes, U256, address, b256, fixed_bytes},
-    sol_types::{SolCall, SolValue},
-};
+use alloy::primitives::U256;
 use eyre::Result;
 use relay::{
-    signers::{DynSigner, P256Signer},
-    types::{
-        Call, Delegation::SpendPeriod, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer,
-        rpc::UpgradeAccountCapabilities,
-    },
+    signers::DynSigner,
+    types::{KeyType, KeyWith712Signer},
 };
-use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
@@ -46,7 +38,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    run_e2e_upgraded(|env| {
+    run_e2e_upgraded(|_env| {
         vec![TxContext {
             authorization_keys: vec![key.to_authorized()],
             expected: ExpectedOutcome::FailSend,
@@ -64,7 +56,7 @@ async fn invalid_auth_signature() -> Result<()> {
         DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
             .await?;
 
-    run_e2e_upgraded(|env| {
+    run_e2e_upgraded(|_env| {
         vec![TxContext {
             authorization_keys: vec![key.to_authorized()],
             expected: ExpectedOutcome::FailSend,
@@ -143,7 +135,7 @@ async fn native_transfer() -> Result<()> {
     for key_type in [KeyType::Secp256k1, KeyType::P256, KeyType::WebAuthnP256] {
         let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
 
-        run_e2e(|env| {
+        run_e2e(|_env| {
             vec![
                 TxContext {
                     authorization_keys: vec![key.to_authorized()],

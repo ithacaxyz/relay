@@ -1,12 +1,6 @@
 //! Relay end-to-end test constants
 
-use std::sync::LazyLock;
-
-use alloy::{
-    hex,
-    primitives::{Address, B256, FixedBytes, address, b256, fixed_bytes},
-};
-use relay::signers::{DynSigner, P256Signer};
+use alloy::primitives::{Address, B256, FixedBytes, address, b256, fixed_bytes};
 
 pub const EOA_PRIVATE_KEY: B256 =
     b256!("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");

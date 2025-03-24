@@ -5,7 +5,7 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, B256, U256},
+    primitives::{Address, U256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
@@ -17,12 +17,10 @@ use relay::{
         Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
             AuthorizeKey, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, SendPreparedCallsParameters, SendPreparedCallsResponse,
-            SendPreparedCallsSignature,
+            PrepareCallsResponse,
         },
     },
 };
-use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_with_upgraded_account() -> eyre::Result<()> {
@@ -37,7 +35,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
 
     // Upgrade environment EOA signer with the above admin keys.
     let env = Environment::setup_with_upgraded().await?;
-    upgrade_account(&env, &keys, AuthKind::Auth).await;
+    upgrade_account(&env, &keys, AuthKind::Auth).await?;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {
@@ -51,7 +49,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
     // upgrade account UserOp had nonce 0;
     let user_op_nonce = 1;
     for (tx_num, signer) in signers.iter().enumerate() {
-        let PrepareCallsResponse { context, digest, capabilities } = env
+        let PrepareCallsResponse { context, digest, capabilities: _ } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![erc20_transfer.clone()],

@@ -3,28 +3,27 @@
 use crate::e2e::{AuthKind, environment::Environment};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, TxHash, U256},
+    primitives::{Address, TxHash},
     providers::{PendingTransactionBuilder, Provider},
 };
 use eyre::WrapErr;
 use relay::{
     rpc::RelayApiClient,
     types::{
-        Entry, KeyType, KeyWith712Signer,
+        KeyType, KeyWith712Signer,
         rpc::{
-            AuthorizeKey, PrepareCreateAccountCapabilities, PrepareUpgradeAccountParameters,
-            UpgradeAccountCapabilities, UpgradeAccountParameters,
+            AuthorizeKey, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
+            UpgradeAccountParameters,
         },
     },
 };
-use std::str::FromStr;
 
 pub async fn upgrade_account(
     env: &Environment,
     authorize_keys: &[AuthorizeKey],
     auth: AuthKind,
 ) -> eyre::Result<(TxHash, SignedAuthorization)> {
-    let mut response = env
+    let response = env
         .relay_endpoint
         .prepare_upgrade_account(PrepareUpgradeAccountParameters {
             address: env.eoa.address(),
@@ -83,7 +82,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let mut env = Environment::setup_with_upgraded().await?;
 
-    let mut response = env
+    let response = env
         .relay_endpoint
         .prepare_upgrade_account(PrepareUpgradeAccountParameters {
             address: env.eoa.address(),

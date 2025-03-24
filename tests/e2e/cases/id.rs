@@ -1,23 +1,13 @@
-use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::prep_account, common_calls as calls,
-    config::AccountConfig, environment::Environment, eoa::EoaKind, process_tx,
-};
+use crate::e2e::{cases::prep_account, config::AccountConfig, eoa::EoaKind};
 use alloy::{
-    primitives::{Bytes, PrimitiveSignature, U256, keccak256},
-    sol,
-    sol_types::{SolCall, SolValue},
+    primitives::{PrimitiveSignature, keccak256},
+    sol_types::SolValue,
 };
 use relay::{
     rpc::RelayApiClient,
     types::{
         AccountRegistry::AccountRegistryInstance,
-        CallPermission,
-        Delegation::{SpendInfo, SpendPeriod},
-        KeyType, KeyWith712Signer,
-        rpc::{
-            AccountResponse, AuthorizeKey, AuthorizeKeyResponse, GetAccountsParameters,
-            GetKeysParameters, Permission, SpendPermission,
-        },
+        rpc::{AccountResponse, AuthorizeKeyResponse, GetAccountsParameters},
     },
 };
 

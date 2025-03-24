@@ -75,11 +75,11 @@ impl AccountConfig {
     ///
     /// If it's an upgraded account, returns the list of [`Call`] that should be prepended on the
     /// next transaction, since it does not support bundling.
-    pub async fn handle_first_tx<'a>(
+    pub async fn handle_first_tx(
         self,
         env: &mut Environment,
         tx_num: usize,
-        tx: &mut TxContext<'a>,
+        tx: &mut TxContext<'_>,
     ) -> eyre::Result<Vec<Call>> {
         match self {
             AccountConfig::Prep => {
