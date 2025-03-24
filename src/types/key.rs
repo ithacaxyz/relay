@@ -239,6 +239,11 @@ impl Key {
 
         slots
     }
+
+    /// Generates the digest associated with this key identifier.
+    pub fn identifier_digest(&self, prep_address: Address) -> B256 {
+        keccak256((self.key_hash().abi_encode(), prep_address).abi_encode_sequence())
+    }
 }
 
 /// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.

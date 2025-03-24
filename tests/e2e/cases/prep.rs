@@ -26,7 +26,12 @@ pub async fn prep_account(
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
-    let PrepareCreateAccountResponse { capabilities: _, context: server_account } = env
+    let PrepareCreateAccountResponse {
+        capabilities: _,
+        digests: _,
+        context: server_account,
+        address,
+    } = env
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
@@ -35,6 +40,8 @@ pub async fn prep_account(
             },
         })
         .await?;
+
+    assert!(address == server_account.address);
 
     let id_signatures = match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),

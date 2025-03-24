@@ -1,6 +1,6 @@
 use alloy::{
-    primitives::{Address, B256, U256, keccak256},
-    sol_types::{SolCall, SolValue},
+    primitives::{Address, B256, U256},
+    sol_types::SolCall,
 };
 use relay::{
     signers::{DynSigner, Eip712PayLoadSigner},
@@ -36,9 +36,8 @@ impl EoaKind {
         }];
 
         let prep = PREPAccount::initialize(delegation, init_calls);
-
         let key_hash = admin_key.key_hash();
-        let hash = keccak256((key_hash.abi_encode(), prep.address).abi_encode_sequence());
+        let hash = admin_key.identifier_digest(prep.address);
 
         let signature = match admin_key.keyType {
             KeyType::P256 => {
