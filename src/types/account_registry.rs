@@ -1,15 +1,14 @@
-use AccountRegistry::idInfoReturn;
-use alloy::{
-    primitives::{Address, B256},
-    sol,
-};
+use crate::error::RelayError;
+use alloy::{primitives::Address, providers::DynProvider, sol};
+
+use super::KeyHash;
 
 sol! {
     #[sol(rpc)]
     contract AccountRegistry {
         /// Returns the state of a given ID, including the data and accounts.
         #[derive(Debug)]
-        function idInfo(address id) returns (bytes memory data, address[] memory accounts);
+        function idInfos(address[] calldata ids) returns (bytes[] memory keyhashes, address[][] memory accounts);
 
         /// Registers a new ID with the given `data` and `account`.
         ///
@@ -32,12 +31,32 @@ sol! {
     }
 }
 
-impl idInfoReturn {
-    /// Attempts to decode response into `(B256, Vec<Address>)`, where [`B256`] is the key hash.
-    pub fn try_decode(self) -> Option<(B256, Vec<Address>)> {
-        if self.data.len() < 32 {
-            return None;
-        }
-        Some((B256::from_slice(&self.data), self.accounts))
+impl AccountRegistry::AccountRegistryCalls {
+    /// Returns all accounts with these IDs in a list of tuples: `Option<(KeyHash, Vec<Address>)>`.
+    ///
+    /// Note: the returned list will always have the same length as `ids`. If any ID does not exist,
+    /// it's returned as `None`.
+    pub async fn id_infos(
+        ids: Vec<Address>,
+        entrypoint: Address,
+        provider: DynProvider,
+    ) -> Result<Vec<Option<(KeyHash, Vec<Address>)>>, RelayError> {
+        AccountRegistry::AccountRegistryInstance::new(entrypoint, provider)
+            .idInfos(ids.clone())
+            .call()
+            .await
+            .map_err(|err| RelayError::InternalError(err.into()))
+            .map(|res| {
+                res.keyhashes
+                    .into_iter()
+                    .zip(res.accounts)
+                    .map(|(key_hash, accounts)| {
+                        if key_hash.len() != 32 {
+                            return None;
+                        }
+                        Some((KeyHash::from_slice(&key_hash), accounts))
+                    })
+                    .collect()
+            })
     }
 }
