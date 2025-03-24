@@ -3,7 +3,7 @@ use alloy::primitives::PrimitiveSignature;
 use relay::{
     rpc::RelayApiClient,
     types::{
-        AccountRegistry::AccountRegistryInstance,
+        AccountRegistry::AccountRegistryCalls,
         rpc::{AccountResponse, AuthorizeKeyResponse, GetAccountsParameters},
     },
 };
@@ -24,12 +24,13 @@ async fn register_id() -> eyre::Result<()> {
             .recover_address_from_prehash(&admin_key.identifier_digest(account.prep.address))
             .unwrap();
 
-        let accounts =
-            AccountRegistryInstance::new(env.entrypoint, env.provider).idInfo(id).call().await?;
-        assert!(!accounts.accounts.is_empty());
+        let (key_hash, addresses) =
+            AccountRegistryCalls::id_infos(vec![id], env.entrypoint, env.provider)
+                .await?
+                .pop()
+                .unwrap();
 
         // Ensure ID -> (KeyHash, Address[]) matches
-        let (key_hash, addresses) = accounts.try_decode().unwrap();
         assert_eq!(key_hash, admin_key_hash);
         assert_eq!(&addresses, &[account.prep.address]);
 

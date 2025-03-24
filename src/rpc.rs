@@ -8,7 +8,7 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::types::AccountRegistry::AccountRegistryInstance;
+use crate::types::AccountRegistry::AccountRegistryCalls;
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -460,14 +460,10 @@ impl RelayApiServer for Relay {
             .ok_or(RelayError::UnsupportedChain(request.chain_id))?
             .provider;
 
-        let (_, addresses) = AccountRegistryInstance::new(self.inner.entrypoint, provider)
-            .idInfo(request.id)
-            .call()
-            .await
-            .map_err(|err| RelayError::InternalError(err.into()))
-            .and_then(|res| {
-                res.try_decode().ok_or(KeysError::InvalidRegistryData(request.id).into())
-            })?;
+        // Contract call will revert if ID is not found.
+        let (_, addresses) =
+            &AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
+                .await?[0];
 
         try_join_all(addresses.iter().map(async |addr| {
             Ok(AccountResponse {
