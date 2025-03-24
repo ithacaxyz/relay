@@ -1,10 +1,9 @@
+use crate::error::{KeysError, RelayError};
 use alloy::{
     primitives::{Address, B256},
     providers::DynProvider,
     sol,
 };
-
-use crate::error::{KeysError, RelayError};
 
 sol! {
     #[sol(rpc)]
@@ -49,11 +48,10 @@ impl AccountRegistry::AccountRegistryCalls {
             .await
             .map_err(|err| RelayError::InternalError(err.into()))
             .and_then(|res| {
-                res.keyhashes
-                    .into_iter()
+                ids.into_iter()
+                    .zip(res.keyhashes)
                     .zip(res.accounts)
-                    .zip(ids)
-                    .map(|((key_hash, accounts), id)| {
+                    .map(|((id, key_hash), accounts)| {
                         if key_hash.len() != 32 {
                             return Err(RelayError::Keys(KeysError::InvalidRegistryData(id)));
                         }
