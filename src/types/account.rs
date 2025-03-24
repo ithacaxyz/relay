@@ -195,6 +195,7 @@ impl<P: Provider> Account<P> {
 ///
 /// Read [`PREPAccount::initialize`] for more information on how it is generated.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct PREPAccount {
     /// EOA generated address.
     pub address: Address,
