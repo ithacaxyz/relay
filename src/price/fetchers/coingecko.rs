@@ -1,5 +1,5 @@
 use crate::{
-    error::PriceOracleError,
+    error::{QuoteError, RelayError},
     price::{PriceFetcher, oracle::PriceOracleMessage},
     types::{CoinKind, CoinPair, CoinRegistry},
 };
@@ -116,18 +116,21 @@ impl CoinGecko {
     }
 
     /// Updates inner token prices.
-    async fn update_prices(&self) -> Result<(), PriceOracleError> {
+    async fn update_prices(&self) -> Result<(), RelayError> {
         let timestamp =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
 
         for (chain, url) in &self.request_urls {
             // Fetch token prices
-            let resp = get(url)
+            let resp = async { get(url).await?.text().await }
                 .await
-                .map_err(|err| PriceOracleError::InternalError(err.into()))?
-                .text()
-                .await
-                .map_err(|err| PriceOracleError::InternalError(err.into()))?;
+                .inspect_err(|err| {
+                    error!(
+                        %err,
+                        "Failed to fetch price from feed.",
+                    );
+                })
+                .map_err(|_| QuoteError::UnavailablePriceFeed(*chain))?;
 
             trace!(response=?resp, "CoinGecko response.");
 

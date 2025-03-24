@@ -1,7 +1,8 @@
 use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId};
 use crate::{
+    error::StorageError,
     signers::DynSigner,
-    storage::{RelayStorage, StorageApi, StorageError},
+    storage::{RelayStorage, StorageApi},
     types::{ENTRYPOINT_NO_ERROR, EntryPoint},
 };
 use alloy::{

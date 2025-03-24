@@ -1,7 +1,7 @@
 //! Relay storage api.
 
-use super::StorageError;
 use crate::{
+    error::StorageError,
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };

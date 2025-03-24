@@ -1,7 +1,8 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{StorageApi, StorageError, api::Result};
+use super::{StorageApi, api::Result};
 use crate::{
+    error::StorageError,
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };

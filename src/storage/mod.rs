@@ -2,8 +2,6 @@
 
 mod api;
 pub use api::StorageApi;
-mod error;
-pub use error::StorageError;
 mod memory;
 
 use crate::{
