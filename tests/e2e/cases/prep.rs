@@ -1,11 +1,8 @@
 //! Prepare calls related end-to-end test cases
 
-use crate::e2e::{
-    MockErc20, cases::upgrade::upgrade_account, environment::Environment, eoa::EoaKind,
-    send_prepared_calls,
-};
+use crate::e2e::{MockErc20, environment::Environment, eoa::EoaKind, send_prepared_calls};
 use alloy::{
-    primitives::{Address, B256, TxHash, U256, keccak256},
+    primitives::{Address, TxHash, U256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
@@ -14,16 +11,14 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, KeyType, KeyWith712Signer, PREPAccount, Signature,
+        Call, Signature,
         rpc::{
             AuthorizeKey, CreateAccountParameters, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
             PrepareCreateAccountParameters, PrepareCreateAccountResponse,
-            SendPreparedCallsParameters, SendPreparedCallsResponse, SendPreparedCallsSignature,
         },
     },
 };
-use std::str::FromStr;
 
 pub async fn prep_account(
     env: &mut Environment,
@@ -31,7 +26,7 @@ pub async fn prep_account(
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
-    let PrepareCreateAccountResponse { capabilities, context: server_account } = env
+    let PrepareCreateAccountResponse { capabilities: _, context: server_account } = env
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
@@ -42,8 +37,8 @@ pub async fn prep_account(
         .await?;
 
     let id_signatures = match &mut env.eoa {
-        EoaKind::Upgraded(dyn_signer) => unreachable!(),
-        EoaKind::Prep { admin_key, account } => {
+        EoaKind::Upgraded(_dyn_signer) => unreachable!(),
+        EoaKind::Prep { admin_key: _, account } => {
             account.prep = server_account.clone();
             account.id_signatures.clone()
         }
@@ -59,7 +54,7 @@ pub async fn prep_account(
 
     // todo: assert that a createAccount reference exists
 
-    let PrepareCallsResponse { context, digest, capabilities } = env
+    let PrepareCallsResponse { context, digest, capabilities: _ } = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             calls: calls.to_vec(),

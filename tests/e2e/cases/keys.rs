@@ -1,16 +1,12 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, common_calls as calls, config::AccountConfig,
-    environment::Environment, process_tx,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, config::AccountConfig, process_tx,
 };
 use alloy::{primitives::U256, sol_types::SolCall};
-use relay::{
-    rpc::RelayApiClient,
-    types::{
-        CallPermission,
-        Delegation::{SpendInfo, SpendPeriod},
-        KeyType, KeyWith712Signer,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, GetKeysParameters, Permission, SpendPermission},
-    },
+use relay::types::{
+    CallPermission,
+    Delegation::SpendPeriod,
+    KeyType, KeyWith712Signer,
+    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,7 +66,7 @@ async fn get_keys() -> eyre::Result<()> {
         .into_iter()
         .enumerate()
     {
-        let mut tx = TxContext {
+        let tx = TxContext {
             authorization_keys: vec![key],
             expected: ExpectedOutcome::Pass,
             key: Some(&keys[0]),

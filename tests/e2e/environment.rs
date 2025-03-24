@@ -5,39 +5,31 @@ use alloy::{
     hex,
     network::EthereumWallet,
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, address},
-    providers::{
-        DynProvider, Provider, ProviderBuilder, RootProvider, WalletProvider, ext::AnvilApi,
-    },
+    primitives::{Address, Bytes, TxKind, U256},
+    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider},
     rpc::types::TransactionRequest,
-    signers::Signer,
-    sol_types::{SolCall, SolConstructor, SolEvent, SolValue},
+    sol_types::{SolConstructor, SolValue},
 };
-use alloy_chains::NamedChain;
-use eyre::{self, ContextCompat, OptionExt, WrapErr};
+use eyre::{self, ContextCompat, WrapErr};
 use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
     server::ServerHandle,
 };
 use relay::{
-    cli::Args,
     config::RelayConfig,
-    signers::{DynSigner, P256Signer},
+    signers::DynSigner,
     spawn::try_spawn,
     types::{
-        Call, CoinKind, CoinRegistry,
-        IDelegation::authorizeCall,
-        KeyWith712Signer, PREPAccount,
+        CoinKind, CoinRegistry, KeyWith712Signer,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
 use std::{
-    net::{Ipv4Addr, TcpListener},
+    net::TcpListener,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
-use tokio::time::sleep;
 use url::Url;
 
 pub struct Environment {
@@ -51,6 +43,7 @@ pub struct Environment {
     pub erc20_alt: Address,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
+    #[allow(dead_code)]
     pub relay_handle: ServerHandle,
 }
 
@@ -261,7 +254,9 @@ pub async fn mint_erc20s<P: Provider>(
                 .mint(*addr, U256::from(100e18))
                 .send()
                 .await
-                .wrap_err("Minting failed")?;
+                .wrap_err("Minting failed")?
+                .get_receipt()
+                .await?;
         }
     }
     Ok(())

@@ -1,18 +1,9 @@
 //! Porto equivalent end-to-end test cases
 
 use crate::e2e::{common_calls as calls, *};
-use alloy::{
-    hex,
-    primitives::{B256, Bytes, FixedBytes, U256, address, b256, fixed_bytes},
-    sol_types::{SolCall, SolValue},
-};
+use alloy::{primitives::U256, sol_types::SolCall};
 use eyre::Result;
-use relay::{
-    signers::{DynSigner, P256Signer},
-    types::{
-        Call, Delegation::SpendPeriod, IDelegation::authorizeCall, Key, KeyType, KeyWith712Signer,
-    },
-};
+use relay::types::{Call, KeyType, KeyWith712Signer};
 
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]

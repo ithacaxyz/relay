@@ -1,27 +1,23 @@
-use std::ops::Deref;
-
 use super::{
     cases::{prep_account, upgrade_account},
     check_bundle,
     environment::{Environment, mint_erc20s},
 };
-use MockErc20::MockErc20Calls;
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, Bytes, TxKind, U256},
+    primitives::{Address, TxKind, U256},
     providers::Provider,
     rpc::types::TransactionRequest,
-    sol,
-    sol_types::{SolCall, SolValue},
 };
 use eyre::WrapErr;
 use relay::{
-    signers::{DynSigner, P256Signer},
-    types::{Call, Key, KeyType, KeyWith712Signer, rpc::AuthorizeKey},
+    signers::DynSigner,
+    types::{Call, KeyWith712Signer, rpc::AuthorizeKey},
 };
 
 /// Represents the expected outcome of a test case execution
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub enum ExpectedOutcome {
     /// Test should pass completely
     #[default]
@@ -37,6 +33,7 @@ pub enum ExpectedOutcome {
 }
 
 impl ExpectedOutcome {
+    #[allow(dead_code)]
     pub fn passed(&self) -> bool {
         matches!(self, ExpectedOutcome::Pass)
     }
@@ -78,7 +75,7 @@ impl AuthKind {
     pub fn nonce(&self) -> Option<u64> {
         match self {
             AuthKind::Auth => None,
-            AuthKind::ModifiedAuth { signer, nonce } => *nonce,
+            AuthKind::ModifiedAuth { nonce, .. } => *nonce,
         }
     }
 
@@ -86,7 +83,7 @@ impl AuthKind {
     pub fn signer(&self) -> Option<&DynSigner> {
         match self {
             AuthKind::Auth => None,
-            AuthKind::ModifiedAuth { signer, nonce } => signer.as_ref(),
+            AuthKind::ModifiedAuth { signer, .. } => signer.as_ref(),
         }
     }
 
@@ -122,17 +119,18 @@ pub struct TxContext<'a> {
     /// List of keys to authorize that will be converted to calls on top of the UserOp.
     pub authorization_keys: Vec<AuthorizeKey>,
     /// Fee token to be used
+    #[allow(dead_code)]
     pub fee_token: Address,
 }
 
-impl<'a> TxContext<'a> {
+impl TxContext<'_> {
     /// Creates a PREPAccount from the first [`TxContext`] of a test case.
     pub async fn prep_account(
         &mut self,
         env: &mut Environment,
         tx_num: usize,
     ) -> Result<(), eyre::Error> {
-        /// Ensure that there is always at least one admin key.
+        // Ensure that there is always at least one admin key.
         self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
 
         // If we add more authorization_keys, the EOA address init data will be different, so we
