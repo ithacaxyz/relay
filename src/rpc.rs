@@ -12,10 +12,7 @@ use crate::types::{AccountRegistry::AccountRegistryCalls, rpc::CreateAccountCont
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
-        constants::{
-            EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST,
-            PER_EMPTY_ACCOUNT_COST,
-        },
+        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
     primitives::{Address, Bytes, ChainId, TxHash, U256, bytes, map::HashSet},
     providers::{DynProvider, Provider},
@@ -205,11 +202,8 @@ impl Relay {
                 .into());
             }
         } else {
-            let code = provider.get_code_at(quote.ty().op.eoa).await.map_err(RelayError::from)?;
-
-            if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                || code[..] == EIP7702_CLEARED_DELEGATION
-            {
+            let account = Account::new(quote.ty().op.eoa, provider);
+            if !account.is_delegated().await? {
                 return Err(AuthError::EoaNotDelegated(quote.ty().op.eoa).into());
             }
         }
@@ -583,28 +577,21 @@ impl RelayApiServer for Relay {
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
-        let maybe_prep = provider
-            .get_code_at(request.from)
-            .into_future()
-            .map_err(RelayError::from)
-            .and_then(|code| async move {
-                if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                    || code[..] == EIP7702_CLEARED_DELEGATION
-                {
-                    return self
-                        .inner
-                        .storage
-                        .read_prep(&request.from)
-                        .await
-                        .map_err(|err| RelayError::InternalError(err.into()))?
-                        .ok_or_else(|| {
-                            RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
-                        })
-                        .map(Some);
-                }
-                Ok(None)
-            })
-            .await?;
+        let account = Account::new(request.from, provider.clone());
+        let maybe_prep = if !account.is_delegated().await? {
+            Some(
+                self.inner
+                    .storage
+                    .read_prep(&request.from)
+                    .await
+                    .map_err(|err| RelayError::InternalError(err.into()))?
+                    .ok_or_else(|| {
+                        RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
+                    })?,
+            )
+        } else {
+            None
+        };
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
         let all_calls = authorize_calls
