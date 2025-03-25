@@ -606,14 +606,18 @@ impl RelayApiServer for Relay {
         };
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
-        let all_calls = authorize_calls
-            .chain(maybe_prep.iter().flat_map(|acc| {
-                acc.id_signatures
-                    .iter()
-                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
-            }))
-            .chain(request.calls)
-            .collect::<Vec<_>>();
+        let all_calls = if request.capabilities.pre_op {
+            authorize_calls.chain(request.calls).collect::<Vec<_>>()
+        } else {
+            authorize_calls
+                .chain(maybe_prep.iter().flat_map(|acc| {
+                    acc.id_signatures
+                        .iter()
+                        .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+                }))
+                .chain(request.calls)
+                .collect::<Vec<_>>()
+        };
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self

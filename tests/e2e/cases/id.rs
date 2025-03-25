@@ -11,7 +11,7 @@ use relay::{
 async fn register_id() -> eyre::Result<()> {
     let mut env = AccountConfig::Prep.setup_environment().await?;
     let authorized_key = env.eoa.prep_signer().to_authorized();
-    prep_account(&mut env, &[], &[authorized_key], vec![]).await?;
+    prep_account(&mut env, &[], &[authorized_key], &[], 0).await?;
 
     if let EoaKind::Prep { admin_key, account } = env.eoa {
         let admin_key_hash = admin_key.key_hash();

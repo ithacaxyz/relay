@@ -1,14 +1,12 @@
 use super::{
     cases::{prep_account, upgrade_account},
     check_bundle,
-    environment::{Environment, mint_erc20s},
+    environment::Environment,
     prepare_calls,
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, TxKind, U256},
-    providers::Provider,
-    rpc::types::TransactionRequest,
+    primitives::{Address, U256},
 };
 use eyre::WrapErr;
 use futures_util::future::join_all;
@@ -139,24 +137,8 @@ impl TxContext<'_> {
         // Ensure that there is always at least one admin key.
         self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
 
-        let pre_ops = self.build_pre_ops(tx_num, env).await?;
-
-        // If we add more authorization_keys, the EOA address init data will be different, so we
-        // need to mint native and fake tokens into our generated EOA.
-        let before = env.eoa.address();
-        let tx_hash = prep_account(env, &self.calls, &self.authorization_keys, pre_ops).await;
-        if before != env.eoa.address() {
-            mint_erc20s(&[env.erc20, env.erc20_alt], &[env.eoa.address()], &env.provider).await?;
-            env.provider
-                .send_transaction(TransactionRequest {
-                    to: Some(TxKind::Call(env.eoa.address())),
-                    value: Some(U256::from(100e18)),
-                    ..Default::default()
-                })
-                .await?
-                .get_receipt()
-                .await?;
-        }
+        let tx_hash =
+            prep_account(env, &self.calls, &self.authorization_keys, &self.pre_ops, tx_num).await;
 
         // Check test expectations
         let op_nonce = U256::ZERO; // first transaction
@@ -174,7 +156,7 @@ impl TxContext<'_> {
         env: &Environment,
         tx_num: usize,
     ) -> Result<Vec<Call>, eyre::Error> {
-        let pre_ops = self.build_pre_ops(tx_num, env).await?;
+        let pre_ops = build_pre_ops(env, &self.pre_ops, tx_num).await?;
         let (tx_hash, authorization) = upgrade_account(
             env,
             &self.authorization_keys,
@@ -190,24 +172,24 @@ impl TxContext<'_> {
 
         Ok(self.calls.clone())
     }
+}
 
-    /// Prepares preOps for the transaction.
-    pub async fn build_pre_ops(
-        &self,
-        tx_num: usize,
-        env: &Environment,
-    ) -> eyre::Result<Vec<UserOp>> {
-        let pre_ops = join_all(self.pre_ops.iter().map(|tx| async move {
-            let signer = tx.key.expect("userop should have a key");
-            let (signature, quote) = prepare_calls(tx_num, tx, signer, env).await.unwrap().unwrap();
-            let mut op = quote.ty().op.clone();
-            op.signature = signature;
-            op
-        }))
-        .await;
+pub async fn build_pre_ops<'a>(
+    env: &Environment,
+    pre_ops: &[TxContext<'a>],
+    tx_num: usize,
+) -> eyre::Result<Vec<UserOp>> {
+    let pre_ops = join_all(pre_ops.iter().map(|tx| async move {
+        let signer = tx.key.expect("userop should have a key");
+        let (signature, quote) =
+            prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
+        let mut op = quote.ty().op.clone();
+        op.signature = signature;
+        op
+    }))
+    .await;
 
-        Ok(pre_ops)
-    }
+    Ok(pre_ops)
 }
 
 alloy::sol! {

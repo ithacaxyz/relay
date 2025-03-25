@@ -51,6 +51,8 @@ pub struct PrepareCallsCapabilities {
     ///
     /// See [`UserOp::encodedPreOps`].
     pub pre_ops: Vec<UserOp>,
+    /// Whether the call bundle is to be considered a preop.
+    pub pre_op: bool,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
