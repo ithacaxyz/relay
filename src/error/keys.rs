@@ -11,6 +11,9 @@ pub enum KeysError {
     /// Missing at least one admin authorization key.
     #[error("should have at least one admin authorization key")]
     MissingAdminKey,
+    /// Should only have admin authorization keys.
+    #[error("should only have admin authorization keys")]
+    OnlyAdminKeyAllowed,
     /// Invalid account key registry data.
     #[error("invalid account key registry data for ID {0}")]
     InvalidRegistryData(Address),
@@ -35,6 +38,7 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
         match err {
             KeysError::UnsupportedKeyType
             | KeysError::MissingAdminKey
+            | KeysError::OnlyAdminKeyAllowed
             | KeysError::TakenKeyId { .. }
             | KeysError::UnexpectedKeyId { .. }
             | KeysError::InvalidKeyIdSignature { .. } => invalid_params(err.to_string()),

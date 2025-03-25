@@ -409,8 +409,13 @@ impl RelayApiServer for Relay {
         request: PrepareCreateAccountParameters,
     ) -> RpcResult<PrepareCreateAccountResponse> {
         // Creating account should have at least one admin key.
-        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
+        if request.capabilities.authorize_keys.is_empty() {
             return Err(KeysError::MissingAdminKey)?;
+        }
+
+        // Creating account should only have admin keys.
+        if request.capabilities.authorize_keys.iter().any(|key| !key.key.isSuperAdmin) {
+            return Err(KeysError::OnlyAdminKeyAllowed)?;
         }
 
         // Generate all calls that will authorize keys and set their permissions
