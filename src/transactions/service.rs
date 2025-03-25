@@ -5,7 +5,7 @@ use super::{
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
-use alloy::providers::DynProvider;
+use alloy::providers::{DynProvider, Provider};
 use rand::seq::IndexedRandom;
 use std::{
     collections::HashMap,
@@ -74,7 +74,10 @@ impl TransactionService {
         signers: Vec<DynSigner>,
         storage: RelayStorage,
     ) -> TransactionServiceHandle {
-        let metrics = Arc::new(TransactionServiceMetrics::default());
+        let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
+            "chain_id",
+            provider.get_chain_id().await.unwrap().to_string(),
+        )]));
         let signers = futures_util::future::try_join_all(signers.into_iter().map(|signer| {
             Signer::spawn(provider.clone(), signer, storage.clone(), metrics.clone())
         }))
