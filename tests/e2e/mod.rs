@@ -25,7 +25,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use eyre::{Context, Result};
-use futures_util::future::try_join_all;
+use futures_util::future::{join_all, try_join_all};
 use itertools::iproduct;
 use relay::{
     rpc::RelayApiClient,
@@ -176,6 +176,23 @@ pub async fn prepare_calls(
     signer: &KeyWith712Signer,
     env: &Environment,
 ) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
+    let (nonce, pre_ops) = if tx.pre_ops.is_empty() {
+        (None, vec![])
+    } else {
+        let mut nonce = env.entry().get_nonce(env.eoa.address()).await?;
+        let pre_ops = join_all(tx.pre_ops.iter().map(|tx| async move {
+            let signer = tx.key.expect("userop should have a key");
+            let (signature, quote) = prepare_calls(tx_num, tx, signer, env).await.unwrap().unwrap();
+            let mut op = quote.ty().op.clone();
+            op.signature = signature;
+            nonce += U256::from(1);
+            op
+        }))
+        .await;
+
+        (Some(nonce), pre_ops)
+    };
+
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -185,12 +202,8 @@ pub async fn prepare_calls(
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: tx.authorization_keys.clone(),
                 revoke_keys: Vec::new(),
-                meta: Meta {
-                    fee_token: env.fee_token,
-                    key_hash: signer.key_hash(),
-                    nonce: Some(U256::from(tx_num)),
-                },
-                pre_ops: Vec::new(),
+                meta: Meta { fee_token: env.fee_token, key_hash: signer.key_hash(), nonce },
+                pre_ops,
             },
         })
         .await;

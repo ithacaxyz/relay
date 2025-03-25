@@ -20,7 +20,7 @@ use relay::{
     signers::DynSigner,
     spawn::try_spawn,
     types::{
-        CoinKind, CoinRegistry, KeyWith712Signer,
+        CoinKind, CoinRegistry, Entry, KeyWith712Signer,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
@@ -238,6 +238,11 @@ impl Environment {
             .relay_endpoint
             .get_keys(GetKeysParameters { address: self.eoa.address(), chain_id: self.chain_id })
             .await?)
+    }
+
+    /// Returns an [`Entry`].
+    pub fn entry(&self) -> Entry<DynProvider> {
+        Entry::new(self.entrypoint, self.provider.clone())
     }
 }
 

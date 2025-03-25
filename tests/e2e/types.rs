@@ -121,6 +121,8 @@ pub struct TxContext<'a> {
     /// Fee token to be used
     #[allow(dead_code)]
     pub fee_token: Address,
+    /// Optional array of pre-ops to be executed before the UserOp.
+    pub pre_ops: Vec<TxContext<'a>>,
 }
 
 impl TxContext<'_> {
