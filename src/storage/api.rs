@@ -3,7 +3,7 @@
 use crate::{
     error::StorageError,
     transactions::{PendingTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -22,7 +22,7 @@ pub trait StorageApi: Debug + Send + Sync {
     async fn write_prep(&self, account: CreatableAccount) -> Result<()>;
 
     /// Reads all account addresses associated with a ID.
-    async fn read_accounts_from_id(&self, id: &Address) -> Result<Option<Vec<Address>>>;
+    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Option<Vec<Address>>>;
 
     /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;

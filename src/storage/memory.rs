@@ -4,7 +4,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     transactions::{PendingTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -53,7 +53,7 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn read_accounts_from_id(&self, id: &Address) -> Result<Option<Vec<Address>>> {
+    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Option<Vec<Address>>> {
         Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()))
     }
 

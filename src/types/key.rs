@@ -20,6 +20,9 @@ use std::{ops::Deref, sync::Arc};
 /// Alias type for key hash.
 pub type KeyHash = B256;
 
+/// Alias type for key id.
+pub type KeyID = Address;
+
 sol! {
     /// The type of key.
     #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -355,7 +358,7 @@ pub struct KeyHashWithID {
     /// Key hash.
     pub hash: B256,
     /// Key identifier.
-    pub id: Address,
+    pub id: KeyID,
     /// Signature over the PREP account address.
     #[serde(with = "crate::serde::signature")]
     pub signature: PrimitiveSignature,
