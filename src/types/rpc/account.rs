@@ -140,6 +140,7 @@ pub struct UpgradeAccountCapabilities {
     /// Optional preOps to execute before signature verification.
     ///
     /// See [`UserOp::encodedPreOps`].
+    #[serde(default)]
     pub pre_ops: Vec<UserOp>,
 }
 
