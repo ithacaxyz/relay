@@ -190,6 +190,7 @@ pub async fn prepare_calls(
                     key_hash: signer.key_hash(),
                     nonce: Some(U256::from(tx_num)),
                 },
+                pre_ops: Vec::new(),
             },
         })
         .await;

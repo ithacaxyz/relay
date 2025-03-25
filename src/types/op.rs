@@ -1,6 +1,6 @@
 use super::Call;
 use alloy::{
-    primitives::{Address, B256, Bytes, Keccak256, U256},
+    primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
     sol,
     sol_types::SolValue,
     uint,
@@ -92,6 +92,9 @@ sol! {
         ///
         /// Excluded from signature.
         bytes initData;
+        /// Optional array of encoded UserOps that will be verified and executed
+        /// after PREP (if any) and before the validation of the overall UserOp.
+        bytes[] encodedPreOps;
     }
 }
 
@@ -113,6 +116,9 @@ pub struct PartialUserOp {
     ///
     /// Excluded from signature.
     pub init_data: Option<Bytes>,
+    /// Optional array of encoded UserOps that will be verified and executed before the
+    /// verification of the overall UserOp.
+    pub pre_ops: Vec<UserOp>,
 }
 
 mod eip712 {
@@ -130,6 +136,7 @@ mod eip712 {
             uint256 paymentMaxAmount;
             uint256 paymentPerGas;
             uint256 combinedGas;
+            bytes[] encodedPreOps;
         }
     }
 }
@@ -157,6 +164,7 @@ impl UserOp {
             paymentMaxAmount: self.paymentMaxAmount,
             paymentPerGas: self.paymentPerGas,
             combinedGas: self.combinedGas,
+            encodedPreOps: self.encodedPreOps.clone(),
         })
     }
 
@@ -176,6 +184,14 @@ impl UserOp {
         hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.paymentPerGas.to_be_bytes::<32>());
         hasher.update(self.combinedGas.to_be_bytes::<32>());
+        let pre_ops_hash = {
+            let mut hasher = Keccak256::new();
+            for pre_op in self.encodedPreOps.iter() {
+                hasher.update(keccak256(pre_op));
+            }
+            hasher.finalize()
+        };
+        hasher.update(pre_ops_hash);
         hasher.finalize()
     }
 }
@@ -223,6 +239,7 @@ mod tests {
             combinedGas: U256::from(10_000_000u64),
             signature: bytes!(""),
             initData: bytes!(""),
+            encodedPreOps: vec![],
         };
 
         // Single chain op
@@ -269,6 +286,7 @@ mod tests {
             combinedGas: U256::from(10000000u64),
             signature: bytes!(""),
             initData: bytes!(""),
+            encodedPreOps: vec![],
         };
 
         let expected_digest =

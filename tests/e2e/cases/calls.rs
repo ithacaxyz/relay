@@ -63,6 +63,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                         key_hash: signer.key_hash(),
                         nonce: Some(U256::from(tx_num + user_op_nonce)),
                     },
+                    pre_ops: Vec::new(),
                 },
             })
             .await?;

@@ -94,6 +94,7 @@ pub async fn prep_account(
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
                 },
+                pre_ops: Vec::new(),
             },
         })
         .await?;
