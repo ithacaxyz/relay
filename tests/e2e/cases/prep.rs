@@ -13,7 +13,7 @@ use relay::{
     types::{
         Call, KeyHashWithID, Signature,
         rpc::{
-            AuthorizeKey, CreateAccountParameters, GetAccountsParameters, Meta,
+            AuthorizeKey, CreateAccountParameters, GetAccountsParameters, GetKeysParameters, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
             PrepareCreateAccountResponse,
@@ -66,17 +66,33 @@ pub async fn prep_account(
         }
     };
     let admin_key_id = signatures[0].id;
+    let init_calls_len = context.account.init_calls.len();
 
     // Send the PREPAccount with its key identifiers and signatures
     env.relay_endpoint.create_account(CreateAccountParameters { context, signatures }).await?;
 
     // Ensure the ID -> Account has been stored in storage before the onchain commit
     {
-        let response = env
+        let get_accounts_response = env
             .relay_endpoint
             .get_accounts(GetAccountsParameters { id: admin_key_id, chain_id: env.chain_id })
             .await?;
-        assert!(response.iter().any(|r| r.address == prep_address));
+        assert!(get_accounts_response.iter().any(|r| r.address == prep_address));
+
+        // Number of keys should be equal to the number of init_calls, since we only authorize admin
+        // keys
+        assert_eq!(get_accounts_response[0].keys.len(), init_calls_len);
+
+        // Ensure getKeys returns the same keys from an account of getAccounts
+        let get_keys_response = env
+            .relay_endpoint
+            .get_keys(GetKeysParameters {
+                address: get_accounts_response[0].address,
+                chain_id: env.chain_id,
+            })
+            .await?;
+
+        assert_eq!(get_keys_response, get_accounts_response[0].keys);
     }
 
     let PrepareCallsResponse { context, digest, capabilities: _ } = env

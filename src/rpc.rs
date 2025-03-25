@@ -253,7 +253,32 @@ impl Relay {
         Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
     }
 
+    /// Get keys from an account.
     async fn get_keys(
+        &self,
+        request: GetKeysParameters,
+    ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
+        match self.get_keys_onchain(request.clone()).await {
+            Ok(keys) => Ok(keys),
+            Err(err) => {
+                // We check our storage, since it might have been called after createAccount, but
+                // before its onchain commit.
+                if let RelayError::Auth(auth_err) = &err {
+                    if auth_err.is_eoa_not_delegated() {
+                        if let Some(account) =
+                            self.inner.storage.read_prep(&request.address).await?
+                        {
+                            return account.prep.authorized_keys().map_err(RelayError::AbiError);
+                        }
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Get keys from an account onchain.
+    async fn get_keys_onchain(
         &self,
         request: GetKeysParameters,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
@@ -540,19 +565,12 @@ impl RelayApiServer for Relay {
         }
 
         try_join_all(account_set.into_iter().map(async |address| {
-            let keys = match self
-                .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
-                .await
-            {
-                Ok(keys) => keys,
-                Err(err) => match err {
-                    // Might have been called after createAccount but before its onchain commit.
-                    RelayError::Auth(auth_err) if auth_err.is_eoa_not_delegated() => vec![],
-                    _ => return Err(err.into()),
-                },
-            };
-
-            Ok(AccountResponse { address, keys })
+            Ok(AccountResponse {
+                address,
+                keys: self
+                    .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
+                    .await?,
+            })
         }))
         .await
     }
