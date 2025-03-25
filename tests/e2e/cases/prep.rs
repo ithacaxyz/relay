@@ -13,9 +13,10 @@ use relay::{
     types::{
         Call, KeyHashWithID, Signature,
         rpc::{
-            AuthorizeKey, CreateAccountParameters, Meta, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
-            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
+            AuthorizeKey, CreateAccountParameters, GetAccountsParameters, Meta,
+            PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
+            PrepareCreateAccountResponse,
         },
     },
 };
@@ -26,7 +27,12 @@ pub async fn prep_account(
     authorize_keys: &[AuthorizeKey],
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
-    let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } = env
+    let PrepareCreateAccountResponse {
+        capabilities: _,
+        digests: _,
+        context,
+        address: prep_address,
+    } = env
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
@@ -37,7 +43,7 @@ pub async fn prep_account(
         })
         .await?;
 
-    assert!(address == context.account.address);
+    assert!(prep_address == context.account.address);
 
     let signatures = match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),
@@ -49,9 +55,7 @@ pub async fn prep_account(
                 hash: key_hash,
                 id: ephemeral.address(),
                 signature: PrimitiveSignature::from_raw(
-                    &ephemeral
-                        .sign_payload_hash(admin_key.id_digest(context.account.address))
-                        .await?,
+                    &ephemeral.sign_payload_hash(admin_key.id_digest(prep_address)).await?,
                 )
                 .unwrap(),
             };
@@ -61,11 +65,19 @@ pub async fn prep_account(
             account.id_signatures.clone()
         }
     };
+    let admin_key_id = signatures[0].id;
 
     // Send the PREPAccount with its key identifiers and signatures
     env.relay_endpoint.create_account(CreateAccountParameters { context, signatures }).await?;
 
-    // todo: assert that a createAccount reference exists
+    // Ensure the ID -> Account has been stored in storage before the onchain commit
+    {
+        let response = env
+            .relay_endpoint
+            .get_accounts(GetAccountsParameters { id: admin_key_id, chain_id: env.chain_id })
+            .await?;
+        assert!(response.iter().any(|r| r.address == prep_address));
+    }
 
     let PrepareCallsResponse { context, digest, capabilities: _ } = env
         .relay_endpoint

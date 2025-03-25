@@ -35,6 +35,10 @@ impl StorageApi for RelayStorage {
         self.inner.write_prep(account).await
     }
 
+    async fn read_accounts_from_id(&self, id: &Address) -> api::Result<Option<Vec<Address>>> {
+        self.inner.read_accounts_from_id(id).await
+    }
+
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> api::Result<()> {
         self.inner.write_pending_transaction(tx).await
     }

@@ -17,7 +17,7 @@ use alloy::{
             PER_EMPTY_ACCOUNT_COST,
         },
     },
-    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
+    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes, map::HashSet},
     providers::{DynProvider, Provider},
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
@@ -28,6 +28,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
+use tokio_util::sync::ReusableBoxFuture;
 use tracing::{debug, error};
 
 use crate::{
@@ -256,6 +257,38 @@ impl Relay {
         Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
     }
 
+    async fn get_keys(
+        &self,
+        request: GetKeysParameters,
+    ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
+        let account = Account::new(request.address, self.provider(request.chain_id)?);
+
+        if !account.is_delegated().await? {
+            return Err(AuthError::EoaNotDelegated(request.address).boxed().into());
+        }
+
+        // Get all keys from account
+        let keys = account.keys().await.map_err(RelayError::from)?;
+
+        // Get all permissions from non admin keys
+        let mut permissioned_keys = account
+            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
+            .await
+            .map_err(RelayError::from)?;
+
+        Ok(keys
+            .into_iter()
+            .map(|(hash, key)| AuthorizeKeyResponse {
+                hash,
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                    id_signature: None,
+                },
+            })
+            .collect())
+    }
+
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
         Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
@@ -481,54 +514,51 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        let Some((_, addresses)) =
-            &AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
-                .await?[0]
-        else {
-            return Err(RelayError::Keys(KeysError::InvalidRegistryData(request.id)).into());
-        };
+        // Get all accounts from onchain and local storage
+        let local_addresses = ReusableBoxFuture::new(async move {
+            self.inner.storage.read_accounts_from_id(&request.id).await.map_err(RelayError::Storage)
+        });
+        let onchain_addresses = ReusableBoxFuture::new(async move {
+            let accounts =
+                AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
+                    .await?
+                    .pop()
+                    .expect("should exist");
+            Ok(accounts.map(|(_, accounts)| accounts))
+        });
 
-        try_join_all(addresses.iter().map(async |addr| {
-            Ok(AccountResponse {
-                address: *addr,
-                keys: self
-                    .get_keys(GetKeysParameters { address: *addr, chain_id: request.chain_id })
-                    .await?,
-            })
+        let accounts = try_join_all([local_addresses, onchain_addresses]).await?;
+
+        // Merge local and onchain accounts, ensuring there are no duplicates.
+        let account_set: HashSet<_> = accounts
+            .into_iter()
+            .flat_map(|maybe_accounts| maybe_accounts.unwrap_or_default())
+            .collect();
+
+        if account_set.is_empty() {
+            return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());
+        }
+
+        try_join_all(account_set.into_iter().map(async |address| {
+            let keys = match self
+                .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
+                .await
+            {
+                Ok(keys) => keys,
+                Err(err) => match err {
+                    // Might have been called after createAccount but before its onchain commit.
+                    RelayError::Auth(auth_err) if auth_err.is_eoa_not_delegated() => vec![],
+                    _ => return Err(err.into()),
+                },
+            };
+
+            Ok(AccountResponse { address, keys })
         }))
         .await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        let account = Account::new(
-            request.address,
-            self.inner
-                .chains
-                .get(request.chain_id)
-                .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-                .provider,
-        );
-
-        // Get all keys from account
-        let keys = account.keys().await.map_err(RelayError::from)?;
-
-        // Get all permissions from non admin keys
-        let mut permissioned_keys = account
-            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
-            .await
-            .map_err(RelayError::from)?;
-
-        Ok(keys
-            .into_iter()
-            .map(|(hash, key)| AuthorizeKeyResponse {
-                hash,
-                authorize_key: AuthorizeKey {
-                    key,
-                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
-                    id_signature: None,
-                },
-            })
-            .collect())
+        Ok(self.get_keys(request).await?)
     }
 
     async fn prepare_calls(

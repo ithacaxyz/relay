@@ -1,4 +1,4 @@
-use super::{internal_rpc, invalid_params};
+use super::invalid_params;
 use alloy::primitives::{Address, PrimitiveSignature};
 use thiserror::Error;
 
@@ -14,9 +14,9 @@ pub enum KeysError {
     /// Should only have admin authorization keys.
     #[error("should only have admin authorization keys")]
     OnlyAdminKeyAllowed,
-    /// Invalid account key registry data.
-    #[error("invalid account key registry data for ID {0}")]
-    InvalidRegistryData(Address),
+    /// Unknown key id.
+    #[error("key id {0} is unknown")]
+    UnknownKeyId(Address),
     /// Key identifier already in use on account registry.
     #[error("key identifier already taken: {0}")]
     TakenKeyId(Address),
@@ -41,8 +41,8 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
             | KeysError::OnlyAdminKeyAllowed
             | KeysError::TakenKeyId { .. }
             | KeysError::UnexpectedKeyId { .. }
+            | KeysError::UnknownKeyId { .. }
             | KeysError::InvalidKeyIdSignature { .. } => invalid_params(err.to_string()),
-            KeysError::InvalidRegistryData(_) => internal_rpc(err.to_string()),
         }
     }
 }

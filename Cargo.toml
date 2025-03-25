@@ -48,6 +48,7 @@ serde_repr = "0.1"
 thiserror = "2"
 toml = "*"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
+tokio-util = "0.7.4"
 tower = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.0"

@@ -41,6 +41,13 @@ pub enum AuthError {
     InvalidPrep(PREPAccount),
 }
 
+impl AuthError {
+    /// Whether it is a [AuthError::EoaNotDelegated] error.
+    pub fn is_eoa_not_delegated(&self) -> bool {
+        matches!(self, Self::EoaNotDelegated(_))
+    }
+}
+
 impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: AuthError) -> Self {
         match err {
