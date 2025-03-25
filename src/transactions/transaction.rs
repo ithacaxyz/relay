@@ -1,5 +1,3 @@
-use std::{sync::Arc, time::SystemTime};
-
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
     consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
@@ -7,6 +5,7 @@ use alloy::{
     primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
     sol_types::{SolCall, SolValue},
 };
+use std::{sync::Arc, time::Instant};
 
 wrap_fixed_bytes! {
     /// An id of the transaction being handled by the relay.
@@ -115,7 +114,7 @@ pub struct PendingTransaction {
     /// Signer that signed the transaction.
     pub signer: Address,
     /// Time at which we've received this transaction.
-    pub received_at: SystemTime,
+    pub received_at: Instant,
 }
 
 impl PendingTransaction {

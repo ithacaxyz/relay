@@ -28,7 +28,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::error;
@@ -92,7 +92,7 @@ pub enum SignerEvent {
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Signer {
     /// Provider used by the signer.
     provider: DynProvider,
@@ -103,7 +103,7 @@ pub struct Signer {
     /// Estimated block time.
     block_time: Duration,
     /// Nonce of thes signer.
-    nonce: Arc<Mutex<u64>>,
+    nonce: Mutex<u64>,
     /// Channel to send signer events to.
     events_tx: mpsc::UnboundedSender<SignerEvent>,
     /// Underlying storage.
@@ -151,7 +151,7 @@ impl Signer {
             wallet,
             chain_id,
             block_time,
-            nonce: Arc::new(Mutex::new(nonce)),
+            nonce: Mutex::new(nonce),
             events_tx,
             storage,
             metrics,
@@ -316,9 +316,7 @@ impl Signer {
             return self.close_nonce_gap(tx.sent.nonce()).await;
         }
 
-        self.metrics.confirmation_time.record(
-            SystemTime::now().duration_since(tx.received_at).expect("should never underflow"),
-        );
+        self.metrics.confirmation_time.record(tx.received_at.elapsed());
         self.metrics.pending.decrement(1);
 
         Ok(())
@@ -364,7 +362,7 @@ impl Signer {
             }
         };
         let tx =
-            PendingTransaction { tx, sent, signer: self.address(), received_at: SystemTime::now() };
+            PendingTransaction { tx, sent, signer: self.address(), received_at: Instant::now() };
 
         self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
         self.storage.write_pending_transaction(&tx).await?;
