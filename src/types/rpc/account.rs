@@ -3,7 +3,7 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote},
+    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -137,6 +137,10 @@ pub struct UpgradeAccountCapabilities {
     /// Defaults to the native token.
     #[serde(default)]
     pub fee_token: Address,
+    /// Optional preOps to execute before signature verification.
+    ///
+    /// See [`UserOp::encodedPreOps`].
+    pub pre_ops: Vec<UserOp>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.

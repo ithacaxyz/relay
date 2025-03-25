@@ -2,6 +2,7 @@ use super::{
     cases::{prep_account, upgrade_account},
     check_bundle,
     environment::{Environment, mint_erc20s},
+    prepare_calls,
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -10,9 +11,10 @@ use alloy::{
     rpc::types::TransactionRequest,
 };
 use eyre::WrapErr;
+use futures_util::future::join_all;
 use relay::{
     signers::DynSigner,
-    types::{Call, KeyWith712Signer, rpc::AuthorizeKey},
+    types::{Call, KeyWith712Signer, UserOp, rpc::AuthorizeKey},
 };
 
 /// Represents the expected outcome of a test case execution
@@ -121,6 +123,10 @@ pub struct TxContext<'a> {
     /// Fee token to be used
     #[allow(dead_code)]
     pub fee_token: Address,
+    /// Optional array of pre-ops to be executed before the UserOp.
+    pub pre_ops: Vec<TxContext<'a>>,
+    /// Optional nonce to be used.
+    pub nonce: Option<U256>,
 }
 
 impl TxContext<'_> {
@@ -133,10 +139,12 @@ impl TxContext<'_> {
         // Ensure that there is always at least one admin key.
         self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
 
+        let pre_ops = self.build_pre_ops(tx_num, env).await?;
+
         // If we add more authorization_keys, the EOA address init data will be different, so we
         // need to mint native and fake tokens into our generated EOA.
         let before = env.eoa.address();
-        let tx_hash = prep_account(env, &self.calls, &self.authorization_keys).await;
+        let tx_hash = prep_account(env, &self.calls, &self.authorization_keys, pre_ops).await;
         if before != env.eoa.address() {
             mint_erc20s(&[env.erc20, env.erc20_alt], &[env.eoa.address()], &env.provider).await?;
             env.provider
@@ -166,16 +174,39 @@ impl TxContext<'_> {
         env: &Environment,
         tx_num: usize,
     ) -> Result<Vec<Call>, eyre::Error> {
-        let (tx_hash, authorization) =
-            upgrade_account(env, &self.authorization_keys, self.auth.clone().expect("should have"))
-                .await
-                .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
+        let pre_ops = self.build_pre_ops(tx_num, env).await?;
+        let (tx_hash, authorization) = upgrade_account(
+            env,
+            &self.authorization_keys,
+            self.auth.clone().expect("should have"),
+            pre_ops,
+        )
+        .await
+        .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
 
         // Check test expectations
         let op_nonce = U256::ZERO; // first transaction
         check_bundle(tx_hash, self, tx_num, authorization, op_nonce, env).await?;
 
         Ok(self.calls.clone())
+    }
+
+    /// Prepares preOps for the transaction.
+    pub async fn build_pre_ops(
+        &self,
+        tx_num: usize,
+        env: &Environment,
+    ) -> eyre::Result<Vec<UserOp>> {
+        let pre_ops = join_all(self.pre_ops.iter().map(|tx| async move {
+            let signer = tx.key.expect("userop should have a key");
+            let (signature, quote) = prepare_calls(tx_num, tx, signer, env).await.unwrap().unwrap();
+            let mut op = quote.ty().op.clone();
+            op.signature = signature;
+            op
+        }))
+        .await;
+
+        Ok(pre_ops)
     }
 }
 

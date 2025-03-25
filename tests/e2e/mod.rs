@@ -176,6 +176,8 @@ pub async fn prepare_calls(
     signer: &KeyWith712Signer,
     env: &Environment,
 ) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
+    let pre_ops = tx.build_pre_ops(tx_num, env).await?;
+
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -188,8 +190,9 @@ pub async fn prepare_calls(
                 meta: Meta {
                     fee_token: env.fee_token,
                     key_hash: signer.key_hash(),
-                    nonce: Some(U256::from(tx_num)),
+                    nonce: tx.nonce,
                 },
+                pre_ops,
             },
         })
         .await;

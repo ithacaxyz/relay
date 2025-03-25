@@ -357,6 +357,12 @@ impl RelayApiServer for Relay {
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
             initData: request.op.init_data.unwrap_or_default(),
+            encodedPreOps: request
+                .op
+                .pre_ops
+                .into_iter()
+                .map(|pre_op| pre_op.abi_encode().into())
+                .collect(),
             ..Default::default()
         };
 
@@ -618,6 +624,7 @@ impl RelayApiServer for Relay {
                         execution_data: all_calls.abi_encode().into(),
                         nonce: request.capabilities.meta.nonce,
                         init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
+                        pre_ops: request.capabilities.pre_ops.clone(),
                     },
                     chain_id: request.chain_id,
                 },
@@ -689,6 +696,7 @@ impl RelayApiServer for Relay {
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
                         nonce: Some(U256::ZERO),
                         init_data: None,
+                        pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
                 },

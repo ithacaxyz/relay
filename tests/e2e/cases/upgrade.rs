@@ -10,7 +10,7 @@ use eyre::WrapErr;
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer,
+        KeyType, KeyWith712Signer, UserOp,
         rpc::{
             AuthorizeKey, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters,
@@ -22,6 +22,7 @@ pub async fn upgrade_account(
     env: &Environment,
     authorize_keys: &[AuthorizeKey],
     auth: AuthKind,
+    pre_ops: Vec<UserOp>,
 ) -> eyre::Result<(TxHash, SignedAuthorization)> {
     let response = env
         .relay_endpoint
@@ -32,6 +33,7 @@ pub async fn upgrade_account(
                 authorize_keys: authorize_keys.to_vec(),
                 delegation: env.delegation,
                 fee_token: env.erc20,
+                pre_ops,
             },
         })
         .await?;
@@ -72,6 +74,7 @@ async fn basic_upgrade() -> eyre::Result<()> {
         &Environment::setup_with_upgraded().await?,
         &[key.to_authorized()],
         AuthKind::Auth,
+        vec![],
     )
     .await?;
     Ok(())
@@ -91,6 +94,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
                 authorize_keys: vec![key.to_authorized()],
                 delegation: env.delegation,
                 fee_token: env.erc20,
+                pre_ops: vec![],
             },
         })
         .await?;
