@@ -52,8 +52,8 @@ jobs:
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0x6aadeeb8bf44f704a712bbc2673ffabf73ce23fb" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0xf95148307c4d8b8d991f3bae6597d4583a4f3be7" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0xff975ecd6f690fdc091553606ecacdb5c503a54f" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x26e8e129742f03bb4879d657c53b598561aeff17" >> $GITHUB_ENV
 
       - name: Run tests
         run: |
