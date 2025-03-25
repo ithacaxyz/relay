@@ -188,7 +188,7 @@ pub async fn prepare_calls(
                 meta: Meta {
                     fee_token: env.fee_token,
                     key_hash: signer.key_hash(),
-                    nonce: U256::from(tx_num),
+                    nonce: Some(U256::from(tx_num)),
                 },
             },
         })

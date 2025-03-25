@@ -80,7 +80,7 @@ pub async fn prep_account(
                     fee_token: env.erc20,
                     key_hash: env.eoa.prep_signer().key_hash(),
                     // this will be the first UserOP
-                    nonce: U256::from(0),
+                    nonce: Some(U256::from(0)),
                 },
             },
         })
