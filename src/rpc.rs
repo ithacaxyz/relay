@@ -19,13 +19,15 @@ use alloy::{
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::{TryFutureExt, future::try_join_all};
+use futures_util::{
+    TryFutureExt,
+    future::{try_join, try_join_all},
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
-use tokio_util::sync::ReusableBoxFuture;
 use tracing::{debug, error};
 
 use crate::{
@@ -509,25 +511,29 @@ impl RelayApiServer for Relay {
         let provider = self.provider(request.chain_id)?;
 
         // Get all accounts from onchain and local storage
-        let local_addresses = ReusableBoxFuture::new(async move {
-            self.inner.storage.read_accounts_from_id(&request.id).await.map_err(RelayError::Storage)
+        let local_addresses = Box::pin(async move {
+            self.inner
+                .storage
+                .read_accounts_from_id(&request.id)
+                .await
+                .map_err(RelayError::Storage)
+                .map(|accounts| accounts.unwrap_or_default())
         });
-        let onchain_addresses = ReusableBoxFuture::new(async move {
+        let onchain_addresses = Box::pin(async move {
             let accounts =
                 AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
                     .await?
                     .pop()
                     .expect("should exist");
-            Ok(accounts.map(|(_, accounts)| accounts))
+            Ok(accounts.map(|(_, accounts)| accounts).unwrap_or_default())
         });
 
-        let accounts = try_join_all([local_addresses, onchain_addresses]).await?;
+        let (local_addresses, onchain_addresses) =
+            try_join(local_addresses, onchain_addresses).await?;
 
         // Merge local and onchain accounts, ensuring there are no duplicates.
-        let account_set: HashSet<_> = accounts
-            .into_iter()
-            .flat_map(|maybe_accounts| maybe_accounts.unwrap_or_default())
-            .collect();
+        let account_set: HashSet<_> =
+            local_addresses.into_iter().chain(onchain_addresses).collect();
 
         if account_set.is_empty() {
             return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());

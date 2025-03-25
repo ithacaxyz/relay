@@ -42,12 +42,7 @@ impl StorageApi for InMemoryStorage {
 
         // Store ID -> Address[]
         for id in keys {
-            match self.id_to_accounts.entry(id) {
-                Entry::Occupied(mut entry) => entry.get_mut().push(prep_address),
-                Entry::Vacant(entry) => {
-                    entry.insert(vec![prep_address]);
-                }
-            }
+            self.id_to_accounts.entry(id).or_default().push(prep_address)
         }
 
         Ok(())
