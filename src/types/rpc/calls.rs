@@ -50,8 +50,10 @@ pub struct PrepareCallsCapabilities {
     /// Optional preOps to execute before signature verification.
     ///
     /// See [`UserOp::encodedPreOps`].
+    #[serde(default)]
     pub pre_ops: Vec<UserOp>,
     /// Whether the call bundle is to be considered a preop.
+    #[serde(default)]
     pub pre_op: bool,
 }
 
