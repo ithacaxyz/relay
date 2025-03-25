@@ -1,11 +1,16 @@
+use crate::{signers::DynSigner, storage::RelayStorage};
+
 use super::{
-    SignerEvent, SignerHandle, TxId,
+    Signer, SignerEvent, SignerHandle, TxId,
+    metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
+use alloy::providers::{DynProvider, Provider};
 use rand::seq::IndexedRandom;
 use std::{
     collections::HashMap,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
@@ -46,26 +51,53 @@ pub struct TransactionService {
 
     /// Subscriptions to transaction status updates.
     subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
+
+    /// Metrics of the service.
+    metrics: Arc<TransactionServiceMetrics>,
 }
 
 impl TransactionService {
     /// Creates a new [`TransactionService`].
-    pub fn new(signers: Vec<SignerHandle>) -> (Self, TransactionServiceHandle) {
+    pub fn new(
+        signers: Vec<SignerHandle>,
+        metrics: Arc<TransactionServiceMetrics>,
+    ) -> (Self, TransactionServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let this = Self { signers, command_rx, subscriptions: Default::default() };
+        let this = Self { signers, command_rx, subscriptions: Default::default(), metrics };
 
         (this, TransactionServiceHandle { command_tx })
     }
 
     /// Creates a new [`TransactionService`] and spawns it.
-    pub fn spawn(signers: Vec<SignerHandle>) -> TransactionServiceHandle {
-        let (this, handle) = Self::new(signers);
+    pub async fn spawn(
+        provider: DynProvider,
+        signers: Vec<DynSigner>,
+        storage: RelayStorage,
+    ) -> TransactionServiceHandle {
+        let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
+            "chain_id",
+            provider.get_chain_id().await.unwrap().to_string(),
+        )]));
+        let signers = futures_util::future::try_join_all(signers.into_iter().map(|signer| {
+            Signer::spawn(provider.clone(), signer, storage.clone(), metrics.clone())
+        }))
+        .await
+        .expect("failed to build signers");
+
+        let (this, handle) = Self::new(signers, metrics);
         tokio::spawn(this);
         handle
     }
 
-    fn send_transaction(&mut self, tx: RelayTransaction) {
+    /// Sends the given transaction to a randomly chosen signer.
+    fn send_transaction(
+        &mut self,
+        tx: RelayTransaction,
+        status_tx: mpsc::UnboundedSender<TransactionStatus>,
+    ) {
+        self.subscriptions.insert(tx.id, status_tx);
         self.signers.choose(&mut rand::rng()).expect("no signers").send_transaction(tx);
+        self.metrics.sent.increment(1);
     }
 }
 
@@ -78,8 +110,7 @@ impl Future for TransactionService {
         while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
             match action {
                 TransactionServiceMessage::SendTransaction(tx, status_tx) => {
-                    this.subscriptions.insert(tx.id, status_tx);
-                    this.send_transaction(tx);
+                    this.send_transaction(tx, status_tx);
                 }
             }
         }
@@ -88,6 +119,12 @@ impl Future for TransactionService {
             while let Poll::Ready(Some(event)) = signer.poll_recv(cx) {
                 match event {
                     SignerEvent::TransactionStatus(id, status) => {
+                        match &status {
+                            TransactionStatus::Failed(_) => this.metrics.failed.increment(1),
+                            TransactionStatus::Confirmed(_) => this.metrics.confirmed.increment(1),
+                            _ => {}
+                        }
+
                         if let Some(status_tx) = this.subscriptions.get(&id) {
                             let _ = status_tx.send(status.clone());
                         }

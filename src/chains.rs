@@ -9,7 +9,7 @@ use alloy::{
 use crate::{
     signers::DynSigner,
     storage::RelayStorage,
-    transactions::{Signer, TransactionService, TransactionServiceHandle},
+    transactions::{TransactionService, TransactionServiceHandle},
 };
 
 /// A single supported chain.
@@ -36,13 +36,12 @@ impl Chains {
     ) -> TransportResult<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
-                let signers =
-                    futures_util::future::try_join_all(tx_signers.clone().into_iter().map(
-                        |tx_signer| Signer::spawn(provider.clone(), tx_signer, storage.clone()),
-                    ))
-                    .await?;
-
-                let transactions = TransactionService::spawn(signers);
+                let transactions = TransactionService::spawn(
+                    provider.clone(),
+                    tx_signers.clone(),
+                    storage.clone(),
+                )
+                .await;
 
                 let chain_id = provider.get_chain_id().await?;
                 Ok::<_, RpcError<TransportErrorKind>>((chain_id, Chain { provider, transactions }))

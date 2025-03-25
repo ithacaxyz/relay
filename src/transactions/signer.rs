@@ -1,4 +1,7 @@
-use super::transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId};
+use super::{
+    metrics::TransactionServiceMetrics,
+    transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+};
 use crate::{
     error::StorageError,
     signers::DynSigner,
@@ -26,7 +29,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::error;
@@ -90,7 +93,7 @@ pub enum SignerEvent {
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Signer {
     /// Provider used by the signer.
     provider: DynProvider,
@@ -101,11 +104,13 @@ pub struct Signer {
     /// Estimated block time.
     block_time: Duration,
     /// Nonce of thes signer.
-    nonce: Arc<Mutex<u64>>,
+    nonce: Mutex<u64>,
     /// Channel to send signer events to.
     events_tx: mpsc::UnboundedSender<SignerEvent>,
     /// Underlying storage.
     storage: RelayStorage,
+    /// Metrics of the parent transaction service.
+    metrics: Arc<TransactionServiceMetrics>,
 }
 
 impl Signer {
@@ -114,6 +119,7 @@ impl Signer {
         provider: DynProvider,
         signer: DynSigner,
         storage: RelayStorage,
+        metrics: Arc<TransactionServiceMetrics>,
     ) -> TransportResult<SignerHandle> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -146,9 +152,10 @@ impl Signer {
             wallet,
             chain_id,
             block_time,
-            nonce: Arc::new(Mutex::new(nonce)),
+            nonce: Mutex::new(nonce),
             events_tx,
             storage,
+            metrics,
         };
 
         let loaded_transactions = this
@@ -302,11 +309,16 @@ impl Signer {
 
     /// Awaits the given [`PendingTransaction`] and watches it for status updates.
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
+        self.metrics.pending.increment(1);
         if let Err(err) = self.watch_transaction_inner(&mut tx).await {
+            self.metrics.pending.decrement(1);
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
             self.storage.remove_pending_transaction(tx.id()).await?;
             return self.close_nonce_gap(tx.sent.nonce()).await;
         }
+
+        self.metrics.confirmation_time.record(tx.received_at.elapsed());
+        self.metrics.pending.decrement(1);
 
         Ok(())
     }
@@ -350,7 +362,8 @@ impl Signer {
                 return self.close_nonce_gap(nonce).await;
             }
         };
-        let tx = PendingTransaction { tx, sent, signer: self.address() };
+        let tx =
+            PendingTransaction { tx, sent, signer: self.address(), received_at: Instant::now() };
 
         self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
         self.storage.write_pending_transaction(&tx).await?;
