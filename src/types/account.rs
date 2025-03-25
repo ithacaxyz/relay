@@ -1,4 +1,9 @@
-use super::{Call, Key, rpc::Permission};
+use super::{
+    Call,
+    IDelegation::authorizeCall,
+    Key,
+    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
+};
 use crate::{error::RelayError, types::IDelegation};
 use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
 use alloy::{
@@ -317,6 +322,28 @@ impl PREPAccount {
     /// Verifies that the current account is valid.
     pub fn is_valid(&self) -> bool {
         self == &Self::initialize(self.signed_authorization.address, self.init_calls.clone())
+    }
+
+    /// Return the list of authorized keys as [`AuthorizeKeyResponse`].
+    pub fn authorized_keys(&self) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
+        // `wallet_prepareCreateAccount` and `wallet_createAccount` ensure that we only have
+        // authorize calls on admin keys oatn PREPAccount init calls. So, we can safely
+        // decode all of them as authorizeCalls
+        self.init_calls
+            .iter()
+            .filter(|call| call.target == Address::ZERO)
+            .map(|call| {
+                let authorize = authorizeCall::abi_decode(&call.data, false)?;
+                Ok(AuthorizeKeyResponse {
+                    hash: authorize.key.key_hash(),
+                    authorize_key: AuthorizeKey {
+                        key: authorize.key,
+                        permissions: vec![],
+                        id_signature: None,
+                    },
+                })
+            })
+            .collect()
     }
 }
 

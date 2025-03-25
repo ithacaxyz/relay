@@ -11,7 +11,7 @@ pub struct CreatableAccount {
 
 impl CreatableAccount {
     /// Return a new [`CreateAccount`].
-    pub fn new(account: PREPAccount, id_signature: Vec<KeyHashWithID>) -> Self {
-        Self { prep: account, id_signatures: id_signature }
+    pub fn new(account: PREPAccount, id_signatures: Vec<KeyHashWithID>) -> Self {
+        Self { prep: account, id_signatures }
     }
 }
