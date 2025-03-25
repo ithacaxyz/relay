@@ -12,17 +12,17 @@ use crate::types::{AccountRegistry::AccountRegistryCalls, rpc::CreateAccountCont
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
-        constants::{
-            EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST,
-            PER_EMPTY_ACCOUNT_COST,
-        },
+        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
+    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes, map::HashSet},
     providers::{DynProvider, Provider},
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::{TryFutureExt, future::try_join_all};
+use futures_util::{
+    TryFutureExt,
+    future::{try_join, try_join_all},
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -204,11 +204,8 @@ impl Relay {
                 .into());
             }
         } else {
-            let code = provider.get_code_at(quote.ty().op.eoa).await.map_err(RelayError::from)?;
-
-            if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                || code[..] == EIP7702_CLEARED_DELEGATION
-            {
+            let account = Account::new(quote.ty().op.eoa, provider);
+            if !account.is_delegated().await? {
                 return Err(AuthError::EoaNotDelegated(quote.ty().op.eoa).into());
             }
         }
@@ -254,6 +251,38 @@ impl Relay {
         }
 
         Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
+    }
+
+    async fn get_keys(
+        &self,
+        request: GetKeysParameters,
+    ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
+        let account = Account::new(request.address, self.provider(request.chain_id)?);
+
+        if !account.is_delegated().await? {
+            return Err(AuthError::EoaNotDelegated(request.address).boxed().into());
+        }
+
+        // Get all keys from account
+        let keys = account.keys().await.map_err(RelayError::from)?;
+
+        // Get all permissions from non admin keys
+        let mut permissioned_keys = account
+            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
+            .await
+            .map_err(RelayError::from)?;
+
+        Ok(keys
+            .into_iter()
+            .map(|(hash, key)| AuthorizeKeyResponse {
+                hash,
+                authorize_key: AuthorizeKey {
+                    key,
+                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                    id_signature: None,
+                },
+            })
+            .collect())
     }
 
     /// Returns the chain [`DynProvider`].
@@ -481,54 +510,55 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        let Some((_, addresses)) =
-            &AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
-                .await?[0]
-        else {
-            return Err(RelayError::Keys(KeysError::InvalidRegistryData(request.id)).into());
-        };
+        // Get all accounts from onchain and local storage
+        let local_addresses = Box::pin(async move {
+            self.inner
+                .storage
+                .read_accounts_from_id(&request.id)
+                .await
+                .map_err(RelayError::Storage)
+                .map(|accounts| accounts.unwrap_or_default())
+        });
+        let onchain_addresses = Box::pin(async move {
+            let accounts =
+                AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
+                    .await?
+                    .pop()
+                    .expect("should exist");
+            Ok(accounts.map(|(_, accounts)| accounts).unwrap_or_default())
+        });
 
-        try_join_all(addresses.iter().map(async |addr| {
-            Ok(AccountResponse {
-                address: *addr,
-                keys: self
-                    .get_keys(GetKeysParameters { address: *addr, chain_id: request.chain_id })
-                    .await?,
-            })
+        let (local_addresses, onchain_addresses) =
+            try_join(local_addresses, onchain_addresses).await?;
+
+        // Merge local and onchain accounts, ensuring there are no duplicates.
+        let account_set: HashSet<_> =
+            local_addresses.into_iter().chain(onchain_addresses).collect();
+
+        if account_set.is_empty() {
+            return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());
+        }
+
+        try_join_all(account_set.into_iter().map(async |address| {
+            let keys = match self
+                .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
+                .await
+            {
+                Ok(keys) => keys,
+                Err(err) => match err {
+                    // Might have been called after createAccount but before its onchain commit.
+                    RelayError::Auth(auth_err) if auth_err.is_eoa_not_delegated() => vec![],
+                    _ => return Err(err.into()),
+                },
+            };
+
+            Ok(AccountResponse { address, keys })
         }))
         .await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        let account = Account::new(
-            request.address,
-            self.inner
-                .chains
-                .get(request.chain_id)
-                .ok_or(RelayError::UnsupportedChain(request.chain_id))?
-                .provider,
-        );
-
-        // Get all keys from account
-        let keys = account.keys().await.map_err(RelayError::from)?;
-
-        // Get all permissions from non admin keys
-        let mut permissioned_keys = account
-            .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
-            .await
-            .map_err(RelayError::from)?;
-
-        Ok(keys
-            .into_iter()
-            .map(|(hash, key)| AuthorizeKeyResponse {
-                hash,
-                authorize_key: AuthorizeKey {
-                    key,
-                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
-                    id_signature: None,
-                },
-            })
-            .collect())
+        Ok(self.get_keys(request).await?)
     }
 
     async fn prepare_calls(
@@ -553,28 +583,21 @@ impl RelayApiServer for Relay {
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
-        let maybe_prep = provider
-            .get_code_at(request.from)
-            .into_future()
-            .map_err(RelayError::from)
-            .and_then(|code| async move {
-                if code.get(..3) != Some(&EIP7702_DELEGATION_DESIGNATOR[..])
-                    || code[..] == EIP7702_CLEARED_DELEGATION
-                {
-                    return self
-                        .inner
-                        .storage
-                        .read_prep(&request.from)
-                        .await
-                        .map_err(|err| RelayError::InternalError(err.into()))?
-                        .ok_or_else(|| {
-                            RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
-                        })
-                        .map(Some);
-                }
-                Ok(None)
-            })
-            .await?;
+        let account = Account::new(request.from, provider.clone());
+        let maybe_prep = if !account.is_delegated().await? {
+            Some(
+                self.inner
+                    .storage
+                    .read_prep(&request.from)
+                    .await
+                    .map_err(|err| RelayError::InternalError(err.into()))?
+                    .ok_or_else(|| {
+                        RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
+                    })?,
+            )
+        } else {
+            None
+        };
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
         let all_calls = authorize_calls

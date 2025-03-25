@@ -4,7 +4,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     transactions::{PendingTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -14,6 +14,7 @@ use dashmap::{DashMap, Entry};
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
     accounts: DashMap<Address, CreatableAccount>,
+    id_to_accounts: DashMap<Address, Vec<Address>>,
     pending_transactions: DashMap<TxId, PendingTransaction>,
     statuses: DashMap<TxId, TransactionStatus>,
     bundles: DashMap<BundleId, Vec<TxId>>,
@@ -26,13 +27,29 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn write_prep(&self, account: CreatableAccount) -> Result<()> {
-        match self.accounts.entry(account.prep.address) {
-            Entry::Occupied(_) => Err(StorageError::AccountAlreadyExists(account.prep.address)),
+        let prep_address = account.prep.address;
+        let keys = account.id_signatures.iter().map(|k| k.id).collect::<Vec<_>>();
+
+        // Store PREPAccount if it does not yet exist
+        match self.accounts.entry(prep_address) {
+            Entry::Occupied(_) => {
+                return Err(StorageError::AccountAlreadyExists(account.prep.address));
+            }
             Entry::Vacant(entry) => {
                 entry.insert(account);
-                Ok(())
             }
         }
+
+        // Store ID -> Address[]
+        for id in keys {
+            self.id_to_accounts.entry(id).or_default().push(prep_address)
+        }
+
+        Ok(())
+    }
+
+    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Option<Vec<Address>>> {
+        Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()))
     }
 
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {

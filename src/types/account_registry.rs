@@ -1,7 +1,6 @@
+use super::KeyHash;
 use crate::error::RelayError;
 use alloy::{primitives::Address, providers::DynProvider, sol};
-
-use super::KeyHash;
 
 sol! {
     #[sol(rpc)]

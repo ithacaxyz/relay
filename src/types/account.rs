@@ -1,8 +1,11 @@
 use super::{Call, Key, rpc::Permission};
-use crate::types::IDelegation;
+use crate::{error::RelayError, types::IDelegation};
 use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
 use alloy::{
-    eips::eip7702::SignedAuthorization,
+    eips::eip7702::{
+        SignedAuthorization,
+        constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
+    },
     primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
     providers::Provider,
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
@@ -135,6 +138,19 @@ impl<P: Provider> Account<P> {
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
+    }
+
+    /// Whether this account is delegated.
+    pub async fn is_delegated(&self) -> Result<bool, RelayError> {
+        let code = self
+            .delegation
+            .provider()
+            .get_code_at(*self.delegation.address())
+            .await
+            .map_err(RelayError::from)?;
+
+        Ok(code.get(..3) == Some(&EIP7702_DELEGATION_DESIGNATOR[..])
+            && code[..] != EIP7702_CLEARED_DELEGATION)
     }
 
     /// Returns a list of all non expired keys as (KeyHash, Key) tuples.

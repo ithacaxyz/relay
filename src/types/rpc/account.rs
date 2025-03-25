@@ -3,7 +3,7 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, PREPAccount, SignedQuote},
+    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -175,7 +175,7 @@ pub struct UpgradeAccountResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetAccountsParameters {
     /// Key identifier.
-    pub id: Address,
+    pub id: KeyID,
     /// Chain ID.
     pub chain_id: ChainId,
 }

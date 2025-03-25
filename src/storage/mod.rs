@@ -6,7 +6,7 @@ mod memory;
 
 use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::primitives::Address;
 use async_trait::async_trait;
@@ -33,6 +33,10 @@ impl StorageApi for RelayStorage {
 
     async fn write_prep(&self, account: CreatableAccount) -> api::Result<()> {
         self.inner.write_prep(account).await
+    }
+
+    async fn read_accounts_from_id(&self, id: &KeyID) -> api::Result<Option<Vec<Address>>> {
+        self.inner.read_accounts_from_id(id).await
     }
 
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> api::Result<()> {
