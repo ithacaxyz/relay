@@ -52,6 +52,14 @@ where
     run_configs(build_txs, iproduct!(AccountConfig::iter(), PaymentConfig::iter())).await
 }
 
+/// Runs only the PREP account configuration, in both ERC20 and native payment methods.
+pub async fn run_e2e_prep<'a, F>(build_txs: F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
+{
+    run_configs(build_txs, iproduct!(iter::once(AccountConfig::Prep), PaymentConfig::iter())).await
+}
+
 /// Runs only the upgraded account configuration, in both ERC20 and native payment methods.
 pub async fn run_e2e_upgraded<'a, F>(build_txs: F) -> Result<()>
 where
@@ -92,7 +100,7 @@ where
 async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Result<()> {
     let signer = tx.key.expect("should have key");
 
-    let Some((signature, quote)) = prepare_calls(tx_num, &tx, signer, env).await? else {
+    let Some((signature, quote)) = prepare_calls(tx_num, &tx, signer, env, false).await? else {
         // We had an expected failure so we should exit.
         return Ok(());
     };
@@ -175,8 +183,9 @@ pub async fn prepare_calls(
     tx: &TxContext<'_>,
     signer: &KeyWith712Signer,
     env: &Environment,
+    pre_op: bool,
 ) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
-    let pre_ops = tx.build_pre_ops(tx_num, env).await?;
+    let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
 
     let response = env
         .relay_endpoint
@@ -193,6 +202,7 @@ pub async fn prepare_calls(
                     nonce: tx.nonce,
                 },
                 pre_ops,
+                pre_op,
             },
         })
         .await;

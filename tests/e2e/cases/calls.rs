@@ -64,6 +64,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                         nonce: Some(U256::from(tx_num + user_op_nonce)),
                     },
                     pre_ops: Vec::new(),
+                    pre_op: false,
                 },
             })
             .await?;

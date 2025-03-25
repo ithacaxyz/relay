@@ -1,9 +1,15 @@
 //! Prepare calls related end-to-end test cases
 
-use crate::e2e::{MockErc20, environment::Environment, eoa::EoaKind, send_prepared_calls};
+use crate::e2e::{
+    MockErc20, TxContext, build_pre_ops,
+    environment::{Environment, mint_erc20s},
+    eoa::EoaKind,
+    send_prepared_calls,
+};
 use alloy::{
-    primitives::{Address, B256, PrimitiveSignature, TxHash, U256},
+    primitives::{Address, B256, PrimitiveSignature, TxHash, TxKind, U256},
     providers::{PendingTransactionBuilder, Provider},
+    rpc::types::TransactionRequest,
     sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
@@ -11,7 +17,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::{DynSigner, Eip712PayLoadSigner},
     types::{
-        Call, KeyHashWithID, Signature, UserOp,
+        Call, KeyHashWithID, Signature,
         rpc::{
             AuthorizeKey, CreateAccountParameters, GetAccountsParameters, GetKeysParameters, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
@@ -21,11 +27,12 @@ use relay::{
     },
 };
 
-pub async fn prep_account(
+pub async fn prep_account<'a>(
     env: &mut Environment,
     calls: &[Call],
     authorize_keys: &[AuthorizeKey],
-    pre_ops: Vec<UserOp>,
+    pre_ops: &[TxContext<'a>],
+    tx_num: usize,
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
@@ -45,6 +52,18 @@ pub async fn prep_account(
         .await?;
 
     assert!(prep_address == context.account.address);
+
+    // Mint ERC20 tokens into the account
+    mint_erc20s(&[env.erc20, env.erc20_alt], &[prep_address], &env.provider).await?;
+    env.provider
+        .send_transaction(TransactionRequest {
+            to: Some(TxKind::Call(prep_address)),
+            value: Some(U256::from(100e18)),
+            ..Default::default()
+        })
+        .await?
+        .get_receipt()
+        .await?;
 
     let signatures = match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),
@@ -96,6 +115,7 @@ pub async fn prep_account(
         assert_eq!(get_keys_response, get_accounts_response[0].keys);
     }
 
+    let pre_ops = build_pre_ops(env, pre_ops, tx_num).await?;
     let PrepareCallsResponse { context, digest, capabilities: _ } = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -112,6 +132,7 @@ pub async fn prep_account(
                     nonce: Some(U256::from(0)),
                 },
                 pre_ops,
+                pre_op: false,
             },
         })
         .await?;
@@ -164,7 +185,8 @@ async fn basic_prep() -> eyre::Result<()> {
         }],
         // todo: add test where key is not admin and should have permissions
         &[eoa_authorized],
-        vec![],
+        &[],
+        0,
     )
     .await?;
 
