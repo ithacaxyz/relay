@@ -414,7 +414,7 @@ impl RelayApiServer for Relay {
         }
 
         // Creating account should only have admin keys.
-        if !request.capabilities.authorize_keys.iter().all(|key| key.key.isSuperAdmin) {
+        if request.capabilities.authorize_keys.iter().any(|key| !key.key.isSuperAdmin) {
             return Err(KeysError::OnlyAdminKeyAllowed)?;
         }
 
