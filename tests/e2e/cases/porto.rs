@@ -505,3 +505,51 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
     .await?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_key_pre_op() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    run_e2e(|env| {
+        vec![
+            // Authorize the admin key (P256)
+            TxContext {
+                authorization_keys: vec![key.to_authorized()],
+                expected: ExpectedOutcome::Pass,
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                // Bundle session key authorization as a pre-op
+                pre_ops: vec![TxContext {
+                    authorization_keys: vec![session_key.to_authorized()],
+                    calls: vec![Call {
+                        target: Address::ZERO,
+                        value: U256::ZERO,
+                        data: Delegation::setCanExecuteCall {
+                            keyHash: session_key.key_hash(),
+                            can: true,
+                            fnSel: DEFAULT_EXECUTE_SELECTOR,
+                            target: DEFAULT_EXECUTE_TO,
+                        }
+                        .abi_encode()
+                        .into(),
+                    }],
+                    expected: ExpectedOutcome::Pass,
+                    key: Some(&key),
+                    // use random nonce sequence
+                    nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
+                    ..Default::default()
+                }],
+                // Execute the transfer via session key in the same userop
+                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                // The userop is signed by the session key itself
+                key: Some(&session_key),
+                ..Default::default()
+            },
+        ]
+    })
+    .await?;
+    Ok(())
+}

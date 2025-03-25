@@ -35,7 +35,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
 
     // Upgrade environment EOA signer with the above admin keys.
     let env = Environment::setup_with_upgraded().await?;
-    upgrade_account(&env, &keys, AuthKind::Auth).await?;
+    upgrade_account(&env, &keys, AuthKind::Auth, vec![]).await?;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {

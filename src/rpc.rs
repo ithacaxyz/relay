@@ -696,7 +696,7 @@ impl RelayApiServer for Relay {
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
                         nonce: Some(U256::ZERO),
                         init_data: None,
-                        pre_ops: vec![],
+                        pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
                 },

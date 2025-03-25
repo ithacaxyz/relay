@@ -11,7 +11,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::{DynSigner, Eip712PayLoadSigner},
     types::{
-        Call, KeyHashWithID, Signature,
+        Call, KeyHashWithID, Signature, UserOp,
         rpc::{
             AuthorizeKey, CreateAccountParameters, GetAccountsParameters, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
@@ -25,6 +25,7 @@ pub async fn prep_account(
     env: &mut Environment,
     calls: &[Call],
     authorize_keys: &[AuthorizeKey],
+    pre_ops: Vec<UserOp>,
 ) -> eyre::Result<TxHash> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
@@ -94,7 +95,7 @@ pub async fn prep_account(
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
                 },
-                pre_ops: Vec::new(),
+                pre_ops,
             },
         })
         .await?;
@@ -147,6 +148,7 @@ async fn basic_prep() -> eyre::Result<()> {
         }],
         // todo: add test where key is not admin and should have permissions
         &[eoa_authorized],
+        vec![],
     )
     .await?;
 
