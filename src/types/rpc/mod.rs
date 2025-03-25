@@ -27,5 +27,5 @@ pub struct Meta {
     /// Key (hash) that will be used to sign the request.
     pub key_hash: B256,
     /// Nonce.
-    pub nonce: U256,
+    pub nonce: Option<U256>,
 }

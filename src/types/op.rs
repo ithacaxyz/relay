@@ -1,6 +1,6 @@
 use super::Call;
 use alloy::{
-    primitives::{B256, Keccak256, U256},
+    primitives::{Address, B256, Bytes, Keccak256, U256},
     sol,
     sol_types::SolValue,
     uint,
@@ -93,24 +93,26 @@ sol! {
         /// Excluded from signature.
         bytes initData;
     }
+}
 
-    /// A partial [`UserOp`] used for fee estimation.
-    #[derive(Debug, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct PartialUserOp {
-        /// The user's address.
-        address eoa;
-        /// An encoded array of calls, using ERC7579 batch execution encoding.
-        /// `abi.encode(calls)`, where `calls` is an array of type `Call[]`.
-        /// This allows for more efficient safe forwarding to the EOA.
-        bytes executionData;
-        /// Per delegated EOA.
-        uint256 nonce;
-        /// Optional data for `initPREP` on the delegation.
-        ///
-        /// Excluded from signature.
-        bytes initData;
-    }
+/// A partial [`UserOp`] used for fee estimation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialUserOp {
+    /// The user's address.
+    pub eoa: Address,
+    /// An encoded array of calls, using ERC7579 batch execution encoding.
+    ///
+    /// The format is `abi.encode(calls)`, where `calls` is an array of type `Call[]`.
+    ///
+    /// This allows for more efficient safe forwarding to the EOA.
+    pub execution_data: Bytes,
+    /// Per delegated EOA.
+    pub nonce: Option<U256>,
+    /// Optional data for `initPREP` on the delegation.
+    ///
+    /// Excluded from signature.
+    pub init_data: Option<Bytes>,
 }
 
 mod eip712 {

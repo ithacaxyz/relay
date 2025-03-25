@@ -1,12 +1,13 @@
 use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, FixedBytes, fixed_bytes},
+    primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::state::StateOverride,
     sol,
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
+    uint,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,9 @@ sol! {
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
         #[derive(Debug)]
         function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
+
+        /// Return current nonce with sequence key.
+        function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256);
 
         /// Returns the EIP712 domain of the entrypoint.
         ///
@@ -165,6 +169,22 @@ impl<P: Provider> Entry<P> {
             Some(domain.verifyingContract),
             None,
         ))
+    }
+
+    /// Get the next nonce for the given EOA.
+    ///
+    /// # Note
+    ///
+    /// This gets the next nonce for sequence key `0`.
+    pub async fn get_nonce(&self, account: Address) -> TransportResult<U256> {
+        Ok(self
+            .entrypoint
+            .getNonce(account, uint!(0_U192))
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?
+            ._0)
     }
 }
 

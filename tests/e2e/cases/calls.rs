@@ -61,7 +61,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     meta: Meta {
                         fee_token: env.erc20,
                         key_hash: signer.key_hash(),
-                        nonce: U256::from(tx_num + user_op_nonce),
+                        nonce: Some(U256::from(tx_num + user_op_nonce)),
                     },
                 },
             })

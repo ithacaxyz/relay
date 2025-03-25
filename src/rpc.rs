@@ -311,16 +311,23 @@ impl RelayApiServer for Relay {
         let entrypoint =
             Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
 
+        // fetch nonce if not specified
+        let nonce = if let Some(nonce) = request.op.nonce {
+            nonce
+        } else {
+            entrypoint.get_nonce(request.op.eoa).await.map_err(RelayError::from)?
+        };
+
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
-            executionData: request.op.executionData.clone(),
-            nonce: request.op.nonce,
+            executionData: request.op.execution_data.clone(),
+            nonce,
             paymentToken: token.address,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
-            initData: request.op.initData,
+            initData: request.op.init_data.unwrap_or_default(),
             ..Default::default()
         };
 
@@ -580,12 +587,9 @@ impl RelayApiServer for Relay {
                 PartialAction {
                     op: PartialUserOp {
                         eoa: request.from,
-                        executionData: all_calls.abi_encode().into(),
+                        execution_data: all_calls.abi_encode().into(),
                         nonce: request.capabilities.meta.nonce,
-                        initData: maybe_prep
-                            .as_ref()
-                            .map(|acc| acc.prep.init_data())
-                            .unwrap_or_default(),
+                        init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
                     },
                     chain_id: request.chain_id,
                 },
@@ -653,10 +657,10 @@ impl RelayApiServer for Relay {
                 PartialAction {
                     op: PartialUserOp {
                         eoa: request.address,
-                        executionData: calls.abi_encode().into(),
+                        execution_data: calls.abi_encode().into(),
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
-                        nonce: U256::ZERO,
-                        initData: bytes!(""),
+                        nonce: Some(U256::ZERO),
+                        init_data: None,
                     },
                     chain_id: request.chain_id,
                 },
