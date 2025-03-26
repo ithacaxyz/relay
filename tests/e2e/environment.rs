@@ -253,11 +253,6 @@ impl Environment {
             .await?)
     }
 
-    /// Sets the block time for the Anvil instance.
-    pub async fn set_block_time(&self, block_time: u64) {
-        self.provider.anvil_set_interval_mining(block_time).await.unwrap();
-    }
-
     /// Drops a transaction from the Anvil txpool and returns it.
     pub async fn drop_transaction(&self, hash: B256) -> TxEnvelope {
         let tx =
@@ -265,6 +260,21 @@ impl Environment {
         self.provider.anvil_drop_transaction(hash).await.unwrap();
         assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
         tx
+    }
+
+    /// Disables mining of blocks.
+    ///
+    /// Note: anvil does not expose API to disable mining so we're firstly switching it to auto
+    /// mining and then disabling it. This means that this method would cause a block mined while
+    /// executed.
+    pub async fn disable_mining(&self) {
+        self.provider.anvil_set_auto_mine(true).await.unwrap();
+        self.provider.anvil_set_auto_mine(false).await.unwrap();
+    }
+
+    /// Mines a single block.
+    pub async fn mine_block(&self) {
+        self.provider.anvil_mine(None, None).await.unwrap();
     }
 
     /// Mines 10 blocks with dummy transactions with the given priority fee.
@@ -299,7 +309,7 @@ impl Environment {
             }))
             .await;
 
-            self.provider.anvil_mine(None, None).await.unwrap();
+            self.mine_block().await;
         }
     }
 }

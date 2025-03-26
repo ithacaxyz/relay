@@ -261,14 +261,14 @@ async fn fee_bump() -> eyre::Result<()> {
     // setup account
     let account = MockAccount::new(&env).await.unwrap();
 
+    env.disable_mining().await;
+
     // mine blocks with priority fee of 1000 wei to make it look like the market price
     let initial_priority_fee = 1000;
     env.mine_blocks_with_priority_fee(initial_priority_fee).await;
 
     // prepare transaction to send
     let tx = account.prepare_tx(&env).await;
-    // set high block time to ensure transaction is not getting mined
-    env.set_block_time(3600).await;
 
     // send transaction and get its hash
     let mut events = tx_service_handle.send_transaction(tx);
@@ -290,8 +290,8 @@ async fn fee_bump() -> eyre::Result<()> {
     assert!(new_tx_hash != *dropped.hash());
     assert!(new_tx.max_priority_fee_per_gas().unwrap() >= initial_priority_fee * 2);
 
-    // set normal block time, and wait for tx to confirm
-    env.set_block_time(1).await;
+    // mine a block with the new transaction
+    env.mine_block().await;
     let confirmed_hash = assert_confirmed(events).await;
     // assert that the transaction that got landed is the one we've seen before
     assert_eq!(confirmed_hash, new_tx_hash);
