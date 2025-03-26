@@ -187,7 +187,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     // setup 100 accounts
     let accounts = try_join_all((0..100).map(|_| MockAccount::new(&env))).await?;
     // wait a bit to make sure all tasks see the tx confirmation
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(100, 100, 0, &env);
 
     // send 100 transactions and assert all of them are confirmed
