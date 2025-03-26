@@ -6,7 +6,7 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, B256, U256},
+    primitives::{Address, U256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
@@ -14,7 +14,7 @@ use eyre::Context;
 use futures_util::future::{join_all, try_join_all};
 use relay::{
     rpc::RelayApiClient,
-    signers::{DynSigner, Eip712PayLoadSigner},
+    signers::Eip712PayLoadSigner,
     transactions::{RelayTransaction, TransactionStatus},
     types::{
         Call, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
@@ -38,7 +38,7 @@ impl MockAccount {
     async fn new(env: &Environment) -> eyre::Result<Self> {
         let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256).unwrap().unwrap();
 
-        let PrepareCreateAccountResponse { context, address, digests, .. } = env
+        let PrepareCreateAccountResponse { context, address, .. } = env
             .relay_endpoint
             .prepare_create_account(PrepareCreateAccountParameters {
                 capabilities: PrepareCreateAccountCapabilities {
@@ -50,17 +50,12 @@ impl MockAccount {
             .await
             .unwrap();
 
-        let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
-        let signature = ephemeral.sign_hash(&digests[0]).await?;
+        let signature = key.id_sign(address).await.unwrap();
 
         env.relay_endpoint
             .create_account(CreateAccountParameters {
                 context,
-                signatures: vec![KeyHashWithID {
-                    hash: key.key_hash(),
-                    id: ephemeral.address(),
-                    signature,
-                }],
+                signatures: vec![KeyHashWithID { hash: key.key_hash(), id: key.id(), signature }],
             })
             .await
             .unwrap();
