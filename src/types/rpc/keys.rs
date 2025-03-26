@@ -3,7 +3,10 @@
 use alloy::primitives::{Address, B256, Bytes, ChainId};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Call, Key, KeyID, KeyType};
+use crate::{
+    error::KeysError,
+    types::{Call, Key, KeyID, KeyType},
+};
 
 use super::Permission;
 
@@ -28,9 +31,9 @@ pub struct AuthorizeKey {
     pub key: Key,
     /// The permissions for the key.
     pub permissions: Vec<Permission>,
-    /// Signature over the PREPAddress.
+    /// Signature over the PREPAddress if it's an admin key or webauthn.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id_signature: Option<Bytes>,
+    pub signature: Option<Bytes>,
 }
 
 impl AuthorizeKey {
@@ -40,10 +43,17 @@ impl AuthorizeKey {
     /// [`UserOp`] if the key does not already exist.
     ///
     /// The second set of calls is to add call permissions and spending limits to the key.
-    pub fn into_calls(self) -> (Call, Vec<Call>) {
+    ///
+    /// The third set of calls is to register the mapping from key id to account address in a
+    /// registry.
+    pub fn into_calls(
+        mut self,
+        registry: Address,
+        account: Option<Address>,
+    ) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
 
-        calls.extend(self.permissions.into_iter().map(|perm| match perm {
+        calls.extend(self.permissions.drain(..).map(|perm| match perm {
             Permission::Call(perm) => {
                 Call::set_can_execute(self.key.key_hash(), perm.to, perm.selector, true)
             }
@@ -52,7 +62,24 @@ impl AuthorizeKey {
             }
         }));
 
-        (Call::authorize(self.key), calls)
+        // If we already have a deployed account, any admin OR webauthn keys must come with a key
+        // identifier signature over the EOA address.
+        if let Some(account) = account {
+            if self.key.isSuperAdmin || self.key_type().is_webauthn() {
+                let Some(id_signature) = self.signature else {
+                    return Err(KeysError::MissingKeyID(self.key.key_hash()));
+                };
+
+                calls.push(Call::register_account(
+                    registry,
+                    id_signature,
+                    self.key.key_hash().into(),
+                    account,
+                ))
+            }
+        }
+
+        Ok((Call::authorize(self.key), calls))
     }
 
     /// Returns the inner [`KeyType`].
@@ -136,10 +163,10 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
-            id_signature: None,
+            signature: None,
         };
 
-        let (authorize, calls) = key.clone().into_calls();
+        let (authorize, calls) = key.clone().into_calls(Address::random(), None).unwrap();
 
         assert_eq!(authorize, Call::authorize(key.clone().key));
         assert_eq!(calls.len(), 2);
@@ -185,7 +212,7 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
-            id_signature: None,
+            signature: None,
         };
 
         assert_eq!(
@@ -212,7 +239,7 @@ mod tests {
                     to: Address::ZERO,
                     selector: fixed_bytes!("0xa9059cbb"),
                 })],
-                id_signature: None,
+                signature: None,
             },
         };
 
@@ -247,7 +274,7 @@ mod tests {
                         to: Address::ZERO,
                         selector: fixed_bytes!("0xa9059cbb"),
                     })],
-                    id_signature: None,
+                    signature: None,
                 },
             }
         );

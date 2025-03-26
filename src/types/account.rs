@@ -339,7 +339,7 @@ impl PREPAccount {
                     authorize_key: AuthorizeKey {
                         key: authorize.key,
                         permissions: vec![],
-                        id_signature: None,
+                        signature: None,
                     },
                 })
             })

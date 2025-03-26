@@ -46,7 +46,7 @@ async fn get_keys() -> eyre::Result<()> {
                 authorize_key: AuthorizeKey {
                     key: key.key().clone(),
                     permissions,
-                    id_signature: None,
+                    signature: None,
                 },
             }
         })
@@ -111,8 +111,52 @@ async fn revoke_key() -> eyre::Result<()> {
             },
             TxContext {
                 revoke_keys: vec![&key2, &key3],
-                expected: ExpectedOutcome::FailEstimate,
+                expected: ExpectedOutcome::FailSend,
                 key: Some(&key1),
+                ..Default::default()
+            },
+        ]
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revoke_backup_key() -> eyre::Result<()> {
+    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key2 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let key3 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    run_e2e_prep(|_env| {
+        vec![
+            TxContext {
+                authorization_keys: vec![&key1],
+                expected: ExpectedOutcome::Pass,
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                authorization_keys: vec![&key2],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key1),
+                ..Default::default()
+            },
+            TxContext {
+                revoke_keys: vec![&key2],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key2),
+                ..Default::default()
+            },
+            TxContext {
+                authorization_keys: vec![&key3],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key1),
+                ..Default::default()
+            },
+            TxContext {
+                revoke_keys: vec![&key1],
+                expected: ExpectedOutcome::FailSend,
+                key: Some(&key2),
                 ..Default::default()
             },
         ]

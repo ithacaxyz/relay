@@ -109,6 +109,11 @@ impl KeyType {
     pub fn is_p256(&self) -> bool {
         matches!(self, Self::P256)
     }
+
+    /// Whether it is [`Self::WebAuthnP256`].
+    pub fn is_webauthn(&self) -> bool {
+        matches!(self, Self::WebAuthnP256)
+    }
 }
 
 impl From<Key> for PackedKey {
@@ -344,12 +349,17 @@ impl KeyWith712Signer {
     }
 
     /// Returns a [`AuthorizeKey`] equivalent.
-    pub fn to_authorized(&self) -> AuthorizeKey {
-        AuthorizeKey {
-            key: self.key.clone(),
-            permissions: self.permissions.clone(),
-            id_signature: None,
-        }
+    pub async fn to_authorized(&self, account: Option<Address>) -> eyre::Result<AuthorizeKey> {
+        // Only admin OR webauthn keys require a id signature
+        let signature = if let (Some(account), true) =
+            (account, (self.key.isSuperAdmin || self.keyType.is_webauthn()))
+        {
+            Some(self.id_sign(account).await?.as_bytes().into())
+        } else {
+            None
+        };
+
+        Ok(AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone(), signature })
     }
 
     /// Returns its [`RevokeKey`].
@@ -393,7 +403,7 @@ impl Deref for KeyWith712Signer {
 }
 
 /// Key hash with its signature over the PREP account address.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyHashWithID {
     /// Key hash.

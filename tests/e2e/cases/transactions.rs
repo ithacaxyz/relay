@@ -42,7 +42,7 @@ impl MockAccount {
             .relay_endpoint
             .prepare_create_account(PrepareCreateAccountParameters {
                 capabilities: PrepareCreateAccountCapabilities {
-                    authorize_keys: vec![key.to_authorized()],
+                    authorize_keys: vec![key.to_authorized(None).await?],
                     delegation: env.delegation,
                 },
                 chain_id: env.chain_id,

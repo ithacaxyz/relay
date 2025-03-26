@@ -9,7 +9,7 @@ use alloy::{
     primitives::{Address, U256},
 };
 use eyre::WrapErr;
-use futures_util::future::join_all;
+use futures_util::future::{join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
@@ -161,7 +161,7 @@ impl TxContext<'_> {
         let pre_ops = build_pre_ops(env, &self.pre_ops, tx_num).await?;
         let (tx_hash, authorization) = upgrade_account(
             env,
-            &self.authorization_keys(),
+            &self.authorization_keys(Some(env.eoa.address())).await?,
             self.auth.clone().expect("should have"),
             pre_ops,
         )
@@ -176,8 +176,12 @@ impl TxContext<'_> {
     }
 
     /// Returns authorization keys as a list of [`AuthorizeKey`].
-    pub fn authorization_keys(&self) -> Vec<AuthorizeKey> {
-        self.authorization_keys.iter().map(|k| k.to_authorized()).collect()
+    pub async fn authorization_keys(
+        &self,
+        account: Option<Address>,
+    ) -> eyre::Result<Vec<AuthorizeKey>> {
+        try_join_all(self.authorization_keys.iter().map(async |k| k.to_authorized(account).await))
+            .await
     }
 
     /// Returns keys as a list of [`RevokeKey`].
