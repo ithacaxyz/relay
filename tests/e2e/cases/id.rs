@@ -3,6 +3,7 @@ use relay::{
     rpc::RelayApiClient,
     types::{
         AccountRegistry::AccountRegistryCalls,
+        KeyType, KeyWith712Signer,
         rpc::{AccountResponse, AuthorizeKeyResponse, GetAccountsParameters},
     },
 };
@@ -10,10 +11,13 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn register_id() -> eyre::Result<()> {
     let mut env = AccountConfig::Prep.setup_environment().await?;
-    let authorized_key = env.eoa.prep_signer().to_authorized();
-    prep_account(&mut env, &[], &[authorized_key], &[], 0).await?;
 
-    if let EoaKind::Prep { admin_key, account } = env.eoa {
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    prep_account(&mut env, &[], &[&admin_key], &[], 0).await?;
+
+    if let EoaKind::Prep(account) = env.eoa {
+        let account = account.unwrap();
+
         let admin_key_hash = admin_key.key_hash();
 
         // Generate ID from signature

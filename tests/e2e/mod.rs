@@ -33,7 +33,7 @@ use relay::{
     types::{
         Delegation, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        KeyType, KeyWith712Signer, Signature, SignedQuote,
+        KeyWith712Signer, Signature, SignedQuote,
         rpc::{
             Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             SendPreparedCallsParameters, SendPreparedCallsSignature,
@@ -194,8 +194,8 @@ pub async fn prepare_calls(
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
-                authorize_keys: tx.authorization_keys.clone(),
-                revoke_keys: Vec::new(),
+                authorize_keys: tx.authorization_keys(),
+                revoke_keys: vec![],
                 meta: Meta {
                     fee_token: env.fee_token,
                     key_hash: signer.key_hash(),

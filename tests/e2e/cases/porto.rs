@@ -13,7 +13,7 @@ async fn behavior_delegation() -> Result<()> {
         vec![
             // Authorize key (delegation provided in the call)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -40,14 +40,14 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
         vec![
             // Authorize admin key
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             // Authorize another key, set execution guard and spend limit (1.5 ETH) for it
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 calls: vec![
                     Call {
                         target: Address::ZERO,
@@ -94,7 +94,7 @@ async fn behavior_spend_limits() -> Result<()> {
     run_e2e(|env| {
         vec![
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -137,7 +137,7 @@ async fn execution_guard_target_scope() -> Result<()> {
         vec![
             // Authorize admin key
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -145,7 +145,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             // Authorize another key and set execution guard with a target scope (only env.erc20
             // allowed)
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 calls: vec![Call {
                     target: Address::ZERO,
                     value: U256::ZERO,
@@ -191,7 +191,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
         vec![
             // Authorize admin key
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -199,7 +199,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             // Authorize another key and set execution guard with target and selector (for
             // "transfer")
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 calls: vec![Call {
                     target: Address::ZERO,
                     value: U256::ZERO,
@@ -244,7 +244,7 @@ async fn send_default() -> Result<()> {
         vec![
             // Delegate (empty calls with auth)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -275,14 +275,14 @@ async fn execution_guard_default() -> Result<()> {
         vec![
             // Authorize admin key with delegation
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             // Authorize and set execution guard using default values for selector and target
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 calls: vec![Call {
                     target: Address::ZERO,
                     value: U256::ZERO,
@@ -322,7 +322,7 @@ async fn prepare_send_prepared_default() -> Result<()> {
             TxContext {
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 ..Default::default()
             },
             // Prepared transfer call (simulating prepare then sendPrepared)
@@ -346,7 +346,7 @@ async fn delegated_false_eoa_key_to_authorize_p256() -> Result<()> {
         vec![
             // Send authorize call (EOA signs; delegation parameter provided)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -372,7 +372,7 @@ async fn delegated_true_eoa_key_to_authorize_p256() -> Result<()> {
         vec![
             // Authorize the new key (signed by EOA)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -399,14 +399,14 @@ async fn key_p256_key_to_authorize_p256() -> Result<()> {
         vec![
             // Authorize first key
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             // Authorize a second (P256) key using the first key
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -434,7 +434,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
         vec![
             // Authorize the admin key (P256)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -442,7 +442,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             // Authorize the session key and set its execution guard using
             // Delegation::setCanExecuteCall with defaults
             TxContext {
-                authorization_keys: vec![session_key.to_authorized()],
+                authorization_keys: vec![&session_key],
                 calls: vec![Call {
                     target: Address::ZERO,
                     value: U256::ZERO,
@@ -481,14 +481,14 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
         vec![
             // Delegate
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             // Authorize the second key (WebCryptoP256) using the first key
             TxContext {
-                authorization_keys: vec![another_key.to_authorized()],
+                authorization_keys: vec![&another_key],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -514,7 +514,7 @@ async fn session_key_pre_op() -> Result<()> {
         vec![
             // Authorize the admin key (P256)
             TxContext {
-                authorization_keys: vec![key.to_authorized()],
+                authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
@@ -523,7 +523,7 @@ async fn session_key_pre_op() -> Result<()> {
                 expected: ExpectedOutcome::Pass,
                 // Bundle session key authorization as a pre-op
                 pre_ops: vec![TxContext {
-                    authorization_keys: vec![session_key.to_authorized()],
+                    authorization_keys: vec![&session_key],
                     calls: vec![Call {
                         target: Address::ZERO,
                         value: U256::ZERO,
@@ -560,12 +560,12 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
         vec![TxContext {
-            authorization_keys: vec![key.to_authorized()],
+            authorization_keys: vec![&key],
             auth: Some(AuthKind::Auth),
             expected: ExpectedOutcome::Pass,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
-                authorization_keys: vec![session_key.to_authorized()],
+                authorization_keys: vec![&session_key],
                 calls: vec![Call::set_can_execute(
                     session_key.key_hash(),
                     DEFAULT_EXECUTE_TO,
