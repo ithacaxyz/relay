@@ -13,11 +13,6 @@ use relay::types::{
 async fn get_keys() -> eyre::Result<()> {
     let upgraded_account = AccountConfig::Upgraded;
     let mut env = upgraded_account.setup_environment().await?;
-    let keys = [
-        KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap(),
-        KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap(),
-        KeyWith712Signer::random_session(KeyType::P256)?.unwrap(),
-    ];
 
     // Set session key permissions
     let permissions = vec![
@@ -30,6 +25,14 @@ async fn get_keys() -> eyre::Result<()> {
             to: env.erc20,
             selector: MockErc20::transferCall::SELECTOR.into(),
         }),
+    ];
+
+    let keys = [
+        KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap(),
+        KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap(),
+        KeyWith712Signer::random_session(KeyType::P256)?
+            .unwrap()
+            .with_permissions(permissions.clone()),
     ];
 
     // Set expectable key responses from wallet_getKeys
@@ -51,7 +54,7 @@ async fn get_keys() -> eyre::Result<()> {
     // Upgrade account and check the first key has been added.
     {
         let mut tx = TxContext {
-            authorization_keys: vec![keys[0].to_authorized()],
+            authorization_keys: vec![&keys[0]],
             expected: ExpectedOutcome::Pass,
             auth: Some(AuthKind::Auth),
             ..Default::default()
@@ -62,10 +65,7 @@ async fn get_keys() -> eyre::Result<()> {
     }
 
     // Add the rest of the keys one by one.
-    for (i, key) in [keys[1].to_authorized(), keys[2].to_permissioned_authorized(permissions)]
-        .into_iter()
-        .enumerate()
-    {
+    for (i, key) in [&keys[1], &keys[2]].into_iter().enumerate() {
         let tx = TxContext {
             authorization_keys: vec![key],
             expected: ExpectedOutcome::Pass,

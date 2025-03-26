@@ -7,19 +7,20 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, B256, PrimitiveSignature, TxHash, TxKind, U256},
+    primitives::{Address, TxHash, TxKind, U256},
     providers::{PendingTransactionBuilder, Provider},
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
+use futures_util::future::try_join_all;
 use relay::{
     rpc::RelayApiClient,
-    signers::{DynSigner, Eip712PayLoadSigner},
+    signers::Eip712PayLoadSigner,
     types::{
-        Call, KeyHashWithID, Signature,
+        Call, CreatableAccount, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            AuthorizeKey, CreateAccountParameters, GetAccountsParameters, GetKeysParameters, Meta,
+            CreateAccountParameters, GetAccountsParameters, GetKeysParameters, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
             PrepareCreateAccountResponse,
@@ -30,10 +31,12 @@ use relay::{
 pub async fn prep_account<'a>(
     env: &mut Environment,
     calls: &[Call],
-    authorize_keys: &[AuthorizeKey],
+    authorize_keys: &[&KeyWith712Signer],
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
 ) -> eyre::Result<TxHash> {
+    let prep_signer = authorize_keys[0];
+
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
         capabilities: _,
@@ -44,7 +47,7 @@ pub async fn prep_account<'a>(
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
-                authorize_keys: authorize_keys.to_vec(),
+                authorize_keys: authorize_keys.iter().map(|k| k.to_authorized()).collect(),
                 delegation: env.delegation,
             },
             chain_id: env.chain_id,
@@ -65,26 +68,23 @@ pub async fn prep_account<'a>(
         .get_receipt()
         .await?;
 
-    let signatures = match &mut env.eoa {
-        EoaKind::Upgraded(_dyn_signer) => unreachable!(),
-        EoaKind::Prep { admin_key, account } => {
-            // We need to sign the PREPAccount address with our admin key identifier
-            let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
-            let key_hash = admin_key.key_hash();
-            let id = KeyHashWithID {
-                hash: key_hash,
-                id: ephemeral.address(),
-                signature: PrimitiveSignature::from_raw(
-                    &ephemeral.sign_payload_hash(admin_key.id_digest(prep_address)).await?,
-                )
-                .unwrap(),
-            };
+    // Generate all ID -> Account from the authorized keys
+    let signatures = try_join_all(authorize_keys.iter().map(async |key| {
+        Ok::<_, eyre::Error>(KeyHashWithID {
+            hash: key.key_hash(),
+            id: key.id(),
+            signature: key.id_sign(prep_address).await?,
+        })
+    }))
+    .await?;
 
-            account.prep = context.account.clone();
-            account.id_signatures = vec![id];
-            account.id_signatures.clone()
+    match &mut env.eoa {
+        EoaKind::Upgraded(_dyn_signer) => unreachable!(),
+        EoaKind::Prep(account) => {
+            *account = Some(CreatableAccount::new(context.account.clone(), signatures.clone()));
         }
     };
+
     let admin_key_id = signatures[0].id;
     let init_calls_len = context.account.init_calls.len();
 
@@ -127,7 +127,7 @@ pub async fn prep_account<'a>(
                 revoke_keys: Vec::new(),
                 meta: Meta {
                     fee_token: env.erc20,
-                    key_hash: env.eoa.prep_signer().key_hash(),
+                    key_hash: prep_signer.key_hash(),
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
                 },
@@ -141,15 +141,15 @@ pub async fn prep_account<'a>(
     // todo: innerSignature once estimateFee (or equivalent) is aware of the key instead of just
     // key type.
     let signature = Signature {
-        innerSignature: env.eoa.prep_signer().sign_payload_hash(digest).await?,
-        keyHash: env.eoa.prep_signer().key_hash(),
+        innerSignature: prep_signer.sign_payload_hash(digest).await?,
+        keyHash: prep_signer.key_hash(),
         prehash: false,
     }
     .abi_encode_packed()
     .into();
 
     // Submit signed call
-    let tx_hash = send_prepared_calls(env, env.eoa.prep_signer(), signature, context).await?;
+    let tx_hash = send_prepared_calls(env, prep_signer, signature, context).await?;
 
     // Check that transaction has been successful.
     let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
@@ -172,7 +172,7 @@ async fn basic_prep() -> eyre::Result<()> {
 
     let mut env = Environment::setup_with_prep().await?;
     let target = env.erc20;
-    let eoa_authorized = env.eoa.prep_signer().to_authorized();
+    let eoa_authorized = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     prep_account(
         &mut env,
@@ -184,7 +184,7 @@ async fn basic_prep() -> eyre::Result<()> {
                 .into(),
         }],
         // todo: add test where key is not admin and should have permissions
-        &[eoa_authorized],
+        &[&eoa_authorized],
         &[],
         0,
     )

@@ -117,7 +117,7 @@ pub struct TxContext<'a> {
     /// Optional Key that will sign the UserOp
     pub key: Option<&'a KeyWith712Signer>,
     /// List of keys to authorize that will be converted to calls on top of the UserOp.
-    pub authorization_keys: Vec<AuthorizeKey>,
+    pub authorization_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
     #[allow(dead_code)]
     pub fee_token: Address,
@@ -134,9 +134,6 @@ impl TxContext<'_> {
         env: &mut Environment,
         tx_num: usize,
     ) -> Result<(), eyre::Error> {
-        // Ensure that there is always at least one admin key.
-        self.authorization_keys.push(env.eoa.prep_signer().to_authorized());
-
         let tx_hash =
             prep_account(env, &self.calls, &self.authorization_keys, &self.pre_ops, tx_num).await;
 
@@ -159,7 +156,7 @@ impl TxContext<'_> {
         let pre_ops = build_pre_ops(env, &self.pre_ops, tx_num).await?;
         let (tx_hash, authorization) = upgrade_account(
             env,
-            &self.authorization_keys,
+            &self.authorization_keys(),
             self.auth.clone().expect("should have"),
             pre_ops,
         )
@@ -171,6 +168,11 @@ impl TxContext<'_> {
         check_bundle(tx_hash, self, tx_num, authorization, op_nonce, env).await?;
 
         Ok(self.calls.clone())
+    }
+
+    /// Returns authorization keys as a list of [`AuthorizeKey`].
+    pub fn authorization_keys(&self) -> Vec<AuthorizeKey> {
+        self.authorization_keys.iter().map(|k| k.to_authorized()).collect()
     }
 }
 

@@ -104,6 +104,11 @@ impl KeyType {
     pub fn is_secp256k1(&self) -> bool {
         matches!(self, Self::Secp256k1)
     }
+
+    /// Whether it is [`Self::P256`].
+    pub fn is_p256(&self) -> bool {
+        matches!(self, Self::P256)
+    }
 }
 
 impl From<Key> for PackedKey {
@@ -259,12 +264,16 @@ impl Key {
 }
 
 /// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyWith712Signer {
     /// A key that can be used to authorize call.
     key: Key,
     /// Signer associated with the key that signs eip712
-    signer: Box<dyn Eip712PayLoadSigner>,
+    signer: Arc<dyn Eip712PayLoadSigner>,
+    /// Signer for the key identifier.
+    id_signer: Option<DynSigner>,
+    /// Key permissions in case it's not an admin key.
+    permissions: Vec<Permission>,
 }
 
 impl KeyWith712Signer {
@@ -281,32 +290,41 @@ impl KeyWith712Signer {
         let expiry = U40::ZERO;
         let super_admin = true;
 
-        let (key, signer) = match key_type {
+        let (key, signer, id_signer) = match key_type {
             KeyType::P256 => {
                 let signer = P256Signer::load(&mock_key)?;
                 (
                     Key::p256(signer.public_key(), expiry, super_admin),
-                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                    Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
+                    None,
                 )
             }
             KeyType::WebAuthnP256 => {
                 let signer = WebAuthnSigner::load(&mock_key)?;
                 (
                     Key::webauthn(signer.public_key(), expiry, super_admin),
-                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                    Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
+                    Some(DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?))),
                 )
             }
             KeyType::Secp256k1 => {
                 let signer = DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?));
                 (
                     Key::secp256k1(signer.address(), expiry, super_admin),
-                    Box::new(signer) as Box<dyn Eip712PayLoadSigner>,
+                    Arc::new(signer.clone()) as Arc<dyn Eip712PayLoadSigner>,
+                    Some(signer),
                 )
             }
             _ => return Ok(None),
         };
 
-        Ok(Some(KeyWith712Signer { key, signer }))
+        Ok(Some(KeyWith712Signer { key, signer, id_signer, permissions: vec![] }))
+    }
+
+    /// Returns [`KeyWith712Signer`] with additional permissions.
+    pub fn with_permissions(mut self, permissions: Vec<Permission>) -> Self {
+        self.permissions = permissions;
+        self
     }
 
     /// Encodes and signs the typed data according to [EIP-712].
@@ -327,12 +345,30 @@ impl KeyWith712Signer {
 
     /// Returns a [`AuthorizeKey`] equivalent.
     pub fn to_authorized(&self) -> AuthorizeKey {
-        self.to_permissioned_authorized(vec![])
+        AuthorizeKey {
+            key: self.key.clone(),
+            permissions: self.permissions.clone(),
+            id_signature: None,
+        }
     }
 
-    /// Returns a [`AuthorizeKey`] equivalent with set permissions.
-    pub fn to_permissioned_authorized(&self, permissions: Vec<Permission>) -> AuthorizeKey {
-        AuthorizeKey { key: self.key.clone(), permissions, id_signature: None }
+    /// Signs the PREP address with the [`KeyID`] signer.
+    ///
+    /// # Panics
+    /// This will panic if it's a P256 key.
+    pub async fn id_sign(
+        &self,
+        address: Address,
+    ) -> Result<PrimitiveSignature, alloy::signers::Error> {
+        self.id_signer.as_ref().expect("no p256").sign_hash(&self.key.id_digest(address)).await
+    }
+
+    /// Key identifier.
+    ///
+    /// # Panics
+    /// This will panic if it's a P256 key.
+    pub fn id(&self) -> KeyID {
+        self.id_signer.as_ref().expect("no p256").address()
     }
 }
 

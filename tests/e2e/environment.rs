@@ -20,7 +20,7 @@ use relay::{
     signers::DynSigner,
     spawn::try_spawn,
     types::{
-        CoinKind, CoinRegistry, KeyWith712Signer,
+        CoinKind, CoinRegistry,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
@@ -142,15 +142,7 @@ impl Environment {
         let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
 
         let eoa = if is_prep {
-            // Generate a random admin key from a random key type.
-            let key_type = [KeyType::Secp256k1, KeyType::WebAuthnP256];
-            let random_key_type = key_type[B256::random()[0] as usize % 2];
-
-            EoaKind::create_prep(
-                KeyWith712Signer::random_admin(random_key_type)?.unwrap(),
-                delegation,
-            )
-            .await?
+            EoaKind::create_prep()
         } else {
             EoaKind::create_upgraded(
                 DynSigner::load(
@@ -162,7 +154,9 @@ impl Environment {
             )
         };
 
-        mint_erc20s(&erc20s, &[eoa.address()], &provider).await?;
+        if !eoa.is_prep() {
+            mint_erc20s(&erc20s, &[eoa.address()], &provider).await?;
+        }
 
         // Ensure our registry has our tokens
         let chain_id = provider.get_chain_id().await?;
@@ -174,7 +168,13 @@ impl Environment {
         let relay_signer =
             DynSigner::load(&relay_private_key, None).await.wrap_err("Relay signer load failed")?;
 
-        for address in [relay_signer.address(), eoa.address()] {
+        let fundable_addresses = if eoa.is_prep() {
+            vec![relay_signer.address()]
+        } else {
+            vec![relay_signer.address(), eoa.address()]
+        };
+
+        for address in fundable_addresses {
             provider
                 .send_transaction(TransactionRequest {
                     to: Some(TxKind::Call(address)),
