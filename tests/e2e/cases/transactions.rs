@@ -1,12 +1,11 @@
-use std::time::Duration;
-
 use crate::e2e::{
     MockErc20,
     environment::{Environment, EnvironmentConfig},
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, U256},
+    consensus::Transaction,
+    primitives::{Address, B256, U256},
     providers::{PendingTransactionBuilder, Provider},
     sol_types::{SolCall, SolValue},
 };
@@ -25,6 +24,7 @@ use relay::{
         },
     },
 };
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// An account that can be used to send userops.
@@ -146,10 +146,24 @@ async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> 
     panic!("Transaction did not complete");
 }
 
+async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
+    while let Some(status) = events.recv().await {
+        match status {
+            TransactionStatus::Pending(hash) => return hash,
+            TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
+            _ => {}
+        }
+    }
+
+    panic!("failed to get tx hash")
+}
+
 /// Asserts that transaction was confirmed.
-async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) {
-    if let TransactionStatus::Failed(err) = wait_for_tx(events).await {
-        panic!("Failed to send transaction: {err}");
+async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
+    match wait_for_tx(events).await {
+        TransactionStatus::Confirmed(hash) => hash,
+        TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
+        _ => unreachable!(),
     }
 }
 
@@ -208,6 +222,79 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     }
 
     assert_metrics(300, 300 - invalid, invalid, &env);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropped_transaction() -> eyre::Result<()> {
+    let env =
+        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // setup account
+    let account = MockAccount::new(&env).await.unwrap();
+    // prepare transaction to send
+    let tx = account.prepare_tx(&env).await;
+
+    // send transaction and get its hash
+    let mut events = tx_service_handle.send_transaction(tx);
+    let tx_hash = wait_for_tx_hash(&mut events).await;
+
+    // drop the transaction from txpool
+    env.drop_transaction(tx_hash).await;
+
+    // assert that transaction is still getting resent and confirmed
+    let confirmed_hash = assert_confirmed(events).await;
+
+    assert_eq!(tx_hash, confirmed_hash);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fee_bump() -> eyre::Result<()> {
+    let env =
+        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // setup account
+    let account = MockAccount::new(&env).await.unwrap();
+
+    // mine blocks with priority fee of 1000 wei to make it look like the market price
+    let initial_priority_fee = 1000;
+    env.mine_blocks_with_priority_fee(initial_priority_fee).await;
+
+    // prepare transaction to send
+    let tx = account.prepare_tx(&env).await;
+    // set high block time to ensure transaction is not getting mined
+    env.set_block_time(3600).await;
+
+    // send transaction and get its hash
+    let mut events = tx_service_handle.send_transaction(tx);
+    let tx_hash = wait_for_tx_hash(&mut events).await;
+
+    // drop the transaction from txpool to ensure it won't get mined
+    let dropped = env.drop_transaction(tx_hash).await;
+
+    assert!(dropped.max_priority_fee_per_gas().unwrap() >= initial_priority_fee);
+
+    // mine blocks with higher priority fee
+    env.mine_blocks_with_priority_fee(initial_priority_fee * 2).await;
+
+    // wait for new transaction to be sent
+    let new_tx_hash = wait_for_tx_hash(&mut events).await;
+    let new_tx = env.provider.get_transaction_by_hash(new_tx_hash).await.unwrap().unwrap();
+
+    // assert that new transaction has higher priority fee
+    assert!(new_tx_hash != *dropped.hash());
+    assert!(new_tx.max_priority_fee_per_gas().unwrap() >= initial_priority_fee * 2);
+
+    // set normal block time, and wait for tx to confirm
+    env.set_block_time(1).await;
+    let confirmed_hash = assert_confirmed(events).await;
+    // assert that the transaction that got landed is the one we've seen before
+    assert_eq!(confirmed_hash, new_tx_hash);
 
     Ok(())
 }
