@@ -265,7 +265,7 @@ mod tests {
         let revoke = RevokeKey { hash, id: Some(key_id) };
         assert_eq!(
             revoke.into_calls(entrypoint),
-            vec![Call::revoke(hash), Call::unregister_account(entrypoint, key_id)]
+            vec![Call::unregister_account(entrypoint, key_id), Call::revoke(hash)]
         );
     }
 }
