@@ -2,15 +2,19 @@
 
 use super::{eoa::EoaKind, *};
 use alloy::{
+    consensus::{SignableTransaction, TxEip1559, TxEnvelope},
+    eips::Encodable2718,
     hex,
-    network::EthereumWallet,
+    network::{EthereumWallet, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256},
-    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider},
+    providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
     rpc::types::TransactionRequest,
+    signers::local::PrivateKeySigner,
     sol_types::{SolConstructor, SolValue},
 };
 use eyre::{self, ContextCompat, WrapErr};
+use futures_util::future::join_all;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     config::RelayConfig,
@@ -247,6 +251,66 @@ impl Environment {
             .relay_endpoint
             .get_keys(GetKeysParameters { address: self.eoa.address(), chain_id: self.chain_id })
             .await?)
+    }
+
+    /// Drops a transaction from the Anvil txpool and returns it.
+    pub async fn drop_transaction(&self, hash: B256) -> TxEnvelope {
+        let tx =
+            self.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.into_inner();
+        self.provider.anvil_drop_transaction(hash).await.unwrap();
+        assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
+        tx
+    }
+
+    /// Disables mining of blocks.
+    ///
+    /// Note: anvil does not expose API to disable mining so we're firstly switching it to auto
+    /// mining and then disabling it. This means that this method would cause a block mined while
+    /// executed.
+    pub async fn disable_mining(&self) {
+        self.provider.anvil_set_auto_mine(true).await.unwrap();
+        self.provider.anvil_set_auto_mine(false).await.unwrap();
+    }
+
+    /// Mines a single block.
+    pub async fn mine_block(&self) {
+        self.provider.anvil_mine(None, None).await.unwrap();
+    }
+
+    /// Mines 10 blocks with dummy transactions with the given priority fee.
+    ///
+    /// Can be used to inflate the priority fee market.
+    pub async fn mine_blocks_with_priority_fee(&self, priority_fee: u128) {
+        for _ in 0..10 {
+            let signer = PrivateKeySigner::from_signing_key(
+                self._anvil.as_ref().unwrap().keys()[0].clone().into(),
+            );
+            let nonce = self.provider.get_transaction_count(signer.address()).await.unwrap();
+            let max_fee_per_gas =
+                self.provider.estimate_eip1559_fees().await.unwrap().max_fee_per_gas;
+
+            join_all((0..100).map(|i| {
+                let signer = &signer;
+                async move {
+                    let mut tx = TxEip1559 {
+                        chain_id: self.chain_id,
+                        nonce: nonce + i as u64,
+                        to: Address::ZERO.into(),
+                        gas_limit: 21000,
+                        max_fee_per_gas,
+                        max_priority_fee_per_gas: priority_fee,
+                        ..Default::default()
+                    };
+                    let signature = (&signer).sign_transaction_sync(&mut tx).unwrap();
+                    let tx = TxEnvelope::Eip1559(tx.into_signed(signature));
+
+                    let _ = self.provider.send_raw_transaction(&tx.encoded_2718()).await.unwrap();
+                }
+            }))
+            .await;
+
+            self.mine_block().await;
+        }
     }
 }
 
