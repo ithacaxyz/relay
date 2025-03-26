@@ -1,5 +1,6 @@
 use crate::e2e::{
     AuthKind, ExpectedOutcome, MockErc20, TxContext, config::AccountConfig, process_tx,
+    run_e2e_prep,
 };
 use alloy::{primitives::U256, sol_types::SolCall};
 use relay::types::{
@@ -78,5 +79,44 @@ async fn get_keys() -> eyre::Result<()> {
         assert_eq!(env.get_eoa_authorized_keys().await?, expected_responses[..(i + 2)]);
     }
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revoke_key() -> eyre::Result<()> {
+    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key2 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let key3 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    run_e2e_prep(|_env| {
+        vec![
+            TxContext {
+                authorization_keys: vec![&key1],
+                expected: ExpectedOutcome::Pass,
+                auth: Some(AuthKind::Auth),
+                ..Default::default()
+            },
+            TxContext {
+                authorization_keys: vec![&key2],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key1),
+                ..Default::default()
+            },
+            TxContext {
+                authorization_keys: vec![&key3],
+                revoke_keys: vec![&key1],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key2),
+                ..Default::default()
+            },
+            TxContext {
+                revoke_keys: vec![&key2, &key3],
+                expected: ExpectedOutcome::FailEstimate,
+                key: Some(&key1),
+                ..Default::default()
+            },
+        ]
+    })
+    .await?;
     Ok(())
 }
