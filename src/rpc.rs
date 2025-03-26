@@ -570,15 +570,19 @@ impl RelayApiServer for Relay {
             return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());
         }
 
-        try_join_all(account_set.into_iter().map(async |address| {
-            Ok(AccountResponse {
+        let accounts = try_join_all(account_set.into_iter().map(async |address| {
+            Ok::<_, RelayError>(AccountResponse {
                 address,
                 keys: self
                     .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
                     .await?,
             })
         }))
-        .await
+        .await?;
+
+        // Only return accounts with keys. An account can only have empty keys if all its admin keys
+        // have been revoked.
+        Ok(accounts.into_iter().filter(|account| !account.keys.is_empty()).collect())
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
@@ -598,8 +602,11 @@ impl RelayApiServer for Relay {
             std::iter::once(authorize_call).chain(permissions_calls)
         });
 
-        // todo: fetch them from somewhere.
-        let revoke_keys = Vec::new();
+        let revoke_calls = request
+            .capabilities
+            .revoke_keys
+            .iter()
+            .flat_map(|key| key.clone().into_calls(self.inner.entrypoint));
 
         // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
         // todo: pass key with permissions to estimate_fee instead of keyType
@@ -624,18 +631,15 @@ impl RelayApiServer for Relay {
         };
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
-        let all_calls = if request.capabilities.pre_op {
-            authorize_calls.chain(request.calls).collect::<Vec<_>>()
-        } else {
-            authorize_calls
-                .chain(maybe_prep.iter().flat_map(|acc| {
-                    acc.id_signatures
-                        .iter()
-                        .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
-                }))
-                .chain(request.calls)
-                .collect::<Vec<_>>()
-        };
+        let all_calls = authorize_calls
+            .chain(maybe_prep.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
+                acc.id_signatures
+                    .iter()
+                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+            }))
+            .chain(request.calls)
+            .chain(revoke_calls)
+            .collect::<Vec<_>>();
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self
@@ -677,7 +681,7 @@ impl RelayApiServer for Relay {
                     .into_iter()
                     .map(|key| key.into_response())
                     .collect::<Vec<_>>(),
-                revoke_keys,
+                revoke_keys: request.capabilities.revoke_keys,
             },
         };
 

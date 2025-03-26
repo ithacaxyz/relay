@@ -195,7 +195,7 @@ pub async fn prepare_calls(
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: tx.authorization_keys(),
-                revoke_keys: vec![],
+                revoke_keys: tx.revoke_keys(),
                 meta: Meta {
                     fee_token: env.fee_token,
                     key_hash: signer.key_hash(),

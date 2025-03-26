@@ -3,7 +3,7 @@
 use alloy::primitives::{Address, B256, Bytes, ChainId};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Call, Key, KeyType};
+use crate::types::{Call, Key, KeyID, KeyType};
 
 use super::Permission;
 
@@ -81,13 +81,25 @@ pub struct AuthorizeKeyResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RevokeKey {
     /// Key hash to revoke.
-    hash: B256,
+    pub hash: B256,
+    /// Key id to remove from the registry.
+    pub id: Option<KeyID>,
 }
 
 impl RevokeKey {
-    /// Transform into a call.
-    pub fn into_call(self) -> Call {
-        Call::revoke(self.hash)
+    /// Transform into a series of calls.
+    ///
+    /// The first call is to the delegation to revoke the key.
+    /// If a [`KeyID`] is present, a second call will be added targeting the account registry to
+    /// unregister the key id.
+    pub fn into_calls(self, registry: Address) -> Vec<Call> {
+        if let Some(id) = self.id {
+            // Unregister needs to come first, otherwise the next call would fail since there would
+            // be no key to check execute permissions.
+            vec![Call::unregister_account(registry, id), Call::revoke(self.hash)]
+        } else {
+            vec![Call::revoke(self.hash)]
+        }
     }
 }
 
@@ -98,7 +110,7 @@ mod tests {
     use crate::types::{
         Call, CallPermission,
         Delegation::SpendPeriod,
-        Key, KeyType, U40,
+        Key, KeyID, KeyType, U40,
         rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
@@ -242,11 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn test_revoke_key_into_call() {
+    fn test_revoke_key_into_calls() {
+        let key_id = KeyID::random();
+        let entrypoint = Address::random();
         let hash = B256::random();
 
-        let revoke = RevokeKey { hash };
+        let revoke = RevokeKey { hash, id: None };
+        assert_eq!(revoke.into_calls(entrypoint), vec![Call::revoke(hash)]);
 
-        assert_eq!(revoke.into_call(), Call::revoke(hash));
+        let revoke = RevokeKey { hash, id: Some(key_id) };
+        assert_eq!(
+            revoke.into_calls(entrypoint),
+            vec![Call::unregister_account(entrypoint, key_id), Call::revoke(hash)]
+        );
     }
 }

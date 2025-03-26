@@ -12,7 +12,10 @@ use eyre::WrapErr;
 use futures_util::future::join_all;
 use relay::{
     signers::DynSigner,
-    types::{Call, KeyWith712Signer, UserOp, rpc::AuthorizeKey},
+    types::{
+        Call, KeyWith712Signer, UserOp,
+        rpc::{AuthorizeKey, RevokeKey},
+    },
 };
 
 /// Represents the expected outcome of a test case execution
@@ -118,6 +121,8 @@ pub struct TxContext<'a> {
     pub key: Option<&'a KeyWith712Signer>,
     /// List of keys to authorize that will be converted to calls on top of the UserOp.
     pub authorization_keys: Vec<&'a KeyWith712Signer>,
+    /// List of keys to revoke that will be converted to calls on bottom of the UserOp.
+    pub revoke_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
     #[allow(dead_code)]
     pub fee_token: Address,
@@ -173,6 +178,11 @@ impl TxContext<'_> {
     /// Returns authorization keys as a list of [`AuthorizeKey`].
     pub fn authorization_keys(&self) -> Vec<AuthorizeKey> {
         self.authorization_keys.iter().map(|k| k.to_authorized()).collect()
+    }
+
+    /// Returns keys as a list of [`RevokeKey`].
+    pub fn revoke_keys(&self) -> Vec<RevokeKey> {
+        self.revoke_keys.iter().map(|k| k.to_revoked()).collect()
     }
 }
 

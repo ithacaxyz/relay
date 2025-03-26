@@ -11,7 +11,7 @@ use super::{
     AccountRegistry,
     Delegation::{SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall},
     IDelegation::{authorizeCall, revokeCall},
-    Key,
+    Key, KeyID,
 };
 
 sol! {
@@ -93,6 +93,15 @@ impl Call {
             target: registry,
             value: U256::ZERO,
             data: AccountRegistry::registerCall { signature, data, account }.abi_encode().into(),
+        }
+    }
+
+    /// Create a call to remove an account from the registry.
+    pub fn unregister_account(registry: Address, id: KeyID) -> Self {
+        Self {
+            target: registry,
+            value: U256::ZERO,
+            data: AccountRegistry::removeAccountCall { id }.abi_encode().into(),
         }
     }
 }

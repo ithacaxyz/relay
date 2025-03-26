@@ -1,7 +1,7 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
     Call, U40,
-    rpc::{AuthorizeKey, Permission},
+    rpc::{AuthorizeKey, Permission, RevokeKey},
 };
 use IDelegation::getKeysReturn;
 use alloy::{
@@ -350,6 +350,11 @@ impl KeyWith712Signer {
             permissions: self.permissions.clone(),
             id_signature: None,
         }
+    }
+
+    /// Returns its [`RevokeKey`].
+    pub fn to_revoked(&self) -> RevokeKey {
+        RevokeKey { hash: self.key_hash(), id: (!self.keyType.is_p256()).then(|| self.id()) }
     }
 
     /// Signs the PREP address with the [`KeyID`] signer.
