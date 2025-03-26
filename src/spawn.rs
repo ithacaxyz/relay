@@ -19,17 +19,31 @@ use itertools::Itertools;
 use jsonrpsee::server::{
     RpcServiceBuilder, Server, ServerHandle, middleware::http::ProxyGetRequestLayer,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use std::{path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
+
+/// Context returned once relay is launched.
+#[derive(Debug, Clone)]
+pub struct RelayHandle {
+    /// Handle to RPC server.
+    pub server: ServerHandle,
+    /// Configured providers.
+    pub chains: Chains,
+    /// Storage of the relay.
+    pub storage: RelayStorage,
+    /// Metrics collector handle.
+    pub metrics: PrometheusHandle,
+}
 
 /// Attempts to spawn the relay service using CLI arguments and a configuration file.
 pub async fn try_spawn_with_args<P: AsRef<Path>>(
     args: Args,
     config_path: P,
     registry_path: P,
-) -> eyre::Result<ServerHandle> {
+) -> eyre::Result<RelayHandle> {
     let config = if !config_path.as_ref().exists() {
         let config = args.merge_relay_config(RelayConfig::default());
         config.save_to_file(&config_path)?;
@@ -51,7 +65,7 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
 }
 
 /// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
-pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<ServerHandle> {
+pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<RelayHandle> {
     let registry = Arc::new(registry);
 
     // construct provider
@@ -60,6 +74,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     )
     .await?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
+
+    // setup metrics exporter and periodic metric collectors
+    let metrics =
+        metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
+    metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
+        .await?;
 
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
@@ -86,11 +106,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     }
 
     let storage = RelayStorage::in_memory();
+    let chains = Chains::new(providers.clone(), signers, storage.clone()).await?;
 
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
         config.entrypoint,
-        Chains::new(providers.clone(), signers, storage.clone()).await?,
+        chains.clone(),
         quote_signer,
         config.quote,
         price_oracle,
@@ -98,10 +119,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage.clone(),
     )
     .into_rpc();
-
-    // setup metrics exporter and periodic metric collectors
-    metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
-    metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints).await?;
 
     // http layers
     let cors = CorsLayer::new()
@@ -124,5 +141,5 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
 
-    Ok(server.start(rpc))
+    Ok(RelayHandle { server: server.start(rpc), chains, storage, metrics })
 }

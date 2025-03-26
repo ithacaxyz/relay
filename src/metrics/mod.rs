@@ -6,10 +6,10 @@ pub use periodic::spawn_periodic_collectors;
 use futures_util::future::BoxFuture;
 use jsonrpsee::{MethodResponse, server::middleware::rpc::RpcServiceT, types::Request};
 use metrics::{counter, histogram};
-use metrics_exporter_prometheus::PrometheusBuilder;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::{
     net::SocketAddr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -73,11 +73,12 @@ where
 /// # Panics
 ///
 /// This will panic if the Prometheus recorder could not be set as the global metrics recorder.
-pub async fn setup_exporter(metrics_addr: impl Into<SocketAddr>) {
-    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+pub async fn setup_exporter(metrics_addr: impl Into<SocketAddr>) -> PrometheusHandle {
+    static HANDLE: Mutex<Option<PrometheusHandle>> = Mutex::new(None);
 
-    if INITIALIZED.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
-        return;
+    let mut lock = HANDLE.lock().unwrap();
+    if let Some(handle) = &*lock {
+        return handle.clone();
     }
 
     let addr: SocketAddr = metrics_addr.into();
@@ -87,8 +88,13 @@ pub async fn setup_exporter(metrics_addr: impl Into<SocketAddr>) {
         .build()
         .expect("failed to build metrics recorder");
 
+    let handle = recorder.handle();
     metrics::set_global_recorder(recorder).expect("could not set metrics recorder");
     tokio::spawn(exporter);
 
-    tracing::info!(target: "relay::spawn", %addr, "Started metrics server")
+    tracing::info!(target: "relay::spawn", %addr, "Started metrics server");
+
+    *lock = Some(handle.clone());
+
+    handle
 }

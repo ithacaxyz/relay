@@ -22,6 +22,7 @@ pub struct Chain {
 }
 
 /// A collection of providers for different chains.
+#[derive(Clone)]
 pub struct Chains {
     /// The providers for each chain.
     chains: HashMap<ChainId, Chain>,

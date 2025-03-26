@@ -71,7 +71,7 @@ impl Args {
     pub async fn run(self) -> eyre::Result<()> {
         let config_path = self.config.clone();
         let registry_path = self.registry.clone();
-        try_spawn_with_args(self, &config_path, &registry_path).await?.stopped().await;
+        try_spawn_with_args(self, &config_path, &registry_path).await?.server.stopped().await;
 
         Ok(())
     }
