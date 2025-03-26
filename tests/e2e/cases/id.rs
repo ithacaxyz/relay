@@ -52,7 +52,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
                 address: account.prep.address,
                 keys: vec![AuthorizeKeyResponse {
                     hash: admin_key_hash,
-                    authorize_key: admin_key.to_authorized(),
+                    authorize_key: admin_key.to_authorized(None).await?,
                 }]
             }]
         );

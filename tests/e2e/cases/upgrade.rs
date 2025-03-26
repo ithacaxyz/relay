@@ -69,10 +69,12 @@ pub async fn upgrade_account(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_upgrade() -> eyre::Result<()> {
+    let env = Environment::setup_with_upgraded().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
     upgrade_account(
-        &Environment::setup_with_upgraded().await?,
-        &[key.to_authorized()],
+        &env,
+        &[key.to_authorized(Some(env.eoa.address())).await?],
         AuthKind::Auth,
         vec![],
     )
@@ -91,7 +93,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
             address: env.eoa.address(),
             chain_id: env.chain_id,
             capabilities: UpgradeAccountCapabilities {
-                authorize_keys: vec![key.to_authorized()],
+                authorize_keys: vec![key.to_authorized(Some(env.eoa.address())).await?],
                 delegation: env.delegation,
                 fee_token: env.erc20,
                 pre_ops: vec![],

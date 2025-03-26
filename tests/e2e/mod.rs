@@ -194,7 +194,7 @@ pub async fn prepare_calls(
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
-                authorize_keys: tx.authorization_keys(),
+                authorize_keys: tx.authorization_keys(Some(env.eoa.address())).await?,
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
                     fee_token: env.fee_token,

@@ -1,4 +1,5 @@
 use super::invalid_params;
+use crate::types::KeyHash;
 use alloy::primitives::{Address, PrimitiveSignature};
 use thiserror::Error;
 
@@ -31,12 +32,16 @@ pub enum KeysError {
         /// The ID in the request.
         got: Address,
     },
+    /// Missing key id signature.
+    #[error("missing key id signature for key hash {0}")]
+    MissingKeyID(KeyHash),
 }
 
 impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: KeysError) -> Self {
         match err {
             KeysError::UnsupportedKeyType
+            | KeysError::MissingKeyID { .. }
             | KeysError::MissingAdminKey
             | KeysError::OnlyAdminKeyAllowed
             | KeysError::TakenKeyId { .. }

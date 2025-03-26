@@ -10,31 +10,32 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
+use futures_util::future::try_join_all;
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
         Call, KeyType, KeyWith712Signer, Signature,
-        rpc::{
-            AuthorizeKey, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse,
-        },
+        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse},
     },
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_with_upgraded_account() -> eyre::Result<()> {
-    let (signers, keys) = [KeyType::Secp256k1, KeyType::WebAuthnP256]
-        .into_iter()
-        .map(|key_type| {
-            let signer = KeyWith712Signer::random_admin(key_type).unwrap().unwrap();
-            let key = signer.key().clone();
-            (signer, AuthorizeKey { key, permissions: vec![], id_signature: None })
-        })
-        .collect::<(Vec<_>, Vec<_>)>();
-
     // Upgrade environment EOA signer with the above admin keys.
     let env = Environment::setup_with_upgraded().await?;
+
+    let (signers, keys) = try_join_all(
+        [KeyType::Secp256k1, KeyType::WebAuthnP256].into_iter().map(async |key_type| {
+            let signer = KeyWith712Signer::random_admin(key_type).unwrap().unwrap();
+            let auth = signer.to_authorized(Some(env.eoa.address())).await?;
+            Ok::<_, eyre::Report>((signer, auth))
+        }),
+    )
+    .await?
+    .into_iter()
+    .collect::<(Vec<_>, Vec<_>)>();
+
     upgrade_account(&env, &keys, AuthKind::Auth, vec![]).await?;
 
     // Every key will sign a ERC20 transfer

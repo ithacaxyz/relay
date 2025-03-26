@@ -8,7 +8,7 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::types::{AccountRegistry::AccountRegistryCalls, rpc::CreateAccountContext};
+use crate::types::{AccountRegistry::AccountRegistryCalls, Call, rpc::CreateAccountContext};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -304,7 +304,7 @@ impl Relay {
                 authorize_key: AuthorizeKey {
                     key,
                     permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
-                    id_signature: None,
+                    signature: None,
                 },
             })
             .collect())
@@ -313,6 +313,23 @@ impl Relay {
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
         Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
+    }
+
+    /// Converts authorized keys into a list of [`Call`].
+    fn authorize_into_calls(
+        &self,
+        keys: Vec<AuthorizeKey>,
+        account: Option<Address>,
+    ) -> Result<Vec<Call>, KeysError> {
+        let mut calls = Vec::with_capacity(keys.len());
+        for key in keys {
+            // additional_calls: permission & account registry
+            let (authorize_call, additional_calls) =
+                key.into_calls(self.inner.entrypoint, account)?;
+            calls.push(authorize_call);
+            calls.extend(additional_calls);
+        }
+        Ok(calls)
     }
 }
 
@@ -479,15 +496,8 @@ impl RelayApiServer for Relay {
         }
 
         // Generate all calls that will authorize keys and set their permissions
-        let init_calls = request
-            .capabilities
-            .authorize_keys
-            .iter()
-            .flat_map(|key| {
-                let (authorize_call, permissions_calls) = key.clone().into_calls();
-                std::iter::once(authorize_call).chain(permissions_calls)
-            })
-            .collect::<Vec<_>>();
+        let init_calls =
+            self.authorize_into_calls(request.capabilities.authorize_keys.clone(), None)?;
 
         let account = PREPAccount::initialize(request.capabilities.delegation, init_calls);
         let prep_address = account.address;
@@ -596,11 +606,10 @@ impl RelayApiServer for Relay {
         let provider = self.provider(request.chain_id)?;
 
         // Generate all calls that will authorize keys and set their permissions
-        // todo: admin or webauthn require Some(signed identifier)
-        let authorize_calls = request.capabilities.authorize_keys.iter().flat_map(|key| {
-            let (authorize_call, permissions_calls) = key.clone().into_calls();
-            std::iter::once(authorize_call).chain(permissions_calls)
-        });
+        let authorize_calls = self.authorize_into_calls(
+            request.capabilities.authorize_keys.clone(),
+            Some(request.from),
+        )?;
 
         let revoke_calls = request
             .capabilities
@@ -632,6 +641,7 @@ impl RelayApiServer for Relay {
 
         // Merges authorize, registry(from prepareAccount) and requested calls.
         let all_calls = authorize_calls
+            .into_iter()
             .chain(maybe_prep.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
                 acc.id_signatures
                     .iter()
@@ -701,16 +711,10 @@ impl RelayApiServer for Relay {
         }
 
         // Generate all calls that will authorize keys and set their permissions
-        // todo: admin or webauthn require Some(signed identifier)
-        let calls = request
-            .capabilities
-            .authorize_keys
-            .iter()
-            .flat_map(|key| {
-                let (authorize_call, permissions_calls) = key.clone().into_calls();
-                std::iter::once(authorize_call).chain(permissions_calls)
-            })
-            .collect::<Vec<_>>();
+        let calls = self.authorize_into_calls(
+            request.capabilities.authorize_keys.clone(),
+            Some(request.address),
+        )?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let quote = self

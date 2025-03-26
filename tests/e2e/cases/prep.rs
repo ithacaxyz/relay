@@ -47,7 +47,10 @@ pub async fn prep_account<'a>(
         .relay_endpoint
         .prepare_create_account(PrepareCreateAccountParameters {
             capabilities: PrepareCreateAccountCapabilities {
-                authorize_keys: authorize_keys.iter().map(|k| k.to_authorized()).collect(),
+                authorize_keys: try_join_all(
+                    authorize_keys.iter().map(async |k| k.to_authorized(None).await),
+                )
+                .await?,
                 delegation: env.delegation,
             },
             chain_id: env.chain_id,
