@@ -11,14 +11,11 @@ use alloy::{
     sol_types::{SolConstructor, SolValue},
 };
 use eyre::{self, ContextCompat, WrapErr};
-use jsonrpsee::{
-    http_client::{HttpClient, HttpClientBuilder},
-    server::ServerHandle,
-};
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     config::RelayConfig,
     signers::DynSigner,
-    spawn::try_spawn,
+    spawn::{RelayHandle, try_spawn},
     types::{
         CoinKind, CoinRegistry,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
@@ -32,6 +29,12 @@ use std::{
 };
 use url::Url;
 
+#[derive(Debug, Clone, Default)]
+pub struct EnvironmentConfig {
+    pub is_prep: bool,
+    pub block_time: Option<u64>,
+}
+
 pub struct Environment {
     pub _anvil: Option<AnvilInstance>,
     pub provider: DynProvider,
@@ -43,8 +46,7 @@ pub struct Environment {
     pub erc20_alt: Address,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
-    #[allow(dead_code)]
-    pub relay_handle: ServerHandle,
+    pub relay_handle: RelayHandle,
 }
 
 impl std::fmt::Debug for Environment {
@@ -66,14 +68,14 @@ impl Environment {
     ///
     /// Read [`Self::setup`] for more information on setup.
     pub async fn setup_with_prep() -> eyre::Result<Self> {
-        Self::setup(true).await
+        Self::setup(EnvironmentConfig { is_prep: true, ..Default::default() }).await
     }
 
     /// Sets up the test environment with a upgraded account using [`DynSigner`].
     ///
     /// Read [`Self::setup`] for more information on setup.
     pub async fn setup_with_upgraded() -> eyre::Result<Self> {
-        Self::setup(false).await
+        Self::setup(EnvironmentConfig { is_prep: false, ..Default::default() }).await
     }
 
     /// Sets up the test environment including Anvil, contracts, and the relay service.
@@ -98,11 +100,14 @@ impl Environment {
     /// TEST_DELEGATION="0xDelegationAddress"
     /// TEST_ERC20="0xYourErc20Address"
     /// ```
-    async fn setup(is_prep: bool) -> eyre::Result<Self> {
+    pub async fn setup(config: EnvironmentConfig) -> eyre::Result<Self> {
         dotenv::dotenv().ok();
 
         // Spawns a local Ethereum node if one is not specified.
         let (endpoint, anvil) = if let Ok(endpoint) = std::env::var("TEST_EXTERNAL_ANVIL") {
+            if config.block_time.is_some() {
+                eyre::bail!("Cannot specify both block time and external anvil node");
+            }
             (Url::from_str(&endpoint).wrap_err("Invalid endpoint on $TEST_EXTERNAL_ANVIL ")?, None)
         } else {
             let mut args = vec![];
@@ -110,6 +115,10 @@ impl Environment {
             let fork_url = std::env::var("TEST_FORK_URL");
             if let Ok(fork_url) = &fork_url {
                 args.extend(["--fork-url", fork_url]);
+            }
+            let block_time = config.block_time.map(|t| t.to_string());
+            if let Some(block_time) = &block_time {
+                args.extend(["--block-time", block_time]);
             }
 
             let fork_block_number = std::env::var("TEST_FORK_BLOCK_NUMBER");
@@ -141,7 +150,7 @@ impl Environment {
         // Get or deploy mock contracts.
         let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
 
-        let eoa = if is_prep {
+        let eoa = if config.is_prep {
             EoaKind::create_prep()
         } else {
             EoaKind::create_upgraded(

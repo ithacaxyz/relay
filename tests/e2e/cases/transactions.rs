@@ -1,0 +1,218 @@
+use std::time::Duration;
+
+use crate::e2e::{
+    MockErc20,
+    environment::{Environment, EnvironmentConfig},
+    send_prepared_calls,
+};
+use alloy::{
+    primitives::{Address, B256, U256},
+    providers::{PendingTransactionBuilder, Provider},
+    sol_types::{SolCall, SolValue},
+};
+use eyre::Context;
+use futures_util::future::{join_all, try_join_all};
+use relay::{
+    rpc::RelayApiClient,
+    signers::{DynSigner, Eip712PayLoadSigner},
+    transactions::{RelayTransaction, TransactionStatus},
+    types::{
+        Call, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
+        rpc::{
+            CreateAccountParameters, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
+            PrepareCreateAccountResponse,
+        },
+    },
+};
+use tokio::sync::mpsc;
+
+/// An account that can be used to send userops.
+struct MockAccount {
+    address: Address,
+    key: KeyWith712Signer,
+}
+
+impl MockAccount {
+    /// Creates a new account by going through PREP flow.
+    async fn new(env: &Environment) -> eyre::Result<Self> {
+        let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256).unwrap().unwrap();
+
+        let PrepareCreateAccountResponse { context, address, digests, .. } = env
+            .relay_endpoint
+            .prepare_create_account(PrepareCreateAccountParameters {
+                capabilities: PrepareCreateAccountCapabilities {
+                    authorize_keys: vec![key.to_authorized()],
+                    delegation: env.delegation,
+                },
+                chain_id: env.chain_id,
+            })
+            .await
+            .unwrap();
+
+        let ephemeral = DynSigner::load(&B256::random().to_string(), None).await?;
+        let signature = ephemeral.sign_hash(&digests[0]).await?;
+
+        env.relay_endpoint
+            .create_account(CreateAccountParameters {
+                context,
+                signatures: vec![KeyHashWithID {
+                    hash: key.key_hash(),
+                    id: ephemeral.address(),
+                    signature,
+                }],
+            })
+            .await
+            .unwrap();
+
+        let PrepareCallsResponse { context, digest, .. } = env
+            .relay_endpoint
+            .prepare_calls(PrepareCallsParameters {
+                calls: vec![Call {
+                    target: env.erc20,
+                    value: U256::ZERO,
+                    data: MockErc20::mintCall { a: address, val: U256::from(100e18) }
+                        .abi_encode()
+                        .into(),
+                }],
+                chain_id: env.chain_id,
+                from: address,
+                capabilities: PrepareCallsCapabilities {
+                    authorize_keys: vec![],
+                    meta: Meta { fee_token: env.erc20, key_hash: key.key_hash(), nonce: None },
+                    pre_ops: vec![],
+                    pre_op: false,
+                    revoke_keys: vec![],
+                },
+            })
+            .await
+            .unwrap();
+
+        let signature = Signature {
+            innerSignature: key.sign_payload_hash(digest).await?,
+            keyHash: key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
+
+        let tx_hash = send_prepared_calls(env, &key, signature, context).await.unwrap();
+
+        let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
+            .get_receipt()
+            .await
+            .wrap_err("Failed to get receipt")?;
+
+        assert!(receipt.status());
+
+        Ok(MockAccount { address, key })
+    }
+
+    /// Prepares a simple transaction from the account which is ready to be sent to the transacton
+    /// service.
+    async fn prepare_tx(&self, env: &Environment) -> RelayTransaction {
+        let PrepareCallsResponse { mut context, digest, .. } = env
+            .relay_endpoint
+            .prepare_calls(PrepareCallsParameters {
+                calls: vec![],
+                chain_id: env.chain_id,
+                from: self.address,
+                capabilities: PrepareCallsCapabilities {
+                    authorize_keys: vec![],
+                    meta: Meta { fee_token: env.erc20, key_hash: self.key.key_hash(), nonce: None },
+                    pre_ops: vec![],
+                    pre_op: false,
+                    revoke_keys: vec![],
+                },
+            })
+            .await
+            .unwrap();
+
+        context.ty_mut().op.signature = Signature {
+            innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
+            keyHash: self.key.key_hash(),
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
+
+        RelayTransaction::new(context, env.entrypoint, None)
+    }
+}
+
+/// Waits for a final transaction status.
+async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> TransactionStatus {
+    while let Some(status) = events.recv().await {
+        if status.is_final() {
+            return status;
+        }
+    }
+
+    panic!("Transaction did not complete");
+}
+
+/// Asserts that transaction was confirmed.
+async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) {
+    if let TransactionStatus::Failed(err) = wait_for_tx(events).await {
+        panic!("Failed to send transaction: {err}");
+    }
+}
+
+/// Asserts that metrics match the expected values.
+fn assert_metrics(sent: usize, confirmed: usize, failed: usize, env: &Environment) {
+    let output = env.relay_handle.metrics.render();
+    let chain_id = env.chain_id;
+    assert!(output.contains(&format!(r#"transactions_sent{{chain_id="{chain_id}"}} {sent}"#)));
+    assert!(
+        output.contains(&format!(r#"transactions_confirmed{{chain_id="{chain_id}"}} {confirmed}"#))
+    );
+    assert!(output.contains(&format!(r#"transactions_failed{{chain_id="{chain_id}"}} {failed}"#)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_basic_concurrent() -> eyre::Result<()> {
+    let env =
+        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // setup 100 accounts
+    let accounts = try_join_all((0..100).map(|_| MockAccount::new(&env))).await?;
+    // wait a bit to make sure all tasks see the tx confirmation
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_metrics(100, 100, 0, &env);
+
+    // send 100 transactions and assert all of them are confirmed
+    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let handles = transactions
+        .into_iter()
+        .map(|tx| tx_service_handle.send_transaction(tx))
+        .collect::<Vec<_>>();
+    for handle in handles {
+        assert_confirmed(handle).await;
+    }
+    assert_metrics(200, 200, 0, &env);
+
+    // send 100 more transactions some of which are failing
+    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let mut invalid = 0;
+    let handles = transactions
+        .into_iter()
+        .map(|mut tx| {
+            // Set invalid signature for some of the transactions
+            if rand::random_bool(0.5) {
+                tx.quote.ty_mut().op.signature = Default::default();
+                invalid += 1;
+            }
+
+            tx_service_handle.send_transaction(tx)
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        wait_for_tx(handle).await;
+    }
+
+    assert_metrics(300, 300 - invalid, invalid, &env);
+
+    Ok(())
+}
