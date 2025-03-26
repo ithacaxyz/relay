@@ -263,8 +263,9 @@ async fn fee_bump() -> eyre::Result<()> {
 
     env.disable_mining().await;
 
-    // mine blocks with priority fee of 1000 wei to make it look like the market price
-    let initial_priority_fee = 1000;
+    // mine blocks with fixed priority fee to make it look like the market price
+    let initial_priority_fee =
+        env.provider.estimate_eip1559_fees().await.unwrap().max_priority_fee_per_gas;
     env.mine_blocks_with_priority_fee(initial_priority_fee).await;
 
     // prepare transaction to send
