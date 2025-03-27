@@ -87,13 +87,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        let signature = Signature {
-            innerSignature: key.sign_payload_hash(digest).await?,
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        let signature = key.sign_payload_hash(digest).await?;
 
         let tx_hash = send_prepared_calls(env, &key, signature, context).await.unwrap();
 

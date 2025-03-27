@@ -111,11 +111,11 @@ impl CreateAccountParameters {
     fn key_identifiers(&self) -> RpcResult<Vec<KeyHashWithID>> {
         self.signatures
             .iter()
-            .map(|KeySignature { public_key, key_type, value }| {
-                let hash = Key::hash(*key_type, public_key);
+            .map(|key_signature| {
+                let hash = key_signature.key_hash();
                 let digest = Key::id_digest_from_hash(hash, self.context.account.address);
 
-                PrimitiveSignature::from_raw(value)
+                PrimitiveSignature::from_raw(&key_signature.value)
                     .and_then(|signature| {
                         signature.recover_address_from_prehash(&digest).map(|id| KeyHashWithID {
                             hash,
@@ -123,7 +123,9 @@ impl CreateAccountParameters {
                             signature,
                         })
                     })
-                    .map_err(|_| KeysError::InvalidKeyIdSignature(value.clone()).into())
+                    .map_err(|_| {
+                        KeysError::InvalidKeyIdSignature(key_signature.value.clone()).into()
+                    })
             })
             .collect()
     }
