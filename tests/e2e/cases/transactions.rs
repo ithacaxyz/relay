@@ -59,6 +59,7 @@ impl MockAccount {
                     public_key: key.publicKey.clone(),
                     key_type: key.keyType,
                     value: signature.as_bytes().into(),
+                    prehash: false,
                 }],
             })
             .await

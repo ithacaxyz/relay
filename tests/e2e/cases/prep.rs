@@ -77,6 +77,7 @@ pub async fn prep_account<'a>(
             public_key: key.publicKey.clone(),
             key_type: key.keyType,
             value: key.id_sign(prep_address).await?.as_bytes().into(),
+            prehash: false,
         })
     }))
     .await?;
