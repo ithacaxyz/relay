@@ -59,6 +59,7 @@ impl MockAccount {
                     public_key: key.publicKey.clone(),
                     key_type: key.keyType,
                     value: signature.as_bytes().into(),
+                    prehash: false,
                 }],
             })
             .await
@@ -349,12 +350,11 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
             > tx_0.quote.ty().native_fee_estimate.max_fee_per_gas
     );
 
-    // drop the transaction again to make sure it's not getting mined
-    env.drop_transaction(hash_0).await;
-    // enable block mining and assert that first transaction is failing, while the second
-    // transaction lands succesfully
-    env.enable_mining().await;
+    // assert that first transaction fails
     assert_failed(events_0, "transaction underpriced").await;
+
+    // enable block mining and assert that second transaction succeeds
+    env.enable_mining().await;
     assert_confirmed(events_1).await;
 
     Ok(())

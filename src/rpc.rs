@@ -61,8 +61,8 @@ use crate::{
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
-    /// Checks the health of the relay and returns its version.
-    #[method(name = "health")]
+    /// Checks the health of the relay.
+    #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<String>;
 
     /// Get all supported fee tokens by chain.
@@ -791,7 +791,7 @@ impl RelayApiServer for Relay {
         op.signature = Signature {
             innerSignature: request.signature.value,
             keyHash: key_hash,
-            prehash: false,
+            prehash: request.signature.prehash,
         }
         .abi_encode_packed()
         .into();

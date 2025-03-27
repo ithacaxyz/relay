@@ -141,6 +141,9 @@ pub struct KeySignature {
     pub key_type: KeyType,
     /// Signature value.
     pub value: Bytes,
+    /// Whether it should prehash before verifying the signature.
+    #[serde(default)]
+    pub prehash: bool,
 }
 
 impl KeySignature {
