@@ -235,6 +235,7 @@ pub async fn send_prepared_calls(
                 public_key: signer.publicKey.clone(),
                 key_type: signer.keyType,
                 value: signature,
+                prehash: false,
             },
         })
         .await

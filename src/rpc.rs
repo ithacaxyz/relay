@@ -788,7 +788,7 @@ impl RelayApiServer for Relay {
         op.signature = Signature {
             innerSignature: request.signature.value,
             keyHash: key_hash,
-            prehash: false,
+            prehash: request.signature.prehash,
         }
         .abi_encode_packed()
         .into();
