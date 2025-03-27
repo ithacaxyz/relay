@@ -137,6 +137,7 @@ mod tests {
                     entrypoint: Default::default(),
                     endpoints: Default::default(),
                     quote_ttl: Default::default(),
+                    rate_ttl: Default::default(),
                     quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
                     secret_keys: vec![key.to_string()],

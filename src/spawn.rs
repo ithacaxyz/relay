@@ -4,7 +4,7 @@ use crate::{
     cli::Args,
     config::RelayConfig,
     metrics::{self, RpcMetricsService},
-    price::{PriceFetcher, PriceOracle},
+    price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
