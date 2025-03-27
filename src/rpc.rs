@@ -61,7 +61,7 @@ use crate::{
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
-    /// Checks the health of the relay.
+    /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<String>;
 
