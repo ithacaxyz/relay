@@ -10,6 +10,9 @@ use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
 
+/// The time interval between fetching prices.
+static PRICE_FETCH_INTERVAL: Duration = Duration::from_secs(60);
+
 /// CoinGecko price fetcher;
 #[derive(Debug)]
 pub struct CoinGecko {
@@ -74,9 +77,9 @@ impl CoinGecko {
 
         let gecko = Self { coin_registry, request_urls, update_tx };
 
-        // Launch task to fetch prices every 10 seconds
+        // Launch task to fetch prices on a fixed interval
         tokio::spawn(async move {
-            let mut clock = interval(Duration::from_secs(10));
+            let mut clock = interval(PRICE_FETCH_INTERVAL);
 
             loop {
                 clock.tick().await;
