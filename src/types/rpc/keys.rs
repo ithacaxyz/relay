@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::KeysError,
-    types::{Call, Key, KeyID, KeyType},
+    types::{Call, Key, KeyHash, KeyID, KeyType},
 };
 
 use super::Permission;
@@ -141,6 +141,13 @@ pub struct KeySignature {
     pub key_type: KeyType,
     /// Signature value.
     pub value: Bytes,
+}
+
+impl KeySignature {
+    /// Returns the associated [`KeyHash`].
+    pub fn key_hash(&self) -> KeyHash {
+        Key::hash(self.key_type, &self.public_key)
+    }
 }
 
 #[cfg(test)]

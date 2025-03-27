@@ -784,7 +784,14 @@ impl RelayApiServer for Relay {
         let op = &mut request.context.ty_mut().op;
 
         // Fill UserOp with the user signature.
-        op.signature = request.signature.value;
+        let key_hash = request.signature.key_hash();
+        op.signature = Signature {
+            innerSignature: request.signature.value,
+            keyHash: key_hash,
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
 
         // Set `paymentAmount`. It is not included into the signature so we need to enforce it here.
         op.paymentAmount = op.paymentMaxAmount;
