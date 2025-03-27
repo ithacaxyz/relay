@@ -49,6 +49,9 @@ pub struct Args {
     /// The lifetime of a fee quote.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
     pub quote_ttl: Duration,
+    /// The lifetime of a token price rate.
+    #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "300")]
+    pub rate_ttl: Duration,
     /// Extra buffer added to UserOp gas estimates.
     #[arg(long, value_name = "USER_OP_GAS", default_value_t = USER_OP_GAS_BUFFER)]
     pub user_op_gas_buffer: u64,
@@ -87,6 +90,7 @@ impl Args {
             .with_port(self.port)
             .with_metrics_port(self.metrics_port)
             .with_quote_ttl(self.quote_ttl)
+            .with_rate_ttl(self.rate_ttl)
             .with_entrypoint(self.entrypoint)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)

@@ -207,6 +207,7 @@ impl Environment {
                 .with_metrics_port(0)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
+                .with_rate_ttl(Duration::from_secs(300))
                 .with_quote_key(relay_private_key.clone())
                 .with_transaction_key(relay_private_key)
                 .with_quote_constant_rate(1.0)

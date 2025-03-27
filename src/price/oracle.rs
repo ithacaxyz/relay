@@ -4,7 +4,11 @@ use crate::{
     types::{CoinKind, CoinPair, CoinRegistry},
 };
 use alloy::primitives::U256;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::trace;
 
@@ -15,16 +19,29 @@ struct RateTick {
     pub rate: f64,
     /// Timestamp when we received the rate update.
     #[allow(unused)]
-    pub timestamp: u64,
+    pub timestamp: Instant,
 }
 
 /// Messages used by the price oracle task.
 #[derive(Debug)]
 pub enum PriceOracleMessage {
     /// Message to update inner price registry.
-    Update { fetcher: PriceFetcher, prices: Vec<(CoinPair, f64)>, timestamp: u64 },
+    Update { fetcher: PriceFetcher, prices: Vec<(CoinPair, f64)>, timestamp: Instant },
     /// Message to lookup the conversion rate of [`CoinPair`].
     Lookup { pair: CoinPair, tx: oneshot::Sender<Option<f64>> },
+}
+
+/// Configuration for the price oracle.
+#[derive(Debug, Clone)]
+pub struct PriceOracleConfig {
+    /// Duration after which a rate is considered expired.
+    pub rate_ttl: Duration,
+}
+
+impl Default for PriceOracleConfig {
+    fn default() -> Self {
+        Self { rate_ttl: Duration::from_secs(300) }
+    }
 }
 
 /// A price orable that can be used to lookup or update the price of a [`CoinPair`].
@@ -39,13 +56,13 @@ pub struct PriceOracle {
 
 impl Default for PriceOracle {
     fn default() -> Self {
-        Self::new()
+        Self::new(Default::default())
     }
 }
 
 impl PriceOracle {
     /// Return a new [`PriceOracle`].
-    pub fn new() -> Self {
+    pub fn new(config: PriceOracleConfig) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let mut registry: HashMap<CoinPair, RateTick> = HashMap::new();
@@ -60,7 +77,12 @@ impl PriceOracle {
                     }
                     PriceOracleMessage::Lookup { pair, tx } => {
                         trace!(?pair, "Received lookup request.");
-                        let _ = tx.send(registry.get(&pair).map(|t| t.rate));
+                        let _ = tx.send(
+                            registry
+                                .get(&pair)
+                                .filter(|t| t.timestamp.elapsed() < config.rate_ttl)
+                                .map(|t| t.rate),
+                        );
                     }
                 }
             }

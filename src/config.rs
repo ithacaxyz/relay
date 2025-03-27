@@ -55,6 +55,9 @@ pub struct QuoteConfig {
     /// The lifetime of a fee quote.
     #[serde(with = "crate::serde::duration")]
     pub ttl: Duration,
+    /// The lifetime of a price rate.
+    #[serde(with = "crate::serde::duration")]
+    pub rate_ttl: Duration,
 }
 
 /// Gas estimate configuration.
@@ -100,6 +103,7 @@ impl Default for RelayConfig {
                 constant_rate: None,
                 gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
                 ttl: Duration::from_secs(5),
+                rate_ttl: Duration::from_secs(300),
             },
             entrypoint: Address::ZERO,
             secrets: SecretsConfig::default(),
@@ -129,6 +133,12 @@ impl RelayConfig {
     /// Sets the lifetime duration for fee quotes.
     pub fn with_quote_ttl(mut self, quote_ttl: Duration) -> Self {
         self.quote.ttl = quote_ttl;
+        self
+    }
+
+    /// Sets the lifetime duration for token price rates.
+    pub fn with_rate_ttl(mut self, rate_ttl: Duration) -> Self {
+        self.quote.rate_ttl = rate_ttl;
         self
     }
 
