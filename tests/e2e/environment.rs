@@ -298,7 +298,7 @@ impl Environment {
             let max_fee_per_gas =
                 self.provider.estimate_eip1559_fees().await.unwrap().max_fee_per_gas;
 
-            join_all((0..100).map(|i| {
+            join_all((0..10).map(|i| {
                 let signer = &signer;
                 async move {
                     let mut tx = TxEip1559 {
