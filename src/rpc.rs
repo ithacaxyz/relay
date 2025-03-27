@@ -16,15 +16,12 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes, map::HashSet},
+    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::{
-    TryFutureExt,
-    future::{try_join, try_join_all},
-};
+use futures_util::{TryFutureExt, future::try_join_all};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -559,48 +556,50 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        // Get all accounts from onchain and local storage
-        let local_addresses = Box::pin(async move {
-            self.inner
-                .storage
-                .read_accounts_from_id(&request.id)
-                .await
-                .map_err(RelayError::Storage)
-                .map(|accounts| accounts.unwrap_or_default())
-        });
-        let onchain_addresses = Box::pin(async move {
-            let accounts =
-                AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
+        let mut accounts =
+            AccountRegistryCalls::accounts(request.id, self.inner.entrypoint, provider.clone())
+                .await?;
+
+        if accounts.is_none() {
+            // Only read from storage if the onchain mapping does not exist. It's possible that the
+            // original key has been revoked onchain, and we don't want to return it as
+            // a response.
+            if let Some(key_accounts) =
+                self.inner.storage.read_accounts_from_id(&request.id).await?
+            {
+                // For the same reason of the above, we only want to return locally stored accounts
+                // that have NOT been deployed.
+                let stored_accounts: Vec<Address> =
+                    try_join_all(key_accounts.into_iter().map(async |account| {
+                        Ok::<_, RelayError>(
+                            (!Account::new(account, &provider).is_delegated().await?)
+                                .then_some(account),
+                        )
+                    }))
                     .await?
-                    .pop()
-                    .expect("should exist");
-            Ok(accounts.map(|(_, accounts)| accounts).unwrap_or_default())
-        });
+                    .into_iter()
+                    .flatten()
+                    .collect();
 
-        let (local_addresses, onchain_addresses) =
-            try_join(local_addresses, onchain_addresses).await?;
-
-        // Merge local and onchain accounts, ensuring there are no duplicates.
-        let account_set: HashSet<_> =
-            local_addresses.into_iter().chain(onchain_addresses).collect();
-
-        if account_set.is_empty() {
-            return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());
+                if !stored_accounts.is_empty() {
+                    accounts = Some(stored_accounts);
+                }
+            }
         }
 
-        let accounts = try_join_all(account_set.into_iter().map(async |address| {
-            Ok::<_, RelayError>(AccountResponse {
+        let Some(accounts) = accounts else {
+            return Err(KeysError::UnknownKeyId(request.id).into());
+        };
+
+        try_join_all(accounts.into_iter().map(async |address| {
+            Ok(AccountResponse {
                 address,
                 keys: self
                     .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
                     .await?,
             })
         }))
-        .await?;
-
-        // Only return accounts with keys. An account can only have empty keys if all its admin keys
-        // have been revoked.
-        Ok(accounts.into_iter().filter(|account| !account.keys.is_empty()).collect())
+        .await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
