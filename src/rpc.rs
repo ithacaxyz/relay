@@ -59,7 +59,7 @@ use crate::{
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
     /// Checks the health of the relay.
-    #[method(name = "health")]
+    #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<()>;
 
     /// Get all supported fee tokens by chain.
