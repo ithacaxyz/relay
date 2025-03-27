@@ -35,8 +35,8 @@ use relay::{
         EntryPoint::UserOpExecuted,
         KeyWith712Signer, Signature, SignedQuote,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-            SendPreparedCallsParameters, SendPreparedCallsSignature,
+            KeySignature, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, SendPreparedCallsParameters,
         },
     },
 };
@@ -238,7 +238,7 @@ pub async fn send_prepared_calls(
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
             context: quote,
-            signature: SendPreparedCallsSignature {
+            signature: KeySignature {
                 public_key: signer.publicKey.clone(),
                 key_type: signer.keyType,
                 value: signature,

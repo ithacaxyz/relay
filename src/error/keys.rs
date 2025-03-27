@@ -1,6 +1,6 @@
 use super::invalid_params;
 use crate::types::KeyHash;
-use alloy::primitives::{Address, PrimitiveSignature};
+use alloy::primitives::{Address, Bytes};
 use thiserror::Error;
 
 /// Errors related to authorization keys.
@@ -23,7 +23,7 @@ pub enum KeysError {
     TakenKeyId(Address),
     /// Invalid key identifier signature.
     #[error("invalid key identifier signature: {0}")]
-    InvalidKeyIdSignature(PrimitiveSignature),
+    InvalidKeyIdSignature(Bytes),
     /// Unexpected key identifier.
     #[error("invalid key identifier: expected {expected}, got {got}")]
     UnexpectedKeyId {
