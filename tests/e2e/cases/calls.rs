@@ -50,7 +50,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
     // upgrade account UserOp had nonce 0;
     let user_op_nonce = 1;
     for (tx_num, signer) in signers.iter().enumerate() {
-        let PrepareCallsResponse { context, digest, capabilities: _ } = env
+        let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![erc20_transfer.clone()],

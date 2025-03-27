@@ -4,6 +4,7 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::types::{Call, KeyType, SignedQuote, UserOp};
 use alloy::{
     consensus::Eip658Value,
+    dyn_abi::TypedData,
     primitives::{
         Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash, wrap_fixed_bytes,
     },
@@ -78,6 +79,8 @@ pub struct PrepareCallsResponse {
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
+    /// EIP-712 payload corresponding to the digest.
+    pub typed_data: TypedData,
     /// Capabilities response.
     pub capabilities: PrepareCallsResponseCapabilities,
 }

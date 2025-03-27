@@ -126,6 +126,7 @@ mod eip712 {
     use alloy::sol;
 
     sol! {
+        #[derive(serde::Serialize)]
         struct UserOp {
             bool multichain;
             address eoa;

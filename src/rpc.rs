@@ -8,7 +8,10 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::types::{AccountRegistry::AccountRegistryCalls, Call, rpc::CreateAccountContext};
+use crate::{
+    eip712::compute_eip712_data,
+    types::{AccountRegistry::AccountRegistryCalls, Call, rpc::CreateAccountContext},
+};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -33,7 +36,6 @@ use tracing::{debug, error};
 use crate::{
     chains::{Chain, Chains},
     config::QuoteConfig,
-    eip712::compute_eip712_digest,
     error::{AuthError, KeysError, QuoteError, RelayError},
     price::PriceOracle,
     signers::DynSigner,
@@ -677,13 +679,15 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
-            .await
-            .map_err(RelayError::from)?;
+        let (digest, typed_data) =
+            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+                .await
+                .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
             context: quote,
             digest,
+            typed_data,
             capabilities: PrepareCallsResponseCapabilities {
                 authorize_keys: request
                     .capabilities
@@ -748,13 +752,15 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let digest = compute_eip712_digest(&quote.ty().op, self.inner.entrypoint, &provider)
-            .await
-            .map_err(RelayError::from)?;
+        let (digest, typed_data) =
+            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+                .await
+                .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
             context: quote,
             digest,
+            typed_data,
             capabilities: PrepareCallsResponseCapabilities {
                 authorize_keys: request
                     .capabilities

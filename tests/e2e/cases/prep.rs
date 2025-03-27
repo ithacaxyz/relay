@@ -119,7 +119,7 @@ pub async fn prep_account<'a>(
     }
 
     let pre_ops = build_pre_ops(env, pre_ops, tx_num).await?;
-    let PrepareCallsResponse { context, digest, capabilities: _ } = env
+    let PrepareCallsResponse { context, digest, .. } = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             calls: calls.to_vec(),
