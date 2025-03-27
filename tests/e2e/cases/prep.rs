@@ -18,9 +18,9 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, CreatableAccount, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
+        Call, CreatableAccount, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, GetAccountsParameters, GetKeysParameters, Meta,
+            CreateAccountParameters, GetAccountsParameters, GetKeysParameters, KeySignature, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
             PrepareCreateAccountResponse,
@@ -73,26 +73,28 @@ pub async fn prep_account<'a>(
 
     // Generate all ID -> Account from the authorized keys
     let signatures = try_join_all(authorize_keys.iter().map(async |key| {
-        Ok::<_, eyre::Error>(KeyHashWithID {
-            hash: key.key_hash(),
-            id: key.id(),
-            signature: key.id_sign(prep_address).await?,
+        Ok::<_, eyre::Error>(KeySignature {
+            public_key: key.publicKey.clone(),
+            key_type: key.keyType,
+            value: key.id_sign(prep_address).await?.as_bytes().into(),
         })
     }))
     .await?;
 
+    // Send the PREPAccount with its key identifiers and signatures
+    let key_ids = env
+        .relay_endpoint
+        .create_account(CreateAccountParameters { context: context.clone(), signatures })
+        .await?;
+
+    let admin_key_id = key_ids[0].id;
+    let init_calls_len = context.account.init_calls.len();
     match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),
         EoaKind::Prep(account) => {
-            *account = Some(CreatableAccount::new(context.account.clone(), signatures.clone()));
+            *account = Some(CreatableAccount::new(context.account, key_ids));
         }
     };
-
-    let admin_key_id = signatures[0].id;
-    let init_calls_len = context.account.init_calls.len();
-
-    // Send the PREPAccount with its key identifiers and signatures
-    env.relay_endpoint.create_account(CreateAccountParameters { context, signatures }).await?;
 
     // Ensure the ID -> Account has been stored in storage before the onchain commit
     {

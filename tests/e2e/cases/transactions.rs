@@ -16,11 +16,11 @@ use relay::{
     signers::Eip712PayLoadSigner,
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Call, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
+        Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
-            PrepareCreateAccountResponse,
+            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
+            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
         },
     },
 };
@@ -55,7 +55,11 @@ impl MockAccount {
         env.relay_endpoint
             .create_account(CreateAccountParameters {
                 context,
-                signatures: vec![KeyHashWithID { hash: key.key_hash(), id: key.id(), signature }],
+                signatures: vec![KeySignature {
+                    public_key: key.publicKey.clone(),
+                    key_type: key.keyType,
+                    value: signature.as_bytes().into(),
+                }],
             })
             .await
             .unwrap();

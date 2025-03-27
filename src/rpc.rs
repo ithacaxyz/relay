@@ -8,7 +8,9 @@
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::types::{AccountRegistry::AccountRegistryCalls, Call, rpc::CreateAccountContext};
+use crate::types::{
+    AccountRegistry::AccountRegistryCalls, Call, KeyHashWithID, rpc::CreateAccountContext,
+};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
@@ -83,7 +85,10 @@ pub trait RelayApi {
 
     /// Initialize an account.
     #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
-    async fn create_account(&self, parameters: CreateAccountParameters) -> RpcResult<()>;
+    async fn create_account(
+        &self,
+        parameters: CreateAccountParameters,
+    ) -> RpcResult<Vec<KeyHashWithID>>;
 
     /// Get all accounts from an ID.
     #[method(name = "getAccounts", aliases = ["wallet_getAccounts"])]
@@ -518,31 +523,34 @@ impl RelayApiServer for Relay {
         })
     }
 
-    async fn create_account(&self, request: CreateAccountParameters) -> RpcResult<()> {
+    async fn create_account(
+        &self,
+        request: CreateAccountParameters,
+    ) -> RpcResult<Vec<KeyHashWithID>> {
         // Ensure PREPAccount and signatures are valid and not empty.
-        request.validate()?;
+        let keys = request.validate_and_get_key_ids()?;
 
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
-            request.signatures.iter().map(|s| s.id).collect(),
+            keys.iter().map(|key| key.id).collect(),
             self.inner.entrypoint,
             self.provider(request.context.chain_id)?,
         )
         .await?;
 
-        for (signature, accounts) in request.signatures.iter().zip(accounts) {
+        for (key, accounts) in keys.iter().zip(accounts) {
             if accounts.is_some_and(|(_, addresses)| !addresses.is_empty()) {
-                return Err(RelayError::Keys(KeysError::TakenKeyId(signature.id)).into());
+                return Err(RelayError::Keys(KeysError::TakenKeyId(key.id)).into());
             }
         }
 
         // Write to storage to be used on prepareCalls
         self.inner
             .storage
-            .write_prep(CreatableAccount::new(request.context.account, request.signatures))
+            .write_prep(CreatableAccount::new(request.context.account, keys.clone()))
             .await?;
 
-        Ok(())
+        Ok(keys)
     }
 
     async fn get_accounts(

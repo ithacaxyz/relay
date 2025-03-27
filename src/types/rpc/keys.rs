@@ -130,6 +130,19 @@ impl RevokeKey {
     }
 }
 
+/// Key Signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeySignature {
+    /// Public key that generated the signature.
+    pub public_key: Bytes,
+    /// Type of key that generated the signature.
+    #[serde(rename = "type")]
+    pub key_type: KeyType,
+    /// Signature value.
+    pub value: Bytes,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
