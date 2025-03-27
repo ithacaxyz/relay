@@ -254,9 +254,13 @@ impl Environment {
     }
 
     /// Drops a transaction from the Anvil txpool and returns it.
-    pub async fn drop_transaction(&self, hash: B256) -> TxEnvelope {
-        let tx =
-            self.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.into_inner();
+    pub async fn drop_transaction(&self, hash: B256) -> Option<TxEnvelope> {
+        let tx = self
+            .provider
+            .get_transaction_by_hash(hash)
+            .await
+            .unwrap()
+            .map(|tx| tx.inner.into_inner());
         self.provider.anvil_drop_transaction(hash).await.unwrap();
         assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
         tx
@@ -270,6 +274,11 @@ impl Environment {
     pub async fn disable_mining(&self) {
         self.provider.anvil_set_auto_mine(true).await.unwrap();
         self.provider.anvil_set_auto_mine(false).await.unwrap();
+    }
+
+    /// Enables mining of blocks.
+    pub async fn enable_mining(&self) {
+        self.provider.anvil_set_auto_mine(true).await.unwrap();
     }
 
     /// Mines a single block.
@@ -297,7 +306,7 @@ impl Environment {
                         nonce: nonce + i as u64,
                         to: Address::ZERO.into(),
                         gas_limit: 21000,
-                        max_fee_per_gas,
+                        max_fee_per_gas: priority_fee + max_fee_per_gas,
                         max_priority_fee_per_gas: priority_fee,
                         ..Default::default()
                     };

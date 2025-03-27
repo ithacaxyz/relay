@@ -49,7 +49,7 @@ pub enum SignerError {
     TxDropped,
 
     /// The growth of the gas fees exceeded the amount we are ready to pay
-    #[error("fees to high")]
+    #[error("transaction underpriced")]
     FeesTooHigh,
 
     /// Error occurred while signing transaction.
@@ -270,6 +270,12 @@ impl Signer {
 
             let fee_estimate = Eip1559Estimator::default()
                 .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
+
+            // if the latest block base fee is higher than max_fee, we don't want to block on
+            // waiting for it to go down
+            if tx.sent.max_fee_per_gas() < last_base_fee {
+                return Err(SignerError::FeesTooHigh);
+            }
 
             // TODO: figure out a more reasonable condition here or whether we should just always
             // set max_priority_fee = max_fee
