@@ -151,11 +151,18 @@ impl Key {
     /// The key hash.
     ///
     /// The hash is computed as `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
-    pub fn key_hash(&self) -> B256 {
+    pub fn hash(key_type: KeyType, public_key: &[u8]) -> B256 {
         let mut hasher = Keccak256::new();
-        hasher.update(B256::with_last_byte(self.keyType as u8));
-        hasher.update(keccak256(self.publicKey.as_ref()));
+        hasher.update(B256::with_last_byte(key_type as u8));
+        hasher.update(keccak256(public_key));
         hasher.finalize()
+    }
+
+    /// The key hash.
+    ///
+    /// The hash is computed as `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
+    pub fn key_hash(&self) -> B256 {
+        Self::hash(self.keyType, &self.publicKey)
     }
 
     /// Get the seed slot for the given key.

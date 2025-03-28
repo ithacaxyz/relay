@@ -6,9 +6,17 @@ use crate::{
 use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
 use reqwest::get;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
+
+/// The time interval between fetching prices.
+static PRICE_FETCH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// CoinGecko price fetcher;
 #[derive(Debug)]
@@ -74,9 +82,9 @@ impl CoinGecko {
 
         let gecko = Self { coin_registry, request_urls, update_tx };
 
-        // Launch task to fetch prices every 10 seconds
+        // Launch task to fetch prices on a fixed interval
         tokio::spawn(async move {
-            let mut clock = interval(Duration::from_secs(10));
+            let mut clock = interval(PRICE_FETCH_INTERVAL);
 
             loop {
                 clock.tick().await;
@@ -117,8 +125,7 @@ impl CoinGecko {
 
     /// Updates inner token prices.
     async fn update_prices(&self) -> Result<(), RelayError> {
-        let timestamp =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = Instant::now();
 
         for (chain, url) in &self.request_urls {
             // Fetch token prices

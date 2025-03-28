@@ -22,7 +22,6 @@ use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, Bytes, TxHash, U256},
     providers::{PendingTransactionBuilder, Provider},
-    sol_types::SolValue,
 };
 use eyre::{Context, Result};
 use futures_util::future::try_join_all;
@@ -33,10 +32,10 @@ use relay::{
     types::{
         Delegation, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        KeyWith712Signer, Signature, SignedQuote,
+        KeyWith712Signer, SignedQuote,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-            SendPreparedCallsParameters, SendPreparedCallsSignature,
+            KeySignature, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, SendPreparedCallsParameters,
         },
     },
 };
@@ -216,13 +215,7 @@ pub async fn prepare_calls(
     }
 
     let PrepareCallsResponse { context, digest, .. } = response?;
-    let signature = Signature {
-        innerSignature: signer.sign_payload_hash(digest).await.wrap_err("Signing failed")?,
-        keyHash: signer.key_hash(),
-        prehash: false,
-    }
-    .abi_encode_packed()
-    .into();
+    let signature = signer.sign_payload_hash(digest).await.wrap_err("Signing failed")?;
 
     Ok(Some((signature, context)))
 }
@@ -238,10 +231,11 @@ pub async fn send_prepared_calls(
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
             context: quote,
-            signature: SendPreparedCallsSignature {
+            signature: KeySignature {
                 public_key: signer.publicKey.clone(),
                 key_type: signer.keyType,
                 value: signature,
+                prehash: false,
             },
         })
         .await

@@ -7,7 +7,7 @@ use crate::e2e::{
 use alloy::{
     primitives::{Address, U256},
     providers::{PendingTransactionBuilder, Provider},
-    sol_types::{SolCall, SolValue},
+    sol_types::SolCall,
 };
 use eyre::Context;
 use futures_util::future::try_join_all;
@@ -15,7 +15,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, KeyType, KeyWith712Signer, Signature,
+        Call, KeyType, KeyWith712Signer,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse},
     },
 };
@@ -71,15 +71,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .await?;
 
         // Sign UserOp digest
-        // todo: innerSignature once estimateFee (or equivalent) is aware of the key instead of just
-        // key type.
-        let signature = Signature {
-            innerSignature: signer.sign_payload_hash(digest).await?,
-            keyHash: signer.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        let signature = signer.sign_payload_hash(digest).await?;
 
         // Submit signed call
         let tx_hash = send_prepared_calls(&env, signer, signature, context).await?;

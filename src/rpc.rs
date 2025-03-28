@@ -10,22 +10,21 @@
 
 use crate::{
     eip712::compute_eip712_data,
-    types::{AccountRegistry::AccountRegistryCalls, Call, rpc::CreateAccountContext},
+    types::{
+        AccountRegistry::AccountRegistryCalls, Call, KeyHashWithID, rpc::CreateAccountContext,
+    },
 };
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes, map::HashSet},
+    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::{
-    TryFutureExt,
-    future::{try_join, try_join_all},
-};
+use futures_util::{TryFutureExt, future::try_join_all};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -59,7 +58,7 @@ use crate::{
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
     /// Checks the health of the relay.
-    #[method(name = "health")]
+    #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<()>;
 
     /// Get all supported fee tokens by chain.
@@ -85,7 +84,10 @@ pub trait RelayApi {
 
     /// Initialize an account.
     #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
-    async fn create_account(&self, parameters: CreateAccountParameters) -> RpcResult<()>;
+    async fn create_account(
+        &self,
+        parameters: CreateAccountParameters,
+    ) -> RpcResult<Vec<KeyHashWithID>>;
 
     /// Get all accounts from an ID.
     #[method(name = "getAccounts", aliases = ["wallet_getAccounts"])]
@@ -520,31 +522,34 @@ impl RelayApiServer for Relay {
         })
     }
 
-    async fn create_account(&self, request: CreateAccountParameters) -> RpcResult<()> {
+    async fn create_account(
+        &self,
+        request: CreateAccountParameters,
+    ) -> RpcResult<Vec<KeyHashWithID>> {
         // Ensure PREPAccount and signatures are valid and not empty.
-        request.validate()?;
+        let keys = request.validate_and_get_key_ids()?;
 
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
-            request.signatures.iter().map(|s| s.id).collect(),
+            keys.iter().map(|key| key.id).collect(),
             self.inner.entrypoint,
             self.provider(request.context.chain_id)?,
         )
         .await?;
 
-        for (signature, accounts) in request.signatures.iter().zip(accounts) {
+        for (key, accounts) in keys.iter().zip(accounts) {
             if accounts.is_some_and(|(_, addresses)| !addresses.is_empty()) {
-                return Err(RelayError::Keys(KeysError::TakenKeyId(signature.id)).into());
+                return Err(RelayError::Keys(KeysError::TakenKeyId(key.id)).into());
             }
         }
 
         // Write to storage to be used on prepareCalls
         self.inner
             .storage
-            .write_prep(CreatableAccount::new(request.context.account, request.signatures))
+            .write_prep(CreatableAccount::new(request.context.account, keys.clone()))
             .await?;
 
-        Ok(())
+        Ok(keys)
     }
 
     async fn get_accounts(
@@ -553,48 +558,50 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        // Get all accounts from onchain and local storage
-        let local_addresses = Box::pin(async move {
-            self.inner
-                .storage
-                .read_accounts_from_id(&request.id)
-                .await
-                .map_err(RelayError::Storage)
-                .map(|accounts| accounts.unwrap_or_default())
-        });
-        let onchain_addresses = Box::pin(async move {
-            let accounts =
-                AccountRegistryCalls::id_infos(vec![request.id], self.inner.entrypoint, provider)
+        let mut accounts =
+            AccountRegistryCalls::accounts(request.id, self.inner.entrypoint, provider.clone())
+                .await?;
+
+        if accounts.is_none() {
+            // Only read from storage if the onchain mapping does not exist. It's possible that the
+            // original key has been revoked onchain, and we don't want to return it as
+            // a response.
+            if let Some(key_accounts) =
+                self.inner.storage.read_accounts_from_id(&request.id).await?
+            {
+                // For the same reason of the above, we only want to return locally stored accounts
+                // that have NOT been deployed.
+                let stored_accounts: Vec<Address> =
+                    try_join_all(key_accounts.into_iter().map(async |account| {
+                        Ok::<_, RelayError>(
+                            (!Account::new(account, &provider).is_delegated().await?)
+                                .then_some(account),
+                        )
+                    }))
                     .await?
-                    .pop()
-                    .expect("should exist");
-            Ok(accounts.map(|(_, accounts)| accounts).unwrap_or_default())
-        });
+                    .into_iter()
+                    .flatten()
+                    .collect();
 
-        let (local_addresses, onchain_addresses) =
-            try_join(local_addresses, onchain_addresses).await?;
-
-        // Merge local and onchain accounts, ensuring there are no duplicates.
-        let account_set: HashSet<_> =
-            local_addresses.into_iter().chain(onchain_addresses).collect();
-
-        if account_set.is_empty() {
-            return Err(RelayError::Keys(KeysError::UnknownKeyId(request.id)).into());
+                if !stored_accounts.is_empty() {
+                    accounts = Some(stored_accounts);
+                }
+            }
         }
 
-        let accounts = try_join_all(account_set.into_iter().map(async |address| {
-            Ok::<_, RelayError>(AccountResponse {
+        let Some(accounts) = accounts else {
+            return Err(KeysError::UnknownKeyId(request.id).into());
+        };
+
+        try_join_all(accounts.into_iter().map(async |address| {
+            Ok(AccountResponse {
                 address,
                 keys: self
                     .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
                     .await?,
             })
         }))
-        .await?;
-
-        // Only return accounts with keys. An account can only have empty keys if all its admin keys
-        // have been revoked.
-        Ok(accounts.into_iter().filter(|account| !account.keys.is_empty()).collect())
+        .await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
@@ -782,7 +789,14 @@ impl RelayApiServer for Relay {
         let op = &mut request.context.ty_mut().op;
 
         // Fill UserOp with the user signature.
-        op.signature = request.signature.value;
+        let key_hash = request.signature.key_hash();
+        op.signature = Signature {
+            innerSignature: request.signature.value,
+            keyHash: key_hash,
+            prehash: request.signature.prehash,
+        }
+        .abi_encode_packed()
+        .into();
 
         // Set `paymentAmount`. It is not included into the signature so we need to enforce it here.
         op.paymentAmount = op.paymentMaxAmount;

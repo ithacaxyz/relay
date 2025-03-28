@@ -4,7 +4,7 @@ use crate::{
     cli::Args,
     config::RelayConfig,
     metrics::{self, RpcMetricsService},
-    price::{PriceFetcher, PriceOracle},
+    price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
@@ -93,7 +93,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let quote_signer_addr = quote_signer.address();
 
     // construct rpc module
-    let mut price_oracle = PriceOracle::new();
+    let mut price_oracle = PriceOracle::new(PriceOracleConfig { rate_ttl: config.quote.rate_ttl });
     if let Some(constant_rate) = config.quote.constant_rate {
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);

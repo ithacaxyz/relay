@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::KeysError,
-    types::{Call, Key, KeyID, KeyType},
+    types::{Call, Key, KeyHash, KeyID, KeyType},
 };
 
 use super::Permission;
@@ -127,6 +127,29 @@ impl RevokeKey {
         } else {
             vec![Call::revoke(self.hash)]
         }
+    }
+}
+
+/// Key Signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeySignature {
+    /// Public key that generated the signature.
+    pub public_key: Bytes,
+    /// Type of key that generated the signature.
+    #[serde(rename = "type")]
+    pub key_type: KeyType,
+    /// Signature value.
+    pub value: Bytes,
+    /// Whether it should prehash before verifying the signature.
+    #[serde(default)]
+    pub prehash: bool,
+}
+
+impl KeySignature {
+    /// Returns the associated [`KeyHash`].
+    pub fn key_hash(&self) -> KeyHash {
+        Key::hash(self.key_type, &self.public_key)
     }
 }
 

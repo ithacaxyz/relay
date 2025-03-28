@@ -7,13 +7,14 @@ use super::{
 use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::{Address, U256},
+    sol_types::SolValue,
 };
 use eyre::WrapErr;
 use futures_util::future::{join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
-        Call, KeyWith712Signer, UserOp,
+        Call, KeyWith712Signer, Signature, UserOp,
         rpc::{AuthorizeKey, RevokeKey},
     },
 };
@@ -200,7 +201,10 @@ pub async fn build_pre_ops<'a>(
         let (signature, quote) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
         let mut op = quote.ty().op.clone();
-        op.signature = signature;
+        op.signature =
+            Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
+                .abi_encode_packed()
+                .into();
         op
     }))
     .await;

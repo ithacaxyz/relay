@@ -6,7 +6,7 @@ use crate::e2e::{
 use alloy::{
     consensus::Transaction,
     primitives::{Address, B256, U256},
-    providers::{PendingTransactionBuilder, Provider},
+    providers::{PendingTransactionBuilder, Provider, ext::AnvilApi},
     sol_types::{SolCall, SolValue},
 };
 use eyre::Context;
@@ -16,11 +16,11 @@ use relay::{
     signers::Eip712PayLoadSigner,
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Call, KeyHashWithID, KeyType, KeyWith712Signer, Signature,
+        Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
-            PrepareCreateAccountResponse,
+            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
+            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
         },
     },
 };
@@ -55,7 +55,12 @@ impl MockAccount {
         env.relay_endpoint
             .create_account(CreateAccountParameters {
                 context,
-                signatures: vec![KeyHashWithID { hash: key.key_hash(), id: key.id(), signature }],
+                signatures: vec![KeySignature {
+                    public_key: key.publicKey.clone(),
+                    key_type: key.keyType,
+                    value: signature.as_bytes().into(),
+                    prehash: false,
+                }],
             })
             .await
             .unwrap();
@@ -83,13 +88,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        let signature = Signature {
-            innerSignature: key.sign_payload_hash(digest).await?,
-            keyHash: key.key_hash(),
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
+        let signature = key.sign_payload_hash(digest).await?;
 
         let tx_hash = send_prepared_calls(env, &key, signature, context).await.unwrap();
 
@@ -156,6 +155,17 @@ async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus
     }
 
     panic!("failed to get tx hash")
+}
+
+/// Asserts that transaction was confirmed.
+async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error: &str) {
+    match wait_for_tx(events).await {
+        TransactionStatus::Failed(err) => {
+            assert!(err.to_string().contains(error));
+        }
+        TransactionStatus::Confirmed(_) => panic!("expected failure"),
+        _ => unreachable!(),
+    }
 }
 
 /// Asserts that transaction was confirmed.
@@ -263,11 +273,6 @@ async fn fee_bump() -> eyre::Result<()> {
 
     env.disable_mining().await;
 
-    // mine blocks with fixed priority fee to make it look like the market price
-    let initial_priority_fee =
-        env.provider.estimate_eip1559_fees().await.unwrap().max_priority_fee_per_gas;
-    env.mine_blocks_with_priority_fee(initial_priority_fee).await;
-
     // prepare transaction to send
     let tx = account.prepare_tx(&env).await;
 
@@ -276,12 +281,10 @@ async fn fee_bump() -> eyre::Result<()> {
     let tx_hash = wait_for_tx_hash(&mut events).await;
 
     // drop the transaction from txpool to ensure it won't get mined
-    let dropped = env.drop_transaction(tx_hash).await;
-
-    assert!(dropped.max_priority_fee_per_gas().unwrap() >= initial_priority_fee);
+    let dropped = env.drop_transaction(tx_hash).await.unwrap();
 
     // mine blocks with higher priority fee
-    env.mine_blocks_with_priority_fee(initial_priority_fee * 2).await;
+    env.mine_blocks_with_priority_fee(dropped.max_priority_fee_per_gas().unwrap() * 2).await;
 
     // wait for new transaction to be sent
     let new_tx_hash = wait_for_tx_hash(&mut events).await;
@@ -289,13 +292,70 @@ async fn fee_bump() -> eyre::Result<()> {
 
     // assert that new transaction has higher priority fee
     assert!(new_tx_hash != *dropped.hash());
-    assert!(new_tx.max_priority_fee_per_gas().unwrap() >= initial_priority_fee * 2);
+    assert!(
+        new_tx.max_priority_fee_per_gas().unwrap() > dropped.max_priority_fee_per_gas().unwrap()
+    );
 
     // mine a block with the new transaction
     env.mine_block().await;
     let confirmed_hash = assert_confirmed(events).await;
     // assert that the transaction that got landed is the one we've seen before
     assert_eq!(confirmed_hash, new_tx_hash);
+
+    Ok(())
+}
+
+/// Asserts that on fee growth, we can successfully drop an underpriced transaction, and handle
+/// nonce gap caused by it.
+#[tokio::test(flavor = "multi_thread")]
+async fn fee_growth_nonce_gap() -> eyre::Result<()> {
+    let env =
+        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // setup 2 accounts
+    let account_0 = MockAccount::new(&env).await.unwrap();
+    let account_1 = MockAccount::new(&env).await.unwrap();
+
+    env.disable_mining().await;
+
+    // prepare and send first transaction
+    let tx_0 = account_0.prepare_tx(&env).await;
+    let mut events_0 = tx_service_handle.send_transaction(tx_0.clone());
+    let hash_0 = wait_for_tx_hash(&mut events_0).await;
+
+    // drop the transaction to make sure it's not mined
+    let dropped = env.drop_transaction(hash_0).await.unwrap();
+
+    // randomly choose whether we are increasing basefee or inflating priority fee market
+    if rand::random_bool(0.5) {
+        // set next block base fee to a high value to make it look like tx is underpriced
+        env.provider
+            .anvil_set_next_block_base_fee_per_gas(dropped.max_fee_per_gas() * 2)
+            .await
+            .unwrap();
+        env.mine_block().await;
+    } else {
+        // mine blocks with priority fee set to max_fee of dropped tx
+        env.mine_blocks_with_priority_fee(dropped.max_fee_per_gas()).await;
+    }
+
+    // prepare and send second transaction
+    let tx_1 = account_1.prepare_tx(&env).await;
+    let events_1 = tx_service_handle.send_transaction(tx_1.clone());
+
+    // we should see the fee increase and account for it
+    assert!(
+        tx_1.quote.ty().native_fee_estimate.max_fee_per_gas
+            > tx_0.quote.ty().native_fee_estimate.max_fee_per_gas
+    );
+
+    // assert that first transaction fails
+    assert_failed(events_0, "transaction underpriced").await;
+
+    // enable block mining and assert that second transaction succeeds
+    env.enable_mining().await;
+    assert_confirmed(events_1).await;
 
     Ok(())
 }

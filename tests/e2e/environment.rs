@@ -207,6 +207,7 @@ impl Environment {
                 .with_metrics_port(0)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
+                .with_rate_ttl(Duration::from_secs(300))
                 .with_quote_key(relay_private_key.clone())
                 .with_transaction_key(relay_private_key)
                 .with_quote_constant_rate(1.0)
@@ -254,9 +255,13 @@ impl Environment {
     }
 
     /// Drops a transaction from the Anvil txpool and returns it.
-    pub async fn drop_transaction(&self, hash: B256) -> TxEnvelope {
-        let tx =
-            self.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.into_inner();
+    pub async fn drop_transaction(&self, hash: B256) -> Option<TxEnvelope> {
+        let tx = self
+            .provider
+            .get_transaction_by_hash(hash)
+            .await
+            .unwrap()
+            .map(|tx| tx.inner.into_inner());
         self.provider.anvil_drop_transaction(hash).await.unwrap();
         assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
         tx
@@ -270,6 +275,11 @@ impl Environment {
     pub async fn disable_mining(&self) {
         self.provider.anvil_set_auto_mine(true).await.unwrap();
         self.provider.anvil_set_auto_mine(false).await.unwrap();
+    }
+
+    /// Enables mining of blocks.
+    pub async fn enable_mining(&self) {
+        self.provider.anvil_set_auto_mine(true).await.unwrap();
     }
 
     /// Mines a single block.
@@ -289,7 +299,7 @@ impl Environment {
             let max_fee_per_gas =
                 self.provider.estimate_eip1559_fees().await.unwrap().max_fee_per_gas;
 
-            join_all((0..100).map(|i| {
+            join_all((0..10).map(|i| {
                 let signer = &signer;
                 async move {
                     let mut tx = TxEip1559 {
@@ -297,7 +307,7 @@ impl Environment {
                         nonce: nonce + i as u64,
                         to: Address::ZERO.into(),
                         gas_limit: 21000,
-                        max_fee_per_gas,
+                        max_fee_per_gas: priority_fee + max_fee_per_gas,
                         max_priority_fee_per_gas: priority_fee,
                         ..Default::default()
                     };

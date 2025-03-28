@@ -1,6 +1,6 @@
 //! RPC account-related request and response types.
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
+use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, SendPreparedCallsResponse};
 use crate::{
     error::{AuthError, KeysError},
     types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
@@ -88,39 +88,46 @@ pub struct CreateAccountContext {
 pub struct CreateAccountParameters {
     /// Initializable account.
     pub context: CreateAccountContext,
-    /// List of signatures over the PREPAddress.
-    pub signatures: Vec<KeyHashWithID>,
+    /// List of key id signatures over the PREPAddress.
+    pub signatures: Vec<KeySignature>,
 }
 
 impl CreateAccountParameters {
-    /// Validates the PREPAccount and key identifier signatures.
-    pub fn validate(&self) -> RpcResult<()> {
+    /// Validates [`CreateAccountParameters`] and returns the derived list of [`KeyHashWithID`].
+    pub fn validate_and_get_key_ids(&self) -> RpcResult<Vec<KeyHashWithID>> {
         // Ensure PREPAccount is well built, since it might not come from the relay.
         if !self.context.account.is_valid() {
             return Err(AuthError::InvalidPrep(self.context.account.clone()).into());
         }
 
-        // Ensure that every key identifier signature is valid and recovers the same id.
-        self.validate_signatures()
-    }
-
-    /// Verifies all signatures against the [`PREPAccount`] address and key identifiers.
-    pub fn validate_signatures(&self) -> RpcResult<()> {
         if self.signatures.is_empty() {
             return Err(KeysError::MissingAdminKey.into());
         }
 
-        for KeyHashWithID { hash, id, signature } in &self.signatures {
-            let digest = Key::id_digest_from_hash(*hash, self.context.account.address);
-            let expected = signature
-                .recover_address_from_prehash(&digest)
-                .map_err(|_| KeysError::InvalidKeyIdSignature(*signature))?;
+        self.key_identifiers()
+    }
 
-            if *id != expected {
-                return Err(KeysError::UnexpectedKeyId { expected, got: *id }.into());
-            }
-        }
-        Ok(())
+    /// Validates all signatures and returns the derived list of [`KeyHashWithID`].
+    fn key_identifiers(&self) -> RpcResult<Vec<KeyHashWithID>> {
+        self.signatures
+            .iter()
+            .map(|key_signature| {
+                let hash = key_signature.key_hash();
+                let digest = Key::id_digest_from_hash(hash, self.context.account.address);
+
+                PrimitiveSignature::from_raw(&key_signature.value)
+                    .and_then(|signature| {
+                        signature.recover_address_from_prehash(&digest).map(|id| KeyHashWithID {
+                            hash,
+                            id,
+                            signature,
+                        })
+                    })
+                    .map_err(|_| {
+                        KeysError::InvalidKeyIdSignature(key_signature.value.clone()).into()
+                    })
+            })
+            .collect()
     }
 }
 

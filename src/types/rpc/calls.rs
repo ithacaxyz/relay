@@ -1,13 +1,11 @@
 //! RPC calls-related request and response types.
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
-use crate::types::{Call, KeyType, SignedQuote, UserOp};
+use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
+use crate::types::{Call, SignedQuote, UserOp};
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
-    primitives::{
-        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, Log, TxHash, wrap_fixed_bytes,
-    },
+    primitives::{Address, B256, BlockHash, BlockNumber, ChainId, Log, TxHash, wrap_fixed_bytes},
 };
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -91,21 +89,8 @@ pub struct PrepareCallsResponse {
 pub struct SendPreparedCallsParameters {
     /// The [`SignedQuote`] of the prepared call bundle.
     pub context: SignedQuote,
-    /// Signature values.
-    pub signature: SendPreparedCallsSignature,
-}
-
-/// Signature.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SendPreparedCallsSignature {
-    /// Public key that generated the signature.
-    pub public_key: Bytes,
-    /// Type of key that generated the signature.
-    #[serde(rename = "type")]
-    pub key_type: KeyType,
-    /// Signature value.
-    pub value: Bytes,
+    /// UserOp key signature.
+    pub signature: KeySignature,
 }
 
 /// Response for `wallet_sendPreparedCalls`.

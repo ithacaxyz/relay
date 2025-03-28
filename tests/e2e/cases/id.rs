@@ -7,7 +7,7 @@ use relay::{
     types::{
         AccountRegistry::AccountRegistryCalls,
         KeyType, KeyWith712Signer,
-        rpc::{AccountResponse, AuthorizeKeyResponse, GetAccountsParameters, GetKeysParameters},
+        rpc::{GetAccountsParameters, GetKeysParameters},
     },
 };
 
@@ -16,48 +16,37 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
     let mut env = AccountConfig::Prep.setup_environment().await?;
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[], &[&admin_key], &[], 0).await?;
+    let backup_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    prep_account(&mut env, &[], &[&admin_key, &backup_key], &[], 0).await?;
 
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();
 
-        let admin_key_hash = admin_key.key_hash();
-
-        // Generate ID from signature
-        let id = account.id_signatures[0]
-            .signature
-            .recover_address_from_prehash(&admin_key.id_digest(account.prep.address))
-            .unwrap();
-
-        let (key_hash, addresses) =
-            AccountRegistryCalls::id_infos(vec![id], env.entrypoint, env.provider.clone())
-                .await?
-                .pop()
-                .unwrap()
-                .unwrap();
+        let (key_hash, addresses) = AccountRegistryCalls::id_infos(
+            vec![admin_key.id()],
+            env.entrypoint,
+            env.provider.clone(),
+        )
+        .await?
+        .pop()
+        .unwrap()
+        .unwrap();
 
         // Ensure ID -> (KeyHash, Address[]) matches
-        assert_eq!(key_hash, admin_key_hash);
+        assert_eq!(key_hash, admin_key.key_hash());
         assert_eq!(&addresses, &[account.prep.address]);
 
-        // wallet_getAccounts should return the address and authorized keys from this ID
+        // wallet_getAccounts should return the address and both associated authorized keys
         let response = env
             .relay_endpoint
-            .get_accounts(GetAccountsParameters { id, chain_id: env.chain_id })
+            .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
             .await?;
 
-        assert_eq!(
-            response,
-            vec![AccountResponse {
-                address: account.prep.address,
-                keys: vec![AuthorizeKeyResponse {
-                    hash: admin_key_hash,
-                    authorize_key: admin_key.to_authorized(None).await?,
-                }]
-            }]
-        );
+        assert_eq!(response.len(), 1);
+        assert_eq!(response[0].address, account.prep.address);
+        assert!(response[0].keys.contains(&admin_key.to_authorized(None).await?.into_response()));
+        assert!(response[0].keys.contains(&backup_key.to_authorized(None).await?.into_response()));
 
-        // Bork EOA with no admin keys by revoking the only one
         process_tx(
             1,
             TxContext {
@@ -70,27 +59,97 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         )
         .await?;
 
-        // Ensure the account registry no longer has KeyID -> Account
+        // Ensure the onchain account registry no longer has the revoked key entry.
+        // Ensure that the local storage mapping (used for when the account is not deployed) does
+        // not return the account, since the EOA is actually delegated.
         let response = env
             .relay_endpoint
-            .get_accounts(GetAccountsParameters { id, chain_id: env.chain_id })
-            .await?;
+            .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+            .await;
 
-        assert!(response.is_empty());
+        assert!(response.is_err()); // KeysError::UnknownKeyId
         assert!(
-            AccountRegistryCalls::id_infos(vec![id], env.entrypoint, env.provider.clone())
-                .await?
-                .pop()
-                .unwrap()
-                .is_none()
+            AccountRegistryCalls::id_infos(
+                vec![admin_key.id()],
+                env.entrypoint,
+                env.provider.clone()
+            )
+            .await?
+            .pop()
+            .unwrap()
+            .is_none()
         );
 
-        // Ensure getKeys returns the same empty keys list.
-        let response = env
-            .relay_endpoint
-            .get_keys(GetKeysParameters { address: account.prep.address, chain_id: env.chain_id })
-            .await?;
-        assert!(response.is_empty());
+        // Backup key -> Account still exists
+        assert!(
+            AccountRegistryCalls::id_infos(
+                vec![backup_key.id()],
+                env.entrypoint,
+                env.provider.clone()
+            )
+            .await?
+            .pop()
+            .unwrap()
+            .is_some()
+        );
+
+        assert_eq!(
+            env.relay_endpoint
+                .get_accounts(GetAccountsParameters { id: backup_key.id(), chain_id: env.chain_id })
+                .await?
+                .len(),
+            1
+        );
+
+        // Ensure getKeys returns ONLY the backup key.
+        assert_eq!(
+            env.relay_endpoint
+                .get_keys(GetKeysParameters {
+                    address: account.prep.address,
+                    chain_id: env.chain_id
+                })
+                .await?,
+            vec![backup_key.to_authorized(None).await?.into_response()]
+        );
+
+        // Bork EOA with no admin keys by revoking the remaining backup key
+        process_tx(
+            2,
+            TxContext {
+                revoke_keys: vec![&backup_key],
+                expected: ExpectedOutcome::Pass,
+                key: Some(&backup_key),
+                ..Default::default()
+            },
+            &env,
+        )
+        .await?;
+
+        // None of the keys should return any account
+        assert!(
+            env.relay_endpoint
+                .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+                .await
+                .is_err() // KeysError::UnknownKeyId
+        );
+
+        assert!(
+            env.relay_endpoint
+                .get_accounts(GetAccountsParameters { id: backup_key.id(), chain_id: env.chain_id })
+                .await
+                .is_err() // KeysError::UnknownKeyId
+        );
+
+        // Original account should not return any key
+        assert!(
+            env.relay_endpoint
+                .get_keys(GetKeysParameters {
+                    address: account.prep.address,
+                    chain_id: env.chain_id
+                })
+                .await?
+                .is_empty()
+        );
     } else {
         unreachable!();
     }
