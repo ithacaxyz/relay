@@ -70,6 +70,10 @@ itertools = "0.14"
 strum = "0.27"
 strum_macros = "0.27"
 
+[build-dependencies]
+vergen = { version = "9.0", features = ["build", "cargo", "emit_and_set"] }
+vergen-git2 = "1.0"
+
 # Speed up compilation time for dev builds by reducing emitted debug info.
 # NOTE: Debuggers may provide less useful information with this setting.
 # Uncomment this section if you're using a debugger.
