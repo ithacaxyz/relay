@@ -5,12 +5,13 @@ use crate::{
 };
 use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
+use metrics::counter;
 use reqwest::get;
 use std::{
     collections::HashMap,
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
@@ -160,6 +161,9 @@ impl CoinGecko {
                         price,
                     ))
                 });
+
+                counter!("coingecko.last_update")
+                    .absolute(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 
                 let _ = self.update_tx.send(PriceOracleMessage::Update {
                     fetcher: PriceFetcher::CoinGecko,
