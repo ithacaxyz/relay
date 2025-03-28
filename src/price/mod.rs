@@ -4,7 +4,7 @@ mod fetchers;
 pub use fetchers::*;
 
 mod oracle;
-pub use oracle::PriceOracle;
+pub use oracle::{PriceOracle, PriceOracleConfig};
 
 #[cfg(test)]
 mod tests {
@@ -16,7 +16,7 @@ mod tests {
     #[ignore] // requires GECKO_API
     #[tokio::test]
     async fn coingecko() {
-        let oracle = PriceOracle::new();
+        let oracle = PriceOracle::new(Default::default());
         oracle.spawn_fetcher(
             Arc::new(CoinRegistry::default()),
             PriceFetcher::CoinGecko,

@@ -6,7 +6,12 @@ use crate::{
 use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
 use reqwest::get;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
 
@@ -120,8 +125,7 @@ impl CoinGecko {
 
     /// Updates inner token prices.
     async fn update_prices(&self) -> Result<(), RelayError> {
-        let timestamp =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = Instant::now();
 
         for (chain, url) in &self.request_urls {
             // Fetch token prices
