@@ -20,6 +20,7 @@ pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
 
 sol! {
     #[sol(rpc)]
+    #[derive(Debug)]
     contract EntryPoint {
         /// Emitted when a UserOp is executed.
         ///
@@ -30,6 +31,24 @@ sol! {
         /// `err` will be stored for retrieval with `nonceStatus`.
         event UserOpExecuted(address indexed eoa, uint256 indexed nonce, bool incremented, bytes4 err);
 
+        /// @dev Unable to perform the payment.
+        error PaymentError();
+
+        /// @dev Unable to verify the user op. The user op may be invalid.
+        error VerificationError();
+
+        /// Unable to perform the call.
+        error CallError();
+
+        /// @dev Unable to perform the verification and the call.
+        error VerifiedCallError();
+
+        /// @dev Out of gas to perform the call operation.
+        error InsufficientGas();
+
+        /// @dev The order has already been filled.
+        error OrderAlreadyFilled();
+
         /// For returning the gas used and the error from a simulation.
         ///
         /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
@@ -37,8 +56,22 @@ sol! {
         /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        #[derive(Debug)]
         error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+
+        /// @dev The simulate execute run has failed. Try passing in more gas to the simulation.
+        error SimulateExecuteFailed();
+
+        /// @dev No revert has been encountered.
+        error NoRevertEncountered();
+
+        /// @dev A sub UserOp's EOA must be the same as its parent UserOp's eoa.
+        error InvalidPreOpEOA();
+
+        /// @dev The sub UserOp cannot be verified to be correct.
+        error PreOpVerificationError();
+
+        /// @dev Error calling the sub UserOp's `executionData`.
+        error PreOpCallError();
 
         /// Executes a single encoded user operation.
         ///
@@ -53,7 +86,6 @@ sol! {
             returns (bytes4 err);
 
         /// Simulates an execution and reverts with the amount of gas used, and the error selector.
-        #[derive(Debug)]
         function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
 
         /// Return current nonce with sequence key.
@@ -121,13 +153,13 @@ impl<P: Provider> Entry<P> {
         let err = ret.unwrap_err();
         if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
             if result.err != ENTRYPOINT_NO_ERROR {
-                Err(UserOpError::OpRevert { revert_reason: result.err.into() }.into())
+                Err(UserOpError::op_revert(result.err.into()).into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
         } else if let Some(data) = err.as_revert_data() {
-            Err(UserOpError::OpRevert { revert_reason: data }.into())
+            Err(UserOpError::op_revert(data).into())
         } else {
             Err(TransportErrorKind::custom(err).into())
         }
@@ -144,7 +176,7 @@ impl<P: Provider> Entry<P> {
             .map_err(TransportErrorKind::custom)?;
 
         if ret.err != ENTRYPOINT_NO_ERROR {
-            Err(UserOpError::OpRevert { revert_reason: ret.err.into() }.into())
+            Err(UserOpError::op_revert(ret.err.into()).into())
         } else {
             Ok(())
         }
