@@ -1,4 +1,4 @@
-use super::KeyHash;
+use super::{KeyHash, KeyID};
 use crate::error::RelayError;
 use alloy::{primitives::Address, providers::DynProvider, sol};
 
@@ -57,5 +57,18 @@ impl AccountRegistry::AccountRegistryCalls {
                     })
                     .collect()
             })
+    }
+
+    /// Returns all acounts of the requested [`KeyID`].
+    pub async fn accounts(
+        id: KeyID,
+        entrypoint: Address,
+        provider: DynProvider,
+    ) -> Result<Option<Vec<Address>>, RelayError> {
+        Ok(Self::id_infos(vec![id], entrypoint, provider)
+            .await?
+            .pop()
+            .expect("should exist")
+            .map(|(_, accounts)| accounts))
     }
 }
