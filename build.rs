@@ -1,17 +1,19 @@
 #![allow(missing_docs)]
 
 use std::{env, error::Error};
-use vergen::EmitBuilder;
+use vergen::{BuildBuilder, CargoBuilder, Emitter};
+use vergen_git2::Git2Builder;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Emit the instructions
-    EmitBuilder::builder()
-        .git_describe(false, true, None)
-        .git_dirty(true)
-        .git_sha(false)
-        .build_timestamp()
-        .cargo_features()
-        .cargo_target_triple()
+    let build = BuildBuilder::default().build_timestamp(true).build()?;
+    let cargo = CargoBuilder::default().features(true).target_triple(true).build()?;
+    let gitcl =
+    Git2Builder::default().sha(false).dirty(true).describe(false, true, None).build()?;
+
+    Emitter::default()
+        .add_instructions(&build)?
+        .add_instructions(&cargo)?
+        .add_instructions(&gitcl)?
         .emit_and_set()?;
 
     let sha = env::var("VERGEN_GIT_SHA")?;
