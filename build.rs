@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let build = BuildBuilder::default().build_timestamp(true).build()?;
     let cargo = CargoBuilder::default().features(true).target_triple(true).build()?;
     let gitcl =
-    Git2Builder::default().sha(false).dirty(true).describe(false, true, None).build()?;
+        Git2Builder::default().sha(false).dirty(true).describe(false, true, None).build()?;
 
     Emitter::default()
         .add_instructions(&build)?
