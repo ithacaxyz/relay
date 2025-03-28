@@ -1,4 +1,4 @@
-//! Relay versions.
+//! Relay version.
 
 /// The short version information for relay.
 pub const RELAY_SHORT_VERSION: &str = env!("RELAY_SHORT_VERSION");
