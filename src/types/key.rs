@@ -418,7 +418,7 @@ pub struct KeyHashWithID {
     /// Key identifier.
     pub id: KeyID,
     /// Signature over the PREP account address.
-    #[serde(with = "crate::serde::signature")]
+    #[serde(with = "alloy::serde::displayfromstr")]
     pub signature: PrimitiveSignature,
 }
 

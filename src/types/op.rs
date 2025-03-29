@@ -15,7 +15,7 @@ sol! {
     ///
     /// Since L2s already include calldata compression with savings forwarded to users,
     /// we don't need to be too concerned about calldata overhead.
-    #[derive(Debug, Default, Serialize, Deserialize)]
+    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct UserOp {
         /// The user's address.
