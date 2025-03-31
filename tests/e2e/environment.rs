@@ -26,7 +26,6 @@ use relay::{
     },
 };
 use std::{
-    net::TcpListener,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -200,10 +199,9 @@ impl Environment {
         }
 
         // Start relay service.
-        let relay_port = get_available_port()?;
         let relay_handle = try_spawn(
             RelayConfig::default()
-                .with_port(relay_port)
+                .with_port(0)
                 .with_metrics_port(0)
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
@@ -221,7 +219,7 @@ impl Environment {
         .await?;
 
         let relay_endpoint = HttpClientBuilder::default()
-            .build(format!("http://localhost:{relay_port}"))
+            .build(relay_handle.http_url())
             .wrap_err("Failed to build relay client")?;
 
         let chain_id = provider.get_chain_id().await.wrap_err("Failed to get chain ID")?;
@@ -434,11 +432,4 @@ async fn deploy_contract<P: Provider>(
         .await?
         .contract_address
         .wrap_err_with(|| format!("Failed to deploy artifact at {}", artifact_path.display()))
-}
-
-/// Finds an available port by binding to "127.0.0.1:0".
-fn get_available_port() -> std::io::Result<u16> {
-    // Binding to port 0 tells the OS to assign an available port.
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
 }
