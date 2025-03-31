@@ -95,6 +95,9 @@ sol! {
         /// Optional array of encoded UserOps that will be verified and executed
         /// after PREP (if any) and before the validation of the overall UserOp.
         bytes[] encodedPreOps;
+        /// Optional payment signature to be passed into the `compensate` function
+        /// on the `payer`. This signature is NOT included in the EIP712 signature.
+        bytes paymentSignature;
     }
 }
 
@@ -241,6 +244,7 @@ mod tests {
             signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            paymentSignature: bytes!(""),
         };
 
         // Single chain op
@@ -288,6 +292,7 @@ mod tests {
             signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            paymentSignature: bytes!(""),
         };
 
         let expected_digest =

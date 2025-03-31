@@ -69,7 +69,7 @@ impl MockAccount {
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![Call {
-                    target: env.erc20,
+                    to: env.erc20,
                     value: U256::ZERO,
                     data: MockErc20::mintCall { a: address, val: U256::from(100e18) }
                         .abi_encode()

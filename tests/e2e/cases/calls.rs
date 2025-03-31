@@ -40,7 +40,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {
-        target: env.erc20,
+        to: env.erc20,
         value: U256::ZERO,
         data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
             .abi_encode()

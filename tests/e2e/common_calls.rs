@@ -7,13 +7,13 @@ use relay::types::{Call, Delegation::SpendPeriod, Key};
 
 /// Native transfer value call.
 pub fn transfer_native(recipient: Address, amount: U256) -> Call {
-    Call { target: recipient, value: amount, data: bytes!("") }
+    Call { to: recipient, value: amount, data: bytes!("") }
 }
 
 /// ERC20 transfer call.
 pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
     Call {
-        target: erc20,
+        to: erc20,
         value: U256::ZERO,
         data: MockErc20::transferCall { recipient, amount }.abi_encode().into(),
     }
@@ -21,11 +21,7 @@ pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
 
 /// ERC20 mint call.
 pub fn mint(erc20: Address, a: Address, val: U256) -> Call {
-    Call {
-        target: erc20,
-        value: U256::ZERO,
-        data: MockErc20::mintCall { a, val }.abi_encode().into(),
-    }
+    Call { to: erc20, value: U256::ZERO, data: MockErc20::mintCall { a, val }.abi_encode().into() }
 }
 
 /// Set a daily spend limit.

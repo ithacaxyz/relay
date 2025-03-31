@@ -169,13 +169,13 @@ async fn basic_prep() -> eyre::Result<()> {
     }
 
     let mut env = Environment::setup_with_prep().await?;
-    let target = env.erc20;
+    let to = env.erc20;
     let eoa_authorized = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     prep_account(
         &mut env,
         &[Call {
-            target,
+            to,
             value: U256::ZERO,
             data: MockErc20::transferCall { recipient: Address::ZERO, amount: U256::from(10) }
                 .abi_encode()

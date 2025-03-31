@@ -50,7 +50,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
                 authorization_keys: vec![&another_key],
                 calls: vec![
                     Call {
-                        target: Address::ZERO,
+                        to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: another_key.key_hash(),
@@ -147,7 +147,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             TxContext {
                 authorization_keys: vec![&another_key],
                 calls: vec![Call {
-                    target: Address::ZERO,
+                    to: Address::ZERO,
                     value: U256::ZERO,
                     data: Delegation::setCanExecuteCall {
                         keyHash: another_key.key_hash(),
@@ -201,7 +201,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             TxContext {
                 authorization_keys: vec![&another_key],
                 calls: vec![Call {
-                    target: Address::ZERO,
+                    to: Address::ZERO,
                     value: U256::ZERO,
                     data: Delegation::setCanExecuteCall {
                         keyHash: another_key.key_hash(),
@@ -284,7 +284,7 @@ async fn execution_guard_default() -> Result<()> {
             TxContext {
                 authorization_keys: vec![&another_key],
                 calls: vec![Call {
-                    target: Address::ZERO,
+                    to: Address::ZERO,
                     value: U256::ZERO,
                     data: Delegation::setCanExecuteCall {
                         keyHash: another_key.key_hash(),
@@ -444,7 +444,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![Call {
-                    target: Address::ZERO,
+                    to: Address::ZERO,
                     value: U256::ZERO,
                     data: Delegation::setCanExecuteCall {
                         keyHash: session_key.key_hash(),
@@ -525,7 +525,7 @@ async fn session_key_pre_op() -> Result<()> {
                 pre_ops: vec![TxContext {
                     authorization_keys: vec![&session_key],
                     calls: vec![Call {
-                        target: Address::ZERO,
+                        to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
