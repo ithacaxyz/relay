@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
-    /// Message to send a transaction.
+    /// Message to send a transaction and receive events about the status of the transaction.
     SendTransaction(RelayTransaction, mpsc::UnboundedSender<TransactionStatus>),
 }
 
@@ -40,7 +40,8 @@ impl TransactionServiceHandle {
     }
 }
 
-/// Service handing transactions.
+/// Service that handles transactions by dispatching outgoing transaction to an available signer and
+/// monitors the state of the transaction.
 #[derive(Debug)]
 pub struct TransactionService {
     /// Handles of signers responsible for broadcasting transactions.
@@ -69,6 +70,8 @@ impl TransactionService {
     }
 
     /// Creates a new [`TransactionService`] and spawns it.
+    ///
+    /// This also spawns dedicated [`Signer`] task for each configured signer
     pub async fn spawn(
         provider: DynProvider,
         signers: Vec<DynSigner>,
