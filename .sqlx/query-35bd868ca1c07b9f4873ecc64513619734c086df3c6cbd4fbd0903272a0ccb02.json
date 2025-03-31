@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "delete from pending_txs where tx_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "35bd868ca1c07b9f4873ecc64513619734c086df3c6cbd4fbd0903272a0ccb02"
+}

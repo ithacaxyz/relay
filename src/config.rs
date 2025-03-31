@@ -23,6 +23,8 @@ pub struct RelayConfig {
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
+    /// Database URL.
+    pub database_url: Option<String>,
 }
 
 /// Server configuration.
@@ -107,6 +109,7 @@ impl Default for RelayConfig {
             },
             entrypoint: Address::ZERO,
             secrets: SecretsConfig::default(),
+            database_url: None,
         }
     }
 }

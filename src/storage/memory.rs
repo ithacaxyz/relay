@@ -48,8 +48,8 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Option<Vec<Address>>> {
-        Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()))
+    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>> {
+        Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()).unwrap_or_default())
     }
 
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {

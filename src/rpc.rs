@@ -567,26 +567,24 @@ impl RelayApiServer for Relay {
             // Only read from storage if the onchain mapping does not exist. It's possible that the
             // original key has been revoked onchain, and we don't want to return it as
             // a response.
-            if let Some(key_accounts) =
-                self.inner.storage.read_accounts_from_id(&request.id).await?
-            {
-                // For the same reason of the above, we only want to return locally stored accounts
-                // that have NOT been deployed.
-                let stored_accounts: Vec<Address> =
-                    try_join_all(key_accounts.into_iter().map(async |account| {
-                        Ok::<_, RelayError>(
-                            (!Account::new(account, &provider).is_delegated().await?)
-                                .then_some(account),
-                        )
-                    }))
-                    .await?
-                    .into_iter()
-                    .flatten()
-                    .collect();
+            let key_accounts = self.inner.storage.read_accounts_from_id(&request.id).await?;
 
-                if !stored_accounts.is_empty() {
-                    accounts = Some(stored_accounts);
-                }
+            // For the same reason of the above, we only want to return locally stored accounts
+            // that have NOT been deployed.
+            let stored_accounts: Vec<Address> =
+                try_join_all(key_accounts.into_iter().map(async |account| {
+                    Ok::<_, RelayError>(
+                        (!Account::new(account, &provider).is_delegated().await?)
+                            .then_some(account),
+                    )
+                }))
+                .await?
+                .into_iter()
+                .flatten()
+                .collect();
+
+            if !stored_accounts.is_empty() {
+                accounts = Some(stored_accounts);
             }
         }
 

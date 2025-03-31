@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into pending_txs (chain_id, sender, tx_id, tx, envelope, received_at) values ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Bytea",
+        "Jsonb",
+        "Jsonb",
+        "Timestamp"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fc3e0c7d0247ed3621437bcb407e8aa44c109cc33753cf38aed7550a877f43ba"
+}

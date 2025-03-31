@@ -24,12 +24,13 @@ use alloy::{
     sol_types::SolCall,
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
+use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
 use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 use tracing::error;
@@ -323,7 +324,9 @@ impl Signer {
             return self.close_nonce_gap(tx.sent.nonce()).await;
         }
 
-        self.metrics.confirmation_time.record(tx.received_at.elapsed());
+        self.metrics
+            .confirmation_time
+            .record(Utc::now().signed_duration_since(tx.received_at).num_seconds() as f64);
         self.metrics.pending.decrement(1);
 
         Ok(())
@@ -368,8 +371,7 @@ impl Signer {
                 return self.close_nonce_gap(nonce).await;
             }
         };
-        let tx =
-            PendingTransaction { tx, sent, signer: self.address(), received_at: Instant::now() };
+        let tx = PendingTransaction { tx, sent, signer: self.address(), received_at: Utc::now() };
 
         self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
         self.storage.write_pending_transaction(&tx).await?;

@@ -12,6 +12,6 @@ pub struct TransactionServiceMetrics {
     pub confirmed: Counter,
     /// Number of pending transactions.
     pub pending: Gauge,
-    /// Time it takes to include transactions, in seconds.
+    /// Time it takes to include transactions, in milliseconds.
     pub confirmation_time: Histogram,
 }
