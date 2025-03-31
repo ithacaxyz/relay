@@ -199,6 +199,12 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the database URL.
+    pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
+        self.database_url = database_url;
+        self
+    }
+
     /// Load from a TOML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
         let content = std::fs::read_to_string(path)?;
