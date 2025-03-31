@@ -1,5 +1,5 @@
 use super::{internal_rpc, invalid_params, rpc_err};
-use crate::types::EntryPoint::EntryPointErrors;
+use crate::types::{Delegation::DelegationErrors, EntryPoint::EntryPointErrors};
 use alloy::{
     primitives::{B256, Bytes},
     rpc::types::error::EthRpcErrorCode,
@@ -49,7 +49,7 @@ pub struct OpRevert {
     /// The returned revert reason bytes.
     revert_reason: Bytes,
     /// Decoded revert reason.
-    decoded_error: Option<EntryPointErrors>,
+    decoded_error: Option<String>,
 }
 
 impl std::fmt::Display for OpRevert {
@@ -57,7 +57,7 @@ impl std::fmt::Display for OpRevert {
         let Self { revert_reason, decoded_error } = self;
         write!(f, "op reverted:")?;
         if let Some(err) = decoded_error {
-            write!(f, " {err:?}")
+            write!(f, " {err}")
         } else {
             write!(f, " {revert_reason}")
         }
@@ -65,10 +65,18 @@ impl std::fmt::Display for OpRevert {
 }
 
 impl OpRevert {
-    /// Creates a new instance of [`OpRevert`]. Attempts to decode [`EntryPointErrors`].
+    /// Creates a new instance of [`OpRevert`]. Attempts to decode [`EntryPointErrors`]
+    /// and[`DelegationErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
         Self {
-            decoded_error: EntryPointErrors::abi_decode(&revert_reason, false).ok(),
+            decoded_error: EntryPointErrors::abi_decode(&revert_reason, false)
+                .ok()
+                .map(|err| format!("{err:?}"))
+                .or_else(|| {
+                    DelegationErrors::abi_decode(&revert_reason, false)
+                        .ok()
+                        .map(|err| format!("{err:?}"))
+                }),
             revert_reason,
         }
     }
@@ -79,9 +87,7 @@ impl From<OpRevert> for jsonrpsee::types::error::ErrorObject<'static> {
         let OpRevert { revert_reason, decoded_error } = value;
         rpc_err(
             EthRpcErrorCode::ExecutionError.code(),
-            decoded_error
-                .map(|err| format!("{err:?}"))
-                .unwrap_or_else(|| revert_reason.to_string()),
+            decoded_error.unwrap_or_else(|| revert_reason.to_string()),
             Some(revert_reason.clone()),
         )
     }

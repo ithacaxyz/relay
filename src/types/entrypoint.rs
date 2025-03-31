@@ -58,20 +58,47 @@ sol! {
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
         error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
 
-        /// @dev The simulate execute run has failed. Try passing in more gas to the simulation.
+        /// The simulate execute run has failed. Try passing in more gas to the simulation.
         error SimulateExecuteFailed();
 
-        /// @dev No revert has been encountered.
+        /// No revert has been encountered.
         error NoRevertEncountered();
 
-        /// @dev A sub UserOp's EOA must be the same as its parent UserOp's eoa.
+        /// A sub UserOp's EOA must be the same as its parent UserOp's eoa.
         error InvalidPreOpEOA();
 
-        /// @dev The sub UserOp cannot be verified to be correct.
+        /// The sub UserOp cannot be verified to be correct.
         error PreOpVerificationError();
 
-        /// @dev Error calling the sub UserOp's `executionData`.
+        /// Error calling the sub UserOp's `executionData`.
         error PreOpCallError();
+
+        /// The ID has already been registered.
+        error IDOccupied();
+
+        /// Caller is not authorized to modify the ID.
+        error InvalidCaller();
+
+        /// Account is already registered in the ID.
+        error AlreadyRegistered();
+
+        /// The caller is not authorized to call the function.
+        error Unauthorized();
+
+        /// The `newOwner` cannot be the zero address.
+        error NewOwnerIsZeroAddress();
+
+        /// The `pendingOwner` does not have a valid handover request.
+        error NoHandoverRequest();
+
+        /// Cannot double-initialize.
+        error AlreadyInitialized();
+
+        /// The call is from an unauthorized call context.
+        error UnauthorizedCallContext();
+
+        /// Unauthorized reentrant call.
+        error Reentrancy();
 
         /// Executes a single encoded user operation.
         ///
