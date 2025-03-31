@@ -2,6 +2,7 @@
 
 use crate::types::{Entry, UserOp};
 use alloy::{
+    dyn_abi::TypedData,
     primitives::{Address, B256},
     providers::DynProvider,
     sol_types::SolStruct,
@@ -13,11 +14,11 @@ use alloy::{
 /// designator. Otherwise, it will assumed it's already delegated.
 ///
 /// Returns the eip712 digest that user will need to sign.
-pub async fn compute_eip712_digest(
+pub async fn compute_eip712_data(
     op: &UserOp,
     entrypoint_address: Address,
     provider: &DynProvider,
-) -> eyre::Result<B256> {
+) -> eyre::Result<(B256, TypedData)> {
     // Create the entrypoint instance with the same overrides.
     let entrypoint = Entry::new(entrypoint_address, provider);
 
@@ -26,5 +27,10 @@ pub async fn compute_eip712_digest(
     let domain = entrypoint.eip712_domain(op.is_multichain()).await?;
 
     // Return the computed signing hash (digest).
-    Ok(payload.eip712_signing_hash(&domain))
+    let digest = payload.eip712_signing_hash(&domain);
+    let typed_data = TypedData::from_struct(&payload, Some(domain));
+
+    debug_assert_eq!(Ok(digest), typed_data.eip712_signing_hash());
+
+    Ok((digest, typed_data))
 }

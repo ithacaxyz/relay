@@ -19,8 +19,7 @@ sol! {
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
     struct Call {
         /// The call target.
-        #[serde(rename = "to")]
-        address target;
+        address to;
         /// Amount of native value to send to the target.
         uint256 value;
         /// The calldata bytes.
@@ -36,7 +35,7 @@ impl Call {
     ///
     /// See <https://github.com/Vectorized/solady/blob/c9e079c0ca836dcc52777a1fa7227ef28e3537b3/src/accounts/ERC7821.sol#L237-L239>.
     pub fn self_call(data: Bytes) -> Self {
-        Self { target: Address::ZERO, data, ..Default::default() }
+        Self { to: Address::ZERO, data, ..Default::default() }
     }
 
     /// Create a call to authorize a key on `eoa`.
@@ -90,7 +89,7 @@ impl Call {
         account: Address,
     ) -> Self {
         Self {
-            target: registry,
+            to: registry,
             value: U256::ZERO,
             data: AccountRegistry::registerCall { signature, data, account }.abi_encode().into(),
         }
@@ -99,7 +98,7 @@ impl Call {
     /// Create a call to remove an account from the registry.
     pub fn unregister_account(registry: Address, id: KeyID) -> Self {
         Self {
-            target: registry,
+            to: registry,
             value: U256::ZERO,
             data: AccountRegistry::removeAccountCall { id }.abi_encode().into(),
         }
