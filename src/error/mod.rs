@@ -32,7 +32,7 @@ pub enum RelayError {
     Quote(#[from] QuoteError),
     /// Errors related to user ops.
     #[error(transparent)]
-    UserOp(#[from] UserOpError),
+    UserOp(Box<UserOpError>),
     /// Errors related to authorization keys.
     #[error(transparent)]
     Keys(#[from] KeysError),
@@ -53,12 +53,18 @@ pub enum RelayError {
     InternalError(#[from] eyre::Error),
 }
 
+impl From<UserOpError> for RelayError {
+    fn from(err: UserOpError) -> Self {
+        Self::UserOp(Box::new(err))
+    }
+}
+
 impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: RelayError) -> Self {
         match err {
             RelayError::Auth(inner) => (*inner).into(),
             RelayError::Quote(inner) => inner.into(),
-            RelayError::UserOp(inner) => inner.into(),
+            RelayError::UserOp(inner) => (*inner).into(),
             RelayError::Keys(inner) => inner.into(),
             RelayError::Storage(inner) => inner.into(),
             RelayError::UnsupportedChain(_)

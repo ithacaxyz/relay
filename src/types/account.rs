@@ -23,9 +23,10 @@ use tracing::debug;
 
 sol! {
     #[sol(rpc)]
+    #[derive(Debug)]
     contract Delegation {
         /// A spend period.
-        #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+        #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
         enum SpendPeriod {
             /// Per minute.
@@ -45,7 +46,7 @@ sol! {
 
         /// Information about a spend.
         /// All timestamp related values are Unix timestamps in seconds.
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Eq, PartialEq)]
         struct SpendInfo {
             /// Address of the token. `address(0)` denotes native token.
             address token;
@@ -62,6 +63,42 @@ sol! {
             /// The start of the current period.
             uint256 current;
         }
+
+        /// The key does not exist.
+        error KeyDoesNotExist();
+
+        /// The `opData` is too short.
+        error OpDataTooShort();
+
+        /// The PREP has already been initialized.
+        error PREPAlreadyInitialized();
+
+        /// The PREP `initData` is invalid.
+        error InvalidPREP();
+
+        /// Cannot set or get the permissions if the `keyHash` is `bytes32(0)`.
+        error KeyHashIsZero();
+
+        /// Only the EOA itself and super admin keys can self execute.
+        error CannotSelfExecute();
+
+        /// Unauthorized to perform the action.
+        error Unauthorized();
+
+        /// Exceeded the spend limit.
+        error ExceededSpendLimit();
+
+        /// Super admin keys can execute everything.
+        error SuperAdminCanExecuteEverything();
+
+        /// The execution mode is not supported.
+        error UnsupportedExecutionMode();
+
+        /// Cannot decode `executionData` as a batch of batches `abi.encode(bytes[])`.
+        error BatchOfBatchesDecodingError();
+
+        /// The function selector is not recognized.
+        error FnSelectorNotRecognized();
 
         /// Set a limited amount of `token` that `keyHash` can spend per `period`.
         function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)

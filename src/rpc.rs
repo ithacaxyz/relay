@@ -13,6 +13,7 @@ use crate::{
     types::{
         AccountRegistry::AccountRegistryCalls, Call, KeyHashWithID, rpc::CreateAccountContext,
     },
+    version::RELAY_SHORT_VERSION,
 };
 use alloy::{
     eips::eip7702::{
@@ -57,9 +58,9 @@ use crate::{
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "relay")]
 pub trait RelayApi {
-    /// Checks the health of the relay.
+    /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
-    async fn health(&self) -> RpcResult<()>;
+    async fn health(&self) -> RpcResult<String>;
 
     /// Get all supported fee tokens by chain.
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
@@ -339,8 +340,8 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
-    async fn health(&self) -> RpcResult<()> {
-        Ok(())
+    async fn health(&self) -> RpcResult<String> {
+        Ok(RELAY_SHORT_VERSION.to_string())
     }
 
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
