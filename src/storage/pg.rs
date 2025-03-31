@@ -23,7 +23,8 @@ impl PgStorage {
     }
 }
 
-// wrapper...
+/// This is a wrapper around [`TransactionStatus`] since `sqlx` does not support enums with
+/// associated data.
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "tx_status", rename_all = "lowercase")]
 enum TxStatus {

@@ -71,11 +71,13 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     // construct db
     let storage = if let Some(db_url) = config.database_url {
+        info!("Using PostgreSQL as storage.");
         let pool = PgPool::connect(&db_url).await?;
         sqlx::migrate!().run(&pool).await?;
 
         RelayStorage::pg(pool)
     } else {
+        info!("Using in-memory storage.");
         RelayStorage::in_memory()
     };
 
