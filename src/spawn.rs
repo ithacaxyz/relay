@@ -21,7 +21,7 @@ use jsonrpsee::server::{
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
-use std::{path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
@@ -29,6 +29,8 @@ use tracing::{info, warn};
 /// Context returned once relay is launched.
 #[derive(Debug, Clone)]
 pub struct RelayHandle {
+    /// The socket address to which the server is bound.
+    pub local_addr: SocketAddr,
     /// Handle to RPC server.
     pub server: ServerHandle,
     /// Configured providers.
@@ -37,6 +39,13 @@ pub struct RelayHandle {
     pub storage: RelayStorage,
     /// Metrics collector handle.
     pub metrics: PrometheusHandle,
+}
+
+impl RelayHandle {
+    /// Returns the url to the http server
+    pub fn http_url(&self) -> String {
+        format!("http://{}", self.local_addr)
+    }
 }
 
 /// Attempts to spawn the relay service using CLI arguments and a configuration file.
@@ -149,9 +158,10 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
         .await?;
-    info!(addr = %server.local_addr().unwrap(), "Started relay service");
+    let addr = server.local_addr()?;
+    info!(%addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
 
-    Ok(RelayHandle { server: server.start(rpc), chains, storage, metrics })
+    Ok(RelayHandle { local_addr: addr, server: server.start(rpc), chains, storage, metrics })
 }
