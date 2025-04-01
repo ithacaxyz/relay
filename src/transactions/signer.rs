@@ -104,7 +104,7 @@ pub struct Signer {
     chain_id: u64,
     /// Estimated block time.
     block_time: Duration,
-    /// Nonce of thes signer.
+    /// Nonce of this signer.
     nonce: Mutex<u64>,
     /// Channel to send signer events to.
     events_tx: mpsc::UnboundedSender<SignerEvent>,
@@ -125,6 +125,7 @@ impl Signer {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
 
+        // fetch account info
         let (nonce, chain_id, latest) = tokio::try_join!(
             provider.get_transaction_count(address).pending(),
             provider.get_chain_id(),
