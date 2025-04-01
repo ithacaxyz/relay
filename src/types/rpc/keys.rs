@@ -53,6 +53,10 @@ impl AuthorizeKey {
     ) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
 
+        if self.key.isSuperAdmin && self.key_type().is_p256() {
+            return Err(KeysError::P256SessionKeyOnly);
+        }
+
         calls.extend(self.permissions.drain(..).map(|perm| match perm {
             Permission::Call(perm) => {
                 Call::set_can_execute(self.key.key_hash(), perm.to, perm.selector, true)
@@ -170,7 +174,7 @@ mod tests {
             key: Key {
                 expiry: U40::from(0),
                 keyType: KeyType::P256,
-                isSuperAdmin: true,
+                isSuperAdmin: false,
                 publicKey: Bytes::from(fixed_bytes!(
                     "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                 )),
@@ -219,7 +223,7 @@ mod tests {
             key: Key {
                 expiry: U40::from(0),
                 keyType: KeyType::P256,
-                isSuperAdmin: true,
+                isSuperAdmin: false,
                 publicKey: Bytes::from(fixed_bytes!(
                     "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                 )),
@@ -240,7 +244,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&key).unwrap(),
-            r#"{"expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"},{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
+            r#"{"expiry":"0x0","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"},{"type":"spend","limit":"0x3e8","period":"day","token":"0x0000000000000000000000000000000000000000"}]}"#
         );
     }
 
@@ -249,7 +253,7 @@ mod tests {
         let key = Key {
             expiry: U40::from(0),
             keyType: KeyType::P256,
-            isSuperAdmin: true,
+            isSuperAdmin: false,
             publicKey: Bytes::from(fixed_bytes!(
                 "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             )),
@@ -268,20 +272,20 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&resp).unwrap(),
-            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         );
     }
 
     #[test]
     fn deserialize_authorize_key_response() {
         let resp = serde_json::from_str::<AuthorizeKeyResponse>(
-            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"admin","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
+            r#"{"hash":"0xc7982d8475577e50ca7dc56923eb413813cdb93f009160d943436b217410ffd9","expiry":"0x0","type":"p256","role":"normal","publicKey":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","permissions":[{"type":"call","selector":"0xa9059cbb","to":"0x0000000000000000000000000000000000000000"}]}"#
         ).unwrap();
 
         let key = Key {
             expiry: U40::from(0),
             keyType: KeyType::P256,
-            isSuperAdmin: true,
+            isSuperAdmin: false,
             publicKey: Bytes::from(fixed_bytes!(
                 "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             )),
