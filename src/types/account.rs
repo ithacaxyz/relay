@@ -362,16 +362,13 @@ impl PREPAccount {
     }
 
     /// Return the list of authorized keys as [`AuthorizeKeyResponse`].
-    pub fn authorized_keys(&self) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
-        // `wallet_prepareCreateAccount` and `wallet_createAccount` ensure that we only have
-        // authorize calls on admin keys oatn PREPAccount init calls. So, we can safely
-        // decode all of them as authorizeCalls
+    pub fn authorized_keys(&self) -> Vec<AuthorizeKeyResponse> {
         self.init_calls
             .iter()
             .filter(|call| call.to == Address::ZERO)
-            .map(|call| {
-                let authorize = authorizeCall::abi_decode(&call.data, false)?;
-                Ok(AuthorizeKeyResponse {
+            .filter_map(|call| {
+                let authorize = authorizeCall::abi_decode(&call.data, false).ok()?;
+                Some(AuthorizeKeyResponse {
                     hash: authorize.key.key_hash(),
                     authorize_key: AuthorizeKey {
                         key: authorize.key,

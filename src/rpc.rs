@@ -269,7 +269,7 @@ impl Relay {
                         if let Some(account) =
                             self.inner.storage.read_prep(&request.address).await?
                         {
-                            return account.prep.authorized_keys().map_err(RelayError::AbiError);
+                            return Ok(account.prep.authorized_keys());
                         }
                     }
                 }
