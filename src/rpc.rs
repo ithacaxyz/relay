@@ -102,7 +102,6 @@ pub trait RelayApi {
     async fn get_keys(&self, parameters: GetKeysParameters)
     -> RpcResult<Vec<AuthorizeKeyResponse>>;
 
-    // todo: rewrite
     /// Prepares a call bundle for a user.
     #[method(name = "prepareCalls", aliases = ["wallet_prepareCalls"])]
     async fn prepare_calls(
@@ -110,7 +109,6 @@ pub trait RelayApi {
         parameters: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse>;
 
-    // todo: rewrite
     /// Prepares an EOA to be upgraded.
     #[method(name = "prepareUpgradeAccount", aliases = ["wallet_prepareUpgradeAccount"])]
     async fn prepare_upgrade_account(
@@ -118,7 +116,6 @@ pub trait RelayApi {
         parameters: PrepareUpgradeAccountParameters,
     ) -> RpcResult<PrepareCallsResponse>;
 
-    // todo: rewrite
     /// Send a signed call bundle.
     #[method(name = "sendPreparedCalls", aliases = ["wallet_sendPreparedCalls"])]
     async fn send_prepared_calls(
@@ -126,7 +123,6 @@ pub trait RelayApi {
         parameters: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse>;
 
-    // todo: rewrite
     /// Upgrade an account.
     #[method(name = "upgradeAccount", aliases = ["wallet_upgradeAccount"])]
     async fn upgrade_account(
@@ -191,7 +187,6 @@ impl Relay {
         }
 
         if let Some(auth) = &authorization {
-            // todo: persist auth
             if !auth.inner().chain_id().is_zero() {
                 return Err(AuthError::AuthItemNotChainAgnostic.into());
             }
