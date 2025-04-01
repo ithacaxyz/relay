@@ -67,6 +67,9 @@ pub struct Args {
     /// The secret key to sign transactions with.
     #[arg(long = "secret-key", value_name = "SECRET_KEY", num_args=1.., value_delimiter = ',', env = "RELAY_SK")]
     pub secret_keys: Vec<String>,
+    /// The database URL for the relay.
+    #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
+    pub database_url: Option<String>,
 }
 
 impl Args {
@@ -94,6 +97,7 @@ impl Args {
             .with_entrypoint(self.entrypoint)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
+            .with_database_url(self.database_url)
     }
 }
 
@@ -143,6 +147,7 @@ mod tests {
                     secret_keys: vec![key.to_string()],
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
+                    database_url: Default::default(),
                 },
                 config.clone(),
                 registry.clone(),
