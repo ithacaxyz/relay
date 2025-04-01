@@ -6,7 +6,7 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::Address;
+use alloy::primitives::{Address, ChainId};
 use async_trait::async_trait;
 use dashmap::{DashMap, Entry};
 
@@ -16,7 +16,7 @@ pub struct InMemoryStorage {
     accounts: DashMap<Address, CreatableAccount>,
     id_to_accounts: DashMap<Address, Vec<Address>>,
     pending_transactions: DashMap<TxId, PendingTransaction>,
-    statuses: DashMap<TxId, TransactionStatus>,
+    statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
 }
 
@@ -79,15 +79,19 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn write_transaction_status(&self, tx: TxId, status: &TransactionStatus) -> Result<()> {
-        self.statuses.insert(tx, status.clone());
+        self.statuses.entry(tx).and_modify(|tx| tx.1 = status.clone());
         Ok(())
     }
 
-    async fn read_transaction_status(&self, tx: TxId) -> Result<Option<TransactionStatus>> {
+    async fn read_transaction_status(
+        &self,
+        tx: TxId,
+    ) -> Result<Option<(ChainId, TransactionStatus)>> {
         Ok(self.statuses.get(&tx).as_deref().cloned())
     }
 
-    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
+    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()> {
+        self.statuses.insert(tx, (chain_id, TransactionStatus::InFlight));
         self.bundles.entry(bundle).or_default().push(tx);
         Ok(())
     }

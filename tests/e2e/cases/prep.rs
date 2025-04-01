@@ -1,18 +1,17 @@
 //! Prepare calls related end-to-end test cases
 
 use crate::e2e::{
-    MockErc20, TxContext, build_pre_ops,
+    MockErc20, TxContext, await_calls_status, build_pre_ops,
     environment::{Environment, mint_erc20s},
     eoa::EoaKind,
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, TxHash, TxKind, U256},
-    providers::{PendingTransactionBuilder, Provider},
+    primitives::{Address, TxKind, U256},
+    providers::Provider,
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
-use eyre::Context;
 use futures_util::future::try_join_all;
 use relay::{
     rpc::RelayApiClient,
@@ -20,9 +19,9 @@ use relay::{
     types::{
         Call, CreatableAccount, KeyType, KeyWith712Signer,
         rpc::{
-            CreateAccountParameters, GetAccountsParameters, GetKeysParameters, KeySignature, Meta,
-            PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-            PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
+            BundleId, CreateAccountParameters, GetAccountsParameters, GetKeysParameters,
+            KeySignature, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, PrepareCreateAccountCapabilities, PrepareCreateAccountParameters,
             PrepareCreateAccountResponse,
         },
     },
@@ -35,7 +34,7 @@ pub async fn prep_account<'a>(
     authorize_keys: &[&KeyWith712Signer],
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<TxHash> {
+) -> eyre::Result<BundleId> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
         capabilities: _,
@@ -146,17 +145,13 @@ pub async fn prep_account<'a>(
     let signature = user_op_signer.sign_payload_hash(digest).await?;
 
     // Submit signed call
-    let tx_hash = send_prepared_calls(env, user_op_signer, signature, context).await?;
+    let bundle_id = send_prepared_calls(env, user_op_signer, signature, context).await?;
 
-    // Check that transaction has been successful.
-    let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
-        .get_receipt()
-        .await
-        .wrap_err("Failed to get receipt")?;
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(env, bundle_id).await?;
+    assert!(status.status.is_final());
 
-    assert!(receipt.status());
-
-    Ok(tx_hash)
+    Ok(bundle_id)
 }
 
 #[tokio::test(flavor = "multi_thread")]

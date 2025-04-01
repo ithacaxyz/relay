@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update txs set error = $1 where tx_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8cd9e8289f3eeb9038f5cb4caac6ab7b10f46c1037e58850b72321261e8e2e2"
+}

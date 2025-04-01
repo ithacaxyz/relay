@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select chain_id, tx_hash, status as \"status: TxStatus\", error from txs where tx_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "tx_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "status: TxStatus",
+        "type_info": {
+          "Custom": {
+            "name": "tx_status",
+            "kind": {
+              "Enum": [
+                "inflight",
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "error",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "3736d16e4265d8779ca6c4f6f75a93857f14bfc2b13b6f601e6abfe018af02d8"
+}

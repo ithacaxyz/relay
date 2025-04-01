@@ -1,10 +1,12 @@
 //! Relay stress testing tool.
 
+use std::time::Duration;
+
 use alloy::{
     network::EthereumWallet,
     primitives::{Address, ChainId, U256, bytes},
     providers::{
-        DynProvider, PendingTransactionBuilder, Provider, ProviderBuilder,
+        Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
     },
 };
@@ -49,7 +51,6 @@ impl StressAccount {
         chain_id: ChainId,
         fee_token: Address,
         relay_client: HttpClient,
-        provider: DynProvider,
     ) -> eyre::Result<()> {
         loop {
             let prepare_start = Instant::now();
@@ -99,16 +100,19 @@ impl StressAccount {
                 elapsed = ?send_start.elapsed(),
                 "Sent bundle"
             );
-            let receipt = PendingTransactionBuilder::new(provider.root().clone(), bundle_id.id)
-                .get_receipt()
-                .await
-                .expect("Failed to get receipt");
+            loop {
+                let status = relay_client.get_calls_status(bundle_id.id).await;
+                if status.is_ok() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
             info!(
                 %digest,
                 account = %self.address,
                 bundle_id = %bundle_id.id,
                 total_elapsed = ?prepare_start.elapsed(),
-                tx_hash = %receipt.transaction_hash,
                 "Bundle confirmed"
             );
         }
@@ -117,7 +121,6 @@ impl StressAccount {
 
 struct StressTester {
     relay_client: HttpClient,
-    provider: DynProvider,
     args: Args,
     accounts: Vec<StressAccount>,
 }
@@ -196,7 +199,7 @@ impl StressTester {
         .await?;
         info!("Initialized {} accounts", args.accounts);
 
-        Ok(Self { relay_client, provider, args, accounts })
+        Ok(Self { relay_client, args, accounts })
     }
 
     async fn spawn(self) -> eyre::Result<()> {
@@ -213,9 +216,8 @@ impl StressTester {
         let mut tasks = FuturesUnordered::new();
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
-            let provider = self.provider.clone();
             tasks.push(tokio::spawn(async move {
-                account.run(self.args.chain_id, self.args.fee_token, client, provider).await
+                account.run(self.args.chain_id, self.args.fee_token, client).await
             }));
         }
 
