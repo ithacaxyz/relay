@@ -326,7 +326,7 @@ impl Signer {
 
         self.metrics
             .confirmation_time
-            .record(Utc::now().signed_duration_since(tx.received_at).num_seconds() as f64);
+            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
         self.metrics.pending.decrement(1);
 
         Ok(())
