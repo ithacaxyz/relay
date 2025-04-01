@@ -22,3 +22,8 @@
 
 # include example files
 !/examples
+
+# include migrations
+!/migrations
+# include
+!/.sqlx

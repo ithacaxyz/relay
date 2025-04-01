@@ -25,8 +25,13 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y libclang-dev pkg-
 # Builds dependencies
 RUN cargo chef cook --profile $BUILD_PROFILE --recipe-path recipe.json
 
-# Build application
+# Copy source
 COPY . .
+
+# Add migrations
+ADD migrations migrations
+
+# Build application
 RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked --bin relay
 
 # ARG is not resolved in COPY so we have to hack around it by copying the
