@@ -349,11 +349,8 @@ impl Relay {
         chain_id: ChainId,
     ) -> Result<Option<Key>, RelayError> {
         for pre_op in ops {
-            if let Some(key) = pre_op
-                .authorized_keys()
-                .map_err(RelayError::from)?
-                .iter()
-                .find(|key| key.key_hash() == key_hash)
+            if let Some(key) =
+                pre_op.authorized_keys()?.iter().find(|key| key.key_hash() == key_hash)
             {
                 return Ok(Some(key.clone()));
             }
