@@ -3,9 +3,12 @@ use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
-    rpc::types::state::StateOverride,
+    rpc::types::{
+        simulate::{SimBlock, SimulatePayload},
+        state::StateOverride,
+    },
     sol,
-    sol_types::SolValue,
+    sol_types::{SolError, SolValue},
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -175,29 +178,45 @@ impl<P: Provider> Entry<P> {
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
     pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, RelayError> {
-        let ret = self
-            .entrypoint
-            .simulateExecute(op.abi_encode().into())
-            .call()
-            .overrides(self.overrides.clone())
-            .await;
+        let simulate_call =
+            self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
-        if ret.is_ok() {
+        let simulated_call = self
+            .entrypoint
+            .provider()
+            .simulate(
+                &SimulatePayload::default()
+                    .extend(
+                        SimBlock::default()
+                            .call(simulate_call)
+                            .with_state_overrides(self.overrides.clone()),
+                    )
+                    .with_trace_transfers(),
+            )
+            .await?
+            .pop()
+            .expect("should have a single block")
+            .calls
+            .pop()
+            .expect("should have a single call");
+
+        if simulated_call.status {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        let err = ret.unwrap_err();
-        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
+        if let Ok(result) =
+            EntryPoint::SimulationResult::abi_decode(&simulated_call.return_data, true)
+        {
             if result.err != ENTRYPOINT_NO_ERROR {
                 Err(UserOpError::op_revert(result.err.into()).into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
-        } else if let Some(data) = err.as_revert_data() {
-            Err(UserOpError::op_revert(data).into())
+        } else if !simulated_call.return_data.is_empty() {
+            Err(UserOpError::op_revert(simulated_call.return_data).into())
         } else {
-            Err(TransportErrorKind::custom(err).into())
+            Err(eyre::eyre!("failed call: {:?}", simulated_call.error).into())
         }
     }
 
