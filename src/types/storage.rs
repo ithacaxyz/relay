@@ -4,6 +4,7 @@ use crate::types::{KeyHashWithID, PREPAccount};
 
 /// CreateAccount request that can be reused across chains.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreatableAccount {
     /// PREP account.
     pub prep: PREPAccount,
