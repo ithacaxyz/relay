@@ -120,7 +120,7 @@ async fn spend_limits() -> Result<()> {
             },
             // overspend transfer should fail
             TxContext {
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100))],
                 key: Some(&key1),
                 ..Default::default()
@@ -180,7 +180,7 @@ async fn spend_limits_bundled() -> Result<()> {
             },
             // overspend transfer should fail
             TxContext {
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
                 key: Some(&key1),
                 ..Default::default()
@@ -204,7 +204,7 @@ async fn spend_limits_bundle_failure() -> Result<()> {
             },
             // Bundled overspend should fail
             TxContext {
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 calls: vec![
                     calls::daily_limit(env.erc20, U256::from(15), key1.key()),
                     calls::transfer(env.erc20, Address::ZERO, U256::from(20)),

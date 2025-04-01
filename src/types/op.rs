@@ -1,8 +1,8 @@
-use super::Call;
+use super::{Call, IDelegation::authorizeCall, Key, PREPInitData};
 use alloy::{
     primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
     sol,
-    sol_types::SolValue,
+    sol_types::{SolCall, SolValue},
     uint,
 };
 use serde::{Deserialize, Serialize};
@@ -197,6 +197,45 @@ impl UserOp {
         };
         hasher.update(pre_ops_hash);
         hasher.finalize()
+    }
+
+    /// Returns all keys authorized in `pre_ops`.
+    pub fn pre_authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
+        let mut all_keys = Vec::with_capacity(self.encodedPreOps.len());
+        for encoded_op in &self.encodedPreOps {
+            let op = UserOp::abi_decode(encoded_op, false)?;
+            all_keys.extend(op.authorized_keys().into_iter().flatten());
+        }
+        Ok(all_keys)
+    }
+
+    /// Returns all keys authorized in the current [`UserOp`] including `pre_ops`, `executionData`
+    /// and `initData`.
+    pub fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
+        // Decode keys from the execution data.
+        let keys =
+            Vec::<Call>::abi_decode(&self.executionData, false)?.into_iter().filter_map(|call| {
+                // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
+                authorizeCall::abi_decode(&call.data, false).ok().map(|decoded| decoded.key)
+            });
+
+        // Decode keys from initData, if it exists.
+        let mut keys: Vec<Key> = if !self.initData.is_empty() {
+            let prep = PREPInitData::abi_decode_params(&self.initData, false)?;
+
+            keys.chain(prep.calls.into_iter().filter_map(|call| {
+                // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
+                authorizeCall::abi_decode(&call.data, false).ok().map(|decoded| decoded.key)
+            }))
+            .collect()
+        } else {
+            keys.collect()
+        };
+
+        // Extend with pre-authorized keys.
+        keys.extend(self.pre_authorized_keys()?);
+
+        Ok(keys)
     }
 }
 

@@ -11,7 +11,8 @@
 use crate::{
     eip712::compute_eip712_data,
     types::{
-        AccountRegistry::AccountRegistryCalls, Call, KeyHashWithID, rpc::CreateAccountContext,
+        AccountRegistry::AccountRegistryCalls, Call, Key, KeyHash, KeyHashWithID,
+        rpc::CreateAccountContext,
     },
     version::RELAY_SHORT_VERSION,
 };
@@ -42,8 +43,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, Entry, FeeTokens, KeyType, KeyWith712Signer, PREPAccount,
-        PartialAction, PartialUserOp, Quote, Signature, SignedQuote, UserOp,
+        Account, CreatableAccount, Entry, FeeTokens, KeyWith712Signer, PREPAccount, PartialAction,
+        PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
             CreateAccountParameters, GetAccountsParameters, GetKeysParameters,
@@ -73,7 +74,7 @@ pub trait RelayApi {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
-        key: KeyType,
+        key: Key,
     ) -> RpcResult<SignedQuote>;
 
     /// Prepares an account for the user.
@@ -331,6 +332,32 @@ impl Relay {
         }
         Ok(calls)
     }
+
+    /// Given a key hash and a list of [`UserOp`], it tries to find a key from a requested EOA.
+    ///
+    /// If it cannot find it, it will attempt to fetch it from storage or on-chain.
+    async fn try_find_key(
+        &self,
+        from: Address,
+        key_hash: KeyHash,
+        ops: &[UserOp],
+        chain_id: ChainId,
+    ) -> Result<Option<Key>, RelayError> {
+        for pre_op in ops {
+            if let Some(key) =
+                pre_op.authorized_keys()?.iter().find(|key| key.key_hash() == key_hash)
+            {
+                return Ok(Some(key.clone()));
+            }
+        }
+
+        Ok(self
+            .get_keys(GetKeysParameters { address: from, chain_id })
+            .await?
+            .into_iter()
+            .find(|key| key.hash == key_hash)
+            .map(|k| k.authorize_key.key))
+    }
 }
 
 #[async_trait]
@@ -348,7 +375,7 @@ impl RelayApiServer for Relay {
         request: PartialAction,
         token: Address,
         authorization_address: Option<Address>,
-        key_type: KeyType,
+        account_key: Key,
     ) -> RpcResult<SignedQuote> {
         let provider = self.provider(request.chain_id)?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
@@ -357,7 +384,7 @@ impl RelayApiServer for Relay {
 
         // create key
         let mock_signer_address = self.inner.quote_signer.address();
-        let key = KeyWith712Signer::random_admin(key_type)
+        let mock_key = KeyWith712Signer::random_admin(account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
@@ -370,7 +397,7 @@ impl RelayApiServer for Relay {
             .append(
                 request.op.eoa,
                 AccountOverride::default()
-                    .with_state_diff(key.storage_slots())
+                    .with_state_diff(account_key.storage_slots())
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -409,7 +436,7 @@ impl RelayApiServer for Relay {
         };
 
         // sign userop
-        let signature = key
+        let signature = mock_key
             .sign_typed_data(
                 &op.as_eip712().map_err(RelayError::from)?,
                 &entrypoint.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
@@ -417,10 +444,13 @@ impl RelayApiServer for Relay {
             .await
             .map_err(RelayError::from)?;
 
-        op.signature =
-            Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: false }
-                .abi_encode_packed()
-                .into();
+        op.signature = Signature {
+            innerSignature: signature,
+            keyHash: account_key.key_hash(),
+            prehash: account_key.keyType.is_p256(), // WebCrypto P256 uses prehash
+        }
+        .abi_encode_packed()
+        .into();
 
         // we estimate gas and fees
         let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
@@ -620,9 +650,18 @@ impl RelayApiServer for Relay {
             .iter()
             .flat_map(|key| key.clone().into_calls(self.inner.entrypoint));
 
-        // todo: obtain key with permissions from contracts using request.capabilities.meta.key_hash
-        // todo: pass key with permissions to estimate_fee instead of keyType
-        let key = KeyType::WebAuthnP256;
+        // Find the key that authorizes this userop
+        let Some(key) = self
+            .try_find_key(
+                request.from,
+                request.capabilities.meta.key_hash,
+                &request.capabilities.pre_ops,
+                request.chain_id,
+            )
+            .await?
+        else {
+            return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
+        };
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
@@ -711,9 +750,11 @@ impl RelayApiServer for Relay {
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
-        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
+        let Some(admin_key) =
+            request.capabilities.authorize_keys.iter().find(|key| key.key.isSuperAdmin)
+        else {
             return Err(KeysError::MissingAdminKey)?;
-        }
+        };
 
         // Generate all calls that will authorize keys and set their permissions
         let calls = self.authorize_into_calls(
@@ -737,12 +778,7 @@ impl RelayApiServer for Relay {
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
-                request
-                    .capabilities
-                    .authorize_keys
-                    .first()
-                    .map(|k| k.key_type())
-                    .unwrap_or(KeyType::Secp256k1),
+                admin_key.key.clone(),
             )
             .await
             .inspect_err(|err| {

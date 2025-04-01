@@ -77,7 +77,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             // Another transfer exceeds spend limit → fail
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&another_key),
                 ..Default::default()
             },
@@ -117,7 +117,7 @@ async fn behavior_spend_limits() -> Result<()> {
             // Another transfer of 1 ETH exceeds the 1.5 ETH limit → fail
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(1000000000000000000u64))], // 1 ETH in wei
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&key),
                 ..Default::default()
             }
@@ -172,7 +172,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             // Failing transfer (different target)
             TxContext {
                 calls: vec![calls::transfer(env.erc20_alt, Address::ZERO, U256::from(10000000u64))],
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&another_key),
                 ..Default::default()
             },
@@ -226,7 +226,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             // Failing call using a different selector (e.g. "mint")
             TxContext {
                 calls: vec![calls::mint(env.erc20, Address::ZERO, U256::from(10000000u64))],
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&another_key),
                 ..Default::default()
             },
