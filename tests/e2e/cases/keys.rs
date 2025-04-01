@@ -111,7 +111,7 @@ async fn revoke_key() -> eyre::Result<()> {
             },
             TxContext {
                 revoke_keys: vec![&key2, &key3],
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&key1),
                 ..Default::default()
             },
@@ -155,7 +155,7 @@ async fn revoke_backup_key() -> eyre::Result<()> {
             },
             TxContext {
                 revoke_keys: vec![&key1],
-                expected: ExpectedOutcome::FailSend,
+                expected: ExpectedOutcome::FailEstimate,
                 key: Some(&key2),
                 ..Default::default()
             },
