@@ -10,6 +10,7 @@
 !Cross.toml
 !deny.toml
 !Makefile
+!build.rs
 
 # include for vergen constants
 !/.git
