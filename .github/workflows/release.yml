@@ -42,3 +42,13 @@ jobs:
             ${{ env.GHCR_REPO }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Notify Porto Repository
+        env:
+          image-tag: ${{ env.GHCR_REPO }}:${{ github.ref_name }}
+        run: |
+          curl --location --request POST 'https://api.github.com/repos/ithacaxyz/porto/dispatches' \
+            --header 'Authorization: token ${{ secrets.PORTO_ACCESS_TOKEN }}' \
+            --header 'Accept: application/vnd.github+json' \
+            --data '{"event_type":"relay-release", "client_payload":{"image":"${{ env.image-tag }}"}}'
+
