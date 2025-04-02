@@ -847,7 +847,7 @@ impl RelayApiServer for Relay {
             self.send_action(request.context, authorization).await.inspect_err(|err| {
                 error!(
                     %err,
-                    "Failed to submit upgrade account transaction.",
+                    "Failed to submit call bundle transaction.",
                 );
             })?;
 
