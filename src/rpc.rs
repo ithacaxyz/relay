@@ -11,8 +11,9 @@
 use crate::{
     eip712::compute_eip712_data,
     types::{
-        AccountRegistry::AccountRegistryCalls, Call, Key, KeyHash, KeyHashWithID,
-        rpc::CreateAccountContext,
+        AccountRegistry::AccountRegistryCalls,
+        Call, Key, KeyHash, KeyHashWithID,
+        rpc::{CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
 };
@@ -61,7 +62,7 @@ use crate::{
 pub trait RelayApi {
     /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
-    async fn health(&self) -> RpcResult<String>;
+    async fn health(&self) -> RpcResult<RelaySettings>;
 
     /// Get all supported fee tokens by chain.
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
@@ -362,8 +363,12 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
-    async fn health(&self) -> RpcResult<String> {
-        Ok(RELAY_SHORT_VERSION.to_string())
+    async fn health(&self) -> RpcResult<RelaySettings> {
+        Ok(RelaySettings {
+            version: RELAY_SHORT_VERSION.to_string(),
+            entrypoint: self.inner.entrypoint,
+            quote_config: self.inner.quote_config.clone(),
+        })
     }
 
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {

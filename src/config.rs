@@ -48,7 +48,8 @@ pub struct ChainConfig {
 }
 
 /// Quote configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QuoteConfig {
     /// Sets a constant rate for the price oracle. Used for testing.
     pub constant_rate: Option<f64>,
@@ -63,7 +64,7 @@ pub struct QuoteConfig {
 }
 
 /// Gas estimate configuration.
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GasConfig {
     /// Extra buffer added to UserOp gas estimates.
     pub user_op_buffer: u64,

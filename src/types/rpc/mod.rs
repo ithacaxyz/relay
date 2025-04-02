@@ -12,6 +12,9 @@ pub use keys::*;
 mod permission;
 pub use permission::*;
 
+mod settings;
+pub use settings::*;
+
 use alloy::primitives::{Address, B256, U256};
 use serde::{Deserialize, Serialize};
 
