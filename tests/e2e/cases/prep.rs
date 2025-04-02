@@ -31,12 +31,11 @@ use relay::{
 pub async fn prep_account<'a>(
     env: &mut Environment,
     calls: &[Call],
+    user_op_signer: &KeyWith712Signer,
     authorize_keys: &[&KeyWith712Signer],
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
 ) -> eyre::Result<TxHash> {
-    let prep_signer = authorize_keys[0];
-
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
         capabilities: _,
@@ -133,7 +132,7 @@ pub async fn prep_account<'a>(
                 revoke_keys: Vec::new(),
                 meta: Meta {
                     fee_token: env.erc20,
-                    key_hash: prep_signer.key_hash(),
+                    key_hash: user_op_signer.key_hash(),
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
                 },
@@ -144,10 +143,10 @@ pub async fn prep_account<'a>(
         .await?;
 
     // Sign UserOp digest
-    let signature = prep_signer.sign_payload_hash(digest).await?;
+    let signature = user_op_signer.sign_payload_hash(digest).await?;
 
     // Submit signed call
-    let tx_hash = send_prepared_calls(env, prep_signer, signature, context).await?;
+    let tx_hash = send_prepared_calls(env, user_op_signer, signature, context).await?;
 
     // Check that transaction has been successful.
     let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
@@ -181,6 +180,7 @@ async fn basic_prep() -> eyre::Result<()> {
                 .abi_encode()
                 .into(),
         }],
+        &eoa_authorized,
         // todo: add test where key is not admin and should have permissions
         &[&eoa_authorized],
         &[],

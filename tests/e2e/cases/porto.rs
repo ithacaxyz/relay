@@ -588,3 +588,32 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
     .await?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    run_e2e_prep(|env| {
+        vec![TxContext {
+            authorization_keys: vec![&key],
+            auth: Some(AuthKind::Auth),
+            // Should fail since session key does not have any permissions.
+            expected: ExpectedOutcome::FailSend,
+            // Bundle session key authorization as a pre-op
+            pre_ops: vec![TxContext {
+                authorization_keys: vec![&session_key],
+                key: Some(&key),
+                // use random nonce sequence
+                nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
+                ..Default::default()
+            }],
+            // Execute the transfer via session key in the same userop
+            calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+            // The userop is signed by the session key itself
+            key: Some(&session_key),
+            ..Default::default()
+        }]
+    })
+    .await?;
+    Ok(())
+}

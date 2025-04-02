@@ -140,8 +140,18 @@ impl TxContext<'_> {
         env: &mut Environment,
         tx_num: usize,
     ) -> Result<(), eyre::Error> {
-        let tx_hash =
-            prep_account(env, &self.calls, &self.authorization_keys, &self.pre_ops, tx_num).await;
+        // If a signer is not defined, takes the first authorized key from the tx context.
+        let op_signer = self.key.as_ref().unwrap_or(&self.authorization_keys[0]);
+
+        let tx_hash = prep_account(
+            env,
+            &self.calls,
+            op_signer,
+            &self.authorization_keys,
+            &self.pre_ops,
+            tx_num,
+        )
+        .await;
 
         // Check test expectations
         let op_nonce = U256::ZERO; // first transaction
