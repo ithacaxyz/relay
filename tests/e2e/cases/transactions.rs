@@ -50,6 +50,9 @@ impl MockAccount {
             .await
             .unwrap();
 
+        // Using ETH for payments
+        env.provider.anvil_set_balance(address, U256::from(100e18)).await?;
+
         let signature = key.id_sign(address).await.unwrap();
 
         env.relay_endpoint
@@ -79,7 +82,7 @@ impl MockAccount {
                 from: address,
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_token: env.erc20, key_hash: key.key_hash(), nonce: None },
+                    meta: Meta { fee_token: Address::ZERO, key_hash: key.key_hash(), nonce: None },
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],
@@ -113,7 +116,11 @@ impl MockAccount {
                 from: self.address,
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_token: env.erc20, key_hash: self.key.key_hash(), nonce: None },
+                    meta: Meta {
+                        fee_token: Address::ZERO,
+                        key_hash: self.key.key_hash(),
+                        nonce: None,
+                    },
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],

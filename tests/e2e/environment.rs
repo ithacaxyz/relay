@@ -211,7 +211,7 @@ impl Environment {
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_entrypoint(entrypoint)
-                .with_user_op_gas_buffer(100_000) // todo: temp
+                .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
                 .with_database_url(std::env::var("DATABASE_URL").ok()),
             registry,

@@ -402,6 +402,7 @@ impl RelayApiServer for Relay {
             .append(
                 request.op.eoa,
                 AccountOverride::default()
+                    .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
                     .with_state_diff(account_key.storage_slots())
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
@@ -427,6 +428,10 @@ impl RelayApiServer for Relay {
             executionData: request.op.execution_data.clone(),
             nonce,
             paymentToken: token.address,
+            // this will force the simulation to go through payment code paths, and get a better
+            // estimation.
+            paymentAmount: U256::from(1),
+            paymentMaxAmount: U256::from(1),
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
