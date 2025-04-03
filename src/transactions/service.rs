@@ -14,6 +14,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
+use tracing::debug;
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
@@ -123,8 +124,14 @@ impl Future for TransactionService {
                 match event {
                     SignerEvent::TransactionStatus(id, status) => {
                         match &status {
-                            TransactionStatus::Failed(_) => this.metrics.failed.increment(1),
-                            TransactionStatus::Confirmed(_) => this.metrics.confirmed.increment(1),
+                            TransactionStatus::Failed(err) => {
+                                debug!(tx_id = %id, %err, "transaction failed");
+                                this.metrics.failed.increment(1);
+                            }
+                            TransactionStatus::Confirmed(hash) => {
+                                debug!(tx_id = %id, %hash, "transaction confirmed");
+                                this.metrics.confirmed.increment(1);
+                            }
                             _ => {}
                         }
 
