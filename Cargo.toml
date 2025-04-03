@@ -7,6 +7,10 @@ edition = "2024"
 path = "src/bin/relay.rs"
 name = "relay"
 
+[[bin]]
+path = "src/bin/stress.rs"
+name = "stress"
+
 [dependencies]
 alloy = { version = "0.13", features = [
     "getrandom",
