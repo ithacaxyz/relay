@@ -8,7 +8,7 @@ use alloy::{
         state::StateOverride,
     },
     sol,
-    sol_types::{SolError, SolValue},
+    sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -59,7 +59,14 @@ sol! {
         /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+        // error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+        struct SimulationResult {
+            uint256 gExecute;
+            uint256 gCombined;
+            uint256 gUsed;
+            bytes4 err;
+        }
+
 
         /// The simulate execute run has failed. Try passing in more gas to the simulation.
         error SimulateExecuteFailed();
@@ -181,7 +188,7 @@ impl<P: Provider> Entry<P> {
         let simulate_call =
             self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
-        let simulated_call = self
+        let result = self
             .entrypoint
             .provider()
             .simulate(
@@ -200,23 +207,21 @@ impl<P: Provider> Entry<P> {
             .pop()
             .expect("should have a single call");
 
-        if simulated_call.status {
+        if !result.status {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        if let Ok(result) =
-            EntryPoint::SimulationResult::abi_decode(&simulated_call.return_data, true)
-        {
+        if let Ok(result) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
             if result.err != ENTRYPOINT_NO_ERROR {
                 Err(UserOpError::op_revert(result.err.into()).into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
-        } else if !simulated_call.return_data.is_empty() {
-            Err(UserOpError::op_revert(simulated_call.return_data).into())
+        } else if !result.return_data.is_empty() {
+            Err(UserOpError::op_revert(result.return_data).into())
         } else {
-            Err(eyre::eyre!("failed call: {:?}", simulated_call.error).into())
+            Err(eyre::eyre!("failed call: {:?}", result.error).into())
         }
     }
 

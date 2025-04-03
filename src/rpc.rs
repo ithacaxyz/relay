@@ -399,6 +399,9 @@ impl RelayApiServer for Relay {
                 mock_signer_address,
                 AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
             )
+            // simulateExecute requires it, so the function can only be called under a testing
+            // environment
+            .append(Address::ZERO, AccountOverride::default().with_balance(U256::MAX))
             .append(
                 request.op.eoa,
                 AccountOverride::default()
