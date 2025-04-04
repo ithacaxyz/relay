@@ -100,6 +100,15 @@ sol! {
         /// Unauthorized reentrant call.
         error Reentrancy();
 
+        /// The nonce is invalid.
+        error InvalidNonce();
+
+        /// When invalidating a nonce sequence, the new sequence must be larger than the current.
+        error NewSequenceMustBeLarger();
+
+        /// Not authorized to perform the call.
+        error UnauthorizedCall(bytes32 keyHash, address target, bytes data);
+
         /// Executes a single encoded user operation.
         ///
         /// `encodedUserOp` is given by `abi.encode(userOp)`, where `userOp` is a struct of type `UserOp`.
