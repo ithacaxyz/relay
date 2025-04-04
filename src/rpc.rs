@@ -27,7 +27,7 @@ use alloy::{
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::{TryFutureExt, future::try_join_all};
+use futures_util::future::try_join_all;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -422,6 +422,17 @@ impl RelayApiServer for Relay {
             entrypoint.get_nonce(request.op.eoa).await.map_err(RelayError::from)?
         };
 
+        // fetch chain fees
+        let native_fee_estimate =
+            provider.estimate_eip1559_fees().await.map_err(RelayError::from)?;
+        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
+
+        // fetch price in eth
+        // TODO: only handles eth as native fee token
+        let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
+            return Err(QuoteError::UnavailablePrice(token.address).into());
+        };
+
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
@@ -432,6 +443,7 @@ impl RelayApiServer for Relay {
             // estimation.
             paymentAmount: U256::from(1),
             paymentMaxAmount: U256::from(1),
+            paymentPerGas: (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
@@ -463,10 +475,7 @@ impl RelayApiServer for Relay {
         .into();
 
         // we estimate gas and fees
-        let (mut gas_estimate, native_fee_estimate) = futures_util::try_join!(
-            entrypoint.simulate_execute(&op).map_err(RelayError::from),
-            provider.estimate_eip1559_fees().map_err(RelayError::from)
-        )?;
+        let mut gas_estimate = entrypoint.simulate_execute(&op).await?;
 
         // for 7702 designations there is an additional gas charge
         //
@@ -488,14 +497,6 @@ impl RelayApiServer for Relay {
         // Fill combinedGas and empty dummy signature
         op.combinedGas = U256::from(gas_estimate.op);
         op.signature = bytes!("");
-
-        // Get paymentPerGas
-        // TODO: only handles eth as native fee token
-        let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
-            return Err(QuoteError::UnavailablePrice(token.address).into());
-        };
-        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
-        op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
         // Calculate amount with updated paymentPerGas
         op.paymentAmount = op.paymentPerGas * op.combinedGas;
