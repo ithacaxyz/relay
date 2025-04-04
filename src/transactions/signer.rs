@@ -441,6 +441,25 @@ impl Signer {
     }
 }
 
+/// A unique identifier for one [`Signer`]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub struct SignerId(u64);
+
+impl SignerId {
+    
+    /// Creates a new identifier.
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// Handle to interact with [`Signer`].
+#[derive(Debug)]
+pub struct SignerHandle2 {
+    /// Command channel to send 
+    to_signer: mpsc::UnboundedSender<SignerMessage>,
+}
+
 /// Handle to interact with [`Signer`].
 #[derive(Debug)]
 pub struct SignerHandle {

@@ -1,10 +1,6 @@
 use crate::{signers::DynSigner, storage::RelayStorage};
 
-use super::{
-    Signer, SignerEvent, SignerHandle, TxId,
-    metrics::TransactionServiceMetrics,
-    transaction::{RelayTransaction, TransactionStatus},
-};
+use super::{Signer, SignerEvent, SignerHandle, TxId, metrics::TransactionServiceMetrics, transaction::{RelayTransaction, TransactionStatus}, SignerId};
 use alloy::providers::{DynProvider, Provider};
 use rand::seq::IndexedRandom;
 use std::{
@@ -40,6 +36,27 @@ impl TransactionServiceHandle {
         status_rx
     }
 }
+
+/// Service that handles transactions by dispatching outgoing transaction to an available signer and
+/// monitors the state of the transaction.
+#[derive(Debug)]
+pub struct TransactionService2 {
+    /// Handles of signers responsible for broadcasting transactions.
+    signers: HashMap<SignerId ,SignerHandle>,
+    /// Message channel from signers to this service.
+    from_signers: mpsc::UnboundedReceiver<SignerEvent>,
+
+    /// Incoming messages for the service.
+    command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
+
+    /// Subscriptions to transaction status updates.
+    subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
+
+    /// Metrics of the service.
+    metrics: Arc<TransactionServiceMetrics>,
+}
+
+
 
 /// Service that handles transactions by dispatching outgoing transaction to an available signer and
 /// monitors the state of the transaction.
