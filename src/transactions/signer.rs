@@ -33,7 +33,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{debug, error};
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -388,6 +388,9 @@ impl Signer {
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
     async fn close_nonce_gap(&self, nonce: u64) -> Result<(), SignerError> {
+        // todo: what happens if closing the nonce gap fails? i.e. what happens if we fail to send
+        // the transaction?
+        debug!(%nonce, "Closing nonce gap");
         let fee_estimate = self.provider.estimate_eip1559_fees().await?;
         let tx = TypedTransaction::Eip1559(TxEip1559 {
             chain_id: self.chain_id,
@@ -408,6 +411,7 @@ impl Signer {
             )
             .await?
             .await?;
+        debug!(%nonce, tx_hash = %tx.tx_hash(), "Nonce gap closed");
 
         Ok(())
     }
