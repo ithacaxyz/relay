@@ -61,8 +61,8 @@ jobs:
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0x78240fcd65120b477442d54f781d390990a97964" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0x63e0B807c3E872152645103462BD403D4e48fE7e" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0x46ded8e0325572a38b31ae0f628cc007e1600c22" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x2a8b9404addeea26b9789482ce53f6298fb421c3" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}
