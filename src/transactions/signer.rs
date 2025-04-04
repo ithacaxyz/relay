@@ -33,7 +33,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{debug, error, trace};
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -226,7 +226,26 @@ impl Signer {
             NetworkWallet::<Ethereum>::sign_transaction_from(&self.wallet, self.address(), tx)
                 .await?;
 
-        let _ = self.provider.send_raw_transaction(&signed.encoded_2718()).await?;
+        let _ = self
+            .provider
+            .send_raw_transaction(&signed.encoded_2718())
+            .await
+            .inspect(|_| {
+                trace!(
+                    tx_hash = %signed.hash(),
+                    nonce = %signed.nonce(),
+                    "Sent transaction"
+                );
+            })
+            .inspect_err(|err| {
+                error!(
+                    tx_hash = %signed.hash(),
+                    nonce = %signed.nonce(),
+                    err = %err,
+                    "Failed to send transaction"
+                );
+            })?;
+
         Ok(signed)
     }
 
@@ -388,6 +407,7 @@ impl Signer {
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
     async fn close_nonce_gap(&self, nonce: u64) -> Result<(), SignerError> {
+        debug!(%nonce, "Attempting to close nonce gap");
         let fee_estimate = self.provider.estimate_eip1559_fees().await?;
         let tx = TypedTransaction::Eip1559(TxEip1559 {
             chain_id: self.chain_id,
@@ -408,6 +428,7 @@ impl Signer {
             )
             .await?
             .await?;
+        debug!(%nonce, "Closed nonce gap");
 
         Ok(())
     }
