@@ -15,9 +15,10 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::error::{RelayError, UserOpError};
-
-use super::UserOp;
+use crate::{
+    error::{RelayError, UserOpError},
+    types::{AssetDiff, UserOp, calculate_asset_diff},
+};
 
 /// The 4-byte selector returned by the entrypoint if there is no error during execution.
 pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
@@ -190,7 +191,7 @@ impl<P: Provider> Entry<P> {
         &self,
         from: Address,
         op: &UserOp,
-    ) -> Result<GasEstimate, RelayError> {
+    ) -> Result<(AssetDiff, GasEstimate), RelayError> {
         let simulate_call =
             self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
@@ -216,12 +217,15 @@ impl<P: Provider> Entry<P> {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        if let Ok(result) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
-            if result.err != ENTRYPOINT_NO_ERROR {
-                Err(UserOpError::op_revert(result.err.into()).into())
+        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
+            if gas.err != ENTRYPOINT_NO_ERROR {
+                Err(UserOpError::op_revert(gas.err.into()).into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
-                Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
+                Ok((
+                    calculate_asset_diff(result.logs.into_iter()),
+                    GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() },
+                ))
             }
         } else if !result.return_data.is_empty() {
             Err(UserOpError::op_revert(result.return_data).into())

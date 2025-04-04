@@ -8,6 +8,9 @@ pub use account_registry::*;
 mod action;
 pub use action::*;
 
+mod asset_diff;
+pub use asset_diff::*;
+
 mod coin;
 pub use coin::*;
 

@@ -12,7 +12,7 @@ use crate::{
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::AccountRegistryCalls,
-        Call, Key, KeyHash, KeyHashWithID,
+        AssetDiff, Call, Key, KeyHash, KeyHashWithID,
         rpc::{CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
@@ -79,7 +79,7 @@ pub trait RelayApi {
         token: Address,
         authorization_address: Option<Address>,
         key: Key,
-    ) -> RpcResult<SignedQuote>;
+    ) -> RpcResult<(AssetDiff, SignedQuote)>;
 
     /// Prepares an account for the user.
     #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
@@ -384,7 +384,7 @@ impl RelayApiServer for Relay {
         token: Address,
         authorization_address: Option<Address>,
         account_key: Key,
-    ) -> RpcResult<SignedQuote> {
+    ) -> RpcResult<(AssetDiff, SignedQuote)> {
         let provider = self.provider(request.chain_id)?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
@@ -490,7 +490,7 @@ impl RelayApiServer for Relay {
         .into();
 
         // we estimate gas and fees
-        let mut gas_estimate =
+        let (asset_diff, mut gas_estimate) =
             entrypoint.simulate_execute(self.inner.quote_signer.address(), &op).await?;
 
         // for 7702 designations there is an additional gas charge
@@ -535,7 +535,7 @@ impl RelayApiServer for Relay {
             .await
             .map_err(|err| RelayError::InternalError(err.into()))?;
 
-        Ok(quote.into_signed(sig))
+        Ok((asset_diff, quote.into_signed(sig)))
     }
 
     async fn prepare_create_account(
@@ -721,7 +721,7 @@ impl RelayApiServer for Relay {
             .collect::<Vec<_>>();
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
-        let quote = self
+        let (asset_diff, quote) = self
             .estimate_fee(
                 PartialAction {
                     op: PartialUserOp {
@@ -763,6 +763,7 @@ impl RelayApiServer for Relay {
                     .map(|key| key.into_response())
                     .collect::<Vec<_>>(),
                 revoke_keys: request.capabilities.revoke_keys,
+                asset_diff,
             },
         };
 
@@ -790,7 +791,7 @@ impl RelayApiServer for Relay {
         )?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
-        let quote = self
+        let (asset_diff, quote) = self
             .estimate_fee(
                 PartialAction {
                     op: PartialUserOp {
@@ -833,6 +834,7 @@ impl RelayApiServer for Relay {
                     .map(|key| key.into_response())
                     .collect::<Vec<_>>(),
                 revoke_keys: Vec::new(),
+                asset_diff,
             },
         };
 
