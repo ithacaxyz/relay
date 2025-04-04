@@ -60,7 +60,7 @@ jobs:
         if: ${{ matrix.variant == 'odyssey_fork' }}
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
-          echo "TEST_FORK_URL=https://odyssey.ithaca.xyz" >> $GITHUB_ENV
+          echo "TEST_FORK_URL=${{ secrets.RPC_URL }}" >> $GITHUB_ENV
           echo "TEST_ENTRYPOINT=0x46ded8e0325572a38b31ae0f628cc007e1600c22" >> $GITHUB_ENV
           echo "TEST_DELEGATION=0x2a8b9404addeea26b9789482ce53f6298fb421c3" >> $GITHUB_ENV
 
