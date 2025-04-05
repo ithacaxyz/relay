@@ -87,6 +87,7 @@ pub enum SignerMessage {
 }
 
 /// Event emitted by the [`Signer`].
+// TODO: add SignerId
 #[derive(Debug)]
 pub enum SignerEvent {
     /// Status update for a transaction.
@@ -442,11 +443,10 @@ impl Signer {
 }
 
 /// A unique identifier for one [`Signer`]
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, Hash)]
 pub struct SignerId(u64);
 
 impl SignerId {
-    
     /// Creates a new identifier.
     pub const fn new(id: u64) -> Self {
         Self(id)
@@ -456,8 +456,15 @@ impl SignerId {
 /// Handle to interact with [`Signer`].
 #[derive(Debug)]
 pub struct SignerHandle2 {
-    /// Command channel to send 
+    /// Command channel to send
     to_signer: mpsc::UnboundedSender<SignerMessage>,
+}
+
+impl SignerHandle2 {
+    /// Sends a [`SignerMessage::SendTransaction`] to the [`Signer`].
+    pub fn send_transaction(&self, tx: RelayTransaction) {
+        let _ = self.to_signer.send(SignerMessage::SendTransaction(tx));
+    }
 }
 
 /// Handle to interact with [`Signer`].
