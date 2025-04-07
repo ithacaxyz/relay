@@ -59,7 +59,6 @@ sol! {
         /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        // error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
         struct SimulationResult {
             uint256 gExecute;
             uint256 gCombined;
@@ -184,7 +183,9 @@ impl<P: Provider> Entry<P> {
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
-    pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, RelayError> {
+    /// 
+    /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
+    pub async fn simulate_execute(&self, from: Address, op: &UserOp) -> Result<GasEstimate, RelayError> {
         let simulate_call =
             self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
@@ -195,17 +196,15 @@ impl<P: Provider> Entry<P> {
                 &SimulatePayload::default()
                     .extend(
                         SimBlock::default()
-                            .call(simulate_call)
+                            .call(simulate_call.from(from))
                             .with_state_overrides(self.overrides.clone()),
                     )
                     .with_trace_transfers(),
             )
             .await?
             .pop()
-            .expect("should have a single block")
-            .calls
-            .pop()
-            .expect("should have a single call");
+            .and_then(|mut block| block.calls.pop())
+            .expect("expected a single call in a single block");
 
         if !result.status {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
