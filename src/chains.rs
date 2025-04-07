@@ -37,12 +37,11 @@ impl Chains {
     ) -> TransportResult<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
-                let transactions = TransactionService::spawn(
-                    provider.clone(),
-                    tx_signers.clone(),
-                    storage.clone(),
-                )
-                .await;
+                let service =
+                    TransactionService::new(provider.clone(), tx_signers.clone(), storage.clone())
+                        .await;
+                let transactions = service.handle();
+                tokio::spawn(service);
 
                 let chain_id = provider.get_chain_id().await?;
                 Ok::<_, RpcError<TransportErrorKind>>((chain_id, Chain { provider, transactions }))
