@@ -12,9 +12,9 @@ pub struct TransactionServiceMetrics {
     /// Number of confirmed transactions
     pub confirmed: Counter,
     /// How many signers are currently active
-    pub active_signers: Counter,
+    pub active_signers: Gauge,
     /// How many signers are currently paused
-    pub paused_signers: Counter,
+    pub paused_signers: Gauge,
     /// Number of pending transactions.
     pub pending: Gauge,
     /// Time it takes to include transactions, in milliseconds.

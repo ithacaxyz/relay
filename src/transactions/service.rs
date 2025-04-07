@@ -207,8 +207,8 @@ impl TransactionService {
     }
 
     fn update_signer_metrics(&self) {
-        self.metrics.active_signers.absolute(self.active_signers.len() as u64);
-        self.metrics.paused_signers.absolute(self.paused_signers.len() as u64);
+        self.metrics.active_signers.set(self.active_signers.len() as f64);
+        self.metrics.paused_signers.set(self.paused_signers.len() as f64);
     }
 
     /// Returns true if the given signer is currently active.
@@ -223,13 +223,8 @@ impl TransactionService {
 
     /// Picks the next active signer for dispatching a transaction.
     fn next_active_signer(&mut self) -> Option<&SignerHandle> {
-        if self.active_signers.is_empty() {
-            return None;
-        }
-
         let idx = self.transaction_counter % self.active_signers.len();
-        let id = self.active_signers.swap_remove(idx);
-        self.active_signers.push(id);
+        let id = self.active_signers.get(idx).copied()?;
         self.signers.get(&id)
     }
 
