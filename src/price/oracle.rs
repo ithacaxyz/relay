@@ -153,7 +153,7 @@ impl PriceRegistry {
     fn insert(&mut self, pair: CoinPair, rate: RateTick) {
         match self.inner.entry(pair) {
             Entry::Occupied(mut e) => {
-                e.get().metrics.rate.record(rate.rate);
+                e.get().metrics.rate.set(rate.rate);
                 e.get_mut().rate = rate;
             }
             Entry::Vacant(e) => {
@@ -162,7 +162,7 @@ impl PriceRegistry {
                     metrics: CoinPairMetrics::new_with_labels(&[("pair", id)]),
                     rate,
                 };
-                info.metrics.rate.record(rate.rate);
+                info.metrics.rate.set(rate.rate);
                 e.insert(info);
             }
         }

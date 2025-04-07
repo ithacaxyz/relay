@@ -1,6 +1,6 @@
 //! Price metrics
 
-use metrics::Histogram;
+use metrics::Gauge;
 use metrics_derive::Metrics;
 
 /// Metrics for a [`CoinPair`](crate::types::CoinPair).
@@ -8,5 +8,5 @@ use metrics_derive::Metrics;
 #[metrics(scope = "oracle")]
 pub struct CoinPairMetrics {
     /// Rate for this pair.
-    pub rate: Histogram,
+    pub rate: Gauge,
 }
