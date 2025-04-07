@@ -27,7 +27,10 @@ use alloy::{
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolValue,
 };
-use futures_util::future::try_join_all;
+use futures_util::{
+    TryFutureExt,
+    future::{try_join_all, try_join3},
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -421,21 +424,27 @@ impl RelayApiServer for Relay {
         let entrypoint =
             Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
 
-        // fetch nonce if not specified
-        let nonce = if let Some(nonce) = request.op.nonce {
-            nonce
-        } else {
-            entrypoint.get_nonce(request.op.eoa).await.map_err(RelayError::from)?
-        };
+        let (nonce, native_fee_estimate, eth_price) = try_join3(
+            // fetch nonce if not specified
+            async {
+                if let Some(nonce) = request.op.nonce {
+                    Ok(nonce)
+                } else {
+                    entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await
+                }
+            },
+            // fetch chain fees
+            provider.estimate_eip1559_fees().map_err(RelayError::from),
+            // fetch price in eth
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.coin).await)
+            },
+        )
+        .await?;
 
-        // fetch chain fees
-        let native_fee_estimate =
-            provider.estimate_eip1559_fees().await.map_err(RelayError::from)?;
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
-
-        // fetch price in eth
-        // TODO: only handles eth as native fee token
-        let Some(eth_price) = self.inner.price_oracle.eth_price(token.coin).await else {
+        let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
         };
 
