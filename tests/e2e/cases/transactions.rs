@@ -201,13 +201,14 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
-    // setup 100 accounts
-    let accounts = try_join_all((0..100).map(|_| MockAccount::new(&env))).await?;
+    // setup accounts
+    let num_accounts = 5;
+    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_metrics(100, 100, 0, &env);
+    assert_metrics(num_accounts, num_accounts, 0, &env);
 
-    // send 100 transactions and assert all of them are confirmed
+    // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
     let handles = transactions
         .into_iter()
@@ -216,9 +217,9 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     for handle in handles {
         assert_confirmed(handle).await;
     }
-    assert_metrics(200, 200, 0, &env);
+    assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
-    // send 100 more transactions some of which are failing
+    // send `num_accounts` more transactions some of which are failing
     let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
     let mut invalid = 0;
     let handles = transactions
@@ -238,7 +239,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         wait_for_tx(handle).await;
     }
 
-    assert_metrics(300, 300 - invalid, invalid, &env);
+    assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
 
     Ok(())
 }

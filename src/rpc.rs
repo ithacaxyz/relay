@@ -401,7 +401,10 @@ impl RelayApiServer for Relay {
             )
             // simulateExecute requires it, so the function can only be called under a testing
             // environment
-            .append(self.inner.quote_signer.address(), AccountOverride::default().with_balance(U256::MAX))
+            .append(
+                self.inner.quote_signer.address(),
+                AccountOverride::default().with_balance(U256::MAX),
+            )
             .append(
                 request.op.eoa,
                 AccountOverride::default()
@@ -478,7 +481,8 @@ impl RelayApiServer for Relay {
         .into();
 
         // we estimate gas and fees
-        let mut gas_estimate = entrypoint.simulate_execute(self.inner.quote_signer.address(), &op).await?;
+        let mut gas_estimate =
+            entrypoint.simulate_execute(self.inner.quote_signer.address(), &op).await?;
 
         // for 7702 designations there is an additional gas charge
         //

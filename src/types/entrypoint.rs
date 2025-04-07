@@ -13,6 +13,7 @@ use alloy::{
     uint,
 };
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::error::{RelayError, UserOpError};
 
@@ -183,9 +184,13 @@ impl<P: Provider> Entry<P> {
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
-    /// 
+    ///
     /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
-    pub async fn simulate_execute(&self, from: Address, op: &UserOp) -> Result<GasEstimate, RelayError> {
+    pub async fn simulate_execute(
+        &self,
+        from: Address,
+        op: &UserOp,
+    ) -> Result<GasEstimate, RelayError> {
         let simulate_call =
             self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
@@ -207,6 +212,7 @@ impl<P: Provider> Entry<P> {
             .expect("expected a single call in a single block");
 
         if !result.status {
+            debug!(?result, "Unable to simulate user op.");
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
@@ -220,7 +226,7 @@ impl<P: Provider> Entry<P> {
         } else if !result.return_data.is_empty() {
             Err(UserOpError::op_revert(result.return_data).into())
         } else {
-            Err(eyre::eyre!("failed call: {:?}", result.error).into())
+            Err(TransportErrorKind::custom_str("could not simulate op").into())
         }
     }
 
