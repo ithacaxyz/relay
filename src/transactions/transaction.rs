@@ -1,6 +1,6 @@
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
+    consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
     sol_types::{SolCall, SolValue},
@@ -133,5 +133,10 @@ impl PendingTransaction {
     /// Returns the hash of the transaction.
     pub fn tx_hash(&self) -> B256 {
         *self.sent.tx_hash()
+    }
+
+    /// Returns the nonce of the transaction.
+    pub fn nonce(&self) -> u64 {
+        self.sent.nonce()
     }
 }

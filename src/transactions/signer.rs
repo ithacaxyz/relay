@@ -26,9 +26,12 @@ use alloy::{
 };
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{fmt::Display, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::VecDeque, fmt::Display, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
+
+/// Maximum number of pending transactions allowed per a single signer.
+const MAX_PENDING_TRANSACTIONS: usize = 16;
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -441,6 +444,8 @@ impl Signer {
         let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
             FuturesUnordered::new();
 
+        let mut queued = VecDeque::new();
+
         // Watch pending transactions that were loaded from storage
         for tx in loaded_transactions {
             pending.push(Box::pin(self.watch_transaction(tx)));
@@ -451,11 +456,24 @@ impl Signer {
                 command = command_rx.recv() => if let Some(command) = command {
                     match command {
                         SignerMessage::SendTransaction(tx) => {
-                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                            if pending.len() < MAX_PENDING_TRANSACTIONS {
+                                // If we have capacity for another transaction, send it now.
+                                pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                            } else {
+                                // Otherwise, queue it for later.
+                                queued.push_back(tx);
+                            }
                         }
                     }
                 },
-                Some(_) = pending.next() => {}
+                Some(_) = pending.next() => {
+                    if pending.len() < MAX_PENDING_TRANSACTIONS {
+                        // If we have any queued transactions, send them now.
+                        if let Some(tx) = queued.pop_front() {
+                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                        }
+                    }
+                }
             }
         }
     }
