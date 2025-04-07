@@ -1,7 +1,7 @@
 //! RPC calls-related request and response types.
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
-use crate::types::{Call, SignedQuote, UserOp};
+use crate::types::{AssetDiff, Call, SignedQuote, UserOp};
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
@@ -66,6 +66,8 @@ pub struct PrepareCallsResponseCapabilities {
     /// Keys that were revoked from the account.
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
+    /// The [`AssetDiff`] of the prepared call bundle.
+    pub asset_diff: AssetDiff,
 }
 
 /// Response for `wallet_prepareCalls`.
