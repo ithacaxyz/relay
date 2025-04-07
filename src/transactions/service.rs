@@ -6,7 +6,6 @@ use super::{
     transaction::{RelayTransaction, TransactionStatus},
 };
 use alloy::providers::{DynProvider, Provider};
-use rand::seq::IndexedRandom;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -45,7 +44,8 @@ impl TransactionServiceHandle {
 /// monitors the state of the transaction.
 /// Receives incoming [`RelayTransaction`] requests and routes them to an available signer.
 #[derive(Debug)]
-pub struct TransactionService2 {
+#[must_use = "futures do nothing unless polled"]
+pub struct TransactionService {
     /// Handles of _all_ available signers responsible for broadcasting transactions.
     ///
     /// This forms a bijection with {active,paused} signers, meaning each signer id is either
@@ -59,8 +59,14 @@ pub struct TransactionService2 {
     ///
     /// This is used to cheaply cycle through active signers.
     transaction_counter: usize,
+    /// Tracks unique identifiers for signers
+    singer_id: u64,
+    /// Signer event channel
+    to_service: mpsc::UnboundedSender<SignerEvent>,
     /// Message channel from signers to this service.
     from_signers: mpsc::UnboundedReceiver<SignerEvent>,
+    /// Sender half for transaction messages.
+    command_tx: mpsc::UnboundedSender<TransactionServiceMessage>,
     /// Incoming messages for the service.
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
     /// Subscriptions to transaction status updates back to the initiator of the transaction.
@@ -72,7 +78,78 @@ pub struct TransactionService2 {
     metrics: Arc<TransactionServiceMetrics>,
 }
 
-impl TransactionService2 {
+impl TransactionService {
+    /// Creates a new [`TransactionService`].
+    ///
+    /// This also spawns dedicated [`Signer`] task for each configured signer.
+    pub async fn new(
+        provider: DynProvider,
+        signers: Vec<DynSigner>,
+        storage: RelayStorage,
+    ) -> Self {
+        let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
+            "chain_id",
+            provider.get_chain_id().await.unwrap().to_string(),
+        )]));
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (to_service, from_signers) = mpsc::unbounded_channel();
+
+        let mut this = Self {
+            signers: Default::default(),
+            active_signers: vec![],
+            paused_signers: vec![],
+            transaction_counter: 0,
+            singer_id: 0,
+            to_service,
+            from_signers,
+            command_tx,
+            command_rx,
+            subscriptions: Default::default(),
+            metrics,
+        };
+
+        // add all the signers
+        for signer in signers {
+            let id = this.next_singer_id();
+            // message channel for individual signer
+            let (tx, rx) = mpsc::unbounded_channel();
+            let handle = SignerHandle { to_signer: tx };
+            let provider = provider.clone();
+            let storage = storage.clone();
+            let metrics = this.metrics.clone();
+            let events_tx = this.to_service.clone();
+            tokio::spawn(async move {
+                // TODO: proper error handling
+                let signer =
+                    Signer::new(id, provider, signer, storage, events_tx, metrics).await.unwrap();
+                signer.into_future(rx).await
+            });
+
+            // spawn signer
+            this.add_active_signer(id, handle);
+        }
+
+        this
+    }
+
+    /// Returns a new handle connected to this service.
+    pub fn handle(&self) -> TransactionServiceHandle {
+        TransactionServiceHandle { command_tx: self.command_tx.clone() }
+    }
+
+    /// Adds a _new_ signer.
+    fn add_active_signer(&mut self, id: SignerId, signer: SignerHandle) {
+        self.active_signers.push(id);
+        self.signers.insert(id, signer);
+    }
+
+    /// Returns the next unique signer id.
+    fn next_singer_id(&mut self) -> SignerId {
+        let id = self.singer_id;
+        self.singer_id += 1;
+        SignerId::new(id)
+    }
+
     /// Moves a signer from paused to active if it is currently paused
     fn activate_signer(&mut self, signer_id: SignerId) {
         if let Some(pos) = self.paused_signers.iter().position(|id| *id == signer_id) {
@@ -159,7 +236,7 @@ impl TransactionService2 {
     }
 }
 
-impl Future for TransactionService2 {
+impl Future for TransactionService {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -203,122 +280,4 @@ impl Future for TransactionService2 {
 
         Poll::Pending
     }
-}
-
-/// Service that handles transactions by dispatching outgoing transaction to an available signer and
-/// monitors the state of the transaction.
-#[derive(Debug)]
-pub struct TransactionService {
-    /// Handles of signers responsible for broadcasting transactions.
-    signers: Vec<SignerHandle>,
-
-    /// Incoming messages for the service.
-    command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
-
-    /// Subscriptions to transaction status updates.
-    subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
-
-    /// Metrics of the service.
-    metrics: Arc<TransactionServiceMetrics>,
-}
-
-impl TransactionService {
-    /// Creates a new [`TransactionService`].
-    pub fn new(
-        signers: Vec<SignerHandle>,
-        metrics: Arc<TransactionServiceMetrics>,
-    ) -> (Self, TransactionServiceHandle) {
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let this = Self { signers, command_rx, subscriptions: Default::default(), metrics };
-
-        (this, TransactionServiceHandle { command_tx })
-    }
-
-    /// Creates a new [`TransactionService`] and spawns it.
-    ///
-    /// This also spawns dedicated [`Signer`] task for each configured signer
-    pub async fn spawn(
-        provider: DynProvider,
-        signers: Vec<DynSigner>,
-        storage: RelayStorage,
-    ) -> TransactionServiceHandle {
-        let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
-            "chain_id",
-            provider.get_chain_id().await.unwrap().to_string(),
-        )]));
-        let signers = futures_util::future::try_join_all(signers.into_iter().map(|signer| {
-            Signer::spawn(provider.clone(), signer, storage.clone(), metrics.clone())
-        }))
-        .await
-        .expect("failed to build signers");
-
-        let (this, handle) = Self::new(signers, metrics);
-        tokio::spawn(this);
-        handle
-    }
-
-    /// Sends the given transaction to a randomly chosen signer.
-    fn send_transaction(
-        &mut self,
-        tx: RelayTransaction,
-        status_tx: mpsc::UnboundedSender<TransactionStatus>,
-    ) {
-        self.subscriptions.insert(tx.id, status_tx);
-        self.signers.choose(&mut rand::rng()).expect("no signers").send_transaction(tx);
-        self.metrics.sent.increment(1);
-    }
-}
-
-impl Future for TransactionService {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
-            match action {
-                TransactionServiceMessage::SendTransaction(tx, status_tx) => {
-                    this.send_transaction(tx, status_tx);
-                }
-            }
-        }
-
-        for signer in &mut this.signers {
-            while let Poll::Ready(Some(event)) = signer.poll_recv(cx) {
-                match event {
-                    SignerEvent::TransactionStatus(id, status) => {
-                        match &status {
-                            TransactionStatus::Failed(err) => {
-                                debug!(tx_id = %id, %err, "transaction failed");
-                                this.metrics.failed.increment(1);
-                            }
-                            TransactionStatus::Confirmed(hash) => {
-                                debug!(tx_id = %id, %hash, "transaction confirmed");
-                                this.metrics.confirmed.increment(1);
-                            }
-                            _ => {}
-                        }
-
-                        if let Some(status_tx) = this.subscriptions.get(&id) {
-                            let _ = status_tx.send(status.clone());
-                        }
-
-                        if status.is_final() {
-                            this.subscriptions.remove(&id);
-                        }
-                    }
-                }
-            }
-        }
-
-        Poll::Pending
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn dispatch_requests() {}
 }

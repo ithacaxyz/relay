@@ -26,12 +26,7 @@ use alloy::{
 };
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -97,6 +92,8 @@ pub enum SignerEvent {
 /// A signer responsible for signing and sending transactions on a single network.
 #[derive(Debug)]
 pub struct Signer {
+    /// The unique identifier of this signer service.
+    id: SignerId,
     /// Provider used by the signer.
     provider: DynProvider,
     /// Inner [`EthereumWallet`] used to sign transactions.
@@ -117,12 +114,14 @@ pub struct Signer {
 
 impl Signer {
     /// Creates a new [`Signer`].
-    pub async fn spawn(
+    pub async fn new(
+        id: SignerId,
         provider: DynProvider,
         signer: DynSigner,
         storage: RelayStorage,
+        events_tx: mpsc::UnboundedSender<SignerEvent>,
         metrics: Arc<TransactionServiceMetrics>,
-    ) -> TransportResult<SignerHandle> {
+    ) -> TransportResult<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
 
@@ -147,10 +146,8 @@ impl Signer {
             )
         };
 
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-
         let this = Self {
+            id,
             provider,
             wallet,
             chain_id,
@@ -160,16 +157,7 @@ impl Signer {
             storage,
             metrics,
         };
-
-        let loaded_transactions = this
-            .storage
-            .read_pending_transactions(this.address(), this.chain_id)
-            .await
-            .expect("failed to read pending transactions");
-
-        tokio::spawn(this.into_future(command_rx, loaded_transactions));
-
-        Ok(SignerHandle { command_tx, events_rx })
+        Ok(this)
     }
 
     /// Returns the signer address.
@@ -414,11 +402,13 @@ impl Signer {
     }
 
     /// Converts [`Signer`] into a future.
-    async fn into_future(
-        self,
-        mut command_rx: mpsc::UnboundedReceiver<SignerMessage>,
-        loaded_transactions: Vec<PendingTransaction>,
-    ) {
+    pub async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
+        let loaded_transactions = self
+            .storage
+            .read_pending_transactions(self.address(), self.chain_id)
+            .await
+            .expect("failed to read pending transactions");
+
         let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
             FuturesUnordered::new();
 
@@ -455,33 +445,14 @@ impl SignerId {
 
 /// Handle to interact with [`Signer`].
 #[derive(Debug)]
-pub struct SignerHandle2 {
-    /// Command channel to send
-    to_signer: mpsc::UnboundedSender<SignerMessage>,
-}
-
-impl SignerHandle2 {
-    /// Sends a [`SignerMessage::SendTransaction`] to the [`Signer`].
-    pub fn send_transaction(&self, tx: RelayTransaction) {
-        let _ = self.to_signer.send(SignerMessage::SendTransaction(tx));
-    }
-}
-
-/// Handle to interact with [`Signer`].
-#[derive(Debug)]
 pub struct SignerHandle {
-    command_tx: mpsc::UnboundedSender<SignerMessage>,
-    events_rx: mpsc::UnboundedReceiver<SignerEvent>,
+    /// Command channel to send
+    pub to_signer: mpsc::UnboundedSender<SignerMessage>,
 }
 
 impl SignerHandle {
     /// Sends a [`SignerMessage::SendTransaction`] to the [`Signer`].
     pub fn send_transaction(&self, tx: RelayTransaction) {
-        let _ = self.command_tx.send(SignerMessage::SendTransaction(tx));
-    }
-
-    /// Polls for a signer event.
-    pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<SignerEvent>> {
-        self.events_rx.poll_recv(cx)
+        let _ = self.to_signer.send(SignerMessage::SendTransaction(tx));
     }
 }
