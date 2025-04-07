@@ -117,6 +117,10 @@ impl PriceOracle {
 
     /// Returns the conversion rate from a coin to native ETH (in wei).
     pub async fn eth_price(&self, coin: CoinKind) -> Option<U256> {
+        if coin.is_eth() {
+            return Some(U256::from(1e18));
+        }
+
         let (req_tx, req_rx) = oneshot::channel();
         let _ = self.tx.send(PriceOracleMessage::Lookup {
             pair: CoinPair { from: coin, to: CoinKind::ETH },
