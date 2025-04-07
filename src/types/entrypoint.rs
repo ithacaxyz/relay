@@ -210,7 +210,7 @@ impl<P: Provider> Entry<P> {
             .await?
             .pop()
             .and_then(|mut block| block.calls.pop())
-            .expect("expected a single call in a single block");
+            .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
 
         if !result.status {
             debug!(?result, "Unable to simulate user op.");
