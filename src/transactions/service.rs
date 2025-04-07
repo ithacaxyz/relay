@@ -199,7 +199,7 @@ impl TransactionService {
                 signer_id
             );
 
-            // activate signer
+            // pause signer
             self.paused_signers.push(signer_id);
 
             self.update_signer_metrics();
