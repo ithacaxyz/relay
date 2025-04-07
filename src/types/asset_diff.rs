@@ -6,10 +6,10 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Net asset flow per asset and account based on simulated execution logs.
-pub type AssetDiff = Vec<(Asset, Vec<(Address, I512)>)>;
+/// Net flow per account and asset based on simulated execution logs.
+pub type AssetDiff = Vec<(Address, Vec<(Asset, I512)>)>;
 
-/// Calculates the net asset difference for each asset and account based on logs.
+/// Calculates the net asset difference for each account and asset based on logs.
 ///
 /// This function processes logs by filtering for [`IERC20::Transfer`] events and accumulating
 /// transfers as tuples of (credits, debits) for each account per asset.
@@ -20,52 +20,52 @@ pub type AssetDiff = Vec<(Asset, Vec<(Address, I512)>)>;
 /// # Notes
 /// The native asset is represented by the address "0xeeee…eeee" as defined on `eth_simulateV1`.
 pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
-    let asset_diff = logs
-        .filter_map(|log| {
-            if log.topic0()? == &IERC20::Transfer::SIGNATURE_HASH {
-                match IERC20Events::decode_log(&log.inner, true).ok()?.data {
-                    IERC20Events::Transfer(transfer) => {
-                        return Some((Asset::from(log.inner.address), transfer));
-                    }
-                }
-            }
-            None
-        })
-        .fold(HashMap::new(), |mut credits_and_debits, (asset, transfer)| {
-            let asset: &mut HashMap<Address, (U256, U256)> =
-                credits_and_debits.entry(asset).or_default();
+    let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
 
-            // For the receiver, add transfer.amount to credits.
-            asset
-                .entry(transfer.to)
-                .and_modify(|(credit, _)| *credit += transfer.amount)
-                .or_insert((transfer.amount, U256::ZERO));
+    for log in logs {
+        if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
+            continue;
+        }
 
-            // For the sender, add transfer.amount to debits.
-            asset
-                .entry(transfer.from)
-                .and_modify(|(_, debit)| *debit += transfer.amount)
-                .or_insert((U256::ZERO, transfer.amount));
+        let Some((asset, transfer)) =
+            IERC20Events::decode_log(&log.inner, true).ok().map(|ev| match ev.data {
+                IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
+            })
+        else {
+            continue;
+        };
 
-            credits_and_debits
-        });
+        // For the receiver, add transfer.amount to credits.
+        accounts
+            .entry(transfer.to)
+            .or_default()
+            .entry(asset)
+            .and_modify(|(credit, _)| *credit += transfer.amount)
+            .or_insert((transfer.amount, U256::ZERO));
 
-    // Converts each credit and debit (U256) into I512, and then calculates the resulting
-    // net.
-    asset_diff
+        // For the sender, add transfer.amount to debits.
+        accounts
+            .entry(transfer.from)
+            .or_default()
+            .entry(asset)
+            .and_modify(|(_, debit)| *debit += transfer.amount)
+            .or_insert((U256::ZERO, transfer.amount));
+    }
+
+    // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
+    accounts
         .into_iter()
-        .map(|(asset, inner)| {
+        .map(|(address, assets)| {
             (
-                asset,
-                inner
+                address,
+                assets
                     .into_iter()
-                    .map(|(account, (credits, debits))| {
-                        // Convert U256 to I512 and compute net = credits - debits.
+                    .map(|(asset, (credits, debits))| {
                         let net = I512::try_from_le_slice(credits.as_le_slice())
                             .expect("should convert from u256")
                             - I512::try_from_le_slice(debits.as_le_slice())
                                 .expect("should convert from u256");
-                        (account, net)
+                        (asset, net)
                     })
                     .collect(),
             )
