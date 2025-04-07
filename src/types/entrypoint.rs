@@ -3,13 +3,17 @@ use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
-    rpc::types::state::StateOverride,
+    rpc::types::{
+        simulate::{SimBlock, SimulatePayload},
+        state::StateOverride,
+    },
     sol,
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::error::{RelayError, UserOpError};
 
@@ -56,7 +60,13 @@ sol! {
         /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        error SimulationResult(uint256 gExecute, uint256 gCombined, uint256 gUsed, bytes4 err);
+        struct SimulationResult {
+            uint256 gExecute;
+            uint256 gCombined;
+            uint256 gUsed;
+            bytes4 err;
+        }
+
 
         /// The simulate execute run has failed. Try passing in more gas to the simulation.
         error SimulateExecuteFailed();
@@ -174,30 +184,49 @@ impl<P: Provider> Entry<P> {
     }
 
     /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
-    pub async fn simulate_execute(&self, op: &UserOp) -> Result<GasEstimate, RelayError> {
-        let ret = self
-            .entrypoint
-            .simulateExecute(op.abi_encode().into())
-            .call()
-            .overrides(self.overrides.clone())
-            .await;
+    ///
+    /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
+    pub async fn simulate_execute(
+        &self,
+        from: Address,
+        op: &UserOp,
+    ) -> Result<GasEstimate, RelayError> {
+        let simulate_call =
+            self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
-        if ret.is_ok() {
+        let result = self
+            .entrypoint
+            .provider()
+            .simulate(
+                &SimulatePayload::default()
+                    .extend(
+                        SimBlock::default()
+                            .call(simulate_call.from(from))
+                            .with_state_overrides(self.overrides.clone()),
+                    )
+                    .with_trace_transfers(),
+            )
+            .await?
+            .pop()
+            .and_then(|mut block| block.calls.pop())
+            .expect("expected a single call in a single block");
+
+        if !result.status {
+            debug!(?result, "Unable to simulate user op.");
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        let err = ret.unwrap_err();
-        if let Some(result) = err.as_decoded_error::<EntryPoint::SimulationResult>() {
+        if let Ok(result) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
             if result.err != ENTRYPOINT_NO_ERROR {
                 Err(UserOpError::op_revert(result.err.into()).into())
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok(GasEstimate { tx: result.gExecute.to(), op: result.gCombined.to() })
             }
-        } else if let Some(data) = err.as_revert_data() {
-            Err(UserOpError::op_revert(data).into())
+        } else if !result.return_data.is_empty() {
+            Err(UserOpError::op_revert(result.return_data).into())
         } else {
-            Err(TransportErrorKind::custom(err).into())
+            Err(TransportErrorKind::custom_str("could not simulate op").into())
         }
     }
 
