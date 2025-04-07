@@ -4,14 +4,13 @@ use crate::{
     types::{CoinKind, CoinPair, CoinRegistry},
 };
 use alloy::primitives::U256;
-use metrics::counter;
 use std::{
     collections::{HashMap, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{trace, warn};
+use tracing::trace;
 
 /// Coin pair rate taken a certain timestamp.
 #[derive(Debug, Clone, Copy)]
@@ -80,16 +79,15 @@ impl PriceOracle {
                         let _ = tx.send(
                             registry
                                 .get(&pair)
-                                .filter(|t| {
-                                    if t.timestamp.elapsed() > config.rate_ttl {
-                                        warn!(?pair, "Hit expired price rate");
-                                        counter!("price.expired_hits").increment(1);
+                                .filter(|info| {
+                                    if info.rate.timestamp.elapsed() > config.rate_ttl {
+                                        info.metrics.expired_hits.increment(1);
                                         false
                                     } else {
                                         true
                                     }
                                 })
-                                .map(|t| t.rate),
+                                .map(|info| info.rate.rate),
                         );
                     }
                 }
@@ -168,7 +166,7 @@ impl PriceRegistry {
         }
     }
 
-    fn get(&self, pair: &CoinPair) -> Option<&RateTick> {
-        self.inner.get(pair).map(|p| &p.rate)
+    fn get(&self, pair: &CoinPair) -> Option<&CoinPairInfo> {
+        self.inner.get(pair)
     }
 }

@@ -1,6 +1,6 @@
 //! Price metrics
 
-use metrics::Gauge;
+use metrics::{Counter, Gauge};
 use metrics_derive::Metrics;
 
 /// Metrics for a [`CoinPair`](crate::types::CoinPair).
@@ -9,4 +9,6 @@ use metrics_derive::Metrics;
 pub struct CoinPairMetrics {
     /// Rate for this pair.
     pub rate: Gauge,
+    /// How often an expired rate was requested.
+    pub expired_hits: Counter,
 }
