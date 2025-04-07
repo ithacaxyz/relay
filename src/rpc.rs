@@ -237,11 +237,6 @@ impl Relay {
             executionData: request.op.execution_data.clone(),
             nonce,
             paymentToken: token.address,
-            // this will force the simulation to go through payment code paths, and get a better
-            // estimation.
-            paymentAmount: U256::from(1),
-            paymentMaxAmount: U256::from(1),
-            paymentPerGas: (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
@@ -254,6 +249,15 @@ impl Relay {
                 .collect(),
             ..Default::default()
         };
+
+        if !request.is_preop {
+            // this will force the simulation to go through payment code paths, and get a better
+            // estimation.
+            op.paymentAmount = U256::from(1);
+            op.paymentMaxAmount = U256::from(1);
+            op.paymentPerGas =
+                (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+        }
 
         // sign userop
         let signature = mock_key
@@ -310,6 +314,7 @@ impl Relay {
                 .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
             authorization_address,
+            is_preop: request.is_preop,
         };
         let sig = self
             .inner
@@ -326,6 +331,10 @@ impl Relay {
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<TxHash> {
+        if quote.ty().is_preop {
+            return Err(QuoteError::PreOpUnsupported.into());
+        }
+
         let Chain { provider, transactions } = self
             .inner
             .chains
@@ -722,6 +731,7 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops.clone(),
                     },
                     chain_id: request.chain_id,
+                    is_preop: request.capabilities.pre_op,
                 },
                 request.capabilities.meta.fee_token,
                 maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
@@ -793,6 +803,7 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
+                    is_preop: false,
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
