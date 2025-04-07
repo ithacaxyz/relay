@@ -3,6 +3,7 @@
 mod fetchers;
 pub use fetchers::*;
 
+mod metrics;
 mod oracle;
 pub use oracle::{PriceOracle, PriceOracleConfig};
 

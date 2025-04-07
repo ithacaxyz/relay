@@ -1,12 +1,12 @@
 use super::CoinGecko;
 use crate::{
-    price::fetchers::PriceFetcher,
+    price::{fetchers::PriceFetcher, metrics::CoinPairMetrics},
     types::{CoinKind, CoinPair, CoinRegistry},
 };
 use alloy::primitives::U256;
 use metrics::counter;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -44,7 +44,7 @@ impl Default for PriceOracleConfig {
     }
 }
 
-/// A price orable that can be used to lookup or update the price of a [`CoinPair`].
+/// A price oracle that can be used to lookup or update the price of a [`CoinPair`].
 #[derive(Debug)]
 pub struct PriceOracle {
     /// Channel sender to lookup and update pair prices.
@@ -65,7 +65,7 @@ impl PriceOracle {
     pub fn new(config: PriceOracleConfig) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            let mut registry: HashMap<CoinPair, RateTick> = HashMap::new();
+            let mut registry = PriceRegistry::default();
             while let Some(message) = rx.recv().await {
                 match message {
                     PriceOracleMessage::Update { fetcher, prices, timestamp } => {
@@ -130,5 +130,45 @@ impl PriceOracle {
             .flatten()
             .or(self.constant_rate)
             .map(|eth_price| U256::from((eth_price * 1e18) as u128))
+    }
+}
+
+/// Tracks values for the pair
+#[derive(Debug)]
+struct CoinPairInfo {
+    /// metrics for this pair
+    metrics: CoinPairMetrics,
+    /// The tracked rate
+    rate: RateTick,
+}
+
+/// Keeps track of coin pairs and their rate
+#[derive(Debug, Default)]
+struct PriceRegistry {
+    inner: HashMap<CoinPair, CoinPairInfo>,
+}
+
+impl PriceRegistry {
+    /// Inserts or updates the rate for the given pair
+    fn insert(&mut self, pair: CoinPair, rate: RateTick) {
+        match self.inner.entry(pair) {
+            Entry::Occupied(mut e) => {
+                e.get().metrics.rate.record(rate.rate);
+                e.get_mut().rate = rate;
+            }
+            Entry::Vacant(e) => {
+                let id = e.key().identifier();
+                let info = CoinPairInfo {
+                    metrics: CoinPairMetrics::new_with_labels(&[("pair", id)]),
+                    rate,
+                };
+                info.metrics.rate.record(rate.rate);
+                e.insert(info);
+            }
+        }
+    }
+
+    fn get(&self, pair: &CoinPair) -> Option<&RateTick> {
+        self.inner.get(pair).map(|p| &p.rate)
     }
 }
