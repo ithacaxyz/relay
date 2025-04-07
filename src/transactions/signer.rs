@@ -10,7 +10,7 @@ use crate::{
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
-    eips::{BlockId, Encodable2718},
+    eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, Bytes},
     providers::{
@@ -27,11 +27,14 @@ use alloy::{
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
 use std::{collections::VecDeque, fmt::Display, pin::Pin, sync::Arc, time::Duration};
-use tokio::sync::mpsc;
-use tracing::{debug, error, trace};
+use tokio::{sync::mpsc, time::interval};
+use tracing::{debug, error, trace, warn};
 
 /// Maximum number of pending transactions allowed per a single signer.
 const MAX_PENDING_TRANSACTIONS: usize = 16;
+
+/// Price bump for nonce gap transactions.
+const NONCE_GAP_PRICE_BUMP: u128 = 20;
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -341,7 +344,7 @@ impl Signer {
             self.metrics.pending.decrement(1);
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
             self.storage.remove_pending_transaction(tx.id()).await?;
-            return self.close_nonce_gap(tx.sent.nonce()).await;
+            return self.close_nonce_gap(tx.sent.nonce(), Some(tx.fees())).await;
         }
 
         self.metrics
@@ -388,7 +391,7 @@ impl Signer {
                 }
 
                 // Otherwise, we need to close the nonce gap.
-                return self.close_nonce_gap(nonce).await;
+                return self.close_nonce_gap(nonce, None).await;
             }
         };
         let tx = PendingTransaction { tx, sent, signer: self.address(), received_at: Utc::now() };
@@ -406,28 +409,64 @@ impl Signer {
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
-    async fn close_nonce_gap(&self, nonce: u64) -> Result<(), SignerError> {
+    async fn close_nonce_gap(
+        &self,
+        nonce: u64,
+        min_fees: Option<Eip1559Estimation>,
+    ) -> Result<(), SignerError> {
         debug!(%nonce, "Attempting to close nonce gap");
-        let fee_estimate = self.provider.estimate_eip1559_fees().await?;
-        let tx = TypedTransaction::Eip1559(TxEip1559 {
-            chain_id: self.chain_id,
-            nonce,
-            to: self.address().into(),
-            gas_limit: 21000,
-            max_priority_fee_per_gas: fee_estimate.max_priority_fee_per_gas,
-            max_fee_per_gas: fee_estimate.max_fee_per_gas,
-            ..Default::default()
-        });
 
-        let tx = self.send_transaction(tx).await?;
-        // Give transaction 10 blocks to be mined.
-        self.provider
-            .watch_pending_transaction(
-                PendingTransactionConfig::new(*tx.tx_hash())
-                    .with_timeout(Some(self.block_time * 10)),
-            )
-            .await?
-            .await?;
+        let try_close = || async {
+            let fee_estimate = self.provider.estimate_eip1559_fees().await?;
+            let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
+                let min_fee = min_fees.max_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
+                let min_tip =
+                    min_fees.max_priority_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
+
+                (
+                    min_fee.max(fee_estimate.max_fee_per_gas),
+                    min_tip.max(fee_estimate.max_priority_fee_per_gas),
+                )
+            } else {
+                (fee_estimate.max_fee_per_gas, fee_estimate.max_priority_fee_per_gas)
+            };
+
+            let tx = TypedTransaction::Eip1559(TxEip1559 {
+                chain_id: self.chain_id,
+                nonce,
+                to: self.address().into(),
+                gas_limit: 21000,
+                max_priority_fee_per_gas: max_fee,
+                max_fee_per_gas: max_tip,
+                ..Default::default()
+            });
+
+            let tx = self.send_transaction(tx).await?;
+            // Give transaction 10 blocks to be mined.
+            self.provider
+                .watch_pending_transaction(
+                    PendingTransactionConfig::new(*tx.tx_hash())
+                        .with_timeout(Some(self.block_time * 10)),
+                )
+                .await?
+                .await?;
+
+            Ok::<_, SignerError>(())
+        };
+
+        loop {
+            let Err(err) = try_close().await else { break };
+
+            error!(%err, %nonce, "Failed to close nonce gap");
+
+            if self.provider.get_transaction_count(self.address()).await? >= nonce {
+                warn!("nonce gap was closed by a different transaction");
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
         debug!(%nonce, "Closed nonce gap");
 
         Ok(())
@@ -443,13 +482,24 @@ impl Signer {
 
         let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
             FuturesUnordered::new();
-
         let mut queued = VecDeque::new();
+
+        let latest_nonce = self.provider.get_transaction_count(self.address()).await.unwrap();
+
+        // Handle any nonce gaps
+        for nonce in latest_nonce..*self.nonce.lock().await {
+            if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
+                warn!(%nonce, "nonce gap on startup");
+                pending.push(Box::pin(self.close_nonce_gap(nonce, None)));
+            }
+        }
 
         // Watch pending transactions that were loaded from storage
         for tx in loaded_transactions {
             pending.push(Box::pin(self.watch_transaction(tx)));
         }
+
+        let mut interval = interval(Duration::from_secs(60));
 
         loop {
             tokio::select! {
@@ -471,6 +521,16 @@ impl Signer {
                         // If we have any queued transactions, send them now.
                         if let Some(tx) = queued.pop_front() {
                             pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                        }
+                    }
+                }
+                // Check if on-chain nonce has diverged from local nonce
+                _ = interval.tick() => {
+                    if let Ok(nonce) = self.provider.get_transaction_count(self.address()).pending().await {
+                        let mut lock = self.nonce.lock().await;
+                        if nonce > *lock {
+                            warn!(%nonce, "on-chain nonce is ahead of local");
+                            *lock = nonce;
                         }
                     }
                 }
