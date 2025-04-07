@@ -26,7 +26,7 @@ use alloy::{
 };
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{fmt::Display, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -82,11 +82,14 @@ pub enum SignerMessage {
 }
 
 /// Event emitted by the [`Signer`].
-// TODO: add SignerId
 #[derive(Debug)]
 pub enum SignerEvent {
     /// Status update for a transaction.
     TransactionStatus(TxId, TransactionStatus),
+    /// Pauses a signer.
+    PauseSigner(SignerId),
+    /// Reactivates a signer
+    ReActive(SignerId),
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -158,6 +161,11 @@ impl Signer {
             metrics,
         };
         Ok(this)
+    }
+
+    /// Returns the id of this [`Signer`].
+    pub fn id(&self) -> SignerId {
+        self.id
     }
 
     /// Returns the signer address.
@@ -440,6 +448,12 @@ impl SignerId {
     /// Creates a new identifier.
     pub const fn new(id: u64) -> Self {
         Self(id)
+    }
+}
+
+impl Display for SignerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Singer({})", self.0)
     }
 }
 

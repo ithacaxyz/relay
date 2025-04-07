@@ -1,6 +1,7 @@
 use metrics::{Counter, Gauge, Histogram};
 use metrics_derive::Metrics;
 
+/// Metrics for a [`TransactionService`](crate::transactions::TransactionService).
 #[derive(Metrics)]
 #[metrics(scope = "transactions")]
 pub struct TransactionServiceMetrics {
@@ -10,6 +11,10 @@ pub struct TransactionServiceMetrics {
     pub failed: Counter,
     /// Number of confirmed transactions
     pub confirmed: Counter,
+    /// How many signers are currently active
+    pub active_signers: Counter,
+    /// How many signers are currently paused
+    pub paused_signers: Counter,
     /// Number of pending transactions.
     pub pending: Gauge,
     /// Time it takes to include transactions, in milliseconds.

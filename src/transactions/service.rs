@@ -1,10 +1,9 @@
-use crate::{signers::DynSigner, storage::RelayStorage};
-
 use super::{
     Signer, SignerEvent, SignerHandle, SignerId, TxId,
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
+use crate::{signers::DynSigner, storage::RelayStorage};
 use alloy::providers::{DynProvider, Provider};
 use std::{
     collections::HashMap,
@@ -108,25 +107,9 @@ impl TransactionService {
             metrics,
         };
 
-        // add all the signers
+        // crate all the signers
         for signer in signers {
-            let id = this.next_singer_id();
-            // message channel for individual signer
-            let (tx, rx) = mpsc::unbounded_channel();
-            let handle = SignerHandle { to_signer: tx };
-            let provider = provider.clone();
-            let storage = storage.clone();
-            let metrics = this.metrics.clone();
-            let events_tx = this.to_service.clone();
-            tokio::spawn(async move {
-                // TODO: proper error handling
-                let signer =
-                    Signer::new(id, provider, signer, storage, events_tx, metrics).await.unwrap();
-                signer.into_future(rx).await
-            });
-
-            // spawn signer
-            this.add_active_signer(id, handle);
+            this.create_signer(signer, storage.clone(), provider.clone());
         }
 
         this
@@ -137,10 +120,32 @@ impl TransactionService {
         TransactionServiceHandle { command_tx: self.command_tx.clone() }
     }
 
+    /// Creates a new [`Signer`] instance and spawns it.
+    fn create_signer(&mut self, signer: DynSigner, storage: RelayStorage, provider: DynProvider) {
+        let signer_id = self.next_singer_id();
+        debug!(%signer_id, "creating new signer");
+        // message channel for individual signer
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = SignerHandle { to_signer: tx };
+        let metrics = self.metrics.clone();
+        let events_tx = self.to_service.clone();
+        tokio::spawn(async move {
+            // TODO: proper error handling
+            let signer = Signer::new(signer_id, provider, signer, storage, events_tx, metrics)
+                .await
+                .unwrap();
+            signer.into_future(rx).await
+        });
+
+        // track new signer
+        self.insert_active_signer(signer_id, handle);
+    }
+
     /// Adds a _new_ signer.
-    fn add_active_signer(&mut self, id: SignerId, signer: SignerHandle) {
+    fn insert_active_signer(&mut self, id: SignerId, signer: SignerHandle) {
         self.active_signers.push(id);
         self.signers.insert(id, signer);
+        self.update_signer_metrics();
     }
 
     /// Returns the next unique signer id.
@@ -153,6 +158,8 @@ impl TransactionService {
     /// Moves a signer from paused to active if it is currently paused
     fn activate_signer(&mut self, signer_id: SignerId) {
         if let Some(pos) = self.paused_signers.iter().position(|id| *id == signer_id) {
+            debug!(%signer_id, "activate signer");
+
             // remove signer from paused
             self.paused_signers.remove(pos);
 
@@ -169,12 +176,15 @@ impl TransactionService {
 
             // activate signer
             self.active_signers.push(signer_id);
+
+            self.update_signer_metrics();
         }
     }
 
     /// Moves a signer from active to paused if it is currently active
     fn pause_signer(&mut self, signer_id: SignerId) {
         if let Some(pos) = self.active_signers.iter().position(|id| *id == signer_id) {
+            debug!(%signer_id, "pausing signer");
             // remove signer from active
             self.active_signers.remove(pos);
 
@@ -191,7 +201,14 @@ impl TransactionService {
 
             // activate signer
             self.paused_signers.push(signer_id);
+
+            self.update_signer_metrics();
         }
+    }
+
+    fn update_signer_metrics(&self) {
+        self.metrics.active_signers.absolute(self.active_signers.len() as u64);
+        self.metrics.paused_signers.absolute(self.paused_signers.len() as u64);
     }
 
     /// Returns true if the given signer is currently active.
@@ -274,6 +291,12 @@ impl Future for TransactionService {
                     if status.is_final() {
                         this.subscriptions.remove(&id);
                     }
+                }
+                SignerEvent::PauseSigner(id) => {
+                    this.pause_signer(id);
+                }
+                SignerEvent::ReActive(id) => {
+                    this.activate_signer(id);
                 }
             }
         }
