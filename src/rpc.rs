@@ -71,16 +71,6 @@ pub trait RelayApi {
     #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
     async fn fee_tokens(&self) -> RpcResult<FeeTokens>;
 
-    /// Estimates the fee a user would have to pay for the given action in the given fee token.
-    #[method(name = "estimateFee", aliases = ["wallet_estimateFee"])]
-    async fn estimate_fee(
-        &self,
-        request: PartialAction,
-        token: Address,
-        authorization_address: Option<Address>,
-        key: Key,
-    ) -> RpcResult<(AssetDiff, SignedQuote)>;
-
     /// Prepares an account for the user.
     #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
     async fn prepare_create_account(
@@ -169,6 +159,166 @@ impl Relay {
             storage,
         };
         Self { inner: Arc::new(inner) }
+    }
+
+    async fn estimate_fee(
+        &self,
+        request: PartialAction,
+        token: Address,
+        authorization_address: Option<Address>,
+        account_key: Key,
+    ) -> Result<(AssetDiff, SignedQuote), RelayError> {
+        let provider = self.provider(request.chain_id)?;
+        let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
+            return Err(QuoteError::UnsupportedFeeToken(token).into());
+        };
+
+        // create key
+        let mock_signer_address = self.inner.quote_signer.address();
+        let mock_key = KeyWith712Signer::random_admin(account_key.keyType)
+            .map_err(RelayError::from)
+            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+
+        // mocking key storage for the eoa, and the balance for the mock signer
+        let overrides = StateOverridesBuilder::with_capacity(2)
+            .append(
+                mock_signer_address,
+                AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
+            )
+            // simulateExecute requires it, so the function can only be called under a testing
+            // environment
+            .append(
+                self.inner.quote_signer.address(),
+                AccountOverride::default().with_balance(U256::MAX),
+            )
+            .append(
+                request.op.eoa,
+                AccountOverride::default()
+                    .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
+                    .with_state_diff(account_key.storage_slots())
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(authorization_address.map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    })),
+            )
+            .build();
+
+        // load account and entrypoint
+        let entrypoint =
+            Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
+
+        let (nonce, native_fee_estimate, eth_price) = try_join3(
+            // fetch nonce if not specified
+            async {
+                if let Some(nonce) = request.op.nonce {
+                    Ok(nonce)
+                } else {
+                    entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await
+                }
+            },
+            // fetch chain fees
+            provider.estimate_eip1559_fees().map_err(RelayError::from),
+            // fetch price in eth
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.coin).await)
+            },
+        )
+        .await?;
+
+        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
+        let Some(eth_price) = eth_price else {
+            return Err(QuoteError::UnavailablePrice(token.address).into());
+        };
+
+        // fill userop
+        let mut op = UserOp {
+            eoa: request.op.eoa,
+            executionData: request.op.execution_data.clone(),
+            nonce,
+            paymentToken: token.address,
+            // this will force the simulation to go through payment code paths, and get a better
+            // estimation.
+            paymentAmount: U256::from(1),
+            paymentMaxAmount: U256::from(1),
+            paymentPerGas: (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price,
+            // we intentionally do not use the maximum amount of gas since the contracts add a small
+            // overhead when checking if there is sufficient gas for the op
+            combinedGas: U256::from(100_000_000),
+            initData: request.op.init_data.unwrap_or_default(),
+            encodedPreOps: request
+                .op
+                .pre_ops
+                .into_iter()
+                .map(|pre_op| pre_op.abi_encode().into())
+                .collect(),
+            ..Default::default()
+        };
+
+        // sign userop
+        let signature = mock_key
+            .sign_typed_data(
+                &op.as_eip712().map_err(RelayError::from)?,
+                &entrypoint.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
+            )
+            .await
+            .map_err(RelayError::from)?;
+
+        op.signature = Signature {
+            innerSignature: signature,
+            keyHash: account_key.key_hash(),
+            prehash: account_key.keyType.is_p256(), // WebCrypto P256 uses prehash
+        }
+        .abi_encode_packed()
+        .into();
+
+        // we estimate gas and fees
+        let (asset_diff, mut gas_estimate) =
+            entrypoint.simulate_execute(self.inner.quote_signer.address(), &op).await?;
+
+        // for 7702 designations there is an additional gas charge
+        //
+        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
+        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
+        // need to charge for the account being presumed empty.
+        if authorization_address.is_some() {
+            gas_estimate.tx += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
+        }
+
+        // Add some leeway, since the actual simulation may no be enough.
+        // todo: re-evaluate if this is still necessary
+        gas_estimate.op += self.inner.quote_config.user_op_buffer();
+        gas_estimate.tx += self.inner.quote_config.user_op_buffer();
+        gas_estimate.tx += self.inner.quote_config.tx_buffer();
+
+        debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
+
+        // Fill combinedGas and empty dummy signature
+        op.combinedGas = U256::from(gas_estimate.op);
+        op.signature = bytes!("");
+
+        // Calculate amount with updated paymentPerGas
+        op.paymentAmount = op.paymentPerGas * op.combinedGas;
+        op.paymentMaxAmount = op.paymentAmount;
+
+        let quote = Quote {
+            chain_id: request.chain_id,
+            op,
+            tx_gas: gas_estimate.tx,
+            native_fee_estimate,
+            ttl: SystemTime::now()
+                .checked_add(self.inner.quote_config.ttl)
+                .expect("should never overflow"),
+            authorization_address,
+        };
+        let sig = self
+            .inner
+            .quote_signer
+            .sign_hash(&quote.digest())
+            .await
+            .map_err(|err| RelayError::InternalError(err.into()))?;
+
+        Ok((asset_diff, quote.into_signed(sig)))
     }
 
     async fn send_action(
@@ -376,166 +526,6 @@ impl RelayApiServer for Relay {
 
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
-    }
-
-    async fn estimate_fee(
-        &self,
-        request: PartialAction,
-        token: Address,
-        authorization_address: Option<Address>,
-        account_key: Key,
-    ) -> RpcResult<(AssetDiff, SignedQuote)> {
-        let provider = self.provider(request.chain_id)?;
-        let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
-            return Err(QuoteError::UnsupportedFeeToken(token).into());
-        };
-
-        // create key
-        let mock_signer_address = self.inner.quote_signer.address();
-        let mock_key = KeyWith712Signer::random_admin(account_key.keyType)
-            .map_err(RelayError::from)
-            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
-
-        // mocking key storage for the eoa, and the balance for the mock signer
-        let overrides = StateOverridesBuilder::with_capacity(2)
-            .append(
-                mock_signer_address,
-                AccountOverride::default().with_balance(U256::MAX.div_ceil(2.try_into().unwrap())),
-            )
-            // simulateExecute requires it, so the function can only be called under a testing
-            // environment
-            .append(
-                self.inner.quote_signer.address(),
-                AccountOverride::default().with_balance(U256::MAX),
-            )
-            .append(
-                request.op.eoa,
-                AccountOverride::default()
-                    .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
-                    .with_state_diff(account_key.storage_slots())
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(authorization_address.map(|addr| {
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    })),
-            )
-            .build();
-
-        // load account and entrypoint
-        let entrypoint =
-            Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
-
-        let (nonce, native_fee_estimate, eth_price) = try_join3(
-            // fetch nonce if not specified
-            async {
-                if let Some(nonce) = request.op.nonce {
-                    Ok(nonce)
-                } else {
-                    entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await
-                }
-            },
-            // fetch chain fees
-            provider.estimate_eip1559_fees().map_err(RelayError::from),
-            // fetch price in eth
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.coin).await)
-            },
-        )
-        .await?;
-
-        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
-        let Some(eth_price) = eth_price else {
-            return Err(QuoteError::UnavailablePrice(token.address).into());
-        };
-
-        // fill userop
-        let mut op = UserOp {
-            eoa: request.op.eoa,
-            executionData: request.op.execution_data.clone(),
-            nonce,
-            paymentToken: token.address,
-            // this will force the simulation to go through payment code paths, and get a better
-            // estimation.
-            paymentAmount: U256::from(1),
-            paymentMaxAmount: U256::from(1),
-            paymentPerGas: (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price,
-            // we intentionally do not use the maximum amount of gas since the contracts add a small
-            // overhead when checking if there is sufficient gas for the op
-            combinedGas: U256::from(100_000_000),
-            initData: request.op.init_data.unwrap_or_default(),
-            encodedPreOps: request
-                .op
-                .pre_ops
-                .into_iter()
-                .map(|pre_op| pre_op.abi_encode().into())
-                .collect(),
-            ..Default::default()
-        };
-
-        // sign userop
-        let signature = mock_key
-            .sign_typed_data(
-                &op.as_eip712().map_err(RelayError::from)?,
-                &entrypoint.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
-            )
-            .await
-            .map_err(RelayError::from)?;
-
-        op.signature = Signature {
-            innerSignature: signature,
-            keyHash: account_key.key_hash(),
-            prehash: account_key.keyType.is_p256(), // WebCrypto P256 uses prehash
-        }
-        .abi_encode_packed()
-        .into();
-
-        // we estimate gas and fees
-        let (asset_diff, mut gas_estimate) =
-            entrypoint.simulate_execute(self.inner.quote_signer.address(), &op).await?;
-
-        // for 7702 designations there is an additional gas charge
-        //
-        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-        // need to charge for the account being presumed empty.
-        if authorization_address.is_some() {
-            gas_estimate.tx += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
-        }
-
-        // Add some leeway, since the actual simulation may no be enough.
-        // todo: re-evaluate if this is still necessary
-        gas_estimate.op += self.inner.quote_config.user_op_buffer();
-        gas_estimate.tx += self.inner.quote_config.user_op_buffer();
-        gas_estimate.tx += self.inner.quote_config.tx_buffer();
-
-        debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
-
-        // Fill combinedGas and empty dummy signature
-        op.combinedGas = U256::from(gas_estimate.op);
-        op.signature = bytes!("");
-
-        // Calculate amount with updated paymentPerGas
-        op.paymentAmount = op.paymentPerGas * op.combinedGas;
-        op.paymentMaxAmount = op.paymentAmount;
-
-        let quote = Quote {
-            chain_id: request.chain_id,
-            op,
-            tx_gas: gas_estimate.tx,
-            native_fee_estimate,
-            ttl: SystemTime::now()
-                .checked_add(self.inner.quote_config.ttl)
-                .expect("should never overflow"),
-            authorization_address,
-        };
-        let sig = self
-            .inner
-            .quote_signer
-            .sign_hash(&quote.digest())
-            .await
-            .map_err(|err| RelayError::InternalError(err.into()))?;
-
-        Ok((asset_diff, quote.into_signed(sig)))
     }
 
     async fn prepare_create_account(
