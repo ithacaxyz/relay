@@ -11,6 +11,9 @@ pub enum QuoteError {
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
+    /// Preop quotes are not supported.
+    #[error("preop are not supported.")]
+    PreOpUnsupported,
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
@@ -35,6 +38,7 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
         match err {
             QuoteError::QuoteExpired
             | QuoteError::InvalidQuoteSignature
+            | QuoteError::PreOpUnsupported
             | QuoteError::UnsupportedFeeToken(..)
             | QuoteError::InvalidFeeAmount { .. } => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
