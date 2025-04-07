@@ -26,9 +26,12 @@ use alloy::{
 };
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{fmt::Display, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::VecDeque, fmt::Display, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
+
+/// Maximum number of pending transactions allowed per a single signer.
+const MAX_PENDING_TRANSACTIONS: usize = 16;
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -107,8 +110,6 @@ pub struct Signer {
     block_time: Duration,
     /// Nonce of this signer.
     nonce: Mutex<u64>,
-    /// Nonce of the last confirmed transaction.
-    last_confirmed_nonce: Mutex<u64>,
     /// Channel to send signer events to.
     events_tx: mpsc::UnboundedSender<SignerEvent>,
     /// Underlying storage.
@@ -131,9 +132,8 @@ impl Signer {
         let wallet = EthereumWallet::new(signer.0);
 
         // fetch account info
-        let (nonce, last_nonce, chain_id, latest) = tokio::try_join!(
+        let (nonce, chain_id, latest) = tokio::try_join!(
             provider.get_transaction_count(address).pending(),
-            provider.get_transaction_count(address).latest(),
             provider.get_chain_id(),
             provider.get_block(BlockId::latest())
         )?;
@@ -159,7 +159,6 @@ impl Signer {
             chain_id,
             block_time,
             nonce: Mutex::new(nonce),
-            last_confirmed_nonce: Mutex::new(last_nonce),
             events_tx,
             storage,
             metrics,
@@ -187,14 +186,6 @@ impl Signer {
         let _ = self.events_tx.send(SignerEvent::TransactionStatus(tx, status));
 
         Ok(())
-    }
-
-    /// Updates the [`Signer::last_confirmed_nonce`] once a transaction has been confirmed.
-    async fn on_confirmed_nonce(&self, nonce: u64) {
-        let mut last_nonce = self.last_confirmed_nonce.lock().await;
-        if *last_nonce < nonce {
-            *last_nonce = nonce;
-        }
     }
 
     async fn validate_transaction(
@@ -280,7 +271,6 @@ impl Signer {
             if handle.await.is_ok() {
                 self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx.tx_hash())).await?;
                 self.storage.remove_pending_transaction(tx.id()).await?;
-                self.on_confirmed_nonce(tx.nonce()).await;
                 return Ok(());
             }
 
@@ -339,9 +329,6 @@ impl Signer {
             {
                 // The transaction was dropped, try to rebroadcast it.
                 let _ = self.provider.send_raw_transaction(&tx.sent.encoded_2718()).await?;
-                if *self.last_confirmed_nonce.lock().await >= tx.nonce() - 1 {
-                    retries += 1;
-                }
                 retries += 1;
             }
         }
@@ -441,7 +428,6 @@ impl Signer {
             )
             .await?
             .await?;
-        self.on_confirmed_nonce(nonce).await;
         debug!(%nonce, "Closed nonce gap");
 
         Ok(())
@@ -455,13 +441,10 @@ impl Signer {
             .await
             .expect("failed to read pending transactions");
 
-        assert!(
-            loaded_transactions.len()
-                == (*self.nonce.lock().await - *self.last_confirmed_nonce.lock().await) as usize
-        );
-
         let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
             FuturesUnordered::new();
+
+        let mut queued = VecDeque::new();
 
         // Watch pending transactions that were loaded from storage
         for tx in loaded_transactions {
@@ -473,11 +456,24 @@ impl Signer {
                 command = command_rx.recv() => if let Some(command) = command {
                     match command {
                         SignerMessage::SendTransaction(tx) => {
-                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                            if pending.len() < MAX_PENDING_TRANSACTIONS {
+                                // If we have capacity for another transaction, send it now.
+                                pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                            } else {
+                                // Otherwise, queue it for later.
+                                queued.push_back(tx);
+                            }
                         }
                     }
                 },
-                Some(_) = pending.next() => {}
+                Some(_) = pending.next() => {
+                    if pending.len() < MAX_PENDING_TRANSACTIONS {
+                        // If we have any queued transactions, send them now.
+                        if let Some(tx) = queued.pop_front() {
+                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                        }
+                    }
+                }
             }
         }
     }
