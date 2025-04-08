@@ -1,7 +1,7 @@
 use crate::types::{EntryPoint, SignedQuote};
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
-    eips::eip7702::SignedAuthorization,
+    eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
     sol_types::{SolCall, SolValue},
 };
@@ -138,5 +138,13 @@ impl PendingTransaction {
     /// Returns the nonce of the transaction.
     pub fn nonce(&self) -> u64 {
         self.sent.nonce()
+    }
+
+    /// Returns the [`Eip1559Estimation`] of the transaction.
+    pub fn fees(&self) -> Eip1559Estimation {
+        Eip1559Estimation {
+            max_fee_per_gas: self.sent.max_fee_per_gas(),
+            max_priority_fee_per_gas: self.sent.max_priority_fee_per_gas().unwrap_or_default(),
+        }
     }
 }
