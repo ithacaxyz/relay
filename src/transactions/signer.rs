@@ -27,7 +27,7 @@ use alloy::{
 use chrono::Utc;
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
 use std::{collections::VecDeque, fmt::Display, pin::Pin, sync::Arc, time::Duration};
-use tokio::{sync::mpsc, time::interval};
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 /// Maximum number of pending transactions allowed per a single signer.
@@ -414,11 +414,12 @@ impl Signer {
         nonce: u64,
         min_fees: Option<Eip1559Estimation>,
     ) -> Result<(), SignerError> {
-        debug!(%nonce, "Attempting to close nonce gap");
-
         let try_close = || async {
             let fee_estimate = self.provider.estimate_eip1559_fees().await?;
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
+                // If we are provided with `min_fees`, this means, we are going to replace some
+                // existing transaction. Nodes usually require us to bump the fees by some margin to
+                // replace a transaction, so we are enforcing that assigned fees are not too low.
                 let min_fee = min_fees.max_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
                 let min_tip =
                     min_fees.max_priority_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
@@ -455,6 +456,8 @@ impl Signer {
         };
 
         loop {
+            debug!(%nonce, "Attempting to close nonce gap");
+
             let Err(err) = try_close().await else { break };
 
             error!(%err, %nonce, "Failed to close nonce gap");
@@ -499,7 +502,21 @@ impl Signer {
             pending.push(Box::pin(self.watch_transaction(tx)));
         }
 
-        let mut interval = interval(Duration::from_secs(60));
+        // Create a never ending task that checks if on-chain nonce has diverged from local nonce
+        let mut nonce_check = Box::pin(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if let Ok(nonce) =
+                    self.provider.get_transaction_count(self.address()).pending().await
+                {
+                    let mut lock = self.nonce.lock().await;
+                    if nonce > *lock {
+                        warn!(%nonce, "on-chain nonce is ahead of local");
+                        *lock = nonce;
+                    }
+                }
+            }
+        });
 
         loop {
             tokio::select! {
@@ -524,16 +541,8 @@ impl Signer {
                         }
                     }
                 }
-                // Check if on-chain nonce has diverged from local nonce
-                _ = interval.tick() => {
-                    if let Ok(nonce) = self.provider.get_transaction_count(self.address()).pending().await {
-                        let mut lock = self.nonce.lock().await;
-                        if nonce > *lock {
-                            warn!(%nonce, "on-chain nonce is ahead of local");
-                            *lock = nonce;
-                        }
-                    }
-                }
+                // poll the nonce check task
+                _ = &mut nonce_check => {}
             }
         }
     }
