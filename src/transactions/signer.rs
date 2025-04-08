@@ -37,7 +37,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace, warn};
+use tracing::{Instrument, debug, error, trace, warn};
 
 /// Maximum number of pending transactions allowed per a single signer.
 const MAX_PENDING_TRANSACTIONS: usize = 16;
@@ -533,96 +533,118 @@ impl Signer {
         Ok(())
     }
 
-    /// Converts [`Signer`] into a future.
-    pub async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
+    /// Spawns a new [`Signer`] instance.
+    pub async fn spawn(self) -> SignerHandle {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+
         let loaded_transactions = self
             .storage
             .read_pending_transactions(self.address(), self.chain_id)
             .await
             .expect("failed to read pending transactions");
 
-        let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
-            FuturesUnordered::new();
-        let mut queued = VecDeque::new();
-
         let latest_nonce = self.provider.get_transaction_count(self.address()).await.unwrap();
-
-        // Handle any nonce gaps
-        for nonce in latest_nonce..*self.nonce.lock().await {
-            if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
-                warn!(%nonce, "nonce gap on startup");
-                pending.push(Box::pin(self.close_nonce_gap(nonce, None)));
-            }
-        }
-
-        // Watch pending transactions that were loaded from storage
-        for tx in loaded_transactions {
-            pending.push(Box::pin(self.watch_transaction(tx)));
-        }
+        let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
+            .filter(|nonce| {
+                if !loaded_transactions.iter().any(|tx| tx.nonce() == *nonce) {
+                    warn!(%nonce, "nonce gap on startup");
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect::<Vec<_>>();
 
         self.record_and_check_balance().await.expect("failed initial balance check");
 
-        if self.is_paused() && !pending.is_empty() {
+        if self.is_paused() && (!gapped_nonces.is_empty() || !loaded_transactions.is_empty()) {
             warn!("signer is paused, but there are pending transactions loaded on startup");
         }
 
-        // Create a never ending task that checks if on-chain nonce has diverged from local nonce
-        let mut nonce_check = Box::pin(async {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+        let span = tracing::debug_span!(
+            "signer",
+            address = ?self.address(),
+            chain_id = self.chain_id()
+        );
 
-                if let Ok(nonce) =
-                    self.provider.get_transaction_count(self.address()).pending().await
-                {
-                    let mut lock = self.nonce.lock().await;
-                    if nonce > *lock {
-                        warn!(%nonce, "on-chain nonce is ahead of local");
-                        *lock = nonce;
+        let fut = async move {
+            let mut pending: FuturesUnordered<Pin<Box<dyn Future<Output = _> + Send + '_>>> =
+                FuturesUnordered::new();
+            let mut queued = VecDeque::new();
+
+            // Handle the nonce gaps
+            for nonce in gapped_nonces {
+                pending.push(Box::pin(self.close_nonce_gap(nonce, None)));
+            }
+
+            // Watch pending transactions that were loaded from storage
+            for tx in loaded_transactions {
+                pending.push(Box::pin(self.watch_transaction(tx)));
+            }
+
+            // Create a never ending task that checks if on-chain nonce has diverged from local
+            // nonce
+            let mut nonce_check = Box::pin(async {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+
+                    if let Ok(nonce) =
+                        self.provider.get_transaction_count(self.address()).pending().await
+                    {
+                        let mut lock = self.nonce.lock().await;
+                        if nonce > *lock {
+                            warn!(%nonce, "on-chain nonce is ahead of local");
+                            *lock = nonce;
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        // create a never ending task that checks signer balance.
-        let mut balance_check = Box::pin(async {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+            // create a never ending task that checks signer balance.
+            let mut balance_check = Box::pin(async {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
 
-                if let Err(err) = self.record_and_check_balance().await {
-                    warn!(%err, "failed to check signer balance");
+                    if let Err(err) = self.record_and_check_balance().await {
+                        warn!(%err, "failed to check signer balance");
+                    }
                 }
-            }
-        });
+            });
 
-        loop {
-            tokio::select! {
-                command = command_rx.recv() => if let Some(command) = command {
-                    match command {
-                        SignerMessage::SendTransaction(tx) => {
-                            if pending.len() < MAX_PENDING_TRANSACTIONS {
-                                // If we have capacity for another transaction, send it now.
+            loop {
+                tokio::select! {
+                    command = command_rx.recv() => if let Some(command) = command {
+                        match command {
+                            SignerMessage::SendTransaction(tx) => {
+                                if pending.len() < MAX_PENDING_TRANSACTIONS {
+                                    // If we have capacity for another transaction, send it now.
+                                    pending.push(Box::pin(self.send_and_watch_transaction(tx)))
+                                } else {
+                                    // Otherwise, queue it for later.
+                                    queued.push_back(tx);
+                                }
+                            }
+                        }
+                    },
+                    Some(_) = pending.next() => {
+                        if pending.len() < MAX_PENDING_TRANSACTIONS {
+                            // If we have any queued transactions, send them now.
+                            if let Some(tx) = queued.pop_front() {
                                 pending.push(Box::pin(self.send_and_watch_transaction(tx)))
-                            } else {
-                                // Otherwise, queue it for later.
-                                queued.push_back(tx);
                             }
                         }
                     }
-                },
-                Some(_) = pending.next() => {
-                    if pending.len() < MAX_PENDING_TRANSACTIONS {
-                        // If we have any queued transactions, send them now.
-                        if let Some(tx) = queued.pop_front() {
-                            pending.push(Box::pin(self.send_and_watch_transaction(tx)))
-                        }
-                    }
+                    // poll the nonce check task
+                    _ = &mut nonce_check => {}
+                    // poll the balance check task
+                    _ = &mut balance_check => {}
                 }
-                // poll the nonce check task
-                _ = &mut nonce_check => {}
-                // poll the balance check task
-                _ = &mut balance_check => {}
             }
-        }
+        };
+
+        tokio::spawn(fut.instrument(span));
+
+        SignerHandle { to_signer: command_tx }
     }
 }
 
