@@ -248,6 +248,8 @@ pub async fn prepare_calls(
         } else {
             return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {response:?}"));
         }
+    } else if tx.expected.failed_estimate() {
+        return Err(eyre::eyre!("prepareCalls of tx {tx_num} passed when it should have failed."));
     }
 
     let PrepareCallsResponse { context, digest, .. } = response?;

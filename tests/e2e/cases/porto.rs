@@ -87,46 +87,6 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
     Ok(())
 }
 
-/// porto test: "behavior: spend limits"
-#[tokio::test(flavor = "multi_thread")]
-async fn behavior_spend_limits() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    run_e2e(|env| {
-        vec![
-            TxContext {
-                authorization_keys: vec![&key],
-                expected: ExpectedOutcome::Pass,
-                auth: Some(AuthKind::Auth),
-                ..Default::default()
-            },
-            TxContext {
-                calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(1500000000000000000u64), &key), // 1.5 ETH in wei
-                ],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&key),
-                ..Default::default()
-            },
-            // Successful transfer of 1 ETH
-            TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(1000000000000000000u64))], // 1 ETH in wei
-                expected: ExpectedOutcome::Pass,
-                key: Some(&key),
-                ..Default::default()
-            },
-            // Another transfer of 1 ETH exceeds the 1.5 ETH limit → fail
-            TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(1000000000000000000u64))], // 1 ETH in wei
-                expected: ExpectedOutcome::FailEstimate,
-                key: Some(&key),
-                ..Default::default()
-            }
-        ]
-    })
-    .await?;
-    Ok(())
-}
-
 /// porto test: "behavior: target scope"
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_target_scope() -> Result<()> {
@@ -146,18 +106,21 @@ async fn execution_guard_target_scope() -> Result<()> {
             // allowed)
             TxContext {
                 authorization_keys: vec![&another_key],
-                calls: vec![Call {
-                    to: Address::ZERO,
-                    value: U256::ZERO,
-                    data: Delegation::setCanExecuteCall {
-                        keyHash: another_key.key_hash(),
-                        fnSel: DEFAULT_EXECUTE_SELECTOR,
-                        target: env.erc20,
-                        can: true,
-                    }
-                    .abi_encode()
-                    .into(),
-                }],
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    Call {
+                        to: Address::ZERO,
+                        value: U256::ZERO,
+                        data: Delegation::setCanExecuteCall {
+                            keyHash: another_key.key_hash(),
+                            fnSel: DEFAULT_EXECUTE_SELECTOR,
+                            target: env.erc20,
+                            can: true,
+                        }
+                        .abi_encode()
+                        .into(),
+                    },
+                ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -200,18 +163,21 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             // "transfer")
             TxContext {
                 authorization_keys: vec![&another_key],
-                calls: vec![Call {
-                    to: Address::ZERO,
-                    value: U256::ZERO,
-                    data: Delegation::setCanExecuteCall {
-                        keyHash: another_key.key_hash(),
-                        can: true,
-                        fnSel: MockErc20::transferCall::SELECTOR.into(),
-                        target: env.erc20,
-                    }
-                    .abi_encode()
-                    .into(),
-                }],
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    Call {
+                        to: Address::ZERO,
+                        value: U256::ZERO,
+                        data: Delegation::setCanExecuteCall {
+                            keyHash: another_key.key_hash(),
+                            can: true,
+                            fnSel: MockErc20::transferCall::SELECTOR.into(),
+                            target: env.erc20,
+                        }
+                        .abi_encode()
+                        .into(),
+                    },
+                ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -283,18 +249,21 @@ async fn execution_guard_default() -> Result<()> {
             // Authorize and set execution guard using default values for selector and target
             TxContext {
                 authorization_keys: vec![&another_key],
-                calls: vec![Call {
-                    to: Address::ZERO,
-                    value: U256::ZERO,
-                    data: Delegation::setCanExecuteCall {
-                        keyHash: another_key.key_hash(),
-                        can: true,
-                        fnSel: DEFAULT_EXECUTE_SELECTOR,
-                        target: DEFAULT_EXECUTE_TO,
-                    }
-                    .abi_encode()
-                    .into(),
-                }],
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    Call {
+                        to: Address::ZERO,
+                        value: U256::ZERO,
+                        data: Delegation::setCanExecuteCall {
+                            keyHash: another_key.key_hash(),
+                            can: true,
+                            fnSel: DEFAULT_EXECUTE_SELECTOR,
+                            target: DEFAULT_EXECUTE_TO,
+                        }
+                        .abi_encode()
+                        .into(),
+                    },
+                ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -443,18 +412,21 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             // Delegation::setCanExecuteCall with defaults
             TxContext {
                 authorization_keys: vec![&session_key],
-                calls: vec![Call {
-                    to: Address::ZERO,
-                    value: U256::ZERO,
-                    data: Delegation::setCanExecuteCall {
-                        keyHash: session_key.key_hash(),
-                        can: true,
-                        fnSel: DEFAULT_EXECUTE_SELECTOR,
-                        target: DEFAULT_EXECUTE_TO,
-                    }
-                    .abi_encode()
-                    .into(),
-                }],
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
+                    Call {
+                        to: Address::ZERO,
+                        value: U256::ZERO,
+                        data: Delegation::setCanExecuteCall {
+                            keyHash: session_key.key_hash(),
+                            can: true,
+                            fnSel: DEFAULT_EXECUTE_SELECTOR,
+                            target: DEFAULT_EXECUTE_TO,
+                        }
+                        .abi_encode()
+                        .into(),
+                    },
+                ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -524,18 +496,11 @@ async fn session_key_pre_op() -> Result<()> {
                 // Bundle session key authorization as a pre-op
                 pre_ops: vec![TxContext {
                     authorization_keys: vec![&session_key],
-                    calls: vec![Call {
-                        to: Address::ZERO,
-                        value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
-                            keyHash: session_key.key_hash(),
-                            can: true,
-                            fnSel: DEFAULT_EXECUTE_SELECTOR,
-                            target: DEFAULT_EXECUTE_TO,
-                        }
-                        .abi_encode()
-                        .into(),
-                    }],
+                    calls: vec![
+                        calls::can_execute_all(env.entrypoint, session_key.key_hash()),
+                        calls::can_execute_all(env.erc20, session_key.key_hash()),
+                        calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
+                    ],
                     expected: ExpectedOutcome::Pass,
                     key: Some(&key),
                     // use random nonce sequence
@@ -566,12 +531,11 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
-                calls: vec![Call::set_can_execute(
-                    session_key.key_hash(),
-                    DEFAULT_EXECUTE_TO,
-                    DEFAULT_EXECUTE_SELECTOR,
-                    true,
-                )],
+                calls: vec![
+                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
+                    calls::can_execute_all(env.erc20, session_key.key_hash()),
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
+                ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 // use random nonce sequence
