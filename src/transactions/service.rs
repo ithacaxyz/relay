@@ -12,7 +12,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug};
+use tracing::debug;
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
@@ -109,7 +109,7 @@ impl TransactionService {
 
         // crate all the signers
         for signer in signers {
-            this.create_signer(signer, storage.clone(), provider.clone());
+            this.create_signer(signer, storage.clone(), provider.clone()).await;
         }
 
         this
@@ -121,26 +121,19 @@ impl TransactionService {
     }
 
     /// Creates a new [`Signer`] instance and spawns it.
-    fn create_signer(&mut self, signer: DynSigner, storage: RelayStorage, provider: DynProvider) {
+    async fn create_signer(
+        &mut self,
+        signer: DynSigner,
+        storage: RelayStorage,
+        provider: DynProvider,
+    ) {
         let signer_id = self.next_singer_id();
         debug!(%signer_id, "creating new signer");
-        // message channel for individual signer
-        let (tx, rx) = mpsc::unbounded_channel();
-        let handle = SignerHandle { to_signer: tx };
         let metrics = self.metrics.clone();
         let events_tx = self.to_service.clone();
-        tokio::spawn(async move {
-            // TODO: proper error handling
-            let signer = Signer::new(signer_id, provider, signer, storage, events_tx, metrics)
-                .await
-                .unwrap();
-            let span = tracing::debug_span!(
-                "signer",
-                address = ?signer.address(),
-                chain_id = signer.chain_id()
-            );
-            signer.into_future(rx).instrument(span).await
-        });
+        let signer =
+            Signer::new(signer_id, provider, signer, storage, events_tx, metrics).await.unwrap();
+        let handle = signer.spawn().await;
 
         // track new signer
         self.insert_active_signer(signer_id, handle);
