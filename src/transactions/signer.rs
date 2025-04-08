@@ -437,8 +437,8 @@ impl Signer {
                 nonce,
                 to: self.address().into(),
                 gas_limit: 21000,
-                max_priority_fee_per_gas: max_fee,
-                max_fee_per_gas: max_tip,
+                max_priority_fee_per_gas: max_tip,
+                max_fee_per_gas: max_fee,
                 ..Default::default()
             });
 
