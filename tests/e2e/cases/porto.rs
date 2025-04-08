@@ -532,7 +532,6 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
                     calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                 ],

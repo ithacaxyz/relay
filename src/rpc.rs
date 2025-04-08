@@ -703,11 +703,20 @@ impl RelayApiServer for Relay {
         // Merges authorize, registry(from prepareAccount) and requested calls.
         let all_calls = authorize_calls
             .into_iter()
-            .chain(maybe_prep.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
-                acc.id_signatures
+            .chain(
+                maybe_prep
                     .iter()
-                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
-            }))
+                    .filter(|_| {
+                        // ensures that the AccountRegistry::register(admin_key) call is done inside
+                        // the first op which is signed by the admin_key
+                        request.capabilities.pre_ops.is_empty()
+                    })
+                    .flat_map(|acc| {
+                        acc.id_signatures
+                            .iter()
+                            .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+                    }),
+            )
             .chain(request.calls)
             .chain(revoke_calls)
             .collect::<Vec<_>>();
