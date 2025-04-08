@@ -12,7 +12,7 @@ use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
         utils::{
@@ -46,7 +46,7 @@ const MAX_PENDING_TRANSACTIONS: usize = 16;
 const NONCE_GAP_PRICE_BUMP: u128 = 20;
 
 /// Lower bound of gas a signer should be able to afford before getting paused until being funded.
-const MIN_SIGNER_GAS: u64 = 30_000_000;
+const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -512,10 +512,10 @@ impl Signer {
             self.provider.estimate_eip1559_fees()
         )?;
 
-        let min_balance = U256::from(MIN_SIGNER_GAS) * U256::from(fees.max_fee_per_gas);
+        let min_balance = MIN_SIGNER_GAS * U256::from(fees.max_fee_per_gas);
 
         if !self.is_paused() {
-            if balance < U256::from(MIN_SIGNER_GAS) * U256::from(fees.max_fee_per_gas) {
+            if balance < min_balance {
                 warn!(
                     ?balance,
                     max_fee_per_gas = ?fees.max_fee_per_gas,
