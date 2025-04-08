@@ -194,6 +194,11 @@ impl Signer {
         NetworkWallet::<Ethereum>::default_signer_address(&self.wallet)
     }
 
+    /// Returns the chain id.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Emits an event.
     fn emit_event(&self, event: SignerEvent) {
         let _ = self.events_tx.send(event);

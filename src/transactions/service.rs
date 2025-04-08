@@ -12,7 +12,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{Instrument, debug};
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
@@ -134,7 +134,12 @@ impl TransactionService {
             let signer = Signer::new(signer_id, provider, signer, storage, events_tx, metrics)
                 .await
                 .unwrap();
-            signer.into_future(rx).await
+            let span = tracing::debug_span!(
+                "signer",
+                address = ?signer.address(),
+                chain_id = signer.chain_id()
+            );
+            signer.into_future(rx).instrument(span).await
         });
 
         // track new signer
