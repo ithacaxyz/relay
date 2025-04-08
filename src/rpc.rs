@@ -42,7 +42,7 @@ use crate::{
     chains::{Chain, Chains},
     config::QuoteConfig,
     error::{AuthError, KeysError, QuoteError, RelayError},
-    price::PriceOracle,
+    services::price::PriceOracle,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},

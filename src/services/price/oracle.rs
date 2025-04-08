@@ -1,6 +1,6 @@
 use super::CoinGecko;
 use crate::{
-    price::{fetchers::PriceFetcher, metrics::CoinPairMetrics},
+    services::price::{fetchers::PriceFetcher, metrics::CoinPairMetrics},
     types::{CoinKind, CoinPair, CoinRegistry},
 };
 use alloy::primitives::U256;
