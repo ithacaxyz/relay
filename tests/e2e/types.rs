@@ -9,8 +9,9 @@ use alloy::{
     primitives::{Address, U256},
     sol_types::SolValue,
 };
+use derive_more::Debug;
 use eyre::WrapErr;
-use futures_util::future::{join_all, try_join_all};
+use futures_util::future::{BoxFuture, join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
@@ -18,6 +19,11 @@ use relay::{
         rpc::{AuthorizeKey, RevokeKey},
     },
 };
+
+/// Alias type of a boxed async closure capturing [`Environment`] and [`TxContext`] for checking the
+/// outcome of a successful transaction.
+pub type PostTxCheck =
+    Box<dyn for<'a> Fn(&'a Environment, &TxContext<'_>) -> BoxFuture<'a, eyre::Result<()>>>;
 
 /// Represents the expected outcome of a test case execution
 #[derive(Debug, Default)]
@@ -131,6 +137,9 @@ pub struct TxContext<'a> {
     pub pre_ops: Vec<TxContext<'a>>,
     /// Optional nonce to be used.
     pub nonce: Option<U256>,
+    /// Optional checks after a successful transaction.
+    #[debug(skip)]
+    pub post_tx: Vec<PostTxCheck>,
 }
 
 impl TxContext<'_> {
@@ -220,6 +229,14 @@ pub async fn build_pre_ops<'a>(
     .await;
 
     Ok(pre_ops)
+}
+
+/// Helper macro for checking the outcome of a successful transaction.
+#[macro_export]
+macro_rules! check {
+    (| $env:ident, $tx:ident | $body:block) => {
+        vec![Box::new(move |$env, $tx| Box::pin(async move { $body }))]
+    };
 }
 
 alloy::sol! {
