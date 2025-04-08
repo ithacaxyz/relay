@@ -76,6 +76,9 @@ sol! {
         /// The PREP `initData` is invalid.
         error InvalidPREP();
 
+        /// @dev The `keyType` cannot be super admin.
+        error KeyTypeCannotBeSuperAdmin();
+
         /// Cannot set or get the permissions if the `keyHash` is `bytes32(0)`.
         error KeyHashIsZero();
 
@@ -88,8 +91,14 @@ sol! {
         /// Exceeded the spend limit.
         error ExceededSpendLimit();
 
+        /// @dev In order to spend a token, it must have spend permissions set.
+        error NoSpendPermissions();
+
         /// Super admin keys can execute everything.
         error SuperAdminCanExecuteEverything();
+
+        /// @dev Super admin keys can spend anything.
+        error SuperAdminCanSpendAnything();
 
         /// The execution mode is not supported.
         error UnsupportedExecutionMode();

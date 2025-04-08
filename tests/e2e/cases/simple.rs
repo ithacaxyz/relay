@@ -101,6 +101,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn spend_limits() -> Result<()> {
     let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
     run_e2e(|env| {
         vec![
@@ -114,7 +115,8 @@ async fn spend_limits() -> Result<()> {
             // successful transfer
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                calls: vec![calls::daily_limit(env.erc20, U256::from(15), key1.key())],
+                authorization_keys: vec![&session],
+                calls: vec![calls::daily_limit(env.erc20, U256::from(15), session.key())],
                 key: Some(&key1),
                 ..Default::default()
             },
@@ -122,7 +124,7 @@ async fn spend_limits() -> Result<()> {
             TxContext {
                 expected: ExpectedOutcome::FailEstimate,
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100))],
-                key: Some(&key1),
+                key: Some(&session),
                 ..Default::default()
             },
         ]
@@ -159,6 +161,7 @@ async fn native_transfer() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn spend_limits_bundled() -> Result<()> {
     let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
     run_e2e(|env| {
         vec![
@@ -168,21 +171,29 @@ async fn spend_limits_bundled() -> Result<()> {
                 auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
+            // authorize session key
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                authorization_keys: vec![&session],
+                calls: vec![
+                    calls::daily_limit(env.erc20, U256::from(15), session.key()),
+                    calls::can_execute_all(env.erc20, session.key_hash()),
+                ],
+                key: Some(&key1),
+                ..Default::default()
+            },
             // successful transfer that should decrease the daily allowance
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(15), key1.key()),
-                    calls::transfer(env.erc20, Address::ZERO, U256::from(10)),
-                ],
-                key: Some(&key1),
+                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                key: Some(&session),
                 ..Default::default()
             },
             // overspend transfer should fail
             TxContext {
                 expected: ExpectedOutcome::FailEstimate,
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
-                key: Some(&key1),
+                key: Some(&session),
                 ..Default::default()
             },
         ]
@@ -192,27 +203,34 @@ async fn spend_limits_bundled() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn spend_limits_bundle_failure() -> Result<()> {
-    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-
-    run_e2e(|env| {
-        vec![
-            TxContext {
-                expected: ExpectedOutcome::Pass,
-                authorization_keys: vec![&key1],
-                auth: Some(AuthKind::Auth),
-                ..Default::default()
-            },
-            // Bundled overspend should fail
-            TxContext {
-                expected: ExpectedOutcome::FailEstimate,
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    run_e2e_prep(|env| {
+        vec![TxContext {
+            authorization_keys: vec![&key],
+            auth: Some(AuthKind::Auth),
+            expected: ExpectedOutcome::FailSend, // todo should fail on FailEstimate
+            // Bundle session key authorization as a pre-op
+            pre_ops: vec![TxContext {
+                authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(15), key1.key()),
-                    calls::transfer(env.erc20, Address::ZERO, U256::from(20)),
+                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
+                    calls::can_execute_all(env.erc20, session_key.key_hash()),
+                    calls::daily_limit(env.erc20, U256::from(15), session_key.key()),
                 ],
-                key: Some(&key1),
+                expected: ExpectedOutcome::Pass,
+                key: Some(&key),
+                // use random nonce sequence
+                nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                 ..Default::default()
-            },
-        ]
+            }],
+            // Bundled overspend should fail
+            calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(20))],
+            // The userop is signed by the session key itself
+            key: Some(&session_key),
+            ..Default::default()
+        }]
     })
-    .await
+    .await?;
+    Ok(())
 }

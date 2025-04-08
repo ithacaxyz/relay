@@ -61,8 +61,8 @@ jobs:
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=${{ secrets.RPC_URL }}" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0x7cf6287013ef3d4558a98fcc2bc286e53341513f" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0x6faf9eb2742350c772a5c811e1b0e2f330650a25" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0x964b9c8dc6ddf1e414057c5efa80054c27fad4a4" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x7a80c4601c7a944392c54d3afad5441bf6691dcb" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}
