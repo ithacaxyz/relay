@@ -12,7 +12,7 @@ use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, Bytes},
+    primitives::{Address, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
         utils::{
@@ -25,8 +25,17 @@ use alloy::{
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
 use chrono::Utc;
-use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered};
-use std::{collections::VecDeque, fmt::Display, pin::Pin, sync::Arc, time::Duration};
+use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
+use std::{
+    collections::VecDeque,
+    fmt::Display,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
@@ -35,6 +44,9 @@ const MAX_PENDING_TRANSACTIONS: usize = 16;
 
 /// Price bump for nonce gap transactions.
 const NONCE_GAP_PRICE_BUMP: u128 = 20;
+
+/// Lower bound of gas a signer should be able to afford before getting paused until being funded.
+const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +131,8 @@ pub struct Signer {
     storage: RelayStorage,
     /// Metrics of the parent transaction service.
     metrics: Arc<TransactionServiceMetrics>,
+    /// Whether the signer is paused.
+    paused: AtomicBool,
 }
 
 impl Signer {
@@ -165,6 +179,7 @@ impl Signer {
             events_tx,
             storage,
             metrics,
+            paused: AtomicBool::new(false),
         };
         Ok(this)
     }
@@ -179,6 +194,21 @@ impl Signer {
         NetworkWallet::<Ethereum>::default_signer_address(&self.wallet)
     }
 
+    /// Returns the chain id.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    /// Emits an event.
+    fn emit_event(&self, event: SignerEvent) {
+        let _ = self.events_tx.send(event);
+    }
+
+    /// Returns whether the signer is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
     /// Sends a transaction status update.
     async fn update_tx_status(
         &self,
@@ -186,7 +216,7 @@ impl Signer {
         status: TransactionStatus,
     ) -> Result<(), StorageError> {
         self.storage.write_transaction_status(tx, &status).await?;
-        let _ = self.events_tx.send(SignerEvent::TransactionStatus(tx, status));
+        self.emit_event(SignerEvent::TransactionStatus(tx, status));
 
         Ok(())
     }
@@ -475,6 +505,34 @@ impl Signer {
         Ok(())
     }
 
+    /// Fetches the current signer balance and checks if the signer should be paused/unpaused.
+    async fn record_and_check_balance(&self) -> Result<(), SignerError> {
+        let (balance, fees) = try_join!(
+            self.provider.get_balance(self.address()).into_future(),
+            self.provider.estimate_eip1559_fees()
+        )?;
+
+        let min_balance = MIN_SIGNER_GAS * U256::from(fees.max_fee_per_gas);
+
+        if !self.is_paused() {
+            if balance < min_balance {
+                warn!(
+                    ?balance,
+                    max_fee_per_gas = ?fees.max_fee_per_gas,
+                    ?min_balance,
+                    "signer balance is too low, pausing"
+                );
+                self.emit_event(SignerEvent::PauseSigner(self.id()));
+                self.paused.store(true, Ordering::Relaxed);
+            }
+        } else if balance >= min_balance {
+            self.emit_event(SignerEvent::ReActive(self.id()));
+            self.paused.store(false, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
     /// Converts [`Signer`] into a future.
     pub async fn into_future(self, mut command_rx: mpsc::UnboundedReceiver<SignerMessage>) {
         let loaded_transactions = self
@@ -502,10 +560,17 @@ impl Signer {
             pending.push(Box::pin(self.watch_transaction(tx)));
         }
 
+        self.record_and_check_balance().await.expect("failed initial balance check");
+
+        if self.is_paused() && !pending.is_empty() {
+            warn!("signer is paused, but there are pending transactions loaded on startup");
+        }
+
         // Create a never ending task that checks if on-chain nonce has diverged from local nonce
         let mut nonce_check = Box::pin(async {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
+
                 if let Ok(nonce) =
                     self.provider.get_transaction_count(self.address()).pending().await
                 {
@@ -514,6 +579,17 @@ impl Signer {
                         warn!(%nonce, "on-chain nonce is ahead of local");
                         *lock = nonce;
                     }
+                }
+            }
+        });
+
+        // create a never ending task that checks signer balance.
+        let mut balance_check = Box::pin(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                if let Err(err) = self.record_and_check_balance().await {
+                    warn!(%err, "failed to check signer balance");
                 }
             }
         });
@@ -543,6 +619,8 @@ impl Signer {
                 }
                 // poll the nonce check task
                 _ = &mut nonce_check => {}
+                // poll the balance check task
+                _ = &mut balance_check => {}
             }
         }
     }
