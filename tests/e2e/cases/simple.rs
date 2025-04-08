@@ -1,11 +1,14 @@
 //! Relay simple end-to-end test cases
 
-use crate::e2e::{common_calls as calls, *};
+use crate::{
+    check,
+    e2e::{common_calls as calls, *},
+};
 use alloy::primitives::U256;
 use eyre::Result;
 use relay::{
     signers::DynSigner,
-    types::{KeyType, KeyWith712Signer},
+    types::{IERC20, KeyType, KeyWith712Signer},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -15,6 +18,8 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 
         // The first TX will bundle the prep/upgrade calls
         run_e2e(|env| {
+            let to = Address::random();
+            let transfer_amount = U256::from(10);
             vec![
                 TxContext {
                     authorization_keys: vec![&key],
@@ -23,9 +28,20 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                     ..Default::default()
                 },
                 TxContext {
-                    calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                    calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
                     expected: ExpectedOutcome::Pass,
                     key: Some(&key),
+                    post_tx: check!(|env, _tx| {
+                        assert_eq!(
+                            transfer_amount,
+                            IERC20::IERC20Instance::new(env.erc20, &env.provider)
+                                .balanceOf(to)
+                                .call()
+                                .await?
+                                ._0
+                        );
+                        Ok(())
+                    }),
                     ..Default::default()
                 },
             ]

@@ -164,6 +164,11 @@ async fn check_bundle(
                     "Transaction succeeded but UserOp failed for transaction {tx_num}",
                 ));
             }
+
+            // Make any additional custom checks
+            for post_tx_check in &tx.post_tx {
+                post_tx_check(env, tx).await?
+            }
         }
         Err(err) => {
             if tx.expected.failed_send() {
