@@ -33,7 +33,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -626,7 +626,7 @@ impl Signer {
             })
         };
 
-        SignerTask { signer, pending, nonce_check, balance_check, span }
+        SignerTask { signer, pending, nonce_check, balance_check, span, waker: None }
     }
 }
 
@@ -665,6 +665,8 @@ pub struct SignerTask {
     balance_check: Pin<Box<dyn Future<Output = ()> + Send>>,
     /// Span for logging.
     span: tracing::Span,
+    /// Waker used to wake the signer task when new transactions are pushed.
+    waker: Option<Waker>,
 }
 
 impl SignerTask {
@@ -673,8 +675,10 @@ impl SignerTask {
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.
     pub fn push_transaction(&self, tx: RelayTransaction) {
         let signer = self.signer.clone();
-
-        self.pending.push(Box::pin(async move { signer.send_and_watch_transaction(tx).await }))
+        self.pending.push(Box::pin(async move { signer.send_and_watch_transaction(tx).await }));
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref();
+        }
     }
 
     /// Returns the current capacity of the signer.
@@ -696,9 +700,12 @@ impl Future for SignerTask {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let SignerTask { signer: _, pending, nonce_check, balance_check, span } = self.get_mut();
+        let SignerTask { signer: _, pending, nonce_check, balance_check, span, waker } =
+            self.get_mut();
 
         let _enter = span.enter();
+
+        *waker = Some(cx.waker().clone());
 
         while let Poll::Ready(Some(_)) = pending.poll_next_unpin(cx) {}
         let _ = nonce_check.poll_unpin(cx);
