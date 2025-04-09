@@ -1,6 +1,7 @@
 //! Relay configuration.
 use crate::constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER};
 use alloy::primitives::Address;
+use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -217,8 +218,11 @@ impl RelayConfig {
 
     /// Load from a TOML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config = toml::from_str(&content)?;
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("Failed to read config file: {}", path.display()))?;
+        let config = toml::from_str(&content)
+            .wrap_err_with(|| format!("Failed to parse config file: {}", path.display()))?;
         Ok(config)
     }
 
