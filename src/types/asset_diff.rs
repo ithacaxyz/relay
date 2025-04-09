@@ -1,13 +1,34 @@
 use super::IERC20::{self, IERC20Events};
+use crate::{asset::AssetInfoServiceHandle, error::RelayError};
 use alloy::{
-    primitives::{Address, U256, address, aliases::I512, map::HashMap},
+    primitives::{
+        Address, U256, address,
+        aliases::I512,
+        map::{HashMap, HashSet},
+    },
+    providers::Provider,
     rpc::types::Log,
     sol_types::{SolEvent, SolEventInterface},
 };
 use serde::{Deserialize, Serialize};
 
 /// Net flow per account and asset based on simulated execution logs.
-pub type AssetDiff = Vec<(Address, Vec<(Asset, I512)>)>;
+pub type AssetDiffs = Vec<(Address, Vec<AssetDiff>)>;
+
+/// Asset with metadata and value diff.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetDiff {
+    /// Asset address. `None` represents the native token.
+    address: Option<Address>,
+    /// Asset name.
+    name: Option<String>,
+    /// Asset symbol.
+    symbol: Option<String>,
+    /// Asset decimals.
+    decimals: Option<u8>,
+    /// Value diff.
+    value: I512,
+}
 
 /// Calculates the net asset difference for each account and asset based on logs.
 ///
@@ -19,9 +40,14 @@ pub type AssetDiff = Vec<(Address, Vec<(Asset, I512)>)>;
 ///
 /// # Notes
 /// The native asset is represented by the address "0xeeee…eeee" as defined on `eth_simulateV1`.
-pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
+pub async fn calculate_asset_diff<P: Provider>(
+    logs: impl Iterator<Item = Log>,
+    asset_info_handle: AssetInfoServiceHandle,
+    provider: &P,
+) -> Result<AssetDiffs, RelayError> {
     let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
 
+    let mut assets = HashSet::new();
     for log in logs {
         if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
             continue;
@@ -34,6 +60,9 @@ pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
         else {
             continue;
         };
+
+        // Need to collect all assets so we can fetch their metadata
+        assets.insert(asset);
 
         // For the receiver, add transfer.amount to credits.
         accounts
@@ -52,8 +81,11 @@ pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
             .or_insert((U256::ZERO, transfer.amount));
     }
 
+    let assets_map =
+        asset_info_handle.get_asset_info_list(&provider, assets.into_iter().collect()).await?;
+
     // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
-    accounts
+    Ok(accounts
         .into_iter()
         .map(|(address, assets)| {
             (
@@ -61,19 +93,32 @@ pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
                 assets
                     .into_iter()
                     .map(|(asset, (credits, debits))| {
-                        let net = I512::try_from_le_slice(credits.as_le_slice())
+                        let value = I512::try_from_le_slice(credits.as_le_slice())
                             .expect("should convert from u256")
                             - I512::try_from_le_slice(debits.as_le_slice())
                                 .expect("should convert from u256");
-                        (asset, net)
+
+                        // `get_asset_info_list` ensures we have the asset
+                        let AssetWithInfo { name, symbol, decimals, .. } =
+                            assets_map.get(&asset).cloned().expect("should have");
+
+                        AssetDiff {
+                            address: (!asset.is_native()).then(|| asset.address()),
+                            name,
+                            symbol,
+                            decimals,
+                            value,
+                        }
                     })
                     .collect(),
             )
         })
-        .collect()
+        .collect())
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
+///
+/// Note: Token variant might not be ERC20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Asset {
     /// Native asset.
