@@ -64,7 +64,7 @@ tracing-subscriber = { version = "0.3.19", features = [
 url = { version = "2.5", features = ["serde"] }
 rand = "0.9"
 itertools = "0.14"
-derive_more = "2"
+derive_more = { version = "2", features = ["debug"] }
 bytes = "1"
 metrics-derive = "0.1"
 sqlx = { version = "0.8.3", features = [

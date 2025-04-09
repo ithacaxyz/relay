@@ -1,12 +1,13 @@
 use super::{
-    Signer, SignerEvent, SignerHandle, SignerId, TxId,
+    Signer, SignerEvent, SignerId, SignerTask, TxId,
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
 use crate::{signers::DynSigner, storage::RelayStorage};
 use alloy::providers::{DynProvider, Provider};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -49,15 +50,11 @@ pub struct TransactionService {
     ///
     /// This forms a bijection with {active,paused} signers, meaning each signer id is either
     /// `active` OR `paused`.
-    signers: HashMap<SignerId, SignerHandle>,
+    signers: FuturesUnordered<SignerTask>,
     /// Signers we currently can use to dispatch _new_ requests to.
     active_signers: Vec<SignerId>,
     /// Signers that are currently paused until re-activated.
     paused_signers: Vec<SignerId>,
-    /// Tracks the total number of processed [`RelayTransaction`].
-    ///
-    /// This is used to cheaply cycle through active signers.
-    transaction_counter: usize,
     /// Tracks unique identifiers for signers
     singer_id: u64,
     /// Signer event channel
@@ -75,6 +72,8 @@ pub struct TransactionService {
     subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
     /// Metrics of the service.
     metrics: Arc<TransactionServiceMetrics>,
+    /// Queue of transactions waiting for signers capacity.
+    queue: VecDeque<RelayTransaction>,
 }
 
 impl TransactionService {
@@ -97,7 +96,6 @@ impl TransactionService {
             signers: Default::default(),
             active_signers: vec![],
             paused_signers: vec![],
-            transaction_counter: 0,
             singer_id: 0,
             to_service,
             from_signers,
@@ -105,6 +103,7 @@ impl TransactionService {
             command_rx,
             subscriptions: Default::default(),
             metrics,
+            queue: Default::default(),
         };
 
         // crate all the signers
@@ -133,16 +132,16 @@ impl TransactionService {
         let events_tx = self.to_service.clone();
         let signer =
             Signer::new(signer_id, provider, signer, storage, events_tx, metrics).await.unwrap();
-        let handle = signer.spawn().await;
+        let task = signer.into_future().await;
 
         // track new signer
-        self.insert_active_signer(signer_id, handle);
+        self.insert_active_signer(signer_id, task);
     }
 
     /// Adds a _new_ signer.
-    fn insert_active_signer(&mut self, id: SignerId, signer: SignerHandle) {
+    fn insert_active_signer(&mut self, id: SignerId, signer: SignerTask) {
         self.active_signers.push(id);
-        self.signers.insert(id, signer);
+        self.signers.push(signer);
         self.update_signer_metrics();
     }
 
@@ -219,11 +218,21 @@ impl TransactionService {
         self.paused_signers.contains(signer_id)
     }
 
-    /// Picks the next active signer for dispatching a transaction.
-    fn next_active_signer(&mut self) -> Option<&SignerHandle> {
-        let idx = self.transaction_counter % self.active_signers.len();
-        let id = self.active_signers.get(idx).copied()?;
-        self.signers.get(&id)
+    /// Picks the best signer for dispatching a transaction. Signer with the highest capacity is
+    /// returned.
+    fn best_signer(&self) -> Option<&SignerTask> {
+        let mut best_signer = None;
+        let mut best_capacity = 0;
+
+        for signer in self.signers.iter() {
+            let capacity = signer.capacity();
+            if capacity > best_capacity {
+                best_signer = Some(signer);
+                best_capacity = capacity;
+            }
+        }
+
+        best_signer
     }
 
     /// Sends the given transaction to an available signer.
@@ -240,9 +249,32 @@ impl TransactionService {
         );
 
         self.subscriptions.insert(tx.id, status_tx);
-        self.next_active_signer().expect("no signers").send_transaction(tx);
-        self.transaction_counter += 1;
-        self.metrics.sent.increment(1);
+
+        if let Some(signer) = self.best_signer() {
+            signer.push_transaction(tx);
+            self.metrics.sent.increment(1);
+        } else {
+            self.queue.push_back(tx);
+        }
+    }
+
+    /// Attempts advancing the queue by sending a transaction to an available signer.
+    ///
+    /// Returns `true` if any transaction was sent.
+    fn advance_queue(&mut self) -> bool {
+        let mut sent = false;
+
+        while let Some(tx) = self.queue.pop_front() {
+            if let Some(signer) = self.best_signer() {
+                signer.push_transaction(tx);
+                self.metrics.sent.increment(1);
+                sent = true;
+            } else {
+                self.queue.push_front(tx);
+            }
+        }
+
+        sent
     }
 }
 
@@ -292,6 +324,15 @@ impl Future for TransactionService {
                     this.activate_signer(id);
                 }
             }
+        }
+
+        // Advance all signers
+        let _ = this.signers.poll_next_unpin(cx);
+
+        // Try advancing the queue. If we've sent a transaction, poll the signers again to make sure
+        // the new future is polled.
+        while this.advance_queue() {
+            let _ = this.signers.poll_next_unpin(cx);
         }
 
         Poll::Pending
