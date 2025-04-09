@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use alloy::primitives::Address;
 use metrics::{Counter, Gauge, Histogram, counter, histogram};
 use metrics_derive::Metrics;
+use std::sync::Arc;
 
 /// Metrics for a [`TransactionService`](crate::transactions::TransactionService).
 #[derive(Metrics)]
