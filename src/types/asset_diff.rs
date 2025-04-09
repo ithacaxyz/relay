@@ -78,8 +78,26 @@ pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
 pub enum Asset {
     /// Native asset.
     Native,
-    /// ERC20 asset.
-    ERC20(Address),
+    /// Token asset.
+    Token(Address),
+}
+
+impl Asset {
+    /// Whether it is the native asset from a chain.
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::Native)
+    }
+
+    /// Returns the address
+    ///
+    /// # Panics
+    /// It will panic if self is of the native variant.
+    pub fn address(&self) -> Address {
+        match self {
+            Asset::Native => panic!("only token assets can return an address"),
+            Asset::Token(address) => *address,
+        }
+    }
 }
 
 impl From<Address> for Asset {
@@ -88,7 +106,20 @@ impl From<Address> for Asset {
         if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
             Asset::Native
         } else {
-            Asset::ERC20(asset)
+            Asset::Token(asset)
         }
     }
+}
+
+/// Represents metadata for an asset.
+#[derive(Debug, Clone)]
+pub struct AssetWithInfo {
+    /// Asset.
+    pub asset: Asset,
+    /// Name.
+    pub name: Option<String>,
+    /// Symbol.
+    pub symbol: Option<String>,
+    /// Decimals.
+    pub decimals: Option<u8>,
 }

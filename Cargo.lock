@@ -4649,6 +4649,7 @@ dependencies = [
  "http-body 1.0.1",
  "itertools 0.14.0",
  "jsonrpsee",
+ "lru",
  "metrics",
  "metrics-derive",
  "metrics-exporter-prometheus",

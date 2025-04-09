@@ -45,6 +45,7 @@ http-body = "1"
 jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16"
+lru = "0.13.0"
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["rc"] }
