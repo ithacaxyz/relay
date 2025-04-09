@@ -274,6 +274,7 @@ impl TransactionService {
                 sent = true;
             } else {
                 self.queue.push_front(tx);
+                break;
             }
         }
 
