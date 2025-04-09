@@ -71,15 +71,16 @@ pub async fn prep_account<'a>(
         .await?;
 
     // Generate all ID -> Account from the authorized keys
-    let signatures = try_join_all(authorize_keys.iter().map(async |key| {
-        Ok::<_, eyre::Error>(KeySignature {
-            public_key: key.publicKey.clone(),
-            key_type: key.keyType,
-            value: key.id_sign(prep_address).await?.as_bytes().into(),
-            prehash: false,
-        })
-    }))
-    .await?;
+    let signatures =
+        try_join_all(authorize_keys.iter().filter(|key| key.isSuperAdmin).map(async |key| {
+            Ok::<_, eyre::Error>(KeySignature {
+                public_key: key.publicKey.clone(),
+                key_type: key.keyType,
+                value: key.id_sign(prep_address).await?.as_bytes().into(),
+                prehash: false,
+            })
+        }))
+        .await?;
 
     // Send the PREPAccount with its key identifiers and signatures
     let key_ids = env
@@ -88,7 +89,6 @@ pub async fn prep_account<'a>(
         .await?;
 
     let admin_key_id = key_ids[0].id;
-    let init_calls_len = context.account.init_calls.len();
     match &mut env.eoa {
         EoaKind::Upgraded(_dyn_signer) => unreachable!(),
         EoaKind::Prep(account) => {
@@ -104,9 +104,7 @@ pub async fn prep_account<'a>(
             .await?;
         assert!(get_accounts_response.iter().any(|r| r.address == prep_address));
 
-        // Number of keys should be equal to the number of init_calls, since we only authorize admin
-        // keys
-        assert_eq!(get_accounts_response[0].keys.len(), init_calls_len);
+        assert_eq!(get_accounts_response[0].keys.len(), authorize_keys.len());
 
         // Ensure getKeys returns the same keys from an account of getAccounts
         let get_keys_response = env

@@ -539,11 +539,6 @@ impl RelayApiServer for Relay {
             return Err(KeysError::MissingAdminKey)?;
         }
 
-        // Creating account should only have admin keys.
-        if request.capabilities.authorize_keys.iter().any(|key| !key.key.isSuperAdmin) {
-            return Err(KeysError::OnlyAdminKeyAllowed)?;
-        }
-
         // Generate all calls that will authorize keys and set their permissions
         let init_calls =
             self.authorize_into_calls(request.capabilities.authorize_keys.clone(), None)?;

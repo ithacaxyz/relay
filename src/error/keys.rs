@@ -15,9 +15,6 @@ pub enum KeysError {
     /// Missing at least one admin authorization key.
     #[error("should have at least one admin authorization key")]
     MissingAdminKey,
-    /// Should only have admin authorization keys.
-    #[error("should only have admin authorization keys")]
-    OnlyAdminKeyAllowed,
     /// Unknown key hash.
     #[error("key hash {0} is unknown")]
     UnknownKeyHash(KeyHash),
@@ -50,7 +47,6 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
             | KeysError::P256SessionKeyOnly
             | KeysError::MissingKeyID { .. }
             | KeysError::MissingAdminKey
-            | KeysError::OnlyAdminKeyAllowed
             | KeysError::TakenKeyId { .. }
             | KeysError::UnexpectedKeyId { .. }
             | KeysError::UnknownKeyHash { .. }
