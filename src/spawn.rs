@@ -12,7 +12,8 @@ use crate::{
 };
 use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder},
-    transports::TransportError,
+    rpc::client::ClientBuilder,
+    transports::layers::RetryBackoffLayer,
 };
 use http::header;
 use itertools::Itertools;
@@ -25,6 +26,12 @@ use std::{net::SocketAddr, path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
+
+/// [`RetryBackoffLayer`] used for chain providers.
+///
+/// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
+/// any throttling.
+const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// Context returned once relay is launched.
 #[derive(Debug, Clone)]
@@ -105,7 +112,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
-            Ok::<_, TransportError>(ProviderBuilder::new().connect(url.as_str()).await?.erased())
+            ClientBuilder::default()
+                .layer(RETRY_LAYER.clone())
+                .connect(url.as_str())
+                .await
+                .map(|client| ProviderBuilder::new().on_client(client).erased())
         }),
     )
     .await?;
