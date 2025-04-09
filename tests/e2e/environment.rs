@@ -118,6 +118,8 @@ impl Environment {
             let fork_url = std::env::var("TEST_FORK_URL");
             if let Ok(fork_url) = &fork_url {
                 args.extend(["--fork-url", fork_url]);
+                // fork off a block a few blocks lower than `latest`
+                args.extend(["--fork-block-number", "-3"]);
             }
             let block_time = config.block_time.map(|t| t.to_string());
             if let Some(block_time) = &block_time {
