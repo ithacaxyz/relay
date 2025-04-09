@@ -263,22 +263,17 @@ impl TransactionService {
     /// Attempts advancing the queue by sending a transaction to an available signer.
     ///
     /// Returns `true` if any transaction was sent.
-    fn advance_queue(&mut self) -> bool {
-        let mut sent = false;
-
+    fn advance_queue(&mut self) {
         while let Some(tx) = self.queue.pop_front() {
             if let Some(signer) = self.best_signer() {
                 signer.push_transaction(tx);
                 self.metrics.sent.increment(1);
                 self.metrics.queued.decrement(1);
-                sent = true;
             } else {
                 self.queue.push_front(tx);
                 break;
             }
         }
-
-        sent
     }
 }
 
@@ -287,6 +282,12 @@ impl Future for TransactionService {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
+
+        // Advance signers
+        let _ = this.signers.poll_next_unpin(cx);
+
+        // Try advancing the queue.
+        this.advance_queue();
 
         // drain all commands
         while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
@@ -328,15 +329,6 @@ impl Future for TransactionService {
                     this.activate_signer(id);
                 }
             }
-        }
-
-        // Advance all signers
-        let _ = this.signers.poll_next_unpin(cx);
-
-        // Try advancing the queue. If we've sent a transaction, poll the signers again to make sure
-        // the new future is polled.
-        while this.advance_queue() {
-            let _ = this.signers.poll_next_unpin(cx);
         }
 
         Poll::Pending
