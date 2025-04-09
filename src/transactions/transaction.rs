@@ -85,6 +85,9 @@ impl RelayTransaction {
     }
 }
 
+pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}
+impl<T> TransactionFailureReason for T where T: std::fmt::Display + std::fmt::Debug + Send + Sync {}
+
 /// Status of a transaction.
 #[derive(Clone, Debug, Default)]
 pub enum TransactionStatus {
@@ -96,13 +99,21 @@ pub enum TransactionStatus {
     /// Transaction has been confirmed.
     Confirmed(B256),
     /// Failed to broadcast the transaction.
-    Failed(Arc<dyn std::error::Error + Send + Sync>),
+    Failed(Arc<dyn TransactionFailureReason>),
 }
 
 impl TransactionStatus {
     /// Whether the status is final.
     pub fn is_final(&self) -> bool {
         matches!(self, Self::Confirmed(_) | Self::Failed(_))
+    }
+
+    /// The transaction hash of the transaction, if any.
+    pub fn tx_hash(&self) -> Option<B256> {
+        match self {
+            Self::Pending(hash) | Self::Confirmed(hash) => Some(*hash),
+            _ => None,
+        }
     }
 }
 

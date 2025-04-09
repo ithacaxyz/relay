@@ -5,7 +5,9 @@ use crate::types::{AssetDiff, Call, SignedQuote, UserOp};
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
-    primitives::{Address, B256, BlockHash, BlockNumber, ChainId, Log, TxHash, wrap_fixed_bytes},
+    primitives::{Address, B256, BlockHash, BlockNumber, ChainId, TxHash, wrap_fixed_bytes},
+    rpc::types::Log,
+    sol_types::SolEvent,
 };
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -98,9 +100,8 @@ pub struct SendPreparedCallsParameters {
 /// Response for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsResponse {
-    /// Transaction hash.
-    /// TODO: use [`BundleId`] instead
-    pub id: TxHash,
+    /// Bundle ID.
+    pub id: BundleId,
 }
 
 /// The status code of a call bundle.
@@ -119,22 +120,53 @@ pub enum CallStatusCode {
     PartiallyReverted = 500,
 }
 
+impl CallStatusCode {
+    /// Whether the bundle is pending.
+    pub fn is_pending(&self) -> bool {
+        matches!(self, CallStatusCode::Pending)
+    }
+
+    /// Whether the bundle status is final.
+    pub fn is_final(&self) -> bool {
+        !self.is_pending()
+    }
+
+    /// Whether the bundle was confirmed.
+    pub fn is_confirmed(&self) -> bool {
+        matches!(self, CallStatusCode::Confirmed)
+    }
+}
+
 /// A receipt for a call bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallReceipt {
+    /// The chain ID the transaction was included in.
+    pub chain_id: ChainId,
     /// The logs generated in the transaction.
-    logs: Vec<Log>,
+    pub logs: Vec<Log>,
     /// The status of the transaction.
-    status: Eip658Value,
+    pub status: Eip658Value,
     /// The block hash the transaction was included in.
-    block_hash: BlockHash,
+    pub block_hash: Option<BlockHash>,
     /// The block number the transaction was included in.
-    block_number: BlockNumber,
+    pub block_number: Option<BlockNumber>,
     /// The gas used by the transaction.
-    gas_used: u64,
+    pub gas_used: u64,
     /// The transaction hash.
-    transaction_hash: TxHash,
+    pub transaction_hash: TxHash,
+}
+
+impl CallReceipt {
+    /// Attempts to decode the logs to the provided log type.
+    ///
+    /// Returns the first log that decodes successfully.
+    ///
+    /// Returns None, if none of the logs could be decoded to the provided log type or if there
+    /// are no logs.
+    pub fn decoded_log<E: SolEvent>(&self) -> Option<alloy::primitives::Log<E>> {
+        self.logs.iter().find_map(|log| E::decode_log(&log.inner, false).ok())
+    }
 }
 
 /// The status of a call bundle.
@@ -142,11 +174,9 @@ pub struct CallReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct CallsStatus {
     /// The ID of the call bundle.
-    id: BundleId,
-    /// The chain ID the bundle was broadcast on.
-    // TODO: this should not be top-level, but instead be on the receipt object
-    chain_id: ChainId,
+    pub id: BundleId,
     /// The status of the call bundle.
-    status: CallStatusCode,
-    receipts: Vec<CallReceipt>,
+    pub status: CallStatusCode,
+    /// The receipts for the call bundle.
+    pub receipts: Vec<CallReceipt>,
 }

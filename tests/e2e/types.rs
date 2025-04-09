@@ -152,7 +152,7 @@ impl TxContext<'_> {
         // If a signer is not defined, takes the first authorized key from the tx context.
         let op_signer = self.key.as_ref().unwrap_or(&self.authorization_keys[0]);
 
-        let tx_hash = prep_account(
+        let bundle_id = prep_account(
             env,
             &self.calls,
             op_signer,
@@ -164,7 +164,7 @@ impl TxContext<'_> {
 
         // Check test expectations
         let op_nonce = U256::ZERO; // first transaction
-        check_bundle(tx_hash, self, tx_num, None, op_nonce, &*env).await?;
+        check_bundle(bundle_id, self, tx_num, None, op_nonce, &*env).await?;
 
         Ok(())
     }

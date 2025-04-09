@@ -1,11 +1,13 @@
 //! Relay storage implementation using a PostgreSQL database.
 
+use std::sync::Arc;
+
 use super::{StorageApi, api::Result};
 use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256, ChainId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -25,7 +27,7 @@ impl PgStorage {
 
 /// This is a wrapper around [`TransactionStatus`] since `sqlx` does not support enums with
 /// associated data.
-#[derive(sqlx::Type)]
+#[derive(Debug, sqlx::Type)]
 #[sqlx(type_name = "tx_status", rename_all = "lowercase")]
 enum TxStatus {
     InFlight,
@@ -160,6 +162,17 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
+        if let TransactionStatus::Failed(error) = status {
+            sqlx::query!(
+                r#"update txs set error = $1 where tx_id = $2"#,
+                error.to_string(),
+                tx_id.as_slice()
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
         match status {
             TransactionStatus::Pending(tx_hash) | TransactionStatus::Confirmed(tx_hash) => {
                 sqlx::query!(
@@ -178,15 +191,45 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
-    async fn read_transaction_status(&self, _tx: TxId) -> Result<Option<TransactionStatus>> {
-        todo!()
+    async fn read_transaction_status(
+        &self,
+        tx: TxId,
+    ) -> Result<Option<(ChainId, TransactionStatus)>> {
+        let row = sqlx::query!(
+            r#"select chain_id, tx_hash, status as "status: TxStatus", error from txs where tx_id = $1"#,
+            tx.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(row.map(|row| {
+            let tx_hash = row.tx_hash.map(|hash| B256::from_slice(&hash));
+
+            (
+                row.chain_id as u64,
+                match row.status {
+                    TxStatus::InFlight => TransactionStatus::InFlight,
+                    // SAFETY: it should never be possible to have a pending transaction without a
+                    // hash in the database
+                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
+                    // SAFETY: it should never be possible to have a confirmed transaction without a
+                    // hash in the database
+                    TxStatus::Confirmed => TransactionStatus::Confirmed(tx_hash.unwrap()),
+                    TxStatus::Failed => TransactionStatus::Failed(Arc::new(
+                        row.error.unwrap_or_else(|| "transaction failed".to_string()),
+                    )),
+                },
+            )
+        }))
     }
 
-    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
+    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()> {
         sqlx::query!(
-            "insert into txs (tx_id, bundle_id) values ($1, $2)",
+            "insert into txs (tx_id, bundle_id, chain_id) values ($1, $2, $3)",
             tx.as_slice(),
-            bundle.as_slice()
+            bundle.as_slice(),
+            chain_id as i64 // yikes..
         )
         .execute(&self.pool)
         .await

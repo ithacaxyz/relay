@@ -13,7 +13,7 @@ use crate::{
     types::{
         AccountRegistry::AccountRegistryCalls,
         AssetDiff, Call, Key, KeyHash, KeyHashWithID,
-        rpc::{CreateAccountContext, RelaySettings},
+        rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
 };
@@ -24,7 +24,10 @@ use alloy::{
     },
     primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
     providers::{DynProvider, Provider},
-    rpc::types::state::{AccountOverride, StateOverridesBuilder},
+    rpc::types::{
+        TransactionReceipt,
+        state::{AccountOverride, StateOverridesBuilder},
+    },
     sol_types::SolValue,
 };
 use futures_util::{
@@ -323,16 +326,14 @@ impl Relay {
         &self,
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
-    ) -> RpcResult<TxHash> {
+    ) -> RpcResult<BundleId> {
         if quote.ty().is_preop {
             return Err(QuoteError::PreOpUnsupported.into());
         }
 
-        let Chain { provider, transactions } = self
-            .inner
-            .chains
-            .get(quote.ty().chain_id)
-            .ok_or(RelayError::UnsupportedChain(quote.ty().chain_id))?;
+        let chain_id = quote.ty().chain_id;
+        let Chain { provider, transactions } =
+            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         // check that the authorization item matches what's in the quote
         if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
@@ -388,7 +389,7 @@ impl Relay {
         // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
         // this is already supported by current storage API.
         let bundle_id = BundleId(*tx.id);
-        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
+        self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
         let mut rx = transactions.send_transaction(tx);
 
@@ -398,11 +399,11 @@ impl Relay {
         while let Some(status) = rx.recv().await {
             match status {
                 TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
-                    return Ok(hash);
+                    return Ok(hash.into());
                 }
                 TransactionStatus::InFlight => continue,
                 TransactionStatus::Failed(err) => {
-                    return Err(RelayError::InternalError(err.into()).into());
+                    return Err(RelayError::InternalError(eyre::eyre!("{err}")).into());
                 }
             }
         }
@@ -866,16 +867,15 @@ impl RelayApiServer for Relay {
         };
 
         // Broadcast transaction with UserOp
-        let tx_hash =
-            self.send_action(request.context, authorization).await.inspect_err(|err| {
-                error!(
-                    %err,
-                    "Failed to submit call bundle transaction.",
-                );
-            })?;
+        let id = self.send_action(request.context, authorization).await.inspect_err(|err| {
+            error!(
+                %err,
+                "Failed to submit call bundle transaction.",
+            );
+        })?;
 
         // todo: for now it's fine, but this will change in the future.
-        let response = SendPreparedCallsResponse { id: tx_hash };
+        let response = SendPreparedCallsResponse { id };
 
         Ok(response)
     }
@@ -899,25 +899,74 @@ impl RelayApiServer for Relay {
         op.signature = request.signature.as_bytes().into();
 
         // Broadcast transaction with UserOp
-        let tx_hash = self
-            .send_action(request.context, Some(request.authorization))
-            .await
-            .inspect_err(|err| {
+        let id = self.send_action(request.context, Some(request.authorization)).await.inspect_err(
+            |err| {
                 error!(
                     %err,
                     "Failed to submit upgrade account transaction.",
                 );
-            })?;
+            },
+        )?;
 
         // TODO: for now it's fine, but this will change in the future.
-        let response =
-            UpgradeAccountResponse { bundles: vec![SendPreparedCallsResponse { id: tx_hash }] };
+        let response = UpgradeAccountResponse { bundles: vec![SendPreparedCallsResponse { id }] };
 
         Ok(response)
     }
 
-    async fn get_calls_status(&self, _id: BundleId) -> RpcResult<CallsStatus> {
-        todo!()
+    async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
+        let tx_hash: TxHash = *id;
+        let (chain_id, chain) = self.inner.chains.first().unwrap();
+        let provider = chain.provider.clone();
+
+        // this looks weird but just minimizes code delta later on
+        let receipts = vec![
+            async {
+                Ok::<_, RelayError>((
+                    chain_id,
+                    provider.get_transaction_receipt(tx_hash).await.map_err(RelayError::from)?,
+                ))
+            }
+            .await?,
+        ];
+
+        // filter out non existing receipts, as we can assume this means the tx is pending, which is
+        // handled separately
+        let receipts: Vec<(ChainId, TransactionReceipt)> = receipts
+            .into_iter()
+            .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
+            .collect();
+
+        let any_reverted = receipts.iter().any(|(_, receipt)| !receipt.status());
+        let all_reverted = receipts.iter().all(|(_, receipt)| !receipt.status());
+
+        // this is not entirely correct but this is temporary anyway
+        let status = if receipts.is_empty() {
+            CallStatusCode::Pending
+        } else if all_reverted {
+            CallStatusCode::Reverted
+        } else if any_reverted {
+            CallStatusCode::PartiallyReverted
+        } else {
+            CallStatusCode::Confirmed
+        };
+
+        Ok(CallsStatus {
+            id: BundleId::ZERO,
+            status,
+            receipts: receipts
+                .into_iter()
+                .map(|(chain_id, receipt)| CallReceipt {
+                    chain_id,
+                    logs: receipt.inner.logs().to_vec(),
+                    status: receipt.status().into(),
+                    block_hash: receipt.block_hash,
+                    block_number: receipt.block_number,
+                    gas_used: receipt.gas_used,
+                    transaction_hash: receipt.transaction_hash,
+                })
+                .collect(),
+        })
     }
 }
 

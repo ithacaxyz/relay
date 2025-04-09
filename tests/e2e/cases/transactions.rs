@@ -1,15 +1,14 @@
 use crate::e2e::{
-    MockErc20,
+    MockErc20, await_calls_status,
     environment::{Environment, EnvironmentConfig},
     send_prepared_calls,
 };
 use alloy::{
     consensus::Transaction,
     primitives::{Address, B256, U256},
-    providers::{PendingTransactionBuilder, Provider, ext::AnvilApi},
+    providers::{Provider, ext::AnvilApi},
     sol_types::{SolCall, SolValue},
 };
-use eyre::Context;
 use futures_util::future::{join_all, try_join_all};
 use relay::{
     rpc::RelayApiClient,
@@ -93,14 +92,12 @@ impl MockAccount {
 
         let signature = key.sign_payload_hash(digest).await?;
 
-        let tx_hash = send_prepared_calls(env, &key, signature, context).await.unwrap();
+        let bundle_id = send_prepared_calls(env, &key, signature, context).await.unwrap();
 
-        let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
-            .get_receipt()
-            .await
-            .wrap_err("Failed to get receipt")?;
+        // Wait for bundle to not be pending.
+        let status = await_calls_status(env, bundle_id).await?;
 
-        assert!(receipt.status());
+        assert!(status.status.is_final());
 
         Ok(MockAccount { address, key })
     }

@@ -10,7 +10,7 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::Address;
+use alloy::primitives::{Address, ChainId};
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -71,12 +71,20 @@ impl StorageApi for RelayStorage {
         self.inner.write_transaction_status(tx, status).await
     }
 
-    async fn read_transaction_status(&self, tx: TxId) -> api::Result<Option<TransactionStatus>> {
+    async fn read_transaction_status(
+        &self,
+        tx: TxId,
+    ) -> api::Result<Option<(ChainId, TransactionStatus)>> {
         self.inner.read_transaction_status(tx).await
     }
 
-    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {
-        self.inner.add_bundle_tx(bundle, tx).await
+    async fn add_bundle_tx(
+        &self,
+        bundle: BundleId,
+        chain_id: ChainId,
+        tx: TxId,
+    ) -> api::Result<()> {
+        self.inner.add_bundle_tx(bundle, chain_id, tx).await
     }
 
     async fn get_bundle_transactions(&self, bundle: BundleId) -> api::Result<Vec<TxId>> {

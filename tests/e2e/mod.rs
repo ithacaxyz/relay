@@ -20,8 +20,8 @@ pub use types::*;
 
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, B256, Bytes, TxHash, U256},
-    providers::{PendingTransactionBuilder, Provider},
+    primitives::{Address, B256, Bytes, U256},
+    providers::Provider,
 };
 use eyre::{Context, Result};
 use futures_util::future::try_join_all;
@@ -34,12 +34,12 @@ use relay::{
         EntryPoint::UserOpExecuted,
         KeyWith712Signer, SignedQuote,
         rpc::{
-            KeySignature, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareCallsResponse, SendPreparedCallsParameters,
+            BundleId, CallStatusCode, CallsStatus, KeySignature, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse, SendPreparedCallsParameters,
         },
     },
 };
-use std::iter;
+use std::{iter, time::Duration};
 use strum::IntoEnumIterator;
 
 /// Runs all configurations (both PREP and upgraded account, in both ERC20 and native payment
@@ -112,29 +112,60 @@ async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Resu
     check_bundle(bundle, &tx, tx_num, None, op_nonce, env).await
 }
 
+/// Fetch the status of a bundle using `wallet_getCallsStatus`.
+///
+/// Internally will call `wallet_getCallsStatus` up to 10 times with a 1 second delay
+/// between attempts.
+async fn await_calls_status(
+    env: &Environment,
+    bundle_id: BundleId,
+) -> Result<CallsStatus, eyre::Error> {
+    let mut attempts = 0;
+    loop {
+        let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
+
+        if let Some(status) = status {
+            if !status.status.is_pending() {
+                return Ok(status);
+            }
+        }
+
+        attempts += 1;
+        if attempts > 10 {
+            return Err(eyre::eyre!("bundle status not received within 10 attempts"));
+        }
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// Checks that the submitted bundle has had the expected test outcome.
 async fn check_bundle(
-    tx_hash: eyre::Result<B256>,
+    bundle_id: eyre::Result<BundleId>,
     tx: &TxContext<'_>,
     tx_num: usize,
     authorization: Option<SignedAuthorization>,
     _op_nonce: U256,
     env: &Environment,
 ) -> Result<(), eyre::Error> {
-    match tx_hash {
-        Ok(tx_hash) => {
-            if tx.expected.failed_send() {
+    match bundle_id {
+        Ok(bundle_id) => {
+            let calls_status =
+                await_calls_status(env, bundle_id).await.wrap_err("Failed to get receipt")?;
+            if tx.expected.failed_send() && calls_status.status != CallStatusCode::Failed {
                 return Err(
                     eyre::eyre!("Send action {tx_num} passed when it should have failed.",),
                 );
+            } else if !tx.expected.failed_send() && calls_status.status == CallStatusCode::Failed {
+                return Err(
+                    eyre::eyre!("Send action {tx_num} failed when it should have passed.",),
+                );
+            } else if tx.expected.failed_send() && calls_status.status == CallStatusCode::Failed {
+                return Ok(());
             }
 
-            let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
-                .get_receipt()
-                .await
-                .wrap_err("Failed to get receipt")?;
-
-            if receipt.status() {
+            let receipt = &calls_status.receipts[0];
+            if receipt.status.coerce_status() {
                 if tx.expected.reverted_tx() {
                     return Err(eyre::eyre!(
                         "Transaction {tx_num} passed when it should have reverted.",
@@ -231,7 +262,7 @@ pub async fn send_prepared_calls(
     signer: &KeyWith712Signer,
     signature: Bytes,
     quote: SignedQuote,
-) -> eyre::Result<TxHash> {
+) -> eyre::Result<BundleId> {
     let response = env
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {

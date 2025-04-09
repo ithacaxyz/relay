@@ -56,6 +56,12 @@ impl Chains {
     pub fn get(&self, chain_id: ChainId) -> Option<Chain> {
         self.chains.get(&chain_id).cloned()
     }
+
+    /// Get the first provider in the collection.
+    // NOTE: TEMPORARY PLEASE DELETE THIS AFTER https://github.com/ithacaxyz/relay/pull/331
+    pub fn first(&self) -> Option<(&ChainId, &Chain)> {
+        self.chains.iter().next()
+    }
 }
 
 impl std::fmt::Debug for Chains {

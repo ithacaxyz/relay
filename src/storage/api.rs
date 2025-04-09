@@ -5,7 +5,7 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::Address;
+use alloy::primitives::{Address, ChainId};
 use async_trait::async_trait;
 use std::fmt::Debug;
 
@@ -41,10 +41,13 @@ pub trait StorageApi: Debug + Send + Sync {
     async fn write_transaction_status(&self, tx: TxId, status: &TransactionStatus) -> Result<()>;
 
     /// Reads a transaction status.
-    async fn read_transaction_status(&self, tx: TxId) -> Result<Option<TransactionStatus>>;
+    async fn read_transaction_status(
+        &self,
+        tx: TxId,
+    ) -> Result<Option<(ChainId, TransactionStatus)>>;
 
     /// Adds a transaction to a bundle.
-    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()>;
+    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()>;
 
     /// Gets all transactions in a bundle.
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>>;

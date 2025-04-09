@@ -1,18 +1,13 @@
 //! Account upgrade related end-to-end test cases
 
-use crate::e2e::{AuthKind, environment::Environment};
-use alloy::{
-    eips::eip7702::SignedAuthorization,
-    primitives::{Address, TxHash},
-    providers::{PendingTransactionBuilder, Provider},
-};
-use eyre::WrapErr;
+use crate::e2e::{AuthKind, await_calls_status, environment::Environment};
+use alloy::{eips::eip7702::SignedAuthorization, primitives::Address, providers::Provider};
 use relay::{
     rpc::RelayApiClient,
     types::{
         KeyType, KeyWith712Signer, UserOp,
         rpc::{
-            AuthorizeKey, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
+            AuthorizeKey, BundleId, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters,
         },
     },
@@ -23,7 +18,7 @@ pub async fn upgrade_account(
     authorize_keys: &[AuthorizeKey],
     auth: AuthKind,
     pre_ops: Vec<UserOp>,
-) -> eyre::Result<(TxHash, SignedAuthorization)> {
+) -> eyre::Result<(BundleId, SignedAuthorization)> {
     let response = env
         .relay_endpoint
         .prepare_upgrade_account(PrepareUpgradeAccountParameters {
@@ -56,15 +51,14 @@ pub async fn upgrade_account(
         .await?;
 
     // Check that transaction has been successful.
-    let tx_hash = response.bundles[0].id;
-    let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
-        .get_receipt()
-        .await
-        .wrap_err("Failed to get receipt")?;
+    let bundle_id = response.bundles[0].id;
 
-    assert!(receipt.status());
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(env, bundle_id).await?;
 
-    Ok((tx_hash, authorization))
+    assert!(status.status.is_final());
+
+    Ok((bundle_id, authorization))
 }
 
 #[tokio::test(flavor = "multi_thread")]

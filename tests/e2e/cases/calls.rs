@@ -1,15 +1,13 @@
 //! Prepare calls related end-to-end test cases
 
 use crate::e2e::{
-    AuthKind, MockErc20, cases::upgrade::upgrade_account, environment::Environment,
-    send_prepared_calls,
+    AuthKind, MockErc20, await_calls_status, cases::upgrade::upgrade_account,
+    environment::Environment, send_prepared_calls,
 };
 use alloy::{
     primitives::{Address, U256},
-    providers::{PendingTransactionBuilder, Provider},
     sol_types::SolCall,
 };
-use eyre::Context;
 use futures_util::future::try_join_all;
 use relay::{
     rpc::RelayApiClient,
@@ -74,15 +72,11 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
         let signature = signer.sign_payload_hash(digest).await?;
 
         // Submit signed call
-        let tx_hash = send_prepared_calls(&env, signer, signature, context).await?;
+        let bundle_id = send_prepared_calls(&env, signer, signature, context).await?;
 
-        // Check that transaction has been successful.
-        let receipt = PendingTransactionBuilder::new(env.provider.root().clone(), tx_hash)
-            .get_receipt()
-            .await
-            .wrap_err("Failed to get receipt")?;
-
-        assert!(receipt.status());
+        // Wait for bundle to not be pending.
+        let status = await_calls_status(&env, bundle_id).await?;
+        assert!(status.status.is_final());
     }
 
     Ok(())
