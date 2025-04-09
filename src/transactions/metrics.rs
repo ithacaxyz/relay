@@ -1,4 +1,6 @@
-use metrics::{Counter, Gauge, Histogram};
+use std::sync::Arc;
+use alloy::primitives::Address;
+use metrics::{Counter, Gauge, Histogram, counter, histogram};
 use metrics_derive::Metrics;
 
 /// Metrics for a [`TransactionService`](crate::transactions::TransactionService).
@@ -19,8 +21,34 @@ pub struct TransactionServiceMetrics {
     pub pending: Gauge,
     /// Number of queued transactions.
     pub queued: Gauge,
+}
+
+/// Metrics of an individual signer, should be labeled with the signer address and chain ID.
+#[derive(derive_more::Deref, Debug)]
+pub struct SignerMetrics {
+    /// Reference to the [`TransactionServiceMetrics`].
+    #[deref]
+    pub tx_metrics: Arc<TransactionServiceMetrics>,
     /// Time it takes to include transactions, in milliseconds.
     pub confirmation_time: Histogram,
+    /// Number of detected nonce gaps
+    pub detected_nonce_gaps: Counter,
     /// Number of closed nonce gaps
     pub closed_nonce_gaps: Counter,
+}
+
+impl SignerMetrics {
+    /// Creates a new [`SignerMetrics`] for the given signer address and chain.
+    pub fn new(
+        tx_metrics: Arc<TransactionServiceMetrics>,
+        address: Address,
+        chain_id: u64,
+    ) -> Self {
+        Self {
+            tx_metrics,
+            confirmation_time: histogram!("signer.confirmation_time", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            detected_nonce_gaps: counter!("signer.detected_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            closed_nonce_gaps: counter!("signer.closed_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+        }
+    }
 }

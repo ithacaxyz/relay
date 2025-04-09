@@ -1,5 +1,5 @@
 use super::{
-    metrics::TransactionServiceMetrics,
+    metrics::{SignerMetrics, TransactionServiceMetrics},
     transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
 };
 use crate::{
@@ -130,7 +130,7 @@ pub struct Signer {
     /// Underlying storage.
     storage: RelayStorage,
     /// Metrics of the parent transaction service.
-    metrics: Arc<TransactionServiceMetrics>,
+    metrics: SignerMetrics,
     /// Whether the signer is paused.
     paused: AtomicBool,
 }
@@ -143,7 +143,7 @@ impl Signer {
         signer: DynSigner,
         storage: RelayStorage,
         events_tx: mpsc::UnboundedSender<SignerEvent>,
-        metrics: Arc<TransactionServiceMetrics>,
+        tx_metrics: Arc<TransactionServiceMetrics>,
     ) -> TransportResult<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -178,7 +178,7 @@ impl Signer {
             nonce: Mutex::new(nonce),
             events_tx,
             storage,
-            metrics,
+            metrics: SignerMetrics::new(tx_metrics, address, chain_id),
             paused: AtomicBool::new(false),
         };
         Ok(this)
@@ -445,6 +445,8 @@ impl Signer {
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
+        self.metrics.detected_nonce_gaps.increment(1);
+
         let try_close = || async {
             let fee_estimate = self.provider.estimate_eip1559_fees().await?;
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
