@@ -161,6 +161,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // start server
     let server = Server::builder()
         .http_only()
+        .max_connections(config.server.max_connections)
         .set_http_middleware(
             ServiceBuilder::new()
                 .layer(cors)

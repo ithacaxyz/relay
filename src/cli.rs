@@ -70,6 +70,9 @@ pub struct Args {
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
+    /// The maximum number of concurrent connections the relay can handle.
+    #[arg(long = "max-connections", value_name = "NUM", default_value_t = 1000)]
+    pub max_connections: u32,
 }
 
 impl Args {
@@ -92,6 +95,7 @@ impl Args {
             .with_address(self.address)
             .with_port(self.port)
             .with_metrics_port(self.metrics_port)
+            .with_max_connections(self.max_connections)
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
             .with_entrypoint(self.entrypoint)
@@ -138,6 +142,7 @@ mod tests {
                     address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: get_available_port().unwrap(),
                     metrics_port: get_available_port().unwrap(),
+                    max_connections: Default::default(),
                     entrypoint: Default::default(),
                     endpoints: Default::default(),
                     quote_ttl: Default::default(),
