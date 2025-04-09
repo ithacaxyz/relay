@@ -29,7 +29,7 @@ use relay::{
     },
 };
 use tokio::{sync::Semaphore, time::Instant};
-use tracing::{error, info, level_filters::LevelFilter};
+use tracing::{error, info, level_filters::LevelFilter, trace};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -102,7 +102,8 @@ impl StressAccount {
             );
             loop {
                 let status = relay_client.get_calls_status(bundle_id.id).await;
-                if status.is_ok() {
+                trace!("got bundle status: {:?}", status);
+                if status.is_ok_and(|status| status.status.is_final()) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
