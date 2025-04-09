@@ -331,7 +331,7 @@ impl Future for TransactionService {
 
         // Try advancing the queue. If we've sent a transaction, poll the signers again to make sure
         // the new future is polled.
-        if this.advance_queue() {
+        while this.advance_queue() {
             let _ = this.signers.poll_next_unpin(cx);
         }
 
