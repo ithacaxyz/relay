@@ -13,7 +13,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
@@ -56,7 +56,7 @@ pub struct TransactionService {
     /// Signers that are currently paused until re-activated.
     paused_signers: Vec<SignerId>,
     /// Tracks unique identifiers for signers
-    singer_id: u64,
+    signer_id: u64,
     /// Signer event channel
     to_service: mpsc::UnboundedSender<SignerEvent>,
     /// Message channel from signers to this service.
@@ -96,7 +96,7 @@ impl TransactionService {
             signers: Default::default(),
             active_signers: vec![],
             paused_signers: vec![],
-            singer_id: 0,
+            signer_id: 0,
             to_service,
             from_signers,
             command_tx,
@@ -126,7 +126,7 @@ impl TransactionService {
         storage: RelayStorage,
         provider: DynProvider,
     ) {
-        let signer_id = self.next_singer_id();
+        let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
         let metrics = self.metrics.clone();
         let events_tx = self.to_service.clone();
@@ -146,9 +146,9 @@ impl TransactionService {
     }
 
     /// Returns the next unique signer id.
-    fn next_singer_id(&mut self) -> SignerId {
-        let id = self.singer_id;
-        self.singer_id += 1;
+    fn next_signer_id(&mut self) -> SignerId {
+        let id = self.signer_id;
+        self.signer_id += 1;
         SignerId::new(id)
     }
 
@@ -254,7 +254,9 @@ impl TransactionService {
             signer.push_transaction(tx);
             self.metrics.sent.increment(1);
         } else {
+            warn!("no signers available, enqueueing transaction for later");
             self.queue.push_back(tx);
+            self.metrics.queued.increment(1);
         }
     }
 
@@ -268,6 +270,7 @@ impl TransactionService {
             if let Some(signer) = self.best_signer() {
                 signer.push_transaction(tx);
                 self.metrics.sent.increment(1);
+                self.metrics.queued.decrement(1);
                 sent = true;
             } else {
                 self.queue.push_front(tx);

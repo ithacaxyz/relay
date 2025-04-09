@@ -374,7 +374,8 @@ impl Signer {
             self.metrics.pending.decrement(1);
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
             self.storage.remove_pending_transaction(tx.id()).await?;
-            return self.close_nonce_gap(tx.sent.nonce(), Some(tx.fees())).await;
+            self.close_nonce_gap(tx.sent.nonce(), Some(tx.fees())).await;
+            return Ok(());
         }
 
         self.metrics
@@ -409,6 +410,8 @@ impl Signer {
         let sent = match self.send_transaction(tx.build(nonce)).await {
             Ok(sent) => sent,
             Err(err) => {
+                error!(%err, "failed to send a transaction");
+
                 self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
 
                 // If no other transaction occupied the next nonce, we can just reset it.
@@ -421,7 +424,9 @@ impl Signer {
                 }
 
                 // Otherwise, we need to close the nonce gap.
-                return self.close_nonce_gap(nonce, None).await;
+                self.close_nonce_gap(nonce, None).await;
+
+                return Ok(());
             }
         };
         let tx = PendingTransaction { tx, sent, signer: self.address(), received_at: Utc::now() };
@@ -439,11 +444,7 @@ impl Signer {
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
-    async fn close_nonce_gap(
-        &self,
-        nonce: u64,
-        min_fees: Option<Eip1559Estimation>,
-    ) -> Result<(), SignerError> {
+    async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         let try_close = || async {
             let fee_estimate = self.provider.estimate_eip1559_fees().await?;
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
@@ -492,17 +493,18 @@ impl Signer {
 
             error!(%err, %nonce, "Failed to close nonce gap");
 
-            if self.provider.get_transaction_count(self.address()).await? >= nonce {
-                warn!("nonce gap was closed by a different transaction");
-                break;
+            if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await {
+                if latest_nonce >= nonce {
+                    warn!("nonce gap was closed by a different transaction");
+                    break;
+                }
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         debug!(%nonce, "Closed nonce gap");
-
-        Ok(())
+        self.metrics.closed_nonce_gaps.increment(1);
     }
 
     /// Fetches the current signer balance and checks if the signer should be paused/unpaused.
@@ -574,7 +576,10 @@ impl Signer {
             if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
                 warn!(%nonce, "nonce gap on startup");
                 let signer = signer.clone();
-                pending.push(Box::pin(async move { signer.close_nonce_gap(nonce, None).await }));
+                pending.push(Box::pin(async move {
+                    signer.close_nonce_gap(nonce, None).await;
+                    Ok(())
+                }));
             }
         }
 
@@ -636,7 +641,7 @@ impl SignerId {
 
 impl Display for SignerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Singer({})", self.0)
+        write!(f, "Signer({})", self.0)
     }
 }
 

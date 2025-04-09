@@ -17,6 +17,10 @@ pub struct TransactionServiceMetrics {
     pub paused_signers: Gauge,
     /// Number of pending transactions.
     pub pending: Gauge,
+    /// Number of queued transactions.
+    pub queued: Gauge,
     /// Time it takes to include transactions, in milliseconds.
     pub confirmation_time: Histogram,
+    /// Number of closed nonce gaps
+    pub closed_nonce_gaps: Counter,
 }
