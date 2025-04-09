@@ -47,6 +47,7 @@ where
                 .as_error_code()
                 .is_none_or(|code| code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE)
             {
+                let method = method.replace("wallet_", "relay_");
                 counter!(
                     "rpc.call.count",
                     "method" => method.clone(),
