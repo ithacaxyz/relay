@@ -36,6 +36,8 @@ pub struct ServerConfig {
     pub port: u16,
     /// The port to serve the metrics on.
     pub metrics_port: u16,
+    /// The maximum number of concurrent connections the relay can handle.
+    pub max_connections: u32,
 }
 
 /// Chain configuration.
@@ -100,6 +102,7 @@ impl Default for RelayConfig {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: 9119,
                 metrics_port: 9000,
+                max_connections: 1000,
             },
             chain: ChainConfig { endpoints: vec![], fee_tokens: vec![] },
             quote: QuoteConfig {
@@ -131,6 +134,12 @@ impl RelayConfig {
     /// Sets the port to serve the metrics on.
     pub fn with_metrics_port(mut self, port: u16) -> Self {
         self.server.metrics_port = port;
+        self
+    }
+
+    /// Sets the maximum number of concurrent connections the relay can handle.
+    pub fn with_max_connections(mut self, max_connections: u32) -> Self {
+        self.server.max_connections = max_connections;
         self
     }
 
