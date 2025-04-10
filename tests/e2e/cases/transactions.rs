@@ -550,14 +550,15 @@ async fn resume_paused() -> eyre::Result<()> {
     assert_signer_metrics(0, signers.len(), &env);
 
     // send a batch of transactions again and assert that all of them complete
-    let seen_signers =  futures_util::stream::iter(accounts.iter().map(|acc| async {
+    let seen_signers = futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
         env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
     }))
-        .buffered(5)
-    .collect::<HashSet<_>>().await;
+    .buffered(5)
+    .collect::<HashSet<_>>()
+    .await;
 
     // assert that all signers participated in processing the transactions this time
     assert_eq!(seen_signers.len(), signers.len());
