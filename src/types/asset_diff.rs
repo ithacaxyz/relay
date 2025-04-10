@@ -28,7 +28,7 @@ pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
         }
 
         let Some((asset, transfer)) =
-            IERC20Events::decode_log(&log.inner, true).ok().map(|ev| match ev.data {
+            IERC20Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
                 IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
             })
         else {

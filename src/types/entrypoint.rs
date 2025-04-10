@@ -217,7 +217,7 @@ impl<P: Provider> Entry<P> {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
+        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data) {
             if gas.err != ENTRYPOINT_NO_ERROR {
                 Err(UserOpError::op_revert(gas.err.into()).into())
             } else {
