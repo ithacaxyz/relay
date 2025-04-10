@@ -10,10 +10,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolValue},
 };
-use futures_util::{
-    StreamExt, TryStreamExt,
-    future::{join_all, try_join_all},
-};
+use futures_util::future::{join_all, try_join_all};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
@@ -224,20 +221,13 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // setup accounts
     let num_accounts = 100;
-    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(10)
-        .try_collect::<Vec<_>>()
-        .await?;
-
+    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(num_accounts, num_accounts, 0, &env);
 
     // send `num_accounts` transactions and assert all of them are confirmed
-    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(5)
-        .collect::<Vec<_>>()
-        .await;
+    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
@@ -435,18 +425,13 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // setup 30 accounts
     let num_accounts = 30;
-    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(10)
-        .try_collect::<Vec<_>>()
-        .await?;
+    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
 
     // send transactions for each account
-    let handles = futures_util::stream::iter(accounts.iter().map(|acc| async {
+    let handles = join_all(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         tx_service_handle.send_transaction(tx)
     }))
-    .buffered(5)
-    .collect::<Vec<_>>()
     .await;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
@@ -506,10 +491,7 @@ async fn resume_paused() -> eyre::Result<()> {
 
     // setup 10 accounts
     let num_accounts = 10;
-    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(10)
-        .try_collect::<Vec<_>>()
-        .await?;
+    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
 
     // set balances of all signers except the last one to 0 and wait for them to get paused
     try_join_all(
@@ -527,16 +509,14 @@ async fn resume_paused() -> eyre::Result<()> {
     let last_signer = signers.last().unwrap();
 
     // send a batch of transactions and assert that all of them are handled by the last signer
-    futures_util::stream::iter(accounts.iter().map(|acc| async {
+    join_all(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
         let signer =
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
-        assert_eq!(signer, last_signer.address());
+        assert!(signer == last_signer.address());
     }))
-    .buffered(5)
-    .collect::<Vec<_>>()
     .await;
 
     // set balances back to high values
@@ -555,18 +535,18 @@ async fn resume_paused() -> eyre::Result<()> {
     assert_signer_metrics(0, signers.len(), &env);
 
     // send a batch of transactions again and assert that all of them complete
-    let seen_signers = futures_util::stream::iter(accounts.iter().map(|acc| async {
+    let seen_signers = join_all(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
         env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
     }))
-    .buffered(5)
-    .collect::<HashSet<_>>()
-    .await;
+    .await
+    .into_iter()
+    .collect::<HashSet<_>>();
 
     // assert that all signers participated in processing the transactions this time
-    assert_eq!(seen_signers.len(), signers.len());
+    assert!(seen_signers.len() == signers.len());
 
     Ok(())
 }
