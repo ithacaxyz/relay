@@ -10,7 +10,10 @@ use alloy::{
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolValue},
 };
-use futures_util::future::{join_all, try_join_all};
+use futures_util::{
+    StreamExt, TryStreamExt,
+    future::{join_all, try_join_all},
+};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
@@ -221,13 +224,19 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // setup accounts
     let num_accounts = 100;
-    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
+    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
+        .buffered(1)
+        .try_collect::<Vec<_>>()
+        .await?;
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(num_accounts, num_accounts, 0, &env);
 
     // send `num_accounts` transactions and assert all of them are confirmed
-    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
@@ -425,13 +434,18 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // setup 30 accounts
     let num_accounts = 30;
-    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
+    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
+        .buffered(1)
+        .try_collect::<Vec<_>>()
+        .await?;
 
     // send transactions for each account
-    let handles = join_all(accounts.iter().map(|acc| async {
+    let handles = futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         tx_service_handle.send_transaction(tx)
     }))
+    .buffered(1)
+    .collect::<Vec<_>>()
     .await;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
@@ -439,14 +453,15 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let fees = env.provider.estimate_eip1559_fees().await.unwrap();
     let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
 
-    try_join_all(
+    futures_util::stream::iter(
         signers
             .iter()
             .take(signers.len() - 1)
             .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
     )
-    .await
-    .unwrap();
+    .buffered(1)
+    .try_collect::<Vec<_>>()
+    .await?;
 
     // assert that all transactions are confirmed
     for handle in handles {
@@ -509,14 +524,16 @@ async fn resume_paused() -> eyre::Result<()> {
     let last_signer = signers.last().unwrap();
 
     // send a batch of transactions and assert that all of them are handled by the last signer
-    join_all(accounts.iter().map(|acc| async {
+    futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
         let signer =
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
-        assert!(signer == last_signer.address());
+        assert_eq!(signer, last_signer.address());
     }))
+    .buffered(1)
+    .collect::<Vec<_>>()
     .await;
 
     // set balances back to high values
