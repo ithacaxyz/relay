@@ -3,6 +3,7 @@ use super::{
     transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
 };
 use crate::{
+    config::TransactionServiceConfig,
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -38,9 +39,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
-
-/// Maximum number of pending transactions allowed per a single signer.
-const MAX_PENDING_TRANSACTIONS: usize = 16;
 
 /// Price bump for nonce gap transactions.
 const NONCE_GAP_PRICE_BUMP: u128 = 20;
@@ -133,6 +131,8 @@ pub struct Signer {
     metrics: SignerMetrics,
     /// Whether the signer is paused.
     paused: AtomicBool,
+    /// Configuration for the service.
+    config: TransactionServiceConfig,
 }
 
 impl Signer {
@@ -144,6 +144,7 @@ impl Signer {
         storage: RelayStorage,
         events_tx: mpsc::UnboundedSender<SignerEvent>,
         tx_metrics: Arc<TransactionServiceMetrics>,
+        config: TransactionServiceConfig,
     ) -> TransportResult<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -180,6 +181,7 @@ impl Signer {
             storage,
             metrics: SignerMetrics::new(tx_metrics, address, chain_id),
             paused: AtomicBool::new(false),
+            config,
         };
         Ok(this)
     }
@@ -597,7 +599,7 @@ impl Signer {
             let signer = signer.clone();
             Box::pin(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(signer.config.nonce_check_interval).await;
 
                     if let Ok(nonce) =
                         signer.provider.get_transaction_count(signer.address()).pending().await
@@ -617,7 +619,7 @@ impl Signer {
             let signer = signer.clone();
             Box::pin(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tokio::time::sleep(signer.config.balance_check_interval).await;
 
                     if let Err(err) = signer.record_and_check_balance().await {
                         warn!(%err, "failed to check signer balance");
@@ -686,7 +688,7 @@ impl SignerTask {
         if self.is_paused() {
             0
         } else {
-            MAX_PENDING_TRANSACTIONS.saturating_sub(self.pending.len())
+            self.signer.config.max_transactions_per_signer.saturating_sub(self.pending.len())
         }
     }
 

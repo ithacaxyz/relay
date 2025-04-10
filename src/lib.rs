@@ -2,6 +2,7 @@
 //!
 //! Library for the implementation of the Ithaca Relay.
 
+pub mod asset;
 pub mod chains;
 pub mod cli;
 pub mod config;
@@ -17,5 +18,6 @@ pub mod signers;
 pub mod spawn;
 pub mod storage;
 pub mod transactions;
+pub mod transport;
 pub mod types;
 pub mod version;

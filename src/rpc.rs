@@ -9,10 +9,11 @@
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use crate::{
+    asset::AssetInfoServiceHandle,
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::AccountRegistryCalls,
-        AssetDiff, Call, Key, KeyHash, KeyHashWithID,
+        AssetDiffs, Call, Key, KeyHash, KeyHashWithID,
         rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
@@ -143,6 +144,7 @@ pub struct Relay {
 
 impl Relay {
     /// Create a new Ithaca relay module.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         entrypoint: Address,
         chains: Chains,
@@ -151,6 +153,7 @@ impl Relay {
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
         storage: RelayStorage,
+        asset_info: AssetInfoServiceHandle,
     ) -> Self {
         let inner = RelayInner {
             entrypoint,
@@ -160,6 +163,7 @@ impl Relay {
             quote_config,
             price_oracle,
             storage,
+            asset_info,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -170,7 +174,7 @@ impl Relay {
         token: Address,
         authorization_address: Option<Address>,
         account_key: Key,
-    ) -> Result<(AssetDiff, SignedQuote), RelayError> {
+    ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
         let provider = self.provider(request.chain_id)?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
@@ -273,8 +277,9 @@ impl Relay {
         .into();
 
         // we estimate gas and fees
-        let (asset_diff, mut gas_estimate) =
-            entrypoint.simulate_execute(mock_signer_address, &op).await?;
+        let (asset_diff, mut gas_estimate) = entrypoint
+            .simulate_execute(mock_signer_address, &op, self.inner.asset_info.clone())
+            .await?;
 
         // for 7702 designations there is an additional gas charge
         //
@@ -987,4 +992,6 @@ struct RelayInner {
     price_oracle: PriceOracle,
     /// Storage
     storage: RelayStorage,
+    /// AssetInfo
+    asset_info: AssetInfoServiceHandle,
 }
