@@ -225,12 +225,9 @@ impl<P: Provider> Entry<P> {
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok((
-                    AssetDiffs::new(
-                        result.logs.into_iter(),
-                        asset_info_handle,
-                        self.entrypoint.provider(),
-                    )
-                    .await?,
+                    asset_info_handle
+                        .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
+                        .await?,
                     GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() },
                 ))
             }

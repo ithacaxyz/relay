@@ -2,19 +2,23 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetWithInfo,
-        IERC20::{self},
+        Asset, AssetDiff, AssetDiffs, AssetWithInfo,
+        IERC20::{self, IERC20Events},
     },
 };
 use alloy::{
     network::TransactionBuilder,
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{
+        Address, ChainId, U256,
+        aliases::I512,
+        map::{HashMap, HashSet},
+    },
     providers::Provider,
     rpc::types::{
-        TransactionRequest,
+        Log, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
     },
-    sol_types::SolCall,
+    sol_types::{SolCall, SolEvent, SolEventInterface},
 };
 use schnellru::{ByLength, LruMap};
 use std::{
@@ -102,6 +106,90 @@ impl AssetInfoServiceHandle {
             .chain(missing_assets)
             .map(|info| (info.asset, info))
             .collect())
+    }
+
+    /// Calculates the net asset difference for each account and asset based on logs.
+    ///
+    /// This function processes logs by filtering for [`IERC20::Transfer`] events and accumulating
+    /// transfers as tuples of (credits, debits) for each account per asset.
+    ///
+    /// After accumulating, each (credits, debits) tuple member is converted into a [I512] and
+    /// finally obtain the net flow of `credits - debits`.
+    pub async fn calculate_asset_diff<P: Provider>(
+        &self,
+        logs: impl Iterator<Item = Log>,
+        provider: &P,
+    ) -> Result<AssetDiffs, RelayError> {
+        let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
+
+        let mut assets = HashSet::new();
+        for log in logs {
+            if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
+                continue;
+            }
+
+            let Some((asset, transfer)) =
+                IERC20Events::decode_log(&log.inner, true).ok().map(|ev| match ev.data {
+                    IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
+                })
+            else {
+                continue;
+            };
+
+            // Need to collect all assets so we can fetch their metadata
+            assets.insert(asset);
+
+            // For the receiver, add transfer.amount to credits.
+            accounts
+                .entry(transfer.to)
+                .or_default()
+                .entry(asset)
+                .and_modify(|(credit, _)| *credit += transfer.amount)
+                .or_insert((transfer.amount, U256::ZERO));
+
+            // For the sender, add transfer.amount to debits.
+            accounts
+                .entry(transfer.from)
+                .or_default()
+                .entry(asset)
+                .and_modify(|(_, debit)| *debit += transfer.amount)
+                .or_insert((U256::ZERO, transfer.amount));
+        }
+
+        let assets_map = self.get_asset_info_list(&provider, assets.into_iter().collect()).await?;
+
+        // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
+        Ok(AssetDiffs(
+            accounts
+                .into_iter()
+                .map(|(address, assets)| {
+                    (
+                        address,
+                        assets
+                            .into_iter()
+                            .map(|(asset, (credits, debits))| {
+                                let value = I512::try_from_le_slice(credits.as_le_slice())
+                                    .expect("should convert from u256")
+                                    - I512::try_from_le_slice(debits.as_le_slice())
+                                        .expect("should convert from u256");
+
+                                // `get_asset_info_list` ensures we have the asset
+                                let AssetWithInfo { name, symbol, decimals, .. } =
+                                    assets_map.get(&asset).cloned().expect("should have");
+
+                                AssetDiff {
+                                    address: (!asset.is_native()).then(|| asset.address()),
+                                    name,
+                                    symbol,
+                                    decimals,
+                                    value,
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ))
     }
 }
 
