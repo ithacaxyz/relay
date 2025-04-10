@@ -14,6 +14,8 @@ name = "stress"
 
 [dependencies]
 alloy = { version = "0.13", features = [
+    "std",
+    "essentials",
     "getrandom",
     "dyn-abi",
     "eip712",
