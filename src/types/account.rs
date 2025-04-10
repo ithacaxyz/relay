@@ -163,7 +163,7 @@ pub struct CallPermission {
 /// A Porto account.
 #[derive(Debug)]
 pub struct Account<P: Provider> {
-    delegation: DelegationInstance<(), P>,
+    delegation: DelegationInstance<P>,
     overrides: StateOverride,
 }
 
@@ -210,8 +210,7 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .and_then(|r| {
-                IDelegation::getKeysCall::abi_decode_returns(&r, true)
-                    .map_err(TransportErrorKind::custom)
+                IDelegation::getKeysCall::abi_decode_returns(&r).map_err(TransportErrorKind::custom)
             })?;
 
         debug!(
@@ -367,7 +366,7 @@ impl PREPAccount {
             .iter()
             .filter(|call| call.to == Address::ZERO)
             .filter_map(|call| {
-                let authorize = authorizeCall::abi_decode(&call.data, false).ok()?;
+                let authorize = authorizeCall::abi_decode(&call.data).ok()?;
                 Some(AuthorizeKeyResponse {
                     hash: authorize.key.key_hash(),
                     authorize_key: AuthorizeKey {

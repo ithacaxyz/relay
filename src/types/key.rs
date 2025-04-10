@@ -7,8 +7,8 @@ use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
-        Address, B256, Bytes, FixedBytes, Keccak256, PrimitiveSignature, U256, bytes::Buf,
-        keccak256, map::B256Map,
+        Address, B256, Bytes, FixedBytes, Keccak256, Signature as PrimitiveSignature, U256,
+        bytes::Buf, keccak256, map::B256Map,
     },
     signers::local::LocalSigner,
     sol,

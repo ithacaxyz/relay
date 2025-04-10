@@ -240,13 +240,13 @@ impl Signer {
             .call(request)
             .await
             .and_then(|res| {
-                EntryPoint::executeCall::abi_decode_returns(&res, true)
+                EntryPoint::executeCall::abi_decode_returns(&res)
                     .map_err(TransportErrorKind::custom)
             })
             .map_err(SignerError::from)
             .and_then(|result| {
-                if result.err != ENTRYPOINT_NO_ERROR {
-                    return Err(SignerError::OpRevert { revert_reason: result.err.into() });
+                if result != ENTRYPOINT_NO_ERROR {
+                    return Err(SignerError::OpRevert { revert_reason: result.into() });
                 }
                 Ok(())
             })?;

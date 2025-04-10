@@ -129,7 +129,7 @@ impl AssetInfoServiceHandle {
             }
 
             let Some((asset, transfer)) =
-                IERC20Events::decode_log(&log.inner, true).ok().map(|ev| match ev.data {
+                IERC20Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
                     IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
                 })
             else {
@@ -328,13 +328,9 @@ async fn get_info<P: Provider>(
         // & decode.
         assets_with_info.push(AssetWithInfo {
             asset: Asset::Token(asset),
-            decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data, true)
-                .ok()
-                .map(|r| r._0),
-            symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data, true)
-                .ok()
-                .map(|r| r._0),
-            name: IERC20::nameCall::abi_decode_returns(&name.return_data, true).ok().map(|r| r._0),
+            decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data).ok(),
+            symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data).ok(),
+            name: IERC20::nameCall::abi_decode_returns(&name.return_data).ok(),
         })
     }
 

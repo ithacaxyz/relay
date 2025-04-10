@@ -161,7 +161,7 @@ impl UserOp {
         Ok(eip712::UserOp {
             multichain,
             eoa: self.eoa,
-            calls: <Vec<Call>>::abi_decode(&self.executionData, false)?,
+            calls: <Vec<Call>>::abi_decode(&self.executionData)?,
             nonce: self.nonce,
             payer: self.payer,
             paymentToken: self.paymentToken,
@@ -203,7 +203,7 @@ impl UserOp {
     pub fn pre_authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         let mut all_keys = Vec::with_capacity(self.encodedPreOps.len());
         for encoded_op in &self.encodedPreOps {
-            let op = UserOp::abi_decode(encoded_op, false)?;
+            let op = UserOp::abi_decode(encoded_op)?;
             all_keys.extend(op.authorized_keys().into_iter().flatten());
         }
         Ok(all_keys)
@@ -213,19 +213,18 @@ impl UserOp {
     /// and `initData`.
     pub fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         // Decode keys from the execution data.
-        let keys =
-            Vec::<Call>::abi_decode(&self.executionData, false)?.into_iter().filter_map(|call| {
-                // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
-                authorizeCall::abi_decode(&call.data, false).ok().map(|decoded| decoded.key)
-            });
+        let keys = Vec::<Call>::abi_decode(&self.executionData)?.into_iter().filter_map(|call| {
+            // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
+            authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
+        });
 
         // Decode keys from initData, if it exists.
         let mut keys: Vec<Key> = if !self.initData.is_empty() {
-            let prep = PREPInitData::abi_decode_params(&self.initData, false)?;
+            let prep = PREPInitData::abi_decode_params(&self.initData)?;
 
             keys.chain(prep.calls.into_iter().filter_map(|call| {
                 // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
-                authorizeCall::abi_decode(&call.data, false).ok().map(|decoded| decoded.key)
+                authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
             }))
             .collect()
         } else {
