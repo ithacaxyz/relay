@@ -422,7 +422,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         signers: signers.iter().map(|s| B256::from_slice(&s.credential().to_bytes())).collect(),
         transaction_service_config: TransactionServiceConfig {
             // set lower interval to make sure that we hit the pause logic
-            balance_check_interval: Duration::from_millis(150),
+            balance_check_interval: Duration::from_millis(100),
             // set lower throughput to make sure that transactions are not getting included too
             // quickly
             max_transactions_per_signer: 5,
@@ -433,15 +433,20 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
-    // setup accounts
-    let num_accounts = 15;
-    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
+    // setup 30 accounts
+    let num_accounts = 30;
+    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
+        .buffered(10)
+        .try_collect::<Vec<_>>()
+        .await?;
 
     // send transactions for each account
-    let handles = join_all(accounts.iter().map(|acc| async {
+    let handles = futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
         tx_service_handle.send_transaction(tx)
     }))
+    .buffered(5)
+    .collect::<Vec<_>>()
     .await;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
