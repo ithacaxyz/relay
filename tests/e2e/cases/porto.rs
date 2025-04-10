@@ -35,7 +35,7 @@ async fn behavior_delegation() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_spend_limit_and_guard() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize admin key
@@ -47,13 +47,14 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             },
             // Authorize another key, set execution guard and spend limit (1.5 ETH) for it
             TxContext {
-                authorization_keys: vec![&another_key],
+                authorization_keys: vec![&session_key],
                 calls: vec![
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
-                            keyHash: another_key.key_hash(),
+                            keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
                             target: DEFAULT_EXECUTE_TO,
@@ -61,7 +62,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
                         .abi_encode()
                         .into(),
                     },
-                    calls::daily_limit(env.erc20, U256::from(150u64), &another_key),
+                    calls::daily_limit(env.erc20, U256::from(150u64), &session_key),
                 ],
                 key: Some(&key),
                 expected: ExpectedOutcome::Pass,
@@ -71,14 +72,14 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
                 expected: ExpectedOutcome::Pass,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
             // Another transfer exceeds spend limit → fail
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
                 expected: ExpectedOutcome::FailEstimate,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
         ]
@@ -91,7 +92,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_target_scope() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
     run_e2e(|env| {
         vec![
@@ -105,14 +106,15 @@ async fn execution_guard_target_scope() -> Result<()> {
             // Authorize another key and set execution guard with a target scope (only env.erc20
             // allowed)
             TxContext {
-                authorization_keys: vec![&another_key],
+                authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
-                            keyHash: another_key.key_hash(),
+                            keyHash: session_key.key_hash(),
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
                             target: env.erc20,
                             can: true,
@@ -129,14 +131,14 @@ async fn execution_guard_target_scope() -> Result<()> {
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
             // Failing transfer (different target)
             TxContext {
                 calls: vec![calls::transfer(env.erc20_alt, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
         ]
@@ -149,7 +151,7 @@ async fn execution_guard_target_scope() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_target_scope_selector() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize admin key
@@ -162,14 +164,15 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             // Authorize another key and set execution guard with target and selector (for
             // "transfer")
             TxContext {
-                authorization_keys: vec![&another_key],
+                authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
-                            keyHash: another_key.key_hash(),
+                            keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: MockErc20::transferCall::SELECTOR.into(),
                             target: env.erc20,
@@ -186,14 +189,14 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
             // Failing call using a different selector (e.g. "mint")
             TxContext {
                 calls: vec![calls::mint(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
         ]
@@ -236,7 +239,7 @@ async fn send_default() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn execution_guard_default() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let another_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
         vec![
             // Authorize admin key with delegation
@@ -248,14 +251,15 @@ async fn execution_guard_default() -> Result<()> {
             },
             // Authorize and set execution guard using default values for selector and target
             TxContext {
-                authorization_keys: vec![&another_key],
+                authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::daily_limit(env.erc20, U256::from(10000000u64), another_key.key()),
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
                         data: Delegation::setCanExecuteCall {
-                            keyHash: another_key.key_hash(),
+                            keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
                             target: DEFAULT_EXECUTE_TO,
@@ -272,7 +276,7 @@ async fn execution_guard_default() -> Result<()> {
             TxContext {
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
-                key: Some(&another_key),
+                key: Some(&session_key),
                 ..Default::default()
             },
         ]
@@ -413,6 +417,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                     calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     Call {
                         to: Address::ZERO,
@@ -483,8 +488,9 @@ async fn session_key_pre_op() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
+        assert!(env.erc20 != env.fee_token);
         vec![
-            // Authorize the admin key (P256)
+            // Authorize the admin key
             TxContext {
                 authorization_keys: vec![&key],
                 expected: ExpectedOutcome::Pass,
@@ -497,6 +503,7 @@ async fn session_key_pre_op() -> Result<()> {
                 pre_ops: vec![TxContext {
                     authorization_keys: vec![&session_key],
                     calls: vec![
+                        calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                         calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                         calls::can_execute_all(env.erc20, session_key.key_hash()),
                         calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
@@ -524,6 +531,7 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
+        assert!(env.erc20 != env.fee_token);
         vec![TxContext {
             authorization_keys: vec![&key],
             auth: Some(AuthKind::Auth),
@@ -532,9 +540,10 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
+                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
-                    calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                 ],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
