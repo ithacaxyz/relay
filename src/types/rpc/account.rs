@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, ChainId, PrimitiveSignature},
+    primitives::{Address, B256, ChainId, Signature},
 };
 use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ impl CreateAccountParameters {
                 let hash = key_signature.key_hash();
                 let digest = Key::id_digest_from_hash(hash, self.context.account.address);
 
-                PrimitiveSignature::from_raw(&key_signature.value)
+                Signature::from_raw(&key_signature.value)
                     .and_then(|signature| {
                         signature.recover_address_from_prehash(&digest).map(|id| KeyHashWithID {
                             hash,
@@ -171,7 +171,7 @@ pub struct UpgradeAccountParameters {
     pub context: SignedQuote,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
     #[serde(with = "alloy::serde::displayfromstr")]
-    pub signature: PrimitiveSignature,
+    pub signature: Signature,
     /// Signed authorization.
     pub authorization: SignedAuthorization,
 }
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn upgrade_account_params_serde() {
-        let signature = PrimitiveSignature::new(U256::ZERO, U256::ZERO, false);
+        let signature = Signature::new(U256::ZERO, U256::ZERO, false);
         let acc = UpgradeAccountParameters {
             context: Signed::new_unchecked(
                 Quote {
