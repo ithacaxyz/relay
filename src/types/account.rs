@@ -89,7 +89,7 @@ sol! {
         error Unauthorized();
 
         /// Exceeded the spend limit.
-        error ExceededSpendLimit();
+        error ExceededSpendLimit(address token);
 
         /// @dev In order to spend a token, it must have spend permissions set.
         error NoSpendPermissions();
