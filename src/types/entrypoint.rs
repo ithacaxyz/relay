@@ -278,13 +278,12 @@ impl<P: Provider> Entry<P> {
     ///
     /// This gets the next nonce for sequence key `0`.
     pub async fn get_nonce(&self, account: Address) -> TransportResult<U256> {
-        Ok(self
-            .entrypoint
+        self.entrypoint
             .getNonce(account, uint!(0_U192))
             .call()
             .overrides(self.overrides.clone())
             .await
-            .map_err(TransportErrorKind::custom)?)
+            .map_err(TransportErrorKind::custom)
     }
 }
 
