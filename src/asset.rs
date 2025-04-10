@@ -199,7 +199,7 @@ impl AssetInfoServiceHandle {
 /// initializing it.
 #[derive(Debug)]
 pub struct AssetInfoService {
-    /// Supported chains by the service.
+    /// Cached asset metadata per chain.
     cache: LruMap<(ChainId, Asset), AssetWithInfo>,
     /// Sender half for asset info messages.
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
