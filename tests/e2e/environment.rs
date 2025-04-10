@@ -32,10 +32,17 @@ use std::{
 };
 use url::Url;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EnvironmentConfig {
     pub is_prep: bool,
     pub block_time: Option<u64>,
+    pub signers: Vec<B256>,
+}
+
+impl Default for EnvironmentConfig {
+    fn default() -> Self {
+        Self { is_prep: false, block_time: None, signers: vec![RELAY_PRIVATE_KEY] }
+    }
 }
 
 pub struct Environment {
@@ -177,15 +184,13 @@ impl Environment {
         let mut registry = CoinRegistry::default();
         registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
 
-        // Fund relay signer and EOA
-        let relay_private_key = RELAY_PRIVATE_KEY.to_string();
-        let relay_signer =
-            DynSigner::load(&relay_private_key, None).await.wrap_err("Relay signer load failed")?;
-
+        // Fund relay signers and EOA
+        let relay_signers =
+            config.signers.iter().map(|s| PrivateKeySigner::from_bytes(s).unwrap().address());
         let fundable_addresses = if eoa.is_prep() {
-            vec![relay_signer.address()]
+            relay_signers.collect::<Vec<_>>()
         } else {
-            vec![relay_signer.address(), eoa.address()]
+            relay_signers.chain(iter::once(eoa.address())).collect()
         };
 
         for address in fundable_addresses {
@@ -208,8 +213,10 @@ impl Environment {
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
-                .with_quote_key(relay_private_key.clone())
-                .with_transaction_key(relay_private_key)
+                .with_quote_key(config.signers[0].clone().to_string())
+                .with_transaction_keys(
+                    &config.signers.into_iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                )
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_entrypoint(entrypoint)

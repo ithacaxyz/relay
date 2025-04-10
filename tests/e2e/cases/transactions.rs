@@ -7,6 +7,7 @@ use alloy::{
     consensus::Transaction,
     primitives::{Address, B256, U256},
     providers::{Provider, ext::AnvilApi},
+    signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolValue},
 };
 use futures_util::future::{join_all, try_join_all};
@@ -23,7 +24,7 @@ use relay::{
         },
     },
 };
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 use tokio::sync::mpsc;
 
 /// An account that can be used to send userops.
@@ -192,14 +193,33 @@ fn assert_metrics(sent: usize, confirmed: usize, failed: usize, env: &Environmen
     assert!(output.contains(&format!(r#"transactions_failed{{chain_id="{chain_id}"}} {failed}"#)));
 }
 
+/// Asserts that metrics match the expected values.
+fn assert_signer_metrics(paused: usize, active: usize, env: &Environment) {
+    let output = env.relay_handle.metrics.render();
+    let chain_id = env.chain_id;
+    assert!(
+        output
+            .contains(&format!(r#"transactions_active_signers{{chain_id="{chain_id}"}} {active}"#))
+    );
+    assert!(
+        output
+            .contains(&format!(r#"transactions_paused_signers{{chain_id="{chain_id}"}} {paused}"#))
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basic_concurrent() -> eyre::Result<()> {
-    let env =
-        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let env = Environment::setup(EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup accounts
-    let num_accounts = 5;
+    let num_accounts = 100;
     let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -243,8 +263,13 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dropped_transaction() -> eyre::Result<()> {
-    let env =
-        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let env = Environment::setup(EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup account
@@ -269,8 +294,13 @@ async fn dropped_transaction() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_bump() -> eyre::Result<()> {
-    let env =
-        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let env = Environment::setup(EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup account
@@ -314,8 +344,13 @@ async fn fee_bump() -> eyre::Result<()> {
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_growth_nonce_gap() -> eyre::Result<()> {
-    let env =
-        Environment::setup(EnvironmentConfig { is_prep: true, block_time: Some(1) }).await.unwrap();
+    let env = Environment::setup(EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup 2 accounts
@@ -361,6 +396,107 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     // enable block mining and assert that second transaction succeeds
     env.enable_mining().await;
     assert_confirmed(events_1).await;
+
+    Ok(())
+}
+
+/// Asserts that on fee growth, we can successfully drop an underpriced transaction, and handle
+/// nonce gap caused by it.
+#[tokio::test(flavor = "multi_thread")]
+async fn pause_out_of_funds() -> eyre::Result<()> {
+    let signers = (0..5).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
+    let env = Environment::setup(EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1),
+        signers: signers.iter().map(|s| B256::from_slice(&s.credential().to_bytes())).collect(),
+    })
+    .await
+    .unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // setup 100 accounts
+    let num_accounts = 200;
+    let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
+
+    // send transactions for each account
+    let handles = join_all(accounts.iter().map(|acc| async {
+        let tx = acc.prepare_tx(&env).await;
+        tx_service_handle.send_transaction(tx)
+    }))
+    .await;
+
+    // Now set balances of all signers except the last one to a low value that is enough to pay for
+    // the pending transactions but is low enough for signer to get paused.
+    let fees = env.provider.estimate_eip1559_fees().await.unwrap();
+    let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
+
+    try_join_all(
+        signers
+            .iter()
+            .take(signers.len() - 1)
+            .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
+    )
+    .await
+    .unwrap();
+
+    // assert that all transactions are confirmed
+    for handle in handles {
+        assert_confirmed(handle).await;
+    }
+
+    // assert that signers were actually paused according to metrics
+    assert_signer_metrics(signers.len() - 1, 1, &env);
+
+    let last_signer = signers.last().unwrap();
+    let last_signer_nonce =
+        env.provider.get_transaction_count(last_signer.address()).await.unwrap();
+
+    // assert that last signer processed more transactions than others
+    for signer in &signers[..signers.len() - 1] {
+        let nonce = env.provider.get_transaction_count(signer.address()).await.unwrap();
+        assert!(nonce < last_signer_nonce);
+    }
+
+    // send a batch of transactions again and assert that all of them are handled by the last signer
+    join_all(accounts.iter().take(50).map(|acc| async {
+        let tx = acc.prepare_tx(&env).await;
+        let handle = tx_service_handle.send_transaction(tx);
+        let hash = assert_confirmed(handle).await;
+        let signer =
+            env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
+        assert!(signer == last_signer.address());
+    }))
+    .await;
+
+    // set balances back to high values
+    try_join_all(
+        signers.iter().take(signers.len() - 1).map(|signer| {
+            env.provider.anvil_set_balance(signer.address(), U256::MAX / U256::from(2))
+        }),
+    )
+    .await
+    .unwrap();
+
+    // sleep for a bit to let the task fetch the new balances
+    // TODO: should we figure out a better way to do this?
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    // assert that signers are no longer paused
+    assert_signer_metrics(0, signers.len(), &env);
+
+    // send a batch of transactions again and assert that all of them complete
+    let seen_signers = join_all(accounts.iter().map(|acc| async {
+        let tx = acc.prepare_tx(&env).await;
+        let handle = tx_service_handle.send_transaction(tx);
+        let hash = assert_confirmed(handle).await;
+        env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
+    }))
+    .await
+    .into_iter()
+    .collect::<HashSet<_>>();
+
+    // assert that all signers participated in processing the transactions this time
+    assert!(seen_signers.len() == signers.len());
 
     Ok(())
 }
