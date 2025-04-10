@@ -29,6 +29,7 @@ alloy = { version = "0.13", features = [
     "sol-types",
     "transports",
     "network",
+    "json-rpc"
 ] }
 alloy-chains = "0.1"
 async-trait = "0.1"
