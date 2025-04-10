@@ -19,7 +19,7 @@ use alloy::{
 use schnellru::{ByLength, LruMap};
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -178,7 +178,7 @@ impl Future for AssetInfoService {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
 
-        while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
+        while let Some(action) = ready!(this.command_rx.poll_recv(cx)) {
             match action {
                 AssetInfoServiceMessage::Lookup { chain_id, assets, tx } => {
                     this.lookup(chain_id, assets, tx);

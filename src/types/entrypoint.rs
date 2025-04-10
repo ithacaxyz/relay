@@ -18,7 +18,7 @@ use tracing::debug;
 use crate::{
     asset::AssetInfoServiceHandle,
     error::{RelayError, UserOpError},
-    types::{AssetDiffs, UserOp, calculate_asset_diff},
+    types::{AssetDiffs, UserOp},
 };
 
 /// The 4-byte selector returned by the entrypoint if there is no error during execution.
@@ -225,7 +225,7 @@ impl<P: Provider> Entry<P> {
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok((
-                    calculate_asset_diff(
+                    AssetDiffs::new(
                         result.logs.into_iter(),
                         asset_info_handle,
                         self.entrypoint.provider(),
