@@ -17,7 +17,6 @@ pub mod signers;
 pub mod spawn;
 pub mod storage;
 pub mod transactions;
+pub mod transport;
 pub mod types;
 pub mod version;
-
-pub mod transport;
