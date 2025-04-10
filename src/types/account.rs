@@ -163,7 +163,7 @@ pub struct CallPermission {
 /// A Porto account.
 #[derive(Debug)]
 pub struct Account<P: Provider> {
-    delegation: DelegationInstance<(), P>,
+    delegation: DelegationInstance<P>,
     overrides: StateOverride,
 }
 

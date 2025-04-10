@@ -160,7 +160,7 @@ sol! {
 /// A Porto entrypoint.
 #[derive(Debug)]
 pub struct Entry<P: Provider> {
-    entrypoint: EntryPointInstance<(), P>,
+    entrypoint: EntryPointInstance<P>,
     overrides: StateOverride,
 }
 
@@ -244,8 +244,8 @@ impl<P: Provider> Entry<P> {
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        if ret.err != ENTRYPOINT_NO_ERROR {
-            Err(UserOpError::op_revert(ret.err.into()).into())
+        if ret != ENTRYPOINT_NO_ERROR {
+            Err(UserOpError::op_revert(ret.into()).into())
         } else {
             Ok(())
         }
@@ -284,8 +284,7 @@ impl<P: Provider> Entry<P> {
             .call()
             .overrides(self.overrides.clone())
             .await
-            .map_err(TransportErrorKind::custom)?
-            ._0)
+            .map_err(TransportErrorKind::custom)?)
     }
 }
 
