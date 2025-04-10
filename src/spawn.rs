@@ -32,7 +32,7 @@ use tracing::{info, warn};
 ///
 /// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
 /// any throttling.
-const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
+pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// Context returned once relay is launched.
 #[derive(Debug, Clone)]
