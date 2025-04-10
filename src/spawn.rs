@@ -138,7 +138,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains = Chains::new(providers.clone(), signers, storage.clone()).await?;
+    let chains =
+        Chains::new(providers.clone(), signers, storage.clone(), config.transactions.clone())
+            .await?;
 
     // todo: avoid all this darn cloning
     let rpc = Relay::new(

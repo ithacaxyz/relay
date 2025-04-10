@@ -3,7 +3,7 @@ use super::{
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
-use crate::{signers::DynSigner, storage::RelayStorage};
+use crate::{config::TransactionServiceConfig, signers::DynSigner, storage::RelayStorage};
 use alloy::providers::{DynProvider, Provider};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
@@ -51,6 +51,8 @@ pub struct TransactionService {
     /// This forms a bijection with {active,paused} signers, meaning each signer id is either
     /// `active` OR `paused`.
     signers: FuturesUnordered<SignerTask>,
+    /// Configuration for the service.
+    config: TransactionServiceConfig,
     /// Signers we currently can use to dispatch _new_ requests to.
     active_signers: Vec<SignerId>,
     /// Signers that are currently paused until re-activated.
@@ -84,6 +86,7 @@ impl TransactionService {
         provider: DynProvider,
         signers: Vec<DynSigner>,
         storage: RelayStorage,
+        config: TransactionServiceConfig,
     ) -> Self {
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
             "chain_id",
@@ -94,6 +97,7 @@ impl TransactionService {
 
         let mut this = Self {
             signers: Default::default(),
+            config,
             active_signers: vec![],
             paused_signers: vec![],
             signer_id: 0,
@@ -130,8 +134,17 @@ impl TransactionService {
         debug!(%signer_id, "creating new signer");
         let metrics = self.metrics.clone();
         let events_tx = self.to_service.clone();
-        let signer =
-            Signer::new(signer_id, provider, signer, storage, events_tx, metrics).await.unwrap();
+        let signer = Signer::new(
+            signer_id,
+            provider,
+            signer,
+            storage,
+            events_tx,
+            metrics,
+            self.config.clone(),
+        )
+        .await
+        .unwrap();
         let task = signer.into_future().await;
 
         // track new signer

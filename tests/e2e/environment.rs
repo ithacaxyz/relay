@@ -17,7 +17,7 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::join_all;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::RelayConfig,
+    config::{RelayConfig, TransactionServiceConfig},
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
     types::{
@@ -35,13 +35,19 @@ use url::Url;
 #[derive(Debug, Clone)]
 pub struct EnvironmentConfig {
     pub is_prep: bool,
-    pub block_time: Option<u64>,
+    pub block_time: Option<f64>,
     pub signers: Vec<B256>,
+    pub transaction_service_config: TransactionServiceConfig,
 }
 
 impl Default for EnvironmentConfig {
     fn default() -> Self {
-        Self { is_prep: false, block_time: None, signers: vec![RELAY_PRIVATE_KEY] }
+        Self {
+            is_prep: false,
+            block_time: None,
+            signers: vec![RELAY_PRIVATE_KEY],
+            transaction_service_config: Default::default(),
+        }
     }
 }
 
@@ -222,6 +228,7 @@ impl Environment {
                 .with_entrypoint(entrypoint)
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
+                .with_transaction_service_config(config.transaction_service_config)
                 .with_database_url(std::env::var("DATABASE_URL").ok()),
             registry,
         )
