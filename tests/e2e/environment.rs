@@ -117,7 +117,7 @@ impl Environment {
     /// TEST_ERC20="0xYourErc20Address"
     /// ```
     pub async fn setup(config: EnvironmentConfig) -> eyre::Result<Self> {
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         // Spawns a local Ethereum node if one is not specified.
         let (endpoint, anvil) = if let Ok(endpoint) = std::env::var("TEST_EXTERNAL_ANVIL") {
