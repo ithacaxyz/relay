@@ -9,7 +9,7 @@ use alloy::{
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256},
     providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
-    rpc::types::TransactionRequest,
+    rpc::{client::ClientBuilder, types::TransactionRequest},
     signers::local::PrivateKeySigner,
     sol_types::{SolConstructor, SolValue},
 };
@@ -19,7 +19,7 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     config::{RelayConfig, TransactionServiceConfig},
     signers::DynSigner,
-    spawn::{RelayHandle, try_spawn},
+    spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
         CoinKind, CoinRegistry,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
@@ -161,9 +161,10 @@ impl Environment {
         .wrap_err("Relay signer load failed")?;
 
         // Build provider
+        let client = ClientBuilder::default().layer(RETRY_LAYER.clone()).http(endpoint.clone());
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(deployer.0.clone()))
-            .on_http(endpoint.clone());
+            .on_client(client);
 
         // Get or deploy mock contracts.
         let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
