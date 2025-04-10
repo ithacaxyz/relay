@@ -3,7 +3,7 @@ use super::{
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
-use crate::{signers::DynSigner, storage::RelayStorage};
+use crate::{config::TransactionServiceConfig, signers::DynSigner, storage::RelayStorage};
 use alloy::providers::{DynProvider, Provider};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
@@ -51,6 +51,8 @@ pub struct TransactionService {
     /// This forms a bijection with {active,paused} signers, meaning each signer id is either
     /// `active` OR `paused`.
     signers: FuturesUnordered<SignerTask>,
+    /// Configuration for the service.
+    config: TransactionServiceConfig,
     /// Signers we currently can use to dispatch _new_ requests to.
     active_signers: Vec<SignerId>,
     /// Signers that are currently paused until re-activated.
@@ -84,6 +86,7 @@ impl TransactionService {
         provider: DynProvider,
         signers: Vec<DynSigner>,
         storage: RelayStorage,
+        config: TransactionServiceConfig,
     ) -> Self {
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
             "chain_id",
@@ -94,6 +97,7 @@ impl TransactionService {
 
         let mut this = Self {
             signers: Default::default(),
+            config,
             active_signers: vec![],
             paused_signers: vec![],
             signer_id: 0,
@@ -130,8 +134,17 @@ impl TransactionService {
         debug!(%signer_id, "creating new signer");
         let metrics = self.metrics.clone();
         let events_tx = self.to_service.clone();
-        let signer =
-            Signer::new(signer_id, provider, signer, storage, events_tx, metrics).await.unwrap();
+        let signer = Signer::new(
+            signer_id,
+            provider,
+            signer,
+            storage,
+            events_tx,
+            metrics,
+            self.config.clone(),
+        )
+        .await
+        .unwrap();
         let task = signer.into_future().await;
 
         // track new signer
@@ -157,9 +170,6 @@ impl TransactionService {
         if let Some(pos) = self.paused_signers.iter().position(|id| *id == signer_id) {
             debug!(%signer_id, "activate signer");
 
-            // remove signer from paused
-            self.paused_signers.remove(pos);
-
             debug_assert!(
                 self.is_paused_signer(&signer_id),
                 "signer is still paused {:?}; duplicate entry",
@@ -171,6 +181,8 @@ impl TransactionService {
                 signer_id
             );
 
+            // remove signer from paused
+            self.paused_signers.remove(pos);
             // activate signer
             self.active_signers.push(signer_id);
 
@@ -182,8 +194,6 @@ impl TransactionService {
     fn pause_signer(&mut self, signer_id: SignerId) {
         if let Some(pos) = self.active_signers.iter().position(|id| *id == signer_id) {
             debug!(%signer_id, "pausing signer");
-            // remove signer from active
-            self.active_signers.remove(pos);
 
             debug_assert!(
                 self.is_active_signer(&signer_id),
@@ -196,6 +206,8 @@ impl TransactionService {
                 signer_id
             );
 
+            // remove signer from active
+            self.active_signers.remove(pos);
             // pause signer
             self.paused_signers.push(signer_id);
 

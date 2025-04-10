@@ -19,6 +19,8 @@ pub struct RelayConfig {
     pub chain: ChainConfig,
     /// Quote configuration.
     pub quote: QuoteConfig,
+    /// Transaction service configuration.
+    pub transactions: TransactionServiceConfig,
     /// Entrypoint address.
     pub entrypoint: Address,
     /// Secrets.
@@ -96,6 +98,29 @@ pub struct SecretsConfig {
     pub quote_key: String,
 }
 
+/// Configuration for transaction service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionServiceConfig {
+    /// Maximum number of pending transactions that can be handled by a single signer.
+    pub max_transactions_per_signer: usize,
+    /// Interval for checking signer balances.
+    #[serde(with = "crate::serde::duration")]
+    pub balance_check_interval: Duration,
+    /// Interval for checking nonce gaps.
+    #[serde(with = "crate::serde::duration")]
+    pub nonce_check_interval: Duration,
+}
+
+impl Default for TransactionServiceConfig {
+    fn default() -> Self {
+        Self {
+            max_transactions_per_signer: 16,
+            balance_check_interval: Duration::from_secs(5),
+            nonce_check_interval: Duration::from_secs(60),
+        }
+    }
+}
+
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
@@ -112,6 +137,7 @@ impl Default for RelayConfig {
                 ttl: Duration::from_secs(5),
                 rate_ttl: Duration::from_secs(300),
             },
+            transactions: TransactionServiceConfig::default(),
             entrypoint: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
@@ -213,6 +239,12 @@ impl RelayConfig {
     /// Sets the database URL.
     pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
         self.database_url = database_url;
+        self
+    }
+
+    /// Sets the maximum number of pending transactions that can be handled by a single signer.
+    pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
+        self.transactions = config;
         self
     }
 

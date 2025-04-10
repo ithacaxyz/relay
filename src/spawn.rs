@@ -4,7 +4,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    metrics::{self, RpcMetricsService},
+    metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
@@ -32,7 +32,7 @@ use tracing::{info, warn};
 ///
 /// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
 /// any throttling.
-const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
+pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// Context returned once relay is launched.
 #[derive(Debug, Clone)]
@@ -114,6 +114,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
+                .layer(TraceLayer)
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
@@ -139,7 +140,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains = Chains::new(providers.clone(), signers, storage.clone()).await?;
+    let chains =
+        Chains::new(providers.clone(), signers, storage.clone(), config.transactions.clone())
+            .await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);

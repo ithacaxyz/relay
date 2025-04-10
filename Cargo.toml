@@ -17,10 +17,12 @@ alloy = { version = "0.13", features = [
     "dyn-abi",
     "eip712",
     "eips",
+    "json-rpc",
     "k256",
     "providers",
     "rlp",
     "rpc",
+    "rpc-client",
     "rpc-types",
     "serde",
     "signers",
@@ -29,6 +31,7 @@ alloy = { version = "0.13", features = [
     "sol-types",
     "transports",
     "network",
+    "json-rpc"
 ] }
 alloy-chains = "0.1"
 async-trait = "0.1"
@@ -45,6 +48,16 @@ http-body = "1"
 jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16"
+opentelemetry = { version = "0.28.0", features = ["trace"] }
+opentelemetry-otlp = { version = "0.28.0" }
+opentelemetry-semantic-conventions = { version = "0.28.0", features = [
+    "semconv_experimental",
+] }
+opentelemetry-stdout = { version = "0.28.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.28.0", default-features = false, features = [
+    "trace",
+    "rt-tokio",
+] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 schnellru = "0.2.4"
@@ -57,6 +70,8 @@ tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.0"
+tracing-futures = { version = "0.2.5", features = ["std-future"] }
+tracing-opentelemetry = "0.29.0"
 tracing-subscriber = { version = "0.3.19", features = [
     "fmt",
     "std",

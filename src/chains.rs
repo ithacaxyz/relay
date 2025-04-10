@@ -7,6 +7,7 @@ use alloy::{
 };
 
 use crate::{
+    config::TransactionServiceConfig,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{TransactionService, TransactionServiceHandle},
@@ -34,12 +35,17 @@ impl Chains {
         providers: Vec<DynProvider>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
+        config: TransactionServiceConfig,
     ) -> TransportResult<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
-                let service =
-                    TransactionService::new(provider.clone(), tx_signers.clone(), storage.clone())
-                        .await;
+                let service = TransactionService::new(
+                    provider.clone(),
+                    tx_signers.clone(),
+                    storage.clone(),
+                    config.clone(),
+                )
+                .await;
                 let transactions = service.handle();
                 tokio::spawn(service);
 
