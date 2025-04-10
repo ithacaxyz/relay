@@ -12,7 +12,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "0.13", features = [
+alloy = { version = "0.14", features = [
     "getrandom",
     "dyn-abi",
     "eip712",
@@ -30,7 +30,7 @@ alloy = { version = "0.13", features = [
     "transports",
     "network",
 ] }
-alloy-chains = "0.1"
+alloy-chains = "0.2"
 async-trait = "0.1"
 aws-config = "1.6"
 aws-sdk-kms = "1.62"
@@ -75,7 +75,7 @@ sqlx = { version = "0.8.3", features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "0.13", features = ["eips", "provider-anvil-node"] }
+alloy = { version = "0.14", features = ["eips", "provider-anvil-node"] }
 derive_more = { version = "2", features = ["debug"] }
 dotenv = "0.15"
 itertools = "0.14"
