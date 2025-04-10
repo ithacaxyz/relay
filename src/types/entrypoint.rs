@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::{
+    asset::AssetInfoServiceHandle,
     error::{RelayError, UserOpError},
-    types::{AssetDiff, UserOp, calculate_asset_diff},
+    types::{AssetDiffs, UserOp},
 };
 
 /// The 4-byte selector returned by the entrypoint if there is no error during execution.
@@ -191,7 +192,8 @@ impl<P: Provider> Entry<P> {
         &self,
         from: Address,
         op: &UserOp,
-    ) -> Result<(AssetDiff, GasEstimate), RelayError> {
+        asset_info_handle: AssetInfoServiceHandle,
+    ) -> Result<(AssetDiffs, GasEstimate), RelayError> {
         let simulate_call =
             self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
 
@@ -223,7 +225,9 @@ impl<P: Provider> Entry<P> {
             } else {
                 // todo: sanitize this as a malicious contract can make us panic
                 Ok((
-                    calculate_asset_diff(result.logs.into_iter()),
+                    asset_info_handle
+                        .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
+                        .await?,
                     GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() },
                 ))
             }

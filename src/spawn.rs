@@ -1,5 +1,6 @@
 //! Relay spawn utilities.
 use crate::{
+    asset::AssetInfoService,
     chains::Chains,
     cli::Args,
     config::RelayConfig,
@@ -140,6 +141,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     let chains = Chains::new(providers.clone(), signers, storage.clone()).await?;
 
+    // construct asset info service
+    let asset_info = AssetInfoService::new(512);
+    let asset_info_handle = asset_info.handle();
+    tokio::spawn(asset_info);
+
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
         config.entrypoint,
@@ -149,6 +155,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         price_oracle,
         FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
         storage.clone(),
+        asset_info_handle,
     )
     .into_rpc();
 

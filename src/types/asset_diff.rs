@@ -1,85 +1,52 @@
-use super::IERC20::{self, IERC20Events};
-use alloy::{
-    primitives::{Address, U256, address, aliases::I512, map::HashMap},
-    rpc::types::Log,
-    sol_types::{SolEvent, SolEventInterface},
-};
+use alloy::primitives::{Address, address, aliases::I512};
 use serde::{Deserialize, Serialize};
 
 /// Net flow per account and asset based on simulated execution logs.
-pub type AssetDiff = Vec<(Address, Vec<(Asset, I512)>)>;
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetDiffs(pub Vec<(Address, Vec<AssetDiff>)>);
 
-/// Calculates the net asset difference for each account and asset based on logs.
-///
-/// This function processes logs by filtering for [`IERC20::Transfer`] events and accumulating
-/// transfers as tuples of (credits, debits) for each account per asset.
-///
-/// After accumulating, each (credits, debits) tuple member is converted into a [I512] and finally
-/// obtain the net flow of `credits - debits`.
-///
-/// # Notes
-/// The native asset is represented by the address "0xeeee…eeee" as defined on `eth_simulateV1`.
-pub fn calculate_asset_diff(logs: impl Iterator<Item = Log>) -> AssetDiff {
-    let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
-
-    for log in logs {
-        if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
-            continue;
-        }
-
-        let Some((asset, transfer)) =
-            IERC20Events::decode_log(&log.inner, true).ok().map(|ev| match ev.data {
-                IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
-            })
-        else {
-            continue;
-        };
-
-        // For the receiver, add transfer.amount to credits.
-        accounts
-            .entry(transfer.to)
-            .or_default()
-            .entry(asset)
-            .and_modify(|(credit, _)| *credit += transfer.amount)
-            .or_insert((transfer.amount, U256::ZERO));
-
-        // For the sender, add transfer.amount to debits.
-        accounts
-            .entry(transfer.from)
-            .or_default()
-            .entry(asset)
-            .and_modify(|(_, debit)| *debit += transfer.amount)
-            .or_insert((U256::ZERO, transfer.amount));
-    }
-
-    // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
-    accounts
-        .into_iter()
-        .map(|(address, assets)| {
-            (
-                address,
-                assets
-                    .into_iter()
-                    .map(|(asset, (credits, debits))| {
-                        let net = I512::try_from_le_slice(credits.as_le_slice())
-                            .expect("should convert from u256")
-                            - I512::try_from_le_slice(debits.as_le_slice())
-                                .expect("should convert from u256");
-                        (asset, net)
-                    })
-                    .collect(),
-            )
-        })
-        .collect()
+/// Asset with metadata and value diff.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetDiff {
+    /// Asset address. `None` represents the native token.
+    pub address: Option<Address>,
+    /// Asset name.
+    pub name: Option<String>,
+    /// Asset symbol.
+    pub symbol: Option<String>,
+    /// Asset decimals.
+    pub decimals: Option<u8>,
+    /// Value diff.
+    pub value: I512,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
+///
+/// Note: Token variant might not be ERC20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Asset {
     /// Native asset.
     Native,
-    /// ERC20 asset.
-    ERC20(Address),
+    /// Token asset.
+    Token(Address),
+}
+
+impl Asset {
+    /// Whether it is the native asset from a chain.
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::Native)
+    }
+
+    /// Returns the address
+    ///
+    /// # Panics
+    /// It will panic if self is of the native variant.
+    pub fn address(&self) -> Address {
+        match self {
+            Asset::Native => panic!("only token assets can return an address"),
+            Asset::Token(address) => *address,
+        }
+    }
 }
 
 impl From<Address> for Asset {
@@ -88,7 +55,20 @@ impl From<Address> for Asset {
         if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
             Asset::Native
         } else {
-            Asset::ERC20(asset)
+            Asset::Token(asset)
         }
     }
+}
+
+/// Represents metadata for an asset.
+#[derive(Debug, Clone)]
+pub struct AssetWithInfo {
+    /// Asset.
+    pub asset: Asset,
+    /// Name.
+    pub name: Option<String>,
+    /// Symbol.
+    pub symbol: Option<String>,
+    /// Decimals.
+    pub decimals: Option<u8>,
 }

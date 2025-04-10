@@ -1,5 +1,6 @@
 //! Relay end-to-end test cases
 
+mod assets;
 mod calls;
 mod id;
 mod keys;

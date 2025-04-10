@@ -388,9 +388,9 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
             &contracts_path.join("MockERC20.sol/MockERC20.json"),
             Some(
                 MockErc20::constructorCall {
-                    name_: Default::default(),
-                    symbol_: Default::default(),
-                    decimals_: Default::default(),
+                    name_: "mockName".to_string(),
+                    symbol_: "mockSymbol".to_string(),
+                    decimals_: 18,
                 }
                 .abi_encode()
                 .into(),

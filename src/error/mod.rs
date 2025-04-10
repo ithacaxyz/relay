@@ -1,4 +1,6 @@
 //! Relay error types.
+mod asset;
+pub use asset::AssetError;
 
 mod auth;
 pub use auth::AuthError;
@@ -21,9 +23,12 @@ use alloy::{
 };
 use thiserror::Error;
 
-/// The overarching error type returned by `relay_estimateFee`.
+/// The relay overarching error type.
 #[derive(Debug, Error)]
 pub enum RelayError {
+    /// Errors related to assets.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
     /// Errors related to 7702 authorizations.
     #[error(transparent)]
     Auth(#[from] Box<AuthError>),
@@ -62,6 +67,7 @@ impl From<UserOpError> for RelayError {
 impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: RelayError) -> Self {
         match err {
+            RelayError::Asset(inner) => inner.into(),
             RelayError::Auth(inner) => (*inner).into(),
             RelayError::Quote(inner) => inner.into(),
             RelayError::UserOp(inner) => (*inner).into(),
