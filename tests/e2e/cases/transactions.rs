@@ -225,7 +225,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     // setup accounts
     let num_accounts = 100;
     let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(10)
+        .buffered(1)
         .try_collect::<Vec<_>>()
         .await?;
     // wait a bit to make sure all tasks see the tx confirmation
@@ -234,7 +234,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(5)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
@@ -435,7 +435,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     // setup 30 accounts
     let num_accounts = 30;
     let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(10)
+        .buffered(1)
         .try_collect::<Vec<_>>()
         .await?;
 
@@ -444,7 +444,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         let tx = acc.prepare_tx(&env).await;
         tx_service_handle.send_transaction(tx)
     }))
-    .buffered(10)
+    .buffered(1)
     .collect::<Vec<_>>()
     .await;
 
@@ -453,14 +453,15 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let fees = env.provider.estimate_eip1559_fees().await.unwrap();
     let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
 
-    try_join_all(
+    futures_util::stream::iter(
         signers
             .iter()
             .take(signers.len() - 1)
             .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
     )
-    .await
-    .unwrap();
+    .buffered(1)
+    .try_collect::<Vec<_>>()
+    .await?;
 
     // assert that all transactions are confirmed
     for handle in handles {
@@ -531,7 +532,7 @@ async fn resume_paused() -> eyre::Result<()> {
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
         assert_eq!(signer, last_signer.address());
     }))
-    .buffered(10)
+    .buffered(1)
     .collect::<Vec<_>>()
     .await;
 
