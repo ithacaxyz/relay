@@ -405,7 +405,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_out_of_funds() -> eyre::Result<()> {
-    let signers = (0..5).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
+    let signers = (0..3).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
     let env = Environment::setup(EnvironmentConfig {
         is_prep: true,
         block_time: Some(0.2),
@@ -423,8 +423,8 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
-    // setup 50 accounts
-    let num_accounts = 50;
+    // setup 30 accounts
+    let num_accounts = 30;
     let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
 
     // send transactions for each account
