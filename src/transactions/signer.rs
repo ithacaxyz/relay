@@ -38,7 +38,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, Waker},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
@@ -755,7 +755,9 @@ impl Future for SignerTask {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let SignerTask { signer: _, pending, nonce_check, balance_check, span, waker } =
+        let instant = Instant::now();
+
+        let SignerTask { signer, pending, nonce_check, balance_check, span, waker } =
             self.get_mut();
 
         let _enter = span.enter();
@@ -765,6 +767,8 @@ impl Future for SignerTask {
         while let Poll::Ready(Some(_)) = pending.poll_next_unpin(cx) {}
         let _ = nonce_check.poll_unpin(cx);
         let _ = balance_check.poll_unpin(cx);
+
+        signer.metrics.poll_duration.record(instant.elapsed().as_nanos() as f64);
 
         Poll::Pending
     }
