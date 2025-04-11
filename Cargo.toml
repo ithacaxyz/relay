@@ -37,7 +37,7 @@ alloy = { version = "0.14", features = [
     "json-rpc",
     "reqwest-rustls-tls"
 ], default-features = false }
-alloy-chains = "0.1"
+alloy-chains = "0.2"
 async-trait = "0.1"
 aws-config = "1.6"
 aws-sdk-kms = { version = "1", default-features = false }
