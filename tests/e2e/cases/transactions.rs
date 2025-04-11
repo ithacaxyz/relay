@@ -247,7 +247,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(1)
+            .buffered(25)
             .try_collect::<Vec<_>>()
             .await?;
     // wait a bit to make sure all tasks see the tx confirmation
@@ -256,7 +256,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(1)
+        .buffered(25)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
@@ -463,13 +463,13 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(1)
+            .buffered(25)
             .try_collect::<Vec<_>>()
             .await?;
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(1)
+        .buffered(25)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx));
@@ -559,7 +559,7 @@ async fn resume_paused() -> eyre::Result<()> {
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
         assert_eq!(signer, last_signer.address());
     }))
-    .buffered(1)
+    .buffered(10)
     .collect::<Vec<_>>()
     .await;
 
@@ -623,7 +623,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         let account = MockAccount::new(&env).await.unwrap();
         account.prepare_tx(&env).await
     }))
-    .buffered(1)
+    .buffered(10)
     .collect::<Vec<_>>()
     .await;
     let handles = transactions
