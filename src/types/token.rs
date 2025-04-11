@@ -49,7 +49,7 @@ impl FeeTokens {
                         (18, CoinKind::ETH)
                     } else {
                         (
-                            IERC20Instance::new(*token, provider).decimals().call().await?._0,
+                            IERC20Instance::new(*token, provider).decimals().call().await?,
                             CoinKind::get_token(coin_registry, chain, *token).ok_or_else(|| {
                                 eyre::eyre!("Token not supported: {token} @ {chain}.")
                             })?,

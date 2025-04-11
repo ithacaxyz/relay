@@ -11,6 +11,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Instant,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -293,6 +294,8 @@ impl Future for TransactionService {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let instant = Instant::now();
+
         let this = self.get_mut();
 
         // Advance signers
@@ -342,6 +345,8 @@ impl Future for TransactionService {
                 }
             }
         }
+
+        this.metrics.poll_duration.record(instant.elapsed().as_nanos() as f64);
 
         Poll::Pending
     }

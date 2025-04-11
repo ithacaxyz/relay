@@ -4,7 +4,7 @@
 use super::Eip712PayLoadSigner;
 use alloy::{
     network::{FullSigner, TxSigner},
-    primitives::{Address, B256, Bytes, PrimitiveSignature},
+    primitives::{Address, B256, Bytes, Signature},
     signers::{aws::AwsSigner, local::PrivateKeySigner},
 };
 use aws_config::BehaviorVersion;
@@ -12,7 +12,7 @@ use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 /// Abstraction over local signer or AWS.
 #[derive(Clone)]
-pub struct DynSigner(pub Arc<dyn FullSigner<PrimitiveSignature> + Send + Sync>);
+pub struct DynSigner(pub Arc<dyn FullSigner<Signature> + Send + Sync>);
 
 impl fmt::Debug for DynSigner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,7 +39,7 @@ impl DynSigner {
 }
 
 impl Deref for DynSigner {
-    type Target = dyn FullSigner<PrimitiveSignature> + Send + Sync;
+    type Target = dyn FullSigner<Signature> + Send + Sync;
 
     fn deref(&self) -> &Self::Target {
         self.0.as_ref()

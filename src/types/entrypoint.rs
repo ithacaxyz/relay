@@ -161,7 +161,7 @@ sol! {
 /// A Porto entrypoint.
 #[derive(Debug)]
 pub struct Entry<P: Provider> {
-    entrypoint: EntryPointInstance<(), P>,
+    entrypoint: EntryPointInstance<P>,
     overrides: StateOverride,
 }
 
@@ -219,7 +219,7 @@ impl<P: Provider> Entry<P> {
             return Err(TransportErrorKind::custom_str("could not simulate op").into());
         }
 
-        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data, true) {
+        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data) {
             if gas.err != ENTRYPOINT_NO_ERROR {
                 Err(UserOpError::op_revert(gas.err.into()).into())
             } else {
@@ -248,8 +248,8 @@ impl<P: Provider> Entry<P> {
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        if ret.err != ENTRYPOINT_NO_ERROR {
-            Err(UserOpError::op_revert(ret.err.into()).into())
+        if ret != ENTRYPOINT_NO_ERROR {
+            Err(UserOpError::op_revert(ret.into()).into())
         } else {
             Ok(())
         }
@@ -282,14 +282,12 @@ impl<P: Provider> Entry<P> {
     ///
     /// This gets the next nonce for sequence key `0`.
     pub async fn get_nonce(&self, account: Address) -> TransportResult<U256> {
-        Ok(self
-            .entrypoint
+        self.entrypoint
             .getNonce(account, uint!(0_U192))
             .call()
             .overrides(self.overrides.clone())
             .await
-            .map_err(TransportErrorKind::custom)?
-            ._0)
+            .map_err(TransportErrorKind::custom)
     }
 }
 

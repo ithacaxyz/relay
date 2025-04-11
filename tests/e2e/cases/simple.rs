@@ -38,7 +38,6 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                                 .balanceOf(to)
                                 .call()
                                 .await?
-                                ._0
                         );
                         Ok(())
                     }),

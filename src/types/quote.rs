@@ -2,7 +2,7 @@
 
 use crate::types::{Signed, UserOp};
 use alloy::{
-    primitives::{Address, B256, ChainId, Keccak256, PrimitiveSignature},
+    primitives::{Address, B256, ChainId, Keccak256, Signature},
     providers::utils::Eip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct Quote {
 
 impl Quote {
     /// Add a signature turning the quote into a [`SignedQuote`].
-    pub fn into_signed(self, signature: PrimitiveSignature) -> SignedQuote {
+    pub fn into_signed(self, signature: Signature) -> SignedQuote {
         let digest = self.digest();
         SignedQuote::new_unchecked(self, signature, digest)
     }

@@ -69,13 +69,11 @@ impl OpRevert {
     /// and[`DelegationErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
         Self {
-            decoded_error: EntryPointErrors::abi_decode(&revert_reason, false)
+            decoded_error: EntryPointErrors::abi_decode(&revert_reason)
                 .ok()
                 .map(|err| format!("{err:?}"))
                 .or_else(|| {
-                    DelegationErrors::abi_decode(&revert_reason, false)
-                        .ok()
-                        .map(|err| format!("{err:?}"))
+                    DelegationErrors::abi_decode(&revert_reason).ok().map(|err| format!("{err:?}"))
                 }),
             revert_reason,
         }

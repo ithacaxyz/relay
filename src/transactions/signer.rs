@@ -7,13 +7,16 @@ use crate::{
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
-    types::{ENTRYPOINT_NO_ERROR, EntryPoint},
+    types::{
+        ENTRYPOINT_NO_ERROR,
+        EntryPoint::{self, UserOpExecuted},
+    },
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, Bytes, U256, uint},
+    primitives::{Address, B256, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
         utils::{
@@ -22,7 +25,7 @@ use alloy::{
         },
     },
     rpc::types::TransactionRequest,
-    sol_types::SolCall,
+    sol_types::{SolCall, SolEvent},
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
 use chrono::Utc;
@@ -35,7 +38,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, Waker},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
@@ -108,9 +111,9 @@ pub enum SignerEvent {
     ReActive(SignerId),
 }
 
-/// A signer responsible for signing and sending transactions on a single network.
+/// State of [`Signer`].
 #[derive(Debug)]
-pub struct Signer {
+pub struct SignerInner {
     /// The unique identifier of this signer service.
     id: SignerId,
     /// Provider used by the signer.
@@ -133,6 +136,13 @@ pub struct Signer {
     paused: AtomicBool,
     /// Configuration for the service.
     config: TransactionServiceConfig,
+}
+
+/// A signer responsible for signing and sending transactions on a single network.
+#[derive(Debug, Clone, derive_more::Deref)]
+pub struct Signer {
+    #[deref]
+    inner: Arc<SignerInner>,
 }
 
 impl Signer {
@@ -170,7 +180,7 @@ impl Signer {
             )
         };
 
-        let this = Self {
+        let inner = SignerInner {
             id,
             provider,
             wallet,
@@ -183,7 +193,7 @@ impl Signer {
             paused: AtomicBool::new(false),
             config,
         };
-        Ok(this)
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Returns the id of this [`Signer`].
@@ -240,13 +250,13 @@ impl Signer {
             .call(request)
             .await
             .and_then(|res| {
-                EntryPoint::executeCall::abi_decode_returns(&res, true)
+                EntryPoint::executeCall::abi_decode_returns(&res)
                     .map_err(TransportErrorKind::custom)
             })
             .map_err(SignerError::from)
             .and_then(|result| {
-                if result.err != ENTRYPOINT_NO_ERROR {
-                    return Err(SignerError::OpRevert { revert_reason: result.err.into() });
+                if result != ENTRYPOINT_NO_ERROR {
+                    return Err(SignerError::OpRevert { revert_reason: result.into() });
                 }
                 Ok(())
             })?;
@@ -304,8 +314,15 @@ impl Signer {
                 .await?;
 
             if handle.await.is_ok() {
-                self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx.tx_hash())).await?;
+                let tx_hash = tx.tx_hash();
+                self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
                 self.storage.remove_pending_transaction(tx.id()).await?;
+
+                // Spawn a task to record metrics. We don't do this here to avoid blocking the
+                // signer task.
+                let this = self.clone();
+                tokio::spawn(async move { this.record_confirmed_metrics(tx_hash).await });
+
                 return Ok(());
             }
 
@@ -539,6 +556,43 @@ impl Signer {
         Ok(())
     }
 
+    /// Fetches receipt of a confirmed transaction and records metrics.
+    async fn record_confirmed_metrics(&self, tx_hash: B256) {
+        // Fetch receipt
+        let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
+        else {
+            warn!(%tx_hash, "failed to fetch receipt of confirmed transaction");
+            return;
+        };
+
+        self.metrics.gas_spent.increment(receipt.gas_used as f64);
+        self.metrics.native_spent.increment(f64::from(
+            U256::from(receipt.gas_used) * U256::from(receipt.effective_gas_price),
+        ));
+
+        if !receipt.status() {
+            warn!(%tx_hash, "transaction reverted");
+            self.metrics.failed_user_ops.increment(1);
+            return;
+        }
+
+        let Some(event) =
+            receipt.logs().iter().rev().find_map(|log| UserOpExecuted::decode_log(&log.inner).ok())
+        else {
+            warn!(%tx_hash, "failed to find UserOpExecuted event in receipt");
+            self.metrics.failed_user_ops.increment(1);
+            return;
+        };
+
+        if event.err != ENTRYPOINT_NO_ERROR {
+            warn!(%tx_hash, err = %event.err, "user op failed on-chain");
+            self.metrics.failed_user_ops.increment(1);
+            return;
+        }
+
+        self.metrics.successful_user_ops.increment(1);
+    }
+
     /// Spawns a new [`Signer`] instance. Returns [`SignerHandle`] and the number of futures that
     /// are spawned on signer startup (loaded pending transactions or nonce gap closing tasks).
     pub async fn into_future(self) -> SignerTask {
@@ -572,16 +626,14 @@ impl Signer {
             chain_id = self.chain_id()
         );
 
-        let signer = Arc::new(self);
-
         let pending: FuturesUnordered<PendingTransactionFuture> = FuturesUnordered::new();
 
-        for nonce in latest_nonce..*signer.nonce.lock().await {
+        for nonce in latest_nonce..*self.nonce.lock().await {
             if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
                 warn!(%nonce, "nonce gap on startup");
-                let signer = signer.clone();
+                let this = self.clone();
                 pending.push(Box::pin(async move {
-                    signer.close_nonce_gap(nonce, None).await;
+                    this.close_nonce_gap(nonce, None).await;
                     Ok(())
                 }));
             }
@@ -589,22 +641,23 @@ impl Signer {
 
         // Watch pending transactions that were loaded from storage
         for tx in loaded_transactions {
-            let signer = signer.clone();
+            let signer = self.clone();
             pending.push(Box::pin(async move { signer.watch_transaction(tx).await }));
         }
 
         // Create a never ending task that checks if on-chain nonce has diverged from local
         // nonce
         let nonce_check = {
-            let signer = signer.clone();
+            let this = self.clone();
             Box::pin(async move {
                 loop {
-                    tokio::time::sleep(signer.config.nonce_check_interval).await;
+                    tokio::time::sleep(this.config.nonce_check_interval).await;
 
                     if let Ok(nonce) =
-                        signer.provider.get_transaction_count(signer.address()).pending().await
+                        this.provider.get_transaction_count(this.address()).pending().await
                     {
-                        let mut lock = signer.nonce.lock().await;
+                        this.metrics.nonce.absolute(nonce);
+                        let mut lock = this.nonce.lock().await;
                         if nonce > *lock {
                             warn!(%nonce, "on-chain nonce is ahead of local");
                             *lock = nonce;
@@ -616,19 +669,19 @@ impl Signer {
 
         // create a never ending task that checks signer balance.
         let balance_check = {
-            let signer = signer.clone();
+            let this = self.clone();
             Box::pin(async move {
                 loop {
-                    tokio::time::sleep(signer.config.balance_check_interval).await;
+                    tokio::time::sleep(this.config.balance_check_interval).await;
 
-                    if let Err(err) = signer.record_and_check_balance().await {
+                    if let Err(err) = this.record_and_check_balance().await {
                         warn!(%err, "failed to check signer balance");
                     }
                 }
             })
         };
 
-        SignerTask { signer, pending, nonce_check, balance_check, span, waker: None }
+        SignerTask { signer: self, pending, nonce_check, balance_check, span, waker: None }
     }
 }
 
@@ -655,7 +708,7 @@ type PendingTransactionFuture = Pin<Box<dyn Future<Output = Result<(), SignerErr
 #[derive(derive_more::Debug)]
 pub struct SignerTask {
     /// The signer instance.
-    signer: Arc<Signer>,
+    signer: Signer,
     /// All currently pending tasks. Those include pending transactions and nonce gap closing
     /// tasks.
     pending: FuturesUnordered<PendingTransactionFuture>,
@@ -702,7 +755,9 @@ impl Future for SignerTask {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let SignerTask { signer: _, pending, nonce_check, balance_check, span, waker } =
+        let instant = Instant::now();
+
+        let SignerTask { signer, pending, nonce_check, balance_check, span, waker } =
             self.get_mut();
 
         let _enter = span.enter();
@@ -712,6 +767,8 @@ impl Future for SignerTask {
         while let Poll::Ready(Some(_)) = pending.poll_next_unpin(cx) {}
         let _ = nonce_check.poll_unpin(cx);
         let _ = balance_check.poll_unpin(cx);
+
+        signer.metrics.poll_duration.record(instant.elapsed().as_nanos() as f64);
 
         Poll::Pending
     }

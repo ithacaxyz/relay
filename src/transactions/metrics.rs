@@ -1,5 +1,5 @@
 use alloy::primitives::Address;
-use metrics::{Counter, Gauge, Histogram, counter, histogram};
+use metrics::{Counter, Gauge, Histogram, counter, gauge, histogram};
 use metrics_derive::Metrics;
 use std::sync::Arc;
 
@@ -21,6 +21,12 @@ pub struct TransactionServiceMetrics {
     pub pending: Gauge,
     /// Number of queued transactions.
     pub queued: Gauge,
+    /// Duration of polling the transaction service, in nanoseconds.
+    pub poll_duration: Histogram,
+    /// Number of user ops that landed on chain and succeeded.
+    pub successful_user_ops: Counter,
+    /// Number of user ops that landed on chain but failed.
+    pub failed_user_ops: Counter,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.
@@ -35,6 +41,14 @@ pub struct SignerMetrics {
     pub detected_nonce_gaps: Counter,
     /// Number of closed nonce gaps
     pub closed_nonce_gaps: Counter,
+    /// Duration of polling the signer task, in nanoseconds.
+    pub poll_duration: Histogram,
+    /// Gas spent on transactions.
+    pub gas_spent: Gauge,
+    /// Native spent on transactions.
+    pub native_spent: Gauge,
+    /// Signer nonce.
+    pub nonce: Counter,
 }
 
 impl SignerMetrics {
@@ -49,6 +63,10 @@ impl SignerMetrics {
             confirmation_time: histogram!("signer.confirmation_time", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             detected_nonce_gaps: counter!("signer.detected_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             closed_nonce_gaps: counter!("signer.closed_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            poll_duration: histogram!("signer.poll_duration", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            gas_spent: gauge!("signer.gas_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            native_spent: gauge!("signer.native_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            nonce: counter!("signer.nonce", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
         }
     }
 }

@@ -2,6 +2,7 @@
 name = "relay"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [[bin]]
 path = "src/bin/relay.rs"
@@ -12,7 +13,9 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "0.13", features = [
+alloy = { version = "0.14", features = [
+    "std",
+    "essentials",
     "getrandom",
     "dyn-abi",
     "eip712",
@@ -31,12 +34,13 @@ alloy = { version = "0.13", features = [
     "sol-types",
     "transports",
     "network",
-    "json-rpc"
-] }
+    "json-rpc",
+    "reqwest-rustls-tls"
+], default-features = false }
 alloy-chains = "0.1"
 async-trait = "0.1"
 aws-config = "1.6"
-aws-sdk-kms = "1.62"
+aws-sdk-kms = { version = "1", default-features = false }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = "0.4"
@@ -91,9 +95,9 @@ sqlx = { version = "0.8.3", features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "0.13", features = ["eips", "provider-anvil-node"] }
+alloy = { version = "0.14", features = ["eips", "provider-anvil-node"], default-features = false }
 derive_more = { version = "2", features = ["debug"] }
-dotenv = "0.15"
+dotenvy = "0.15"
 itertools = "0.14"
 strum = "0.27"
 strum_macros = "0.27"
@@ -109,6 +113,17 @@ vergen-git2 = "1.0"
 # https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+
+# Speed up tests and dev build.
+[profile.dev.package]
+# Eth.
+alloy-dyn-abi.opt-level = 3
+alloy-json-abi.opt-level = 3
+alloy-primitives.opt-level = 3
+alloy-sol-type-parser.opt-level = 3
+alloy-sol-types.opt-level = 3
+ruint.opt-level = 3
+tiny-keccak.opt-level = 3
 
 [profile.release]
 opt-level = 3
