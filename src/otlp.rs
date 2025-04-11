@@ -2,12 +2,10 @@
 
 use std::str::FromStr;
 
-use opentelemetry::{KeyValue, trace::TracerProvider};
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
-use opentelemetry_semantic_conventions::{
-    SCHEMA_URL,
-    attribute::{SERVICE_NAME, SERVICE_VERSION},
+use opentelemetry_sdk::{
+    Resource, resource::SdkProvidedResourceDetector, trace::SdkTracerProvider,
 };
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
@@ -66,15 +64,7 @@ impl OtelConfig {
     }
 
     fn resource(&self) -> Resource {
-        Resource::builder()
-            .with_schema_url(
-                [
-                    KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
-                    KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
-                ],
-                SCHEMA_URL,
-            )
-            .build()
+        Resource::builder().with_detector(Box::new(SdkProvidedResourceDetector)).build()
     }
 
     /// Creates an OpenTelemetry provider from this configuration.

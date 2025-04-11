@@ -35,7 +35,7 @@ alloy = { version = "0.14", features = [
     "transports",
     "network",
     "json-rpc",
-    "reqwest-rustls-tls"
+    "reqwest-rustls-tls",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
@@ -54,9 +54,6 @@ metrics = "0.24.0"
 metrics-exporter-prometheus = "0.16"
 opentelemetry = { version = "0.28.0", features = ["trace"] }
 opentelemetry-otlp = { version = "0.28.0" }
-opentelemetry-semantic-conventions = { version = "0.28.0", features = [
-    "semconv_experimental",
-] }
 opentelemetry-stdout = { version = "0.28.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.28.0", default-features = false, features = [
     "trace",
@@ -95,7 +92,10 @@ sqlx = { version = "0.8.3", features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "0.14", features = ["eips", "provider-anvil-node"], default-features = false }
+alloy = { version = "0.14", features = [
+    "eips",
+    "provider-anvil-node",
+], default-features = false }
 alloy-primitives = { version = "1.0.0", features = ["rand"] }
 derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
