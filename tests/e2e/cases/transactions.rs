@@ -567,3 +567,46 @@ async fn resume_paused() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn diverged_nonce() -> eyre::Result<()> {
+    let config = EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1.0),
+        transaction_service_config: TransactionServiceConfig {
+            nonce_check_interval: Duration::from_millis(100),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let signer = PrivateKeySigner::from_bytes(&config.signers[0]).unwrap();
+    let env = Environment::setup(config.clone()).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // alter signer nonce to invalidate the nonce cached by service
+    let nonce = env.provider.get_transaction_count(signer.address()).await.unwrap();
+    env.provider.anvil_set_nonce(signer.address(), nonce + 10).await.unwrap();
+
+    // give the service some time
+    tokio::time::sleep(config.transaction_service_config.nonce_check_interval * 2).await;
+
+    // assert the service is functioning by spamming some transactions
+    let num_accounts = 10;
+    let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
+        let account = MockAccount::new(&env).await.unwrap();
+        account.prepare_tx(&env).await
+    }))
+    .buffered(1)
+    .collect::<Vec<_>>()
+    .await;
+    let handles = transactions
+        .into_iter()
+        .map(|tx| tx_service_handle.send_transaction(tx))
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        assert_confirmed(handle).await;
+    }
+
+    Ok(())
+}
