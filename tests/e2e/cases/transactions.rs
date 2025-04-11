@@ -14,6 +14,7 @@ use futures_util::{
     StreamExt, TryStreamExt,
     future::{join_all, try_join_all},
 };
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
@@ -31,6 +32,9 @@ use relay::{
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::mpsc;
 
+/// A Seed used to derive random accounts from
+const KEY_SEED: u64 = 1337;
+
 /// The pinned block number used for heavier fork tests.
 /// By pinning the number we can re-use the cached rpc read-only data via foundry.
 fn pinned_test_fork_block_number() -> Option<i64> {
@@ -44,9 +48,15 @@ struct MockAccount {
 }
 
 impl MockAccount {
-    /// Creates a new account by going through PREP flow.
+    /// Creates a new random account by going through PREP flow.
     async fn new(env: &Environment) -> eyre::Result<Self> {
-        let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256).unwrap().unwrap();
+        Self::with_key(env, B256::random()).await
+    }
+
+    /// Creates a new account by going through PREP flow with the given key.
+    async fn with_key(env: &Environment, key: B256) -> eyre::Result<Self> {
+        let key =
+            KeyWith712Signer::mock_admin_with_key(KeyType::WebAuthnP256, key).unwrap().unwrap();
 
         let PrepareCreateAccountResponse { context, address, .. } = env
             .relay_endpoint
@@ -227,14 +237,19 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     })
     .await
     .unwrap();
+    // use a consistent seed
+    let rng = StdRng::seed_from_u64(KEY_SEED);
+
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup accounts
     let num_accounts = 100;
-    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(1)
-        .try_collect::<Vec<_>>()
-        .await?;
+    let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
+    let accounts =
+        futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
+            .buffered(1)
+            .try_collect::<Vec<_>>()
+            .await?;
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(num_accounts, num_accounts, 0, &env);
@@ -441,12 +456,16 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
+    // use a consistent seed
+    let rng = StdRng::seed_from_u64(KEY_SEED);
     // setup 30 accounts
     let num_accounts = 30;
-    let accounts = futures_util::stream::iter((0..num_accounts).map(|_| MockAccount::new(&env)))
-        .buffered(1)
-        .try_collect::<Vec<_>>()
-        .await?;
+    let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
+    let accounts =
+        futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
+            .buffered(1)
+            .try_collect::<Vec<_>>()
+            .await?;
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
