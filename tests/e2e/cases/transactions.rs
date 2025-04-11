@@ -440,28 +440,25 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         .await?;
 
     // send transactions for each account
-    let handles = futures_util::stream::iter(accounts.iter().map(|acc| async {
-        let tx = acc.prepare_tx(&env).await;
-        tx_service_handle.send_transaction(tx)
-    }))
-    .buffered(1)
-    .collect::<Vec<_>>()
-    .await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
+    let handles = transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx));
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
     let fees = env.provider.estimate_eip1559_fees().await.unwrap();
     let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
 
-    futures_util::stream::iter(
+    try_join_all(
         signers
             .iter()
             .take(signers.len() - 1)
             .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
     )
-    .buffered(1)
-    .try_collect::<Vec<_>>()
-    .await?;
+    .await
+    .unwrap();
 
     // assert that all transactions are confirmed
     for handle in handles {
@@ -564,6 +561,49 @@ async fn resume_paused() -> eyre::Result<()> {
 
     // assert that all signers participated in processing the transactions this time
     assert!(seen_signers.len() == signers.len());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn diverged_nonce() -> eyre::Result<()> {
+    let config = EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1.0),
+        transaction_service_config: TransactionServiceConfig {
+            nonce_check_interval: Duration::from_millis(100),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let signer = PrivateKeySigner::from_bytes(&config.signers[0]).unwrap();
+    let env = Environment::setup(config.clone()).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // alter signer nonce to invalidate the nonce cached by service
+    let nonce = env.provider.get_transaction_count(signer.address()).await.unwrap();
+    env.provider.anvil_set_nonce(signer.address(), nonce + 10).await.unwrap();
+
+    // give the service some time
+    tokio::time::sleep(config.transaction_service_config.nonce_check_interval * 2).await;
+
+    // assert the service is functioning by spamming some transactions
+    let num_accounts = 10;
+    let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
+        let account = MockAccount::new(&env).await.unwrap();
+        account.prepare_tx(&env).await
+    }))
+    .buffered(1)
+    .collect::<Vec<_>>()
+    .await;
+    let handles = transactions
+        .into_iter()
+        .map(|tx| tx_service_handle.send_transaction(tx))
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        assert_confirmed(handle).await;
+    }
 
     Ok(())
 }
