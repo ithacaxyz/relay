@@ -69,8 +69,8 @@ jobs:
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}
         run: |
-          echo "DATABASE_URL=postgres://postgres:postgres@postgres:5432/postgres"
-          
+          echo "DATABASE_URL=postgres://postgres:postgres@postgres:5432/postgres" >> $GITHUB_ENV
+
       - name: Forge RPC cache
         uses: actions/cache@v4
         with:
