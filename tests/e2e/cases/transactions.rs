@@ -440,28 +440,25 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         .await?;
 
     // send transactions for each account
-    let handles = futures_util::stream::iter(accounts.iter().map(|acc| async {
-        let tx = acc.prepare_tx(&env).await;
-        tx_service_handle.send_transaction(tx)
-    }))
-    .buffered(1)
-    .collect::<Vec<_>>()
-    .await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
+    let handles = transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx));
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
     let fees = env.provider.estimate_eip1559_fees().await.unwrap();
     let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
 
-    futures_util::stream::iter(
+    try_join_all(
         signers
             .iter()
             .take(signers.len() - 1)
             .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
     )
-    .buffered(1)
-    .try_collect::<Vec<_>>()
-    .await?;
+    .await
+    .unwrap();
 
     // assert that all transactions are confirmed
     for handle in handles {
