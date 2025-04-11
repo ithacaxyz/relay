@@ -43,7 +43,7 @@ pub struct SignerMetrics {
     pub gas_spent: Gauge,
     /// Native spent on transactions.
     pub native_spent: Gauge,
-    /// SIgner nonce.
+    /// Signer nonce.
     pub nonce: Counter,
 }
 
