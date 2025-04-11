@@ -57,10 +57,12 @@ jobs:
       - uses: taiki-e/install-action@nextest
 
       - name: Set odyssey environment
+        # when updating deployed address, also update TEST_FORK_BLOCK_NUMBER_PINNED
         if: ${{ matrix.variant == 'odyssey_fork' }}
         run: |
           echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey-devnet.ithaca.xyz" >> $GITHUB_ENV
+          echo "TEST_FORK_BLOCK_NUMBER_PINNED=239180" >> $GITHUB_ENV
           echo "TEST_ENTRYPOINT=0xcceed8216fe5b0a8438f5c4c8ce959e0823dec8d" >> $GITHUB_ENV
           echo "TEST_DELEGATION=0xe09d7f4fbd33c6fc734e07d69e40d23f995b43c9" >> $GITHUB_ENV
 

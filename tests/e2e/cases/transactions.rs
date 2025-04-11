@@ -31,6 +31,12 @@ use relay::{
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::mpsc;
 
+/// The pinned block number used for heavier fork tests.
+/// By pinning the number we can re-use the cached rpc read-only data via foundry.
+fn pinned_test_fork_block_number() -> Option<i64> {
+    std::env::var("TEST_FORK_BLOCK_NUMBER_PINNED").ok().and_then(|s| s.parse().ok())
+}
+
 /// An account that can be used to send userops.
 struct MockAccount {
     address: Address,
@@ -216,6 +222,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let env = Environment::setup(EnvironmentConfig {
         is_prep: true,
         block_time: Some(1.0),
+        fork_block_number: pinned_test_fork_block_number(),
         ..Default::default()
     })
     .await
@@ -427,6 +434,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
             max_transactions_per_signer: 5,
             ..Default::default()
         },
+        fork_block_number: pinned_test_fork_block_number(),
         ..Default::default()
     })
     .await
@@ -497,6 +505,7 @@ async fn resume_paused() -> eyre::Result<()> {
             max_transactions_per_signer: 5,
             ..Default::default()
         },
+        fork_block_number: pinned_test_fork_block_number(),
         ..Default::default()
     })
     .await
