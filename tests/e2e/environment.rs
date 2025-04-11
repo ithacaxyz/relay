@@ -222,12 +222,14 @@ impl Environment {
         }
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
-            let mut opts = PgConnectOptions::from_str(&db_url)?;
+            let opts = PgConnectOptions::from_str(&db_url)?;
             let pool = PgPool::connect_with(opts.clone()).await?;
+
+            // create a separate database for this test and override database name in the url
             let database_name = format!("relay_test_database_{}", rand::random::<u64>());
             pool.execute(format!("create database {database_name}").as_str()).await?;
-            opts = opts.database(&database_name);
-            Some(opts.to_url_lossy().to_string())
+
+            Some(opts.database(&database_name).to_url_lossy().to_string())
         } else {
             None
         };
