@@ -68,6 +68,14 @@ jobs:
         if: ${{ matrix.variant == 'pg' }}
         run: |
           echo "DATABASE_URL=postgres://postgres:postgres@postgres:5432/postgres"
+          
+      - name: Forge RPC cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.foundry/cache
+            ~/.config/.foundry/cache
+          key: rpc-cache-${{ hashFiles('tests/assets/rpc-cache-keyfile') }}
 
       - name: Run tests
         run: |
