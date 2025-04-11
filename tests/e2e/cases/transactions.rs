@@ -427,6 +427,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
             max_transactions_per_signer: 5,
             ..Default::default()
         },
+        ..Default::default()
     })
     .await
     .unwrap();
@@ -496,6 +497,7 @@ async fn resume_paused() -> eyre::Result<()> {
             max_transactions_per_signer: 5,
             ..Default::default()
         },
+        ..Default::default()
     })
     .await
     .unwrap();

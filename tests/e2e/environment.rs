@@ -32,12 +32,18 @@ use std::{
 };
 use url::Url;
 
+/// All settings for configuring the [`Environment`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EnvironmentConfig {
     pub is_prep: bool,
     pub block_time: Option<f64>,
     pub signers: Vec<B256>,
     pub transaction_service_config: TransactionServiceConfig,
+    /// The default block number to use for forking.
+    ///
+    /// Negative value represents `latest - num`.
+    pub fork_block_number: Option<i64>,
 }
 
 impl Default for EnvironmentConfig {
@@ -47,6 +53,7 @@ impl Default for EnvironmentConfig {
             block_time: None,
             signers: vec![RELAY_PRIVATE_KEY],
             transaction_service_config: Default::default(),
+            fork_block_number: None,
         }
     }
 }
@@ -128,11 +135,12 @@ impl Environment {
         } else {
             let mut args = vec![];
 
+            // fork off a block a few blocks lower than `latest` by default
+            let fork_block_number = config.fork_block_number.unwrap_or(-3).to_string();
             let fork_url = std::env::var("TEST_FORK_URL");
             if let Ok(fork_url) = &fork_url {
                 args.extend(["--fork-url", fork_url]);
-                // fork off a block a few blocks lower than `latest`
-                args.extend(["--fork-block-number", "-3"]);
+                args.extend(["--fork-block-number", &fork_block_number]);
             }
             let block_time = config.block_time.map(|t| t.to_string());
             if let Some(block_time) = &block_time {
