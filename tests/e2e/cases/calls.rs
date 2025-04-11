@@ -58,7 +58,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     authorize_keys: Vec::new(), // todo: add test authorize "inline"
                     revoke_keys: Vec::new(),
                     meta: Meta {
-                        fee_token: env.erc20,
+                        fee_token: env.fee_token,
                         key_hash: signer.key_hash(),
                         nonce: Some(U256::from(tx_num + user_op_nonce)),
                     },

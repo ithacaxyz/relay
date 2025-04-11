@@ -255,7 +255,7 @@ impl Environment {
             eoa,
             entrypoint,
             delegation,
-            fee_token: erc20s[0],
+            fee_token: erc20s[1],
             erc20: erc20s[0],
             erc20_alt: erc20s[1],
             chain_id,

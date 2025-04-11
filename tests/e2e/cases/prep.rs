@@ -130,7 +130,7 @@ pub async fn prep_account<'a>(
                 authorize_keys: Vec::new(),
                 revoke_keys: Vec::new(),
                 meta: Meta {
-                    fee_token: env.erc20,
+                    fee_token: env.fee_token,
                     key_hash: user_op_signer.key_hash(),
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
