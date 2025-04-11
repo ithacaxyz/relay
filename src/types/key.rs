@@ -298,7 +298,13 @@ impl KeyWith712Signer {
 
     /// Returns a random admin [`Self`] from a [`KeyType`].
     pub fn random_admin(key_type: KeyType) -> eyre::Result<Option<Self>> {
-        let mock_key = B256::random();
+        Self::mock_admin_with_key(key_type, B256::random())
+    }
+
+    /// Returns a admin [`Self`] from a [`KeyType`].
+    ///
+    /// This is intended for testing.
+    pub fn mock_admin_with_key(key_type: KeyType, mock_key: B256) -> eyre::Result<Option<Self>> {
         let expiry = U40::ZERO;
         let super_admin = true;
 
