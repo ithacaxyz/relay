@@ -488,6 +488,9 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .await
     .unwrap();
 
+    // fix the basefee to avoid it going down and signers getting resumed
+    env.freeze_basefee().await;
+
     // assert that all transactions are confirmed
     for handle in handles {
         assert_confirmed(handle).await;
