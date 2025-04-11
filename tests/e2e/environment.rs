@@ -346,6 +346,30 @@ impl Environment {
             self.mine_block().await;
         }
     }
+
+    /// Fetches the current base_fee_per_gas and spawns a task setting blocks basefee to it.
+    pub async fn freeze_basefee(&self) {
+        // spawn
+        let basefee = self
+            .provider
+            .get_block(Default::default())
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .base_fee_per_gas
+            .unwrap() as u128;
+
+        let provider = self.provider.clone();
+
+        // spawn a task setting basefee for next block to a fixed value.
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                provider.anvil_set_next_block_base_fee_per_gas(basefee).await.unwrap();
+            }
+        });
+    }
 }
 
 /// Mint ERC20s into the addresses.

@@ -550,6 +550,7 @@ impl Signer {
                 self.paused.store(true, Ordering::Relaxed);
             }
         } else if balance >= min_balance {
+            debug!("signer balance is sufficient, re-activating");
             self.emit_event(SignerEvent::ReActive(self.id()));
             self.paused.store(false, Ordering::Relaxed);
         }
