@@ -371,9 +371,12 @@ impl Signer {
                     _ => {}
                 };
 
-                tx.sent = self.send_transaction(typed).await?;
-                self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
-                self.storage.write_pending_transaction(tx).await?;
+                let replacement = self.send_transaction(typed).await?;
+
+                self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
+                    .await?;
+                self.storage.update_pending_envelope(tx.id(), &replacement).await?;
+                tx.sent = replacement;
             } else if !self
                 .provider
                 .get_transaction_by_hash(tx.tx_hash())

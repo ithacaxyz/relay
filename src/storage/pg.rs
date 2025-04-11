@@ -7,7 +7,10 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::{Address, B256, ChainId};
+use alloy::{
+    consensus::TxEnvelope,
+    primitives::{Address, B256, ChainId},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -95,6 +98,19 @@ impl StorageApi for PgStorage {
             serde_json::to_value(&tx.tx)?,
             serde_json::to_value(&tx.sent)?,
             tx.received_at.naive_utc(),
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
+        sqlx::query!(
+            "update pending_txs set envelope = $1 where tx_id = $2",
+            serde_json::to_value(envelope)?,
+            tx_id.as_slice()
         )
         .execute(&self.pool)
         .await
