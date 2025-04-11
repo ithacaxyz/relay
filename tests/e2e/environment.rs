@@ -100,6 +100,7 @@ impl Environment {
     pub async fn setup_with_upgraded() -> eyre::Result<Self> {
         Self::setup(EnvironmentConfig { is_prep: false, ..Default::default() }).await
     }
+    
 
     /// Sets up the test environment including Anvil, contracts, and the relay service.
     ///
