@@ -26,9 +26,10 @@ use alloy::{
     },
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolEvent},
-    transports::{RpcError, TransportErrorKind, TransportResult},
+    transports::{RpcError, TransportErrorKind},
 };
 use chrono::Utc;
+use eyre::{OptionExt, WrapErr};
 use futures_util::{FutureExt, StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
 use std::{
     fmt::Display,
@@ -155,7 +156,7 @@ impl Signer {
         events_tx: mpsc::UnboundedSender<SignerEvent>,
         tx_metrics: Arc<TransactionServiceMetrics>,
         config: TransactionServiceConfig,
-    ) -> TransportResult<Self> {
+    ) -> eyre::Result<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
 
@@ -168,12 +169,12 @@ impl Signer {
 
         // Heuristically estimate the block time.
         let block_time = {
-            let latest = latest.ok_or(RpcError::NullResp)?;
+            let latest = latest.ok_or_eyre("couldn't fetch latest block")?;
             let length = 1000.min(latest.header.number - 1);
             let start = provider
                 .get_block(BlockId::number(latest.header.number - length))
                 .await?
-                .ok_or(RpcError::NullResp)?;
+                .ok_or_eyre("couldn't fetch block to estimate block time")?;
 
             Duration::from_millis(
                 1000 * (latest.header.timestamp - start.header.timestamp) / length,
@@ -595,14 +596,14 @@ impl Signer {
 
     /// Spawns a new [`Signer`] instance. Returns [`SignerHandle`] and the number of futures that
     /// are spawned on signer startup (loaded pending transactions or nonce gap closing tasks).
-    pub async fn into_future(self) -> SignerTask {
+    pub async fn into_future(self) -> eyre::Result<SignerTask> {
         let loaded_transactions = self
             .storage
             .read_pending_transactions(self.address(), self.chain_id)
             .await
-            .expect("failed to read pending transactions");
+            .wrap_err("failed to read pending transactions")?;
 
-        let latest_nonce = self.provider.get_transaction_count(self.address()).await.unwrap();
+        let latest_nonce = self.provider.get_transaction_count(self.address()).await?;
         let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
             .filter(|nonce| {
                 if !loaded_transactions.iter().any(|tx| tx.nonce() == *nonce) {
@@ -614,7 +615,7 @@ impl Signer {
             })
             .collect::<Vec<_>>();
 
-        self.record_and_check_balance().await.expect("failed initial balance check");
+        self.record_and_check_balance().await?;
 
         if self.is_paused() && (!gapped_nonces.is_empty() || !loaded_transactions.is_empty()) {
             warn!("signer is paused, but there are pending transactions loaded on startup");
@@ -681,7 +682,7 @@ impl Signer {
             })
         };
 
-        SignerTask { signer: self, pending, nonce_check, balance_check, span, waker: None }
+        Ok(SignerTask { signer: self, pending, nonce_check, balance_check, span, waker: None })
     }
 }
 

@@ -88,7 +88,7 @@ impl TransactionService {
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
-    ) -> Self {
+    ) -> eyre::Result<Self> {
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
             "chain_id",
             provider.get_chain_id().await.unwrap().to_string(),
@@ -113,10 +113,10 @@ impl TransactionService {
 
         // crate all the signers
         for signer in signers {
-            this.create_signer(signer, storage.clone(), provider.clone()).await;
+            this.create_signer(signer, storage.clone(), provider.clone()).await?;
         }
 
-        this
+        Ok(this)
     }
 
     /// Returns a new handle connected to this service.
@@ -130,7 +130,7 @@ impl TransactionService {
         signer: DynSigner,
         storage: RelayStorage,
         provider: DynProvider,
-    ) {
+    ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
         let metrics = self.metrics.clone();
@@ -144,12 +144,13 @@ impl TransactionService {
             metrics,
             self.config.clone(),
         )
-        .await
-        .unwrap();
-        let task = signer.into_future().await;
+        .await?;
+        let task = signer.into_future().await?;
 
         // track new signer
         self.insert_active_signer(signer_id, task);
+
+        Ok(())
     }
 
     /// Adds a _new_ signer.

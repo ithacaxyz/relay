@@ -3,7 +3,6 @@
 use alloy::{
     primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
-    transports::{RpcError, TransportErrorKind, TransportResult},
 };
 
 use crate::{
@@ -36,7 +35,7 @@ impl Chains {
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
-    ) -> TransportResult<Self> {
+    ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
                 let service = TransactionService::new(
@@ -45,12 +44,12 @@ impl Chains {
                     storage.clone(),
                     config.clone(),
                 )
-                .await;
+                .await?;
                 let transactions = service.handle();
                 tokio::spawn(service);
 
                 let chain_id = provider.get_chain_id().await?;
-                Ok::<_, RpcError<TransportErrorKind>>((chain_id, Chain { provider, transactions }))
+                eyre::Ok((chain_id, Chain { provider, transactions }))
             }))
             .await?,
         );
