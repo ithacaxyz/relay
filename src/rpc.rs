@@ -23,7 +23,7 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, TxHash, U256, bytes},
+    primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::{
         TransactionReceipt,
@@ -398,24 +398,9 @@ impl Relay {
         let bundle_id = BundleId(*tx.id);
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
-        let mut rx = transactions.send_transaction(tx);
+        transactions.send_transaction(tx);
 
-        // Wait for the transaction hash.
-        // TODO: get rid of it and use wallet_getCallsStatus instead. This might not work well if we
-        // resubmit transaction with a higher fee.
-        while let Some(status) = rx.recv().await {
-            match status {
-                TransactionStatus::Pending(hash) | TransactionStatus::Confirmed(hash) => {
-                    return Ok(hash.into());
-                }
-                TransactionStatus::InFlight => continue,
-                TransactionStatus::Failed(err) => {
-                    return Err(RelayError::InternalError(eyre::eyre!("{err}")).into());
-                }
-            }
-        }
-
-        Err(RelayError::InternalError(eyre::eyre!("transaction failed")).into())
+        Ok(bundle_id)
     }
 
     /// Get keys from an account.
@@ -933,20 +918,40 @@ impl RelayApiServer for Relay {
 
     #[instrument(skip_all)]
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
-        let tx_hash: TxHash = *id;
-        let (chain_id, chain) = self.inner.chains.first().unwrap();
-        let provider = chain.provider.clone();
+        let tx_ids = self.inner.storage.get_bundle_transactions(id).await?;
+        let tx_statuses =
+            try_join_all(tx_ids.into_iter().map(|tx_id| async move {
+                self.inner.storage.read_transaction_status(tx_id).await
+            }))
+            .await?;
 
-        // this looks weird but just minimizes code delta later on
-        let receipts = vec![
-            async {
-                Ok::<_, RelayError>((
-                    chain_id,
-                    provider.get_transaction_receipt(tx_hash).await.map_err(RelayError::from)?,
-                ))
-            }
-            .await?,
-        ];
+        let any_pending = tx_statuses.iter().flatten().any(|(_, status)| {
+            matches!(status, TransactionStatus::InFlight | TransactionStatus::Pending(_))
+        });
+        let any_failed = tx_statuses
+            .iter()
+            .flatten()
+            .any(|(_, status)| matches!(status, TransactionStatus::Failed(_)));
+
+        let receipts = try_join_all(
+            tx_statuses
+                .iter()
+                .flatten()
+                .flat_map(|(chain_id, status)| {
+                    Some((chain_id, TransactionStatus::tx_hash(status)?))
+                })
+                .map(|(chain_id, tx_hash)| async move {
+                    let provider = self.inner.chains.get(*chain_id).unwrap().provider;
+                    Ok::<_, RelayError>((
+                        chain_id,
+                        provider
+                            .get_transaction_receipt(tx_hash)
+                            .await
+                            .map_err(RelayError::from)?,
+                    ))
+                }),
+        )
+        .await?;
 
         // filter out non existing receipts, as we can assume this means the tx is pending, which is
         // handled separately
@@ -958,8 +963,9 @@ impl RelayApiServer for Relay {
         let any_reverted = receipts.iter().any(|(_, receipt)| !receipt.status());
         let all_reverted = receipts.iter().all(|(_, receipt)| !receipt.status());
 
-        // this is not entirely correct but this is temporary anyway
-        let status = if receipts.is_empty() {
+        let status = if any_failed {
+            CallStatusCode::Failed
+        } else if any_pending {
             CallStatusCode::Pending
         } else if all_reverted {
             CallStatusCode::Reverted
@@ -970,7 +976,7 @@ impl RelayApiServer for Relay {
         };
 
         Ok(CallsStatus {
-            id: BundleId::ZERO,
+            id,
             status,
             receipts: receipts
                 .into_iter()
