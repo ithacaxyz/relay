@@ -6,7 +6,10 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::{Address, ChainId};
+use alloy::{
+    consensus::TxEnvelope,
+    primitives::{Address, ChainId},
+};
 use async_trait::async_trait;
 use dashmap::{DashMap, Entry};
 
@@ -54,6 +57,13 @@ impl StorageApi for InMemoryStorage {
 
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {
         self.pending_transactions.insert(tx.id(), tx.clone());
+        Ok(())
+    }
+
+    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
+        if let Some(mut tx) = self.pending_transactions.get_mut(&tx_id) {
+            tx.sent = envelope.clone();
+        }
         Ok(())
     }
 

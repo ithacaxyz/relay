@@ -25,6 +25,7 @@ use relay::{
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
+use sqlx::{ConnectOptions, Executor, PgPool, postgres::PgConnectOptions};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -220,6 +221,19 @@ impl Environment {
                 .await?;
         }
 
+        let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            let opts = PgConnectOptions::from_str(&db_url)?;
+            let pool = PgPool::connect_with(opts.clone()).await?;
+
+            // create a separate database for this test and override database name in the url
+            let database_name = format!("relay_test_database_{}", rand::random::<u64>());
+            pool.execute(format!("create database {database_name}").as_str()).await?;
+
+            Some(opts.database(&database_name).to_url_lossy().to_string())
+        } else {
+            None
+        };
+
         // Start relay service.
         let relay_handle = try_spawn(
             RelayConfig::default()
@@ -238,7 +252,7 @@ impl Environment {
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
-                .with_database_url(std::env::var("DATABASE_URL").ok()),
+                .with_database_url(database_url),
             registry,
         )
         .await?;

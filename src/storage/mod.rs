@@ -10,7 +10,10 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::{Address, ChainId};
+use alloy::{
+    consensus::TxEnvelope,
+    primitives::{Address, ChainId},
+};
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -49,6 +52,10 @@ impl StorageApi for RelayStorage {
 
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> api::Result<()> {
         self.inner.write_pending_transaction(tx).await
+    }
+
+    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> api::Result<()> {
+        self.inner.update_pending_envelope(tx_id, envelope).await
     }
 
     async fn remove_pending_transaction(&self, tx_id: TxId) -> api::Result<()> {

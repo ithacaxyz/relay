@@ -5,7 +5,10 @@ use crate::{
     transactions::{PendingTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
-use alloy::primitives::{Address, ChainId};
+use alloy::{
+    consensus::TxEnvelope,
+    primitives::{Address, ChainId},
+};
 use async_trait::async_trait;
 use std::fmt::Debug;
 
@@ -26,6 +29,9 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;
+
+    /// Updates [`PendingTransaction::sent`] envelope in storage.
+    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()>;
 
     /// Removes a pending transaction from storage.
     async fn remove_pending_transaction(&self, tx_id: TxId) -> Result<()>;

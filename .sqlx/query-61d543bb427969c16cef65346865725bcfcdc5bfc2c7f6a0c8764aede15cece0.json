@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update pending_txs set envelope = $1 where tx_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "61d543bb427969c16cef65346865725bcfcdc5bfc2c7f6a0c8764aede15cece0"
+}
