@@ -17,8 +17,6 @@ fn init_tracing_subscriber() -> Option<OtelGuard> {
     );
 
     if let Some(cfg) = OtelConfig::load() {
-        debug!(endpoint = %cfg.endpoint, "initializing opentelemetry");
-
         let guard = cfg.provider();
         registry.with(guard.layer()).init();
         Some(guard)
@@ -36,6 +34,9 @@ async fn main() {
     }
 
     let _guard = init_tracing_subscriber();
+    if _guard.is_some() {
+        debug!("opentelemetry initialized");
+    }
 
     let args = Args::parse();
     if let Err(err) = args.run().await {
