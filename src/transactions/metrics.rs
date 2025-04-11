@@ -21,6 +21,8 @@ pub struct TransactionServiceMetrics {
     pub pending: Gauge,
     /// Number of queued transactions.
     pub queued: Gauge,
+    /// Duration of polling the transaction service, in nanoseconds.
+    pub poll_duration: Histogram,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.
@@ -35,6 +37,8 @@ pub struct SignerMetrics {
     pub detected_nonce_gaps: Counter,
     /// Number of closed nonce gaps
     pub closed_nonce_gaps: Counter,
+    /// Duration of polling the signer task, in nanoseconds.
+    pub poll_duration: Histogram,
 }
 
 impl SignerMetrics {
@@ -49,6 +53,7 @@ impl SignerMetrics {
             confirmation_time: histogram!("signer.confirmation_time", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             detected_nonce_gaps: counter!("signer.detected_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             closed_nonce_gaps: counter!("signer.closed_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            poll_duration: histogram!("signer.poll_duration", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
         }
     }
 }
