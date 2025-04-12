@@ -1,9 +1,12 @@
 //! Types for metrics.
 
 mod periodic;
+use opentelemetry::trace::SpanKind;
 pub use periodic::spawn_periodic_collectors;
 
 mod transport;
+use tracing::{Level, span};
+use tracing_futures::Instrument;
 pub use transport::*;
 
 use futures_util::future::BoxFuture;
@@ -39,30 +42,41 @@ where
         let service = self.service.clone();
 
         Box::pin(async move {
-            let method = req.method_name().to_string();
+            let method = req.method_name().replace("wallet_", "relay_");
+            let span = span!(
+                Level::INFO,
+                "request",
+                otel.kind = ?SpanKind::Server,
+                otel.name = format!("relay/{}", method),
+                rpc.jsonrpc.version = "2.0",
+                rpc.system = "jsonrpc",
+                rpc.jsonrpc.request_id = %req.id(),
+                rpc.method = method,
+            );
 
+            // the span handle is cloned here so we can record more fields later
             let timer = Instant::now();
-            let rp = service.call(req).await;
+            let rp = service.call(req).instrument(span.clone()).await;
             let elapsed = timer.elapsed();
 
-            // only record metrics for methods that exist
-            if rp
-                .as_error_code()
-                .is_none_or(|code| code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE)
-            {
-                let method = method.replace("wallet_", "relay_");
-                counter!(
-                    "rpc.call.count",
-                    "method" => method.clone(),
-                    "code" => rp.as_error_code().unwrap_or_default().to_string()
-                )
-                .increment(1);
+            if let Some(error_code) = rp.as_error_code() {
+                span.record("rpc.jsonrpc.error_code", error_code);
 
-                histogram!(
-                    "rpc.call.latency",
-                    "method" => method
-                )
-                .record(elapsed.as_millis() as f64);
+                // only record metrics for methods that exist
+                if error_code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE {
+                    counter!(
+                        "rpc.call.count",
+                        "method" => method.clone(),
+                        "code" => rp.as_error_code().unwrap_or_default().to_string()
+                    )
+                    .increment(1);
+
+                    histogram!(
+                        "rpc.call.latency",
+                        "method" => method
+                    )
+                    .record(elapsed.as_millis() as f64);
+                }
             }
 
             rp

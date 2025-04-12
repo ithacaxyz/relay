@@ -513,7 +513,6 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
-    #[instrument(skip_all, parent = None)]
     async fn health(&self) -> RpcResult<RelaySettings> {
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
@@ -522,12 +521,10 @@ impl RelayApiServer for Relay {
         })
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         Ok(self.inner.fee_tokens.clone())
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn prepare_create_account(
         &self,
         request: PrepareCreateAccountParameters,
@@ -565,7 +562,6 @@ impl RelayApiServer for Relay {
         })
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn create_account(
         &self,
         request: CreateAccountParameters,
@@ -596,7 +592,6 @@ impl RelayApiServer for Relay {
         Ok(keys)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn get_accounts(
         &self,
         request: GetAccountsParameters,
@@ -647,12 +642,10 @@ impl RelayApiServer for Relay {
         .await
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
         Ok(self.get_keys(request).await?)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn prepare_calls(
         &self,
         request: PrepareCallsParameters,
@@ -765,7 +758,6 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn prepare_upgrade_account(
         &self,
         request: PrepareUpgradeAccountParameters,
@@ -838,7 +830,6 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn send_prepared_calls(
         &self,
         mut request: SendPreparedCallsParameters,
@@ -883,7 +874,6 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn upgrade_account(
         &self,
         mut request: UpgradeAccountParameters,
@@ -918,7 +908,6 @@ impl RelayApiServer for Relay {
         Ok(response)
     }
 
-    #[instrument(skip_all, parent = None)]
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
         let tx_ids = self.inner.storage.get_bundle_transactions(id).await?;
         let tx_statuses =
