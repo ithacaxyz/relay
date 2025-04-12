@@ -14,6 +14,7 @@ use alloy::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use tracing::instrument;
 
 /// PostgreSQL storage implementation.
 #[derive(Debug)]
@@ -41,6 +42,7 @@ enum TxStatus {
 
 #[async_trait]
 impl StorageApi for PgStorage {
+    #[instrument(self)]
     async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>> {
         let row =
             sqlx::query!(r#"select account from accounts where address = $1"#, address.as_slice())
@@ -51,6 +53,7 @@ impl StorageApi for PgStorage {
         Ok(row.and_then(|row| serde_json::from_value(row.account).ok()))
     }
 
+    #[instrument(skip_all)]
     async fn write_prep(&self, account: CreatableAccount) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
         sqlx::query!(
@@ -79,6 +82,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(self)]
     async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>> {
         let rows =
             sqlx::query!("select account_address from keys where key_id = $1", id.as_slice())
@@ -89,6 +93,7 @@ impl StorageApi for PgStorage {
         Ok(rows.into_iter().map(|row| Address::from_slice(&row.account_address)).collect())
     }
 
+    #[instrument(skip_all)]
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {
         sqlx::query!(
             "insert into pending_txs (chain_id, sender, tx_id, tx, envelope, received_at) values ($1, $2, $3, $4, $5, $6)",
@@ -106,6 +111,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip(self, envelope))]
     async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
         sqlx::query!(
             "update pending_txs set envelope = $1 where tx_id = $2",
@@ -119,6 +125,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn remove_pending_transaction(&self, tx_id: TxId) -> Result<()> {
         sqlx::query!("delete from pending_txs where tx_id = $1", tx_id.as_slice())
             .execute(&self.pool)
@@ -128,6 +135,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn read_pending_transactions(
         &self,
         signer: Address,
@@ -158,6 +166,7 @@ impl StorageApi for PgStorage {
             .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    #[instrument(skip(self, status))]
     async fn write_transaction_status(
         &self,
         tx_id: TxId,
@@ -207,6 +216,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn read_transaction_status(
         &self,
         tx: TxId,
@@ -240,6 +250,7 @@ impl StorageApi for PgStorage {
         }))
     }
 
+    #[instrument(skip(self))]
     async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()> {
         sqlx::query!(
             "insert into txs (tx_id, bundle_id, chain_id) values ($1, $2, $3)",
@@ -254,6 +265,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>> {
         let rows = sqlx::query!("select tx_id from txs where bundle_id = $1", bundle.as_slice())
             .fetch_all(&self.pool)
