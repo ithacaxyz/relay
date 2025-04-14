@@ -105,4 +105,8 @@ impl StorageApi for RelayStorage {
     async fn read_queued_transactions(&self, chain_id: u64) -> api::Result<Vec<RelayTransaction>> {
         self.inner.read_queued_transactions(chain_id).await
     }
+
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> api::Result<()> {
+        self.inner.remove_from_queue(tx).await
+    }
 }

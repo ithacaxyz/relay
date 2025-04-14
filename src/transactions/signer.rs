@@ -450,6 +450,9 @@ impl Signer {
     async fn send_and_watch_transaction(&self, tx: RelayTransaction) -> Result<(), SignerError> {
         let tx_id = tx.id;
 
+        // Make sure the transaction is no longer in the queue as we've started processing it.
+        self.storage.remove_from_queue(&tx).await?;
+
         let tx = match self.validate_transaction(tx).await {
             Ok(tx) => tx,
             Err(err) => {

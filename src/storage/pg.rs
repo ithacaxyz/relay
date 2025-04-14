@@ -95,8 +95,6 @@ impl StorageApi for PgStorage {
 
     #[instrument(skip_all)]
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {
-        let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
-
         sqlx::query!(
             "insert into pending_txs (chain_id, sender, tx_id, tx, envelopes, received_at) values ($1, $2, $3, $4, $5, $6)",
             tx.chain_id() as i64, // yikes!
@@ -106,16 +104,9 @@ impl StorageApi for PgStorage {
             serde_json::to_value(&tx.sent)?,
             tx.received_at.naive_utc(),
         )
-        .execute(&mut *db_tx)
+        .execute(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
-
-        sqlx::query!("delete from queued_txs where tx_id = $1", tx.tx.id.as_slice())
-            .execute(&mut *db_tx)
-            .await
-            .map_err(eyre::Error::from)?;
-
-        db_tx.commit().await.map_err(eyre::Error::from)?;
 
         Ok(())
     }
@@ -313,5 +304,15 @@ impl StorageApi for PgStorage {
             .into_iter()
             .map(|row| serde_json::from_value(row.tx))
             .collect::<std::result::Result<_, _>>()?)
+    }
+
+    #[instrument(skip(self))]
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> Result<()> {
+        sqlx::query!("delete from queued_txs where tx_id = $1", tx.id.as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        Ok(())
     }
 }

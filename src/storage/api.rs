@@ -27,7 +27,7 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Reads all account addresses associated with a ID.
     async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>>;
 
-    /// Writes a pending transaction to storage. Removes it from the queue.
+    /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;
 
     /// Pushes a new [`TxEnvelope`] to [`PendingTransaction::sent`].
@@ -63,4 +63,7 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Reads queued transactions for the given chain.
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>>;
+
+    /// Removes a transaction from the queue. No-op if transaction is not in the queue.
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> Result<()>;
 }
