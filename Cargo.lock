@@ -4616,7 +4616,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "metrics-exporter-prometheus",
- "opentelemetry 0.28.0",
+ "opentelemetry 0.29.1",
  "opentelemetry-otlp",
  "opentelemetry-stdout",
  "opentelemetry_sdk 0.28.0",
