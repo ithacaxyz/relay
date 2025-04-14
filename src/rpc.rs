@@ -13,7 +13,9 @@ use crate::{
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::AccountRegistryCalls,
-        AssetDiffs, Call, Key, KeyHash, KeyHashWithID,
+        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
+        EntryPoint::UserOpExecuted,
+        Key, KeyHash, KeyHashWithID,
         rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
@@ -951,8 +953,20 @@ impl RelayApiServer for Relay {
             .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
             .collect();
 
-        let any_reverted = receipts.iter().any(|(_, receipt)| !receipt.status());
-        let all_reverted = receipts.iter().all(|(_, receipt)| !receipt.status());
+        // note(onbjerg): this currently rests on the assumption that there is only one userop per
+        // transaction, and that each transaction in a bundle originates from a single user
+        //
+        // in the future, this may not be the case, and we need to store the originating users
+        // address in the txs table.
+        //
+        // note that we also assume that failure to decode a log as `UserOpExecuted` means the
+        // operation failed
+        let any_reverted = receipts.iter().any(|(_, receipt)| {
+            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+        });
+        let all_reverted = receipts.iter().all(|(_, receipt)| {
+            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+        });
 
         let status = if any_failed {
             CallStatusCode::Failed
