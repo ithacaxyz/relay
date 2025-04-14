@@ -25,7 +25,7 @@
       },
       {
         "ordinal": 4,
-        "name": "envelope",
+        "name": "envelopes",
         "type_info": "Jsonb"
       },
       {

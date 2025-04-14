@@ -19,6 +19,7 @@ use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
+    storage::StorageApi,
     transactions::{RelayTransaction, TransactionStatus},
     types::{
         Call, KeyType, KeyWith712Signer, Signature,
@@ -326,13 +327,9 @@ async fn dropped_transaction() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_bump() -> eyre::Result<()> {
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
-        block_time: Some(1.0),
-        ..Default::default()
-    })
-    .await
-    .unwrap();
+    let config = EnvironmentConfig { is_prep: true, block_time: Some(1.0), ..Default::default() };
+    let signer = PrivateKeySigner::from_bytes(&config.signers.first().unwrap()).unwrap().address();
+    let env = Environment::setup(config).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup account
@@ -362,6 +359,10 @@ async fn fee_bump() -> eyre::Result<()> {
     assert!(
         new_tx.max_priority_fee_per_gas().unwrap() > dropped.max_priority_fee_per_gas().unwrap()
     );
+    let pending_txs =
+        env.relay_handle.storage.read_pending_transactions(signer, env.chain_id).await.unwrap();
+    assert_eq!(pending_txs.len(), 1);
+    assert_eq!(pending_txs.first().unwrap().sent.len(), 2);
 
     // mine a block with the new transaction
     env.mine_block().await;

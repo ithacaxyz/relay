@@ -54,8 +54,8 @@ impl StorageApi for RelayStorage {
         self.inner.write_pending_transaction(tx).await
     }
 
-    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> api::Result<()> {
-        self.inner.update_pending_envelope(tx_id, envelope).await
+    async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> api::Result<()> {
+        self.inner.add_pending_envelope(tx_id, envelope).await
     }
 
     async fn remove_pending_transaction(&self, tx_id: TxId) -> api::Result<()> {

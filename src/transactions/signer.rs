@@ -234,6 +234,22 @@ impl Signer {
         Ok(())
     }
 
+    /// Invoked when a transaction is confirmed.
+    async fn on_confirmed_transaction(
+        &self,
+        tx_id: TxId,
+        tx_hash: B256,
+    ) -> Result<(), StorageError> {
+        self.update_tx_status(tx_id, TransactionStatus::Confirmed(tx_hash)).await?;
+        self.storage.remove_pending_transaction(tx_id).await?;
+
+        // Spawn a task to record metrics.
+        let this = self.clone();
+        tokio::spawn(async move { this.record_confirmed_metrics(tx_hash).await });
+
+        Ok(())
+    }
+
     async fn validate_transaction(
         &self,
         mut tx: RelayTransaction,
@@ -306,25 +322,27 @@ impl Signer {
         let mut retries = 0;
 
         loop {
-            let handle = self
-                .provider
-                .watch_pending_transaction(
-                    PendingTransactionConfig::new(tx.tx_hash())
-                        .with_timeout(Some(self.block_time * 2)),
-                )
-                .await?;
+            let mut handles = FuturesUnordered::new();
+            for sent in &tx.sent {
+                handles.push(
+                    self.provider
+                        .watch_pending_transaction(
+                            PendingTransactionConfig::new(*sent.tx_hash())
+                                .with_timeout(Some(self.block_time * 2)),
+                        )
+                        .await?,
+                );
+            }
 
-            if handle.await.is_ok() {
-                let tx_hash = tx.tx_hash();
-                self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
-                self.storage.remove_pending_transaction(tx.id()).await?;
-
-                // Spawn a task to record metrics. We don't do this here to avoid blocking the
-                // signer task.
-                let this = self.clone();
-                tokio::spawn(async move { this.record_confirmed_metrics(tx_hash).await });
-
-                return Ok(());
+            loop {
+                match handles.next().await {
+                    Some(Ok(tx_hash)) => {
+                        self.on_confirmed_transaction(tx.id(), tx_hash).await?;
+                        return Ok(());
+                    }
+                    Some(_) => continue,
+                    None => break,
+                }
             }
 
             if retries > 3 {
@@ -345,26 +363,28 @@ impl Signer {
             let fee_estimate = Eip1559Estimator::default()
                 .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
 
+            let best_tx = tx.best_tx();
+
             // if the latest block base fee is higher than max_fee, we don't want to block on
             // waiting for it to go down
-            if tx.sent.max_fee_per_gas() < last_base_fee {
+            if best_tx.max_fee_per_gas() < last_base_fee {
                 return Err(SignerError::FeesTooHigh);
             }
 
             // TODO: figure out a more reasonable condition here or whether we should just always
             // set max_priority_fee = max_fee
             if fee_estimate.max_priority_fee_per_gas
-                > tx.sent.max_priority_fee_per_gas().unwrap_or(tx.sent.max_fee_per_gas()) * 11 / 10
+                > best_tx.max_priority_fee_per_gas().unwrap_or(best_tx.max_fee_per_gas()) * 11 / 10
             {
                 // Fees went up, assume we need to bump them
                 let new_tip_cap = fee_estimate.max_priority_fee_per_gas;
 
                 // Ensure we can afford the bump given the current base fee
-                if (tx.sent.max_fee_per_gas() - last_base_fee) < new_tip_cap {
+                if (best_tx.max_fee_per_gas() - last_base_fee) < new_tip_cap {
                     return Err(SignerError::FeesTooHigh);
                 }
 
-                let mut typed = TypedTransaction::from(tx.sent.clone());
+                let mut typed = TypedTransaction::from(best_tx.clone());
                 match &mut typed {
                     TypedTransaction::Eip1559(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
                     TypedTransaction::Eip7702(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
@@ -372,19 +392,18 @@ impl Signer {
                 };
 
                 let replacement = self.send_transaction(typed).await?;
-
+                self.storage.add_pending_envelope(tx.id(), &replacement).await?;
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
                     .await?;
-                self.storage.update_pending_envelope(tx.id(), &replacement).await?;
-                tx.sent = replacement;
+                tx.sent.push(replacement);
             } else if !self
                 .provider
-                .get_transaction_by_hash(tx.tx_hash())
+                .get_transaction_by_hash(*best_tx.tx_hash())
                 .await
                 .is_ok_and(|tx| tx.is_some())
             {
                 // The transaction was dropped, try to rebroadcast it.
-                let _ = self.provider.send_raw_transaction(&tx.sent.encoded_2718()).await?;
+                let _ = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await?;
                 retries += 1;
             }
         }
@@ -394,10 +413,27 @@ impl Signer {
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
         self.metrics.pending.increment(1);
         if let Err(err) = self.watch_transaction_inner(&mut tx).await {
+            // If we've failed to send the transaction, start closing the nonce gap to make sure we
+            // occupy the chosen nonce.
+            self.close_nonce_gap(tx.nonce(), Some(tx.fees())).await;
+
+            // After making sure that the nonce is occupied, check if it was occupied by one of the
+            // transactions sent before.
+            for sent in &tx.sent {
+                if let Ok(Some(sent)) = self.provider.get_transaction_by_hash(*sent.tx_hash()).await
+                {
+                    if sent.block_number.is_some() {
+                        self.on_confirmed_transaction(tx.id(), *sent.inner.tx_hash()).await?;
+                        return Ok(());
+                    }
+                }
+            }
+
+            // None of the sent transactions confirmed, mark transaction as failed.
             self.metrics.pending.decrement(1);
             self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
             self.storage.remove_pending_transaction(tx.id()).await?;
-            self.close_nonce_gap(tx.sent.nonce(), Some(tx.fees())).await;
+
             return Ok(());
         }
 
@@ -452,9 +488,15 @@ impl Signer {
                 return Ok(());
             }
         };
-        let tx = PendingTransaction { tx, sent, signer: self.address(), received_at: Utc::now() };
 
-        self.update_tx_status(tx.id(), TransactionStatus::Pending(tx.tx_hash())).await?;
+        self.update_tx_status(tx.id, TransactionStatus::Pending(*sent.tx_hash())).await?;
+
+        let tx = PendingTransaction {
+            tx,
+            sent: vec![sent],
+            signer: self.address(),
+            received_at: Utc::now(),
+        };
         self.storage.write_pending_transaction(&tx).await?;
 
         self.watch_transaction(tx).await
