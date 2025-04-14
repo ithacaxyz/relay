@@ -328,7 +328,7 @@ async fn dropped_transaction() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_bump() -> eyre::Result<()> {
     let config = EnvironmentConfig { is_prep: true, block_time: Some(1.0), ..Default::default() };
-    let signer = PrivateKeySigner::from_bytes(&config.signers.first().unwrap()).unwrap().address();
+    let signer = PrivateKeySigner::from_bytes(config.signers.first().unwrap()).unwrap().address();
     let env = Environment::setup(config).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
