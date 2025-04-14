@@ -36,6 +36,7 @@ use alloy::{
 use futures_util::{
     TryFutureExt,
     future::{try_join_all, try_join3},
+    join,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -438,12 +439,14 @@ impl Relay {
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
         let account = Account::new(request.address, self.provider(request.chain_id)?);
 
-        if !account.is_delegated().await? {
+        let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
+
+        if !is_delegated? {
             return Err(AuthError::EoaNotDelegated(request.address).boxed().into());
         }
 
         // Get all keys from account
-        let keys = account.keys().await.map_err(RelayError::from)?;
+        let keys = keys.map_err(RelayError::from)?;
 
         // Get all permissions from non admin keys
         let mut permissioned_keys = account
