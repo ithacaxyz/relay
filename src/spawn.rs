@@ -9,13 +9,14 @@ use crate::{
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
-    types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
+    types::{CoinKind, CoinPair, CoinRegistry, Delegation::DelegationInstance, FeeTokens},
 };
 use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::ClientBuilder,
     transports::layers::RetryBackoffLayer,
 };
+use futures_util::future::try_join_all;
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
@@ -99,10 +100,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     };
 
     // construct provider
-    let signers = futures_util::future::try_join_all(
-        config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)),
-    )
-    .await?;
+    let signers =
+        try_join_all(config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)))
+            .await?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
     // setup metrics exporter and periodic metric collectors
@@ -111,17 +111,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
         .await?;
 
-    let providers: Vec<DynProvider> = futures_util::future::try_join_all(
-        config.chain.endpoints.iter().cloned().map(|url| async move {
+    let providers: Vec<DynProvider> =
+        try_join_all(config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
                 .layer(TraceLayer)
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
                 .map(|client| ProviderBuilder::new().on_client(client).erased())
-        }),
-    )
-    .await?;
+        }))
+        .await?;
 
     // construct quote signer
     let quote_signer = DynSigner::load(&config.secrets.quote_key, None).await?;
@@ -149,9 +148,31 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 
+    // ensures all entrypoint and delegation pairs are valid
+    try_join_all(config.contracts.iter().map(|contracts| {
+        // all chains are expected to have the same entrypoints and delegations
+        let provider = providers[0].clone();
+        async move {
+            let config_entrypoint = contracts.entrypoint;
+            let onchain_entrypoint = DelegationInstance::new(contracts.delegation, provider)
+                .ENTRY_POINT()
+                .call()
+                .await?;
+
+            if onchain_entrypoint != config_entrypoint {
+                return Err(eyre::eyre!(
+                    "Delegation has entrypoint {onchain_entrypoint} not {config_entrypoint}",
+                ));
+            }
+
+            Ok(())
+        }
+    }))
+    .await?;
+
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
-        config.entrypoint,
+        config.contracts,
         chains.clone(),
         quote_signer,
         config.quote,

@@ -17,7 +17,7 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::join_all;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::{RelayConfig, TransactionServiceConfig},
+    config::{EntryWithDelegation, RelayConfig, TransactionServiceConfig},
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
@@ -248,7 +248,7 @@ impl Environment {
                 )
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
-                .with_entrypoint(entrypoint)
+                .with_contracts(vec![EntryWithDelegation { entrypoint, delegation }])
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)

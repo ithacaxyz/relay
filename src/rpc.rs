@@ -10,6 +10,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    config::EntryWithDelegation,
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::AccountRegistryCalls,
@@ -149,7 +150,7 @@ impl Relay {
     /// Create a new Ithaca relay module.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        entrypoint: Address,
+        contracts: Vec<EntryWithDelegation>,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -160,7 +161,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
     ) -> Self {
         let inner = RelayInner {
-            entrypoint,
+            contracts,
             chains,
             fee_tokens,
             fee_recipient,
@@ -211,7 +212,7 @@ impl Relay {
 
         // load account and entrypoint
         let entrypoint =
-            Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
+            Entry::new(self.entrypoint(), provider.clone()).with_overrides(overrides.clone());
 
         let (nonce, native_fee_estimate, eth_price) = try_join3(
             // fetch nonce if not specified
@@ -396,7 +397,7 @@ impl Relay {
             return Err(QuoteError::QuoteExpired.into());
         }
 
-        let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
+        let tx = RelayTransaction::new(quote, self.entrypoint(), authorization);
 
         // TODO: Right now we only support a single transaction per action and per bundle, so we can
         // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
@@ -484,8 +485,7 @@ impl Relay {
         let mut calls = Vec::with_capacity(keys.len());
         for key in keys {
             // additional_calls: permission & account registry
-            let (authorize_call, additional_calls) =
-                key.into_calls(self.inner.entrypoint, account)?;
+            let (authorize_call, additional_calls) = key.into_calls(self.entrypoint(), account)?;
             calls.push(authorize_call);
             calls.extend(additional_calls);
         }
@@ -517,6 +517,21 @@ impl Relay {
             .find(|key| key.hash == key_hash)
             .map(|k| k.authorize_key.key))
     }
+
+    /// Returns the first supported entrypoint.
+    ///
+    /// Note: Panics if contracts is empty.
+    fn entrypoint(&self) -> Address {
+        self.inner.contracts[0].entrypoint
+    }
+
+    /// Ensures the delegation address is supported, otherwise returns error.
+    fn ensure_delegation_support(&self, delegation: Address) -> Result<(), RelayError> {
+        if !self.inner.contracts.iter().any(|contracts| contracts.delegation == delegation) {
+            return Err(RelayError::UnsupportedDelegation(delegation));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -524,7 +539,7 @@ impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<RelaySettings> {
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
-            entrypoint: self.inner.entrypoint,
+            contracts: self.inner.contracts.clone(),
             fee_recipient: self.inner.fee_recipient,
             quote_config: self.inner.quote_config.clone(),
         })
@@ -538,6 +553,8 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCreateAccountParameters,
     ) -> RpcResult<PrepareCreateAccountResponse> {
+        self.ensure_delegation_support(request.capabilities.delegation)?;
+
         // Creating account should have at least one admin key.
         if request.capabilities.authorize_keys.is_empty() {
             return Err(KeysError::MissingAdminKey)?;
@@ -581,7 +598,7 @@ impl RelayApiServer for Relay {
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
             keys.iter().map(|key| key.id).collect(),
-            self.inner.entrypoint,
+            self.entrypoint(),
             self.provider(request.context.chain_id)?,
         )
         .await?;
@@ -608,8 +625,7 @@ impl RelayApiServer for Relay {
         let provider = self.provider(request.chain_id)?;
 
         let mut accounts =
-            AccountRegistryCalls::accounts(request.id, self.inner.entrypoint, provider.clone())
-                .await?;
+            AccountRegistryCalls::accounts(request.id, self.entrypoint(), provider.clone()).await?;
 
         if accounts.is_none() {
             // Only read from storage if the onchain mapping does not exist. It's possible that the
@@ -671,7 +687,7 @@ impl RelayApiServer for Relay {
             .capabilities
             .revoke_keys
             .iter()
-            .flat_map(|key| key.clone().into_calls(self.inner.entrypoint));
+            .flat_map(|key| key.clone().into_calls(self.entrypoint()));
 
         // Find the key that authorizes this userop
         let Some(key) = self
@@ -708,9 +724,7 @@ impl RelayApiServer for Relay {
         let all_calls = authorize_calls
             .into_iter()
             .chain(maybe_prep.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
-                acc.id_signatures
-                    .iter()
-                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+                acc.id_signatures.iter().map(|id| id.to_call(self.entrypoint(), acc.prep.address))
             }))
             .chain(request.calls)
             .chain(revoke_calls)
@@ -744,7 +758,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) =
-            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+            compute_eip712_data(&quote.ty().op, self.entrypoint(), &provider)
                 .await
                 .map_err(RelayError::from)?;
 
@@ -771,6 +785,8 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareUpgradeAccountParameters,
     ) -> RpcResult<PrepareCallsResponse> {
+        self.ensure_delegation_support(request.capabilities.delegation)?;
+
         let provider = self.provider(request.chain_id)?;
 
         // Upgrading account should have at least one authorize admin key since
@@ -816,7 +832,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) =
-            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+            compute_eip712_data(&quote.ty().op, self.entrypoint(), &provider)
                 .await
                 .map_err(RelayError::from)?;
 
@@ -1009,8 +1025,8 @@ impl RelayApiServer for Relay {
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
 struct RelayInner {
-    /// The entrypoint address.
-    entrypoint: Address,
+    /// The entrypoint and delegation supported addresses.
+    contracts: Vec<EntryWithDelegation>,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.

@@ -25,6 +25,9 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     contract Delegation {
+        /// The entry point address.
+        address public immutable ENTRY_POINT;
+
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]

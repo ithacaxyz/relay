@@ -18,7 +18,7 @@ mod storage;
 pub use storage::StorageError;
 
 use alloy::{
-    primitives::{Bytes, ChainId},
+    primitives::{Address, Bytes, ChainId},
     transports::TransportErrorKind,
 };
 use thiserror::Error;
@@ -44,6 +44,9 @@ pub enum RelayError {
     /// Errors related to storage.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// The delegation is not supported.
+    #[error("unsupported delegation address")]
+    UnsupportedDelegation(Address),
     /// The chain is not supported.
     #[error("unsupported chain {0}")]
     UnsupportedChain(ChainId),
@@ -73,10 +76,12 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::UserOp(inner) => (*inner).into(),
             RelayError::Keys(inner) => inner.into(),
             RelayError::Storage(inner) => inner.into(),
-            RelayError::UnsupportedChain(_)
-            | RelayError::AbiError(_)
-            | RelayError::RpcError(_)
-            | RelayError::InternalError(_) => internal_rpc(err.to_string()),
+            RelayError::UnsupportedChain(_) | RelayError::UnsupportedDelegation(_) => {
+                invalid_params(err.to_string())
+            }
+            RelayError::AbiError(_) | RelayError::RpcError(_) | RelayError::InternalError(_) => {
+                internal_rpc(err.to_string())
+            }
         }
     }
 }

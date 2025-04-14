@@ -1,7 +1,8 @@
 //! # Relay CLI
 use crate::{
-    config::RelayConfig,
+    config::{EntryWithDelegation, RelayConfig},
     constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    serde::contracts::parse_entrypoint_with_delegation,
     spawn::try_spawn_with_args,
 };
 use alloy::primitives::Address;
@@ -38,9 +39,20 @@ pub struct Args {
     /// The port to serve the metrics on.
     #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
     pub metrics_port: u16,
-    /// The address of the entrypoint.
-    #[arg(long = "entrypoint", value_name = "ENTRYPOINT")]
-    pub entrypoint: Address,
+    /// One or more (entrypoint, delegation) contract pairs.
+    ///
+    /// Each pair must be provided in the format: 0xENTRYPOINT,0xDELEGATION.
+    ///
+    /// For example:
+    ///   --contracts
+    /// 0x1234567890123456789012345678901234567890,0xabcdefabcdefabcdefabcdefabcdefabcdefabcd
+    #[arg(
+        long,
+        value_name = "ENTRYPOINT,DELEGATION",
+        num_args = 1..,
+        value_parser = parse_entrypoint_with_delegation
+    )]
+    pub contracts: Vec<EntryWithDelegation>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -105,7 +117,7 @@ impl Args {
             .with_max_connections(self.max_connections)
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
-            .with_entrypoint(self.entrypoint)
+            .with_contracts(self.contracts)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
@@ -150,7 +162,7 @@ mod tests {
                     port: get_available_port().unwrap(),
                     metrics_port: get_available_port().unwrap(),
                     max_connections: Default::default(),
-                    entrypoint: Default::default(),
+                    contracts: Default::default(),
                     endpoints: Default::default(),
                     fee_recipient: Default::default(),
                     quote_ttl: Default::default(),

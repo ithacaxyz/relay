@@ -21,8 +21,8 @@ pub struct RelayConfig {
     pub quote: QuoteConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
-    /// Entrypoint address.
-    pub entrypoint: Address,
+    /// Entrypoint and delegation supported contract addresses.
+    pub contracts: Vec<EntryWithDelegation>,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -126,6 +126,15 @@ impl Default for TransactionServiceConfig {
     }
 }
 
+/// Entrypoint and delegation contract addresses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryWithDelegation {
+    /// Entrypoint address.
+    pub entrypoint: Address,
+    /// Delegation address.
+    pub delegation: Address,
+}
+
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
@@ -147,7 +156,7 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             transactions: TransactionServiceConfig::default(),
-            entrypoint: Address::ZERO,
+            contracts: Default::default(),
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -246,8 +255,8 @@ impl RelayConfig {
     }
 
     /// Sets the entrypoint address.
-    pub fn with_entrypoint(mut self, entrypoint: Address) -> Self {
-        self.entrypoint = entrypoint;
+    pub fn with_contracts(mut self, contracts: Vec<EntryWithDelegation>) -> Self {
+        self.contracts = contracts;
         self
     }
 
