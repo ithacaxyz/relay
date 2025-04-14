@@ -122,8 +122,11 @@ impl TransactionStatus {
 pub struct PendingTransaction {
     /// The [`RelayTransaction`] that was sent.
     pub tx: RelayTransaction,
-    /// Signed [`TxEnvelope`].
-    pub sent: TxEnvelope,
+    /// All signed and sent [`TxEnvelope`]s. All transactions here are sorted by priority fee and
+    /// are guaranteed to have the same nonce.
+    ///
+    /// This vector is guaranteed to have at least one element.
+    pub sent: Vec<TxEnvelope>,
     /// Signer that signed the transaction.
     pub signer: Address,
     /// Time at which we've received this transaction.
@@ -141,21 +144,21 @@ impl PendingTransaction {
         self.tx.id
     }
 
-    /// Returns the hash of the transaction.
-    pub fn tx_hash(&self) -> B256 {
-        *self.sent.tx_hash()
+    /// Returns the latest sent transaction with the highest fees.
+    pub fn best_tx(&self) -> &TxEnvelope {
+        self.sent.last().unwrap()
     }
 
     /// Returns the nonce of the transaction.
     pub fn nonce(&self) -> u64 {
-        self.sent.nonce()
+        self.best_tx().nonce()
     }
 
     /// Returns the [`Eip1559Estimation`] of the transaction.
     pub fn fees(&self) -> Eip1559Estimation {
         Eip1559Estimation {
-            max_fee_per_gas: self.sent.max_fee_per_gas(),
-            max_priority_fee_per_gas: self.sent.max_priority_fee_per_gas().unwrap_or_default(),
+            max_fee_per_gas: self.best_tx().max_fee_per_gas(),
+            max_priority_fee_per_gas: self.best_tx().max_priority_fee_per_gas().unwrap_or_default(),
         }
     }
 }

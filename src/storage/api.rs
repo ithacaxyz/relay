@@ -30,8 +30,8 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Writes a pending transaction to storage.
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()>;
 
-    /// Updates [`PendingTransaction::sent`] envelope in storage.
-    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()>;
+    /// Pushes a new [`TxEnvelope`] to [`PendingTransaction::sent`].
+    async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()>;
 
     /// Removes a pending transaction from storage.
     async fn remove_pending_transaction(&self, tx_id: TxId) -> Result<()>;

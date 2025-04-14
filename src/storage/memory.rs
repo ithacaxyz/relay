@@ -60,9 +60,9 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
+    async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
         if let Some(mut tx) = self.pending_transactions.get_mut(&tx_id) {
-            tx.sent = envelope.clone();
+            tx.sent.push(envelope.clone());
         }
         Ok(())
     }

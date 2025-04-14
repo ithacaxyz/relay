@@ -96,7 +96,7 @@ impl StorageApi for PgStorage {
     #[instrument(skip_all)]
     async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {
         sqlx::query!(
-            "insert into pending_txs (chain_id, sender, tx_id, tx, envelope, received_at) values ($1, $2, $3, $4, $5, $6)",
+            "insert into pending_txs (chain_id, sender, tx_id, tx, envelopes, received_at) values ($1, $2, $3, $4, $5, $6)",
             tx.chain_id() as i64, // yikes!
             tx.signer.as_slice(),
             tx.tx.id.as_slice(),
@@ -112,9 +112,9 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip(self, envelope))]
-    async fn update_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
+    async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
         sqlx::query!(
-            "update pending_txs set envelope = $1 where tx_id = $2",
+            "update pending_txs set envelopes = envelopes || $1 where tx_id = $2",
             serde_json::to_value(envelope)?,
             tx_id.as_slice()
         )
@@ -155,7 +155,7 @@ impl StorageApi for PgStorage {
             .map(|row| {
                 Ok::<_, serde_json::Error>(PendingTransaction {
                     tx: serde_json::from_value(row.tx)?,
-                    sent: serde_json::from_value(row.envelope)?,
+                    sent: serde_json::from_value(row.envelopes)?,
                     signer: Address::from_slice(&row.sender),
                     received_at: DateTime::from_naive_utc_and_offset(
                         row.received_at,
