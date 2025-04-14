@@ -72,7 +72,7 @@ impl CoinGecko {
         for (chain, tokens) in chains_with_tokens {
             let (platform, currency) = Self::identifiers(chain);
             let url = format!(
-                "https://api.coingecko.com/api/v3/simple/token_price/{}?contract_addresses={}&vs_currencies={}&x_cg_demo_api_key={}",
+                "https://pro-api.coingecko.com/api/v3/simple/token_price/{}?contract_addresses={}&vs_currencies={}&x_cg_demo_api_key={}",
                 platform,
                 tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
                 currency,
