@@ -7,6 +7,8 @@ use alloy::{
 use std::task::{Context, Poll, ready};
 use tower::Service;
 
+pub mod error;
+
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
 
 /// A [`alloy::transports::Transport`] that combines two transports.
