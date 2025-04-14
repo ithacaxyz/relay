@@ -146,6 +146,7 @@ pub struct CallReceipt {
     /// The logs generated in the transaction.
     pub logs: Vec<Log>,
     /// The status of the transaction.
+    #[serde(flatten)]
     pub status: Eip658Value,
     /// The block hash the transaction was included in.
     pub block_hash: Option<BlockHash>,
