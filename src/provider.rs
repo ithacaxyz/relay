@@ -37,7 +37,7 @@ pub struct L1BlockFees {
 }
 
 impl L1BlockFees {
-    /// Calculates the L! fee multiplier from both base fee and blob fee.
+    /// Calculates the L1 fee multiplier from both base fee and blob fee.
     pub fn l1_fee_scaled(&self) -> U256 {
         self.base_fee * self.base_fee_scalar * U256::from(NON_ZERO_BYTE_COST)
             + self.blob_base_fee * self.blob_base_fee_scalar
