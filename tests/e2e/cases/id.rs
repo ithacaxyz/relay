@@ -17,7 +17,19 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let backup_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[], &admin_key, &[&admin_key, &backup_key], &[], 0).await?;
+    let fee_token = env.fee_token;
+
+    prep_account(
+        &mut env,
+        &[],
+        &admin_key,
+        &[&admin_key, &backup_key],
+        &[],
+        0,
+        fee_token,
+        ExpectedOutcome::Pass,
+    )
+    .await?;
 
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();

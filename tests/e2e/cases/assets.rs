@@ -5,7 +5,7 @@ use relay::{asset::AssetInfoService, types::Asset};
 async fn asset_info() -> eyre::Result<()> {
     // Setup environment
     let env = AccountConfig::Prep.setup_environment().await?;
-    let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20_alt)];
+    let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20s[1])];
     let provider = env.provider.clone();
 
     // Spawn AssetInfoService

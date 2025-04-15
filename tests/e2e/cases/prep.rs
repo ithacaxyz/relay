@@ -1,7 +1,7 @@
 //! Prepare calls related end-to-end test cases
 
 use crate::e2e::{
-    MockErc20, TxContext, await_calls_status, build_pre_ops,
+    ExpectedOutcome, MockErc20, TxContext, await_calls_status, build_pre_ops,
     environment::{Environment, mint_erc20s},
     eoa::EoaKind,
     send_prepared_calls,
@@ -27,6 +27,9 @@ use relay::{
     },
 };
 
+/// It will attempt to create a PREPAccount. If there's an expectation of the estimation to fail it
+/// will return Ok(None).
+#[allow(clippy::too_many_arguments)]
 pub async fn prep_account<'a>(
     env: &mut Environment,
     calls: &[Call],
@@ -34,7 +37,9 @@ pub async fn prep_account<'a>(
     authorize_keys: &[&KeyWith712Signer],
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<BundleId> {
+    fee_token: Address,
+    expected: ExpectedOutcome,
+) -> eyre::Result<Option<BundleId>> {
     // This will fetch a valid PREPAccount that the user will need to sign over the address
     let PrepareCreateAccountResponse {
         capabilities: _,
@@ -58,7 +63,7 @@ pub async fn prep_account<'a>(
     assert!(prep_address == context.account.address);
 
     // Mint ERC20 tokens into the account
-    mint_erc20s(&[env.erc20, env.erc20_alt], &[prep_address], &env.provider).await?;
+    mint_erc20s(&[env.erc20, env.fee_token], &[prep_address], &env.provider).await?;
     env.provider
         .send_transaction(TransactionRequest {
             to: Some(TxKind::Call(prep_address)),
@@ -120,7 +125,7 @@ pub async fn prep_account<'a>(
     }
 
     let pre_ops = build_pre_ops(env, pre_ops, tx_num).await?;
-    let PrepareCallsResponse { context, digest, .. } = env
+    let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             calls: calls.to_vec(),
@@ -130,7 +135,7 @@ pub async fn prep_account<'a>(
                 authorize_keys: Vec::new(),
                 revoke_keys: Vec::new(),
                 meta: Meta {
-                    fee_token: env.fee_token,
+                    fee_token,
                     key_hash: user_op_signer.key_hash(),
                     // this will be the first UserOP
                     nonce: Some(U256::from(0)),
@@ -139,7 +144,19 @@ pub async fn prep_account<'a>(
                 pre_op: false,
             },
         })
-        .await?;
+        .await;
+
+    if response.is_err() {
+        if expected.failed_estimate() {
+            return Ok(None);
+        } else {
+            return Err(eyre::eyre!("Fee estimation error for tx {tx_num}: {response:?}"));
+        }
+    } else if expected.failed_estimate() {
+        return Err(eyre::eyre!("prepareCalls of tx {tx_num} passed when it should have failed."));
+    }
+
+    let PrepareCallsResponse { context, digest, .. } = response?;
 
     // Sign UserOp digest
     let signature = user_op_signer.sign_payload_hash(digest).await?;
@@ -151,7 +168,7 @@ pub async fn prep_account<'a>(
     let status = await_calls_status(env, bundle_id).await?;
     assert!(status.status.is_final());
 
-    Ok(bundle_id)
+    Ok(Some(bundle_id))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -159,6 +176,7 @@ async fn basic_prep() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
     let to = env.erc20;
     let eoa_authorized = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let fee_token = env.fee_token;
 
     prep_account(
         &mut env,
@@ -174,6 +192,8 @@ async fn basic_prep() -> eyre::Result<()> {
         &[&eoa_authorized],
         &[],
         0,
+        fee_token,
+        ExpectedOutcome::Pass,
     )
     .await?;
 

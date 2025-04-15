@@ -229,7 +229,7 @@ async fn spend_limits_bundle_failure() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             auth: Some(AuthKind::Auth),
-            expected: ExpectedOutcome::FailSend, // todo should fail on FailEstimate
+            expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
@@ -253,4 +253,25 @@ async fn spend_limits_bundle_failure() -> Result<()> {
     })
     .await?;
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_fee_tx() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    // User with no balance on the fee token should fail on prepareCalls.
+    run_e2e_prep_erc20(|env| {
+        let to = Address::random();
+        let transfer_amount = U256::from(10);
+
+        vec![TxContext {
+            authorization_keys: vec![&key],
+            expected: ExpectedOutcome::FailEstimate, // no balance on fee token
+            auth: Some(AuthKind::Auth),
+            fee_token: Some(env.erc20s[2]), // has not been minted
+            calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
+            ..Default::default()
+        }]
+    })
+    .await
 }
