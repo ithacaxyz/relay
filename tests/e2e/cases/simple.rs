@@ -131,7 +131,11 @@ async fn spend_limits() -> Result<()> {
             TxContext {
                 expected: ExpectedOutcome::Pass,
                 authorization_keys: vec![&session_key],
-                calls: vec![calls::daily_limit(env.erc20, U256::from(15), session_key.key())],
+                calls: vec![
+                    calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
+                    calls::can_execute_all(env.erc20, session_key.key_hash()),
+                    calls::daily_limit(env.erc20, U256::from(15), session_key.key()),
+                ],
                 key: Some(&key1),
                 ..Default::default()
             },
