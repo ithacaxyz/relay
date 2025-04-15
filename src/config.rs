@@ -50,6 +50,11 @@ pub struct ChainConfig {
     pub endpoints: Vec<Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
+    /// The fee recipient address.
+    ///
+    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the entrypoint
+    /// contract.
+    pub fee_recipient: Address,
 }
 
 /// Quote configuration.
@@ -130,7 +135,11 @@ impl Default for RelayConfig {
                 metrics_port: 9000,
                 max_connections: 1000,
             },
-            chain: ChainConfig { endpoints: vec![], fee_tokens: vec![] },
+            chain: ChainConfig {
+                endpoints: vec![],
+                fee_tokens: vec![],
+                fee_recipient: Address::ZERO,
+            },
             quote: QuoteConfig {
                 constant_rate: None,
                 gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
@@ -209,6 +218,12 @@ impl RelayConfig {
     /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
     pub fn with_endpoints(mut self, endpoints: &[Url]) -> Self {
         self.chain.endpoints.extend_from_slice(endpoints);
+        self
+    }
+
+    /// Sets the fee recipient address.
+    pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
+        self.chain.fee_recipient = fee_recipient;
         self
     }
 
