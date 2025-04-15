@@ -5,7 +5,7 @@ use alloy::{
     sol,
 };
 
-/// Address of the L1Block contract.
+/// Address of the GasPriceOracle contract.
 pub const OP_FEE_ORACLE_CONTRACT: Address = address!("0x420000000000000000000000000000000000000F");
 
 sol! {
