@@ -3872,6 +3872,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "op-alloy-flz"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ef71f23a8caf6f2a2d5cafbdc44956d44e6014dcb9aa58abf7e4e6481c6ec34"
+
+[[package]]
 name = "openssl-probe"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4616,6 +4622,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "metrics-exporter-prometheus",
+ "op-alloy-flz",
  "opentelemetry 0.28.0",
  "opentelemetry-otlp",
  "opentelemetry-stdout",

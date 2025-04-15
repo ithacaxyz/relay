@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod nonce;
 pub mod otlp;
 pub mod price;
+pub mod provider;
 pub mod rpc;
 pub mod serde;
 pub mod signers;

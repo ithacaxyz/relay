@@ -11,6 +11,7 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     eip712::compute_eip712_data,
+    provider::ProviderExt,
     types::{
         AccountRegistry::AccountRegistryCalls,
         AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
@@ -21,6 +22,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
+    consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
@@ -33,16 +35,13 @@ use alloy::{
     },
     sol_types::SolValue,
 };
-use futures_util::{
-    TryFutureExt,
-    future::{try_join_all, try_join3},
-    join,
-};
+use futures_util::{TryFutureExt, future::try_join_all, join};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use std::{sync::Arc, time::SystemTime};
+use tokio::try_join;
 use tracing::{debug, error, instrument};
 
 use crate::{
@@ -181,7 +180,11 @@ impl Relay {
         authorization_address: Option<Address>,
         account_key: Key,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
-        let provider = self.provider(request.chain_id)?;
+        let Chain { provider, is_optimism, .. } = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
         };
@@ -213,7 +216,7 @@ impl Relay {
         let entrypoint =
             Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
 
-        let (nonce, native_fee_estimate, eth_price) = try_join3(
+        let (nonce, native_fee_estimate, eth_price, l1_fees) = try_join!(
             // fetch nonce if not specified
             async {
                 if let Some(nonce) = request.op.nonce {
@@ -229,8 +232,14 @@ impl Relay {
                 // TODO: only handles eth as native fee token
                 Ok(self.inner.price_oracle.eth_price(token.coin).await)
             },
-        )
-        .await?;
+            async {
+                if is_optimism {
+                    provider.fetch_l1_fees().await.map(Some).map_err(RelayError::from)
+                } else {
+                    Ok(None)
+                }
+            }
+        )?;
 
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         let Some(eth_price) = eth_price else {
@@ -309,8 +318,38 @@ impl Relay {
         op.combinedGas = U256::from(gas_estimate.op);
         op.signature = bytes!("");
 
+        let mut payment = op.combinedGas * op.paymentPerGas;
+
+        // Include the L1 DA fees if we're on an OP rollup.
+        if let Some(l1_fees) = l1_fees {
+            // Firstly prepare a transaction similar to the one that will actually be sent.
+            let tx = TxEip1559 {
+                chain_id: request.chain_id,
+                nonce: 0,
+                gas_limit: gas_estimate.tx,
+                max_fee_per_gas: native_fee_estimate.max_fee_per_gas,
+                max_priority_fee_per_gas: native_fee_estimate.max_priority_fee_per_gas,
+                to: (*entrypoint.address()).into(),
+                input: op.encode_execute(),
+                ..Default::default()
+            };
+            // Prepare a dummy signature.
+            // TODO: is there a better way to do this? likely need to investigate how fastlz acts
+            // with different signatures.
+            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
+
+            let encoded = {
+                let tx = tx.into_signed(signature);
+                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
+                tx.eip2718_encode(&mut buf);
+                buf
+            };
+
+            payment += l1_fees.estimate_l1_cost(&encoded);
+        }
+
         // Calculate amount with updated paymentPerGas
-        op.paymentAmount = op.paymentPerGas * op.combinedGas;
+        op.paymentAmount = payment;
         op.paymentMaxAmount = op.paymentAmount;
 
         let quote = Quote {
@@ -345,7 +384,7 @@ impl Relay {
         }
 
         let chain_id = quote.ty().chain_id;
-        let Chain { provider, transactions } =
+        let Chain { provider, transactions, .. } =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         // check that the authorization item matches what's in the quote

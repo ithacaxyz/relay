@@ -7,6 +7,7 @@ use alloy::{
 
 use crate::{
     config::TransactionServiceConfig,
+    provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{TransactionService, TransactionServiceHandle},
@@ -19,6 +20,8 @@ pub struct Chain {
     pub provider: DynProvider,
     /// Handle to the transaction service.
     pub transactions: TransactionServiceHandle,
+    /// Whether this is an OP network.
+    pub is_optimism: bool,
 }
 
 /// A collection of providers for different chains.
@@ -49,7 +52,8 @@ impl Chains {
                 tokio::spawn(service);
 
                 let chain_id = provider.get_chain_id().await?;
-                eyre::Ok((chain_id, Chain { provider, transactions }))
+                let is_optimism = provider.is_optimism().await?;
+                eyre::Ok((chain_id, Chain { provider, transactions, is_optimism }))
             }))
             .await?,
         );

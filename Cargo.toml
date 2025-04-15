@@ -59,6 +59,7 @@ opentelemetry_sdk = { version = "0.28.0", default-features = false, features = [
     "trace",
     "rt-tokio",
 ] }
+op-alloy-flz = "0.13"
 p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false }
 schnellru = "0.2.4"

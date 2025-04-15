@@ -1,4 +1,4 @@
-use super::{Call, IDelegation::authorizeCall, Key, PREPInitData};
+use super::{Call, EntryPoint, IDelegation::authorizeCall, Key, PREPInitData};
 use alloy::{
     primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
     sol,
@@ -235,6 +235,11 @@ impl UserOp {
         keys.extend(self.pre_authorized_keys()?);
 
         Ok(keys)
+    }
+
+    /// Encodes this userop into calldata for [`EntryPoint::executeCall`].
+    pub fn encode_execute(&self) -> Bytes {
+        EntryPoint::executeCall { encodedUserOp: self.abi_encode().into() }.abi_encode().into()
     }
 }
 

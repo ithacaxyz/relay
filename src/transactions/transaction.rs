@@ -1,9 +1,8 @@
-use crate::types::{EntryPoint, SignedQuote};
+use crate::types::SignedQuote;
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
-    primitives::{Address, B256, Bytes, U256, wrap_fixed_bytes},
-    sol_types::{SolCall, SolValue},
+    primitives::{Address, B256, U256, wrap_fixed_bytes},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -44,10 +43,7 @@ impl RelayTransaction {
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64) -> TypedTransaction {
-        let input: Bytes =
-            EntryPoint::executeCall { encodedUserOp: self.quote.ty().op.abi_encode().into() }
-                .abi_encode()
-                .into();
+        let input = self.quote.ty().op.encode_execute();
 
         // TODO: move calculations here, only store and sign neccesary values in the quote
         let gas_limit = self.quote.ty().tx_gas;
