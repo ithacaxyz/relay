@@ -70,9 +70,6 @@ sol! {
         /// The `opData` is too short.
         error OpDataTooShort();
 
-        /// The PREP has already been initialized.
-        error PREPAlreadyInitialized();
-
         /// The PREP `initData` is invalid.
         error InvalidPREP();
 

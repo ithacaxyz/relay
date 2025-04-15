@@ -66,7 +66,6 @@ sol! {
             uint256 gExecute;
             uint256 gCombined;
             uint256 gUsed;
-            bytes4 err;
         }
 
 
@@ -216,26 +215,24 @@ impl<P: Provider> Entry<P> {
 
         if !result.status {
             debug!(?result, "Unable to simulate user op.");
-            return Err(TransportErrorKind::custom_str("could not simulate op").into());
+            return Err(UserOpError::op_revert(result.return_data).into());
         }
 
-        if let Ok(gas) = EntryPoint::SimulationResult::abi_decode(&result.return_data) {
-            if gas.err != ENTRYPOINT_NO_ERROR {
-                Err(UserOpError::op_revert(gas.err.into()).into())
-            } else {
-                // todo: sanitize this as a malicious contract can make us panic
-                Ok((
-                    asset_info_handle
-                        .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
-                        .await?,
-                    GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() },
-                ))
-            }
-        } else if !result.return_data.is_empty() {
-            Err(UserOpError::op_revert(result.return_data).into())
-        } else {
-            Err(TransportErrorKind::custom_str("could not simulate op").into())
-        }
+        let Ok(gas_estimate) = EntryPoint::SimulationResult::abi_decode(&result.return_data)
+            .map(|gas| GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() })
+        else {
+            return Err(TransportErrorKind::custom_str(&format!(
+                "could not decode op simulation return data: {}",
+                result.return_data
+            ))
+            .into());
+        };
+
+        let asset_diffs = asset_info_handle
+            .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
+            .await?;
+
+        Ok((asset_diffs, gas_estimate))
     }
 
     /// Call `EntryPoint.execute` with the provided [`UserOp`].
