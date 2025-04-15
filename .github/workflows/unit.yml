@@ -62,7 +62,6 @@ jobs:
         # when updating deployed address, also update TEST_FORK_BLOCK_NUMBER_PINNED
         if: ${{ matrix.variant == 'odyssey_fork' }}
         run: |
-          echo "TEST_CI_FORK=1" >> $GITHUB_ENV
           echo "TEST_FORK_URL=https://odyssey-devnet.ithaca.xyz" >> $GITHUB_ENV
           echo "TEST_FORK_BLOCK_NUMBER_PINNED=591698" >> $GITHUB_ENV
           echo "TEST_ENTRYPOINT=0x1692bc8d0c73a7540ecb572e85c0775e68c55d25" >> $GITHUB_ENV
