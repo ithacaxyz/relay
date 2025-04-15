@@ -156,12 +156,6 @@ pub async fn prep_account<'a>(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_prep() -> eyre::Result<()> {
-    if std::env::var("TEST_CI_FORK").is_ok() {
-        // Test WILL run on a local envirnonment but it will be skipped in the odyssey_fork CI run.
-        eprintln!("Test skipped until the new contracts are deployed.");
-        return Ok(());
-    }
-
     let mut env = Environment::setup_with_prep().await?;
     let to = env.erc20;
     let eoa_authorized = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();

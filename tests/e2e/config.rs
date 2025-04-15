@@ -23,12 +23,6 @@ impl TestConfig {
         // Apply native or ERC20 payment method
         env = self.payment.apply(env);
 
-        // Once contracts are deployed, this should go away
-        if env.eoa.is_prep() && std::env::var("TEST_CI_FORK").is_ok() {
-            eprintln!("Skipping configuration: {:?} with {:?}", self.account, self.payment);
-            return Ok(());
-        }
-
         // Generate transactions from test case
         let txs = build_txs(&env);
 
