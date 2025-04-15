@@ -25,13 +25,11 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
+    network::{AnyNetwork, ReceiptResponse},
     primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
-    rpc::types::{
-        TransactionReceipt,
-        state::{AccountOverride, StateOverridesBuilder},
-    },
-    sol_types::SolValue,
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
+    sol_types::{SolEvent, SolValue},
 };
 use futures_util::{
     TryFutureExt,
@@ -468,7 +466,7 @@ impl Relay {
     }
 
     /// Returns the chain [`DynProvider`].
-    pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
+    pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider<AnyNetwork>, RelayError> {
         Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
     }
 
@@ -951,7 +949,7 @@ impl RelayApiServer for Relay {
 
         // filter out non existing receipts, as we can assume this means the tx is pending, which is
         // handled separately
-        let receipts: Vec<(ChainId, TransactionReceipt)> = receipts
+        let receipts: Vec<(ChainId, _)> = receipts
             .into_iter()
             .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
             .collect();
@@ -965,10 +963,22 @@ impl RelayApiServer for Relay {
         // note that we also assume that failure to decode a log as `UserOpExecuted` means the
         // operation failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
-            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+            receipt
+                .inner
+                .inner
+                .logs()
+                .iter()
+                .find_map(|r| UserOpExecuted::decode_log(&r.inner).ok())
+                .is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
         });
         let all_reverted = receipts.iter().all(|(_, receipt)| {
-            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+            receipt
+                .inner
+                .inner
+                .logs()
+                .iter()
+                .find_map(|r| UserOpExecuted::decode_log(&r.inner).ok())
+                .is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
         });
 
         let status = if any_failed {
@@ -990,7 +1000,7 @@ impl RelayApiServer for Relay {
                 .into_iter()
                 .map(|(chain_id, receipt)| CallReceipt {
                     chain_id,
-                    logs: receipt.inner.logs().to_vec(),
+                    logs: receipt.inner.inner.logs().to_vec(),
                     status: receipt.status().into(),
                     block_hash: receipt.block_hash,
                     block_number: receipt.block_number,

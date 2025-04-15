@@ -1,6 +1,6 @@
 use super::{KeyHash, KeyID};
 use crate::error::RelayError;
-use alloy::{primitives::Address, providers::DynProvider, sol};
+use alloy::{network::AnyNetwork, primitives::Address, providers::DynProvider, sol};
 
 sol! {
     #[sol(rpc)]
@@ -38,7 +38,7 @@ impl AccountRegistry::AccountRegistryCalls {
     pub async fn id_infos(
         ids: Vec<Address>,
         entrypoint: Address,
-        provider: DynProvider,
+        provider: DynProvider<AnyNetwork>,
     ) -> Result<Vec<Option<(KeyHash, Vec<Address>)>>, RelayError> {
         AccountRegistry::AccountRegistryInstance::new(entrypoint, provider)
             .idInfos(ids.clone())
@@ -63,7 +63,7 @@ impl AccountRegistry::AccountRegistryCalls {
     pub async fn accounts(
         id: KeyID,
         entrypoint: Address,
-        provider: DynProvider,
+        provider: DynProvider<AnyNetwork>,
     ) -> Result<Option<Vec<Address>>, RelayError> {
         Ok(Self::id_infos(vec![id], entrypoint, provider)
             .await?

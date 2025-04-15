@@ -1,6 +1,7 @@
 use EntryPoint::EntryPointInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
+    network::AnyNetwork,
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{
@@ -160,12 +161,12 @@ sol! {
 
 /// A Porto entrypoint.
 #[derive(Debug)]
-pub struct Entry<P: Provider> {
-    entrypoint: EntryPointInstance<P>,
+pub struct Entry<P> {
+    entrypoint: EntryPointInstance<P, AnyNetwork>,
     overrides: StateOverride,
 }
 
-impl<P: Provider> Entry<P> {
+impl<P: Provider<AnyNetwork>> Entry<P> {
     /// Create a new instance of [`Entry`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
@@ -204,7 +205,7 @@ impl<P: Provider> Entry<P> {
                 &SimulatePayload::default()
                     .extend(
                         SimBlock::default()
-                            .call(simulate_call.from(from))
+                            .call(simulate_call.into_inner().from(from))
                             .with_state_overrides(self.overrides.clone()),
                     )
                     .with_trace_transfers(),

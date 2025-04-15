@@ -5,6 +5,7 @@ use crate::e2e::{
 };
 use alloy::{
     consensus::Transaction,
+    eips::Encodable2718,
     primitives::{Address, B256, U256},
     providers::{Provider, ext::AnvilApi},
     signers::local::PrivateKeySigner,
@@ -355,7 +356,7 @@ async fn fee_bump() -> eyre::Result<()> {
     let new_tx = env.provider.get_transaction_by_hash(new_tx_hash).await.unwrap().unwrap();
 
     // assert that new transaction has higher priority fee
-    assert!(new_tx_hash != *dropped.hash());
+    assert!(new_tx_hash != *dropped.trie_hash());
     assert!(
         new_tx.max_priority_fee_per_gas().unwrap() > dropped.max_priority_fee_per_gas().unwrap()
     );
@@ -560,7 +561,7 @@ async fn resume_paused() -> eyre::Result<()> {
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
         let signer =
-            env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
+            env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.inner.signer();
         assert_eq!(signer, last_signer.address());
     }))
     .buffered(10)
@@ -587,7 +588,7 @@ async fn resume_paused() -> eyre::Result<()> {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx);
         let hash = assert_confirmed(handle).await;
-        env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
+        env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.inner.signer()
     }))
     .await
     .into_iter()

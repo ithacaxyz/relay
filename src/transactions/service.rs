@@ -4,7 +4,10 @@ use super::{
     transaction::{RelayTransaction, TransactionStatus},
 };
 use crate::{config::TransactionServiceConfig, signers::DynSigner, storage::RelayStorage};
-use alloy::providers::{DynProvider, Provider};
+use alloy::{
+    network::AnyNetwork,
+    providers::{DynProvider, Provider},
+};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::{HashMap, VecDeque},
@@ -84,7 +87,7 @@ impl TransactionService {
     ///
     /// This also spawns dedicated [`Signer`] task for each configured signer.
     pub async fn new(
-        provider: DynProvider,
+        provider: DynProvider<AnyNetwork>,
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
@@ -129,7 +132,7 @@ impl TransactionService {
         &mut self,
         signer: DynSigner,
         storage: RelayStorage,
-        provider: DynProvider,
+        provider: DynProvider<AnyNetwork>,
     ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");

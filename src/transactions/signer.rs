@@ -15,7 +15,9 @@ use crate::{
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
-    network::{Ethereum, EthereumWallet, NetworkWallet},
+    network::{
+        AnyNetwork, Ethereum, EthereumWallet, NetworkWallet, ReceiptResponse, TransactionResponse,
+    },
     primitives::{Address, B256, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
@@ -25,6 +27,7 @@ use alloy::{
         },
     },
     rpc::types::TransactionRequest,
+    serde::WithOtherFields,
     sol_types::{SolCall, SolEvent},
     transports::{RpcError, TransportErrorKind},
 };
@@ -118,7 +121,7 @@ pub struct SignerInner {
     /// The unique identifier of this signer service.
     id: SignerId,
     /// Provider used by the signer.
-    provider: DynProvider,
+    provider: DynProvider<AnyNetwork>,
     /// Inner [`EthereumWallet`] used to sign transactions.
     wallet: EthereumWallet,
     /// Cached chain id of the provider.
@@ -150,7 +153,7 @@ impl Signer {
     /// Creates a new [`Signer`].
     pub async fn new(
         id: SignerId,
-        provider: DynProvider,
+        provider: DynProvider<AnyNetwork>,
         signer: DynSigner,
         storage: RelayStorage,
         events_tx: mpsc::UnboundedSender<SignerEvent>,
@@ -264,7 +267,7 @@ impl Signer {
 
         // Try eth_call before committing to send the actual transaction
         self.provider
-            .call(request)
+            .call(WithOtherFields::new(request))
             .await
             .and_then(|res| {
                 EntryPoint::executeCall::abi_decode_returns(&res)
@@ -423,7 +426,7 @@ impl Signer {
                 if let Ok(Some(sent)) = self.provider.get_transaction_by_hash(*sent.tx_hash()).await
                 {
                     if sent.block_number.is_some() {
-                        self.on_confirmed_transaction(tx.id(), *sent.inner.tx_hash()).await?;
+                        self.on_confirmed_transaction(tx.id(), sent.inner.tx_hash()).await?;
                         return Ok(());
                     }
                 }
@@ -623,8 +626,13 @@ impl Signer {
             return;
         }
 
-        let Some(event) =
-            receipt.logs().iter().rev().find_map(|log| UserOpExecuted::decode_log(&log.inner).ok())
+        let Some(event) = receipt
+            .inner
+            .inner
+            .logs()
+            .iter()
+            .rev()
+            .find_map(|log| UserOpExecuted::decode_log(&log.inner).ok())
         else {
             warn!(%tx_hash, "failed to find UserOpExecuted event in receipt");
             self.metrics.failed_user_ops.increment(1);

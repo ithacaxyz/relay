@@ -1,6 +1,7 @@
 //! A collection of providers for different chains.
 
 use alloy::{
+    network::AnyNetwork,
     primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
@@ -16,7 +17,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Chain {
     /// Provider for the chain.
-    pub provider: DynProvider,
+    pub provider: DynProvider<AnyNetwork>,
     /// Handle to the transaction service.
     pub transactions: TransactionServiceHandle,
 }
@@ -31,7 +32,7 @@ pub struct Chains {
 impl Chains {
     /// Creates a new instance of [`Chains`].
     pub async fn new(
-        providers: Vec<DynProvider>,
+        providers: Vec<DynProvider<AnyNetwork>>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,

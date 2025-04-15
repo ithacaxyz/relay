@@ -12,6 +12,7 @@ use crate::{
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
+    network::AnyNetwork,
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::ClientBuilder,
     transports::layers::RetryBackoffLayer,
@@ -111,14 +112,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
         .await?;
 
-    let providers: Vec<DynProvider> = futures_util::future::try_join_all(
+    let providers: Vec<DynProvider<AnyNetwork>> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
                 .layer(TraceLayer)
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
-                .map(|client| ProviderBuilder::new().on_client(client).erased())
+                .map(|client| {
+                    ProviderBuilder::new().network::<AnyNetwork>().on_client(client).erased()
+                })
         }),
     )
     .await?;

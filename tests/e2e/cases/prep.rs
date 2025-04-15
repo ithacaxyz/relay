@@ -10,6 +10,7 @@ use alloy::{
     primitives::{Address, TxKind, U256},
     providers::Provider,
     rpc::types::TransactionRequest,
+    serde::WithOtherFields,
     sol_types::SolCall,
 };
 use futures_util::future::try_join_all;
@@ -60,11 +61,11 @@ pub async fn prep_account<'a>(
     // Mint ERC20 tokens into the account
     mint_erc20s(&[env.erc20, env.erc20_alt], &[prep_address], &env.provider).await?;
     env.provider
-        .send_transaction(TransactionRequest {
+        .send_transaction(WithOtherFields::new(TransactionRequest {
             to: Some(TxKind::Call(prep_address)),
             value: Some(U256::from(100e18)),
             ..Default::default()
-        })
+        }))
         .await?
         .get_receipt()
         .await?;

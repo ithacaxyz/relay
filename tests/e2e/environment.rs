@@ -5,11 +5,12 @@ use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
     hex,
-    network::{EthereumWallet, TxSignerSync},
+    network::{AnyNetwork, AnyTxEnvelope, EthereumWallet, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256},
     providers::{DynProvider, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
     rpc::{client::ClientBuilder, types::TransactionRequest},
+    serde::WithOtherFields,
     signers::local::PrivateKeySigner,
     sol_types::{SolConstructor, SolValue},
 };
@@ -61,7 +62,7 @@ impl Default for EnvironmentConfig {
 
 pub struct Environment {
     pub _anvil: Option<AnvilInstance>,
-    pub provider: DynProvider,
+    pub provider: DynProvider<AnyNetwork>,
     pub eoa: EoaKind,
     pub entrypoint: Address,
     pub delegation: Address,
@@ -172,6 +173,7 @@ impl Environment {
         // Build provider
         let client = ClientBuilder::default().layer(RETRY_LAYER.clone()).http(endpoint.clone());
         let provider = ProviderBuilder::new()
+            .network::<AnyNetwork>()
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .on_client(client);
 
@@ -211,11 +213,11 @@ impl Environment {
 
         for address in fundable_addresses {
             provider
-                .send_transaction(TransactionRequest {
+                .send_transaction(WithOtherFields::new(TransactionRequest {
                     to: Some(TxKind::Call(address)),
                     value: Some(U256::from(1000e18)),
                     ..Default::default()
-                })
+                }))
                 .await?
                 .get_receipt()
                 .await?;
@@ -293,13 +295,13 @@ impl Environment {
     }
 
     /// Drops a transaction from the Anvil txpool and returns it.
-    pub async fn drop_transaction(&self, hash: B256) -> Option<TxEnvelope> {
+    pub async fn drop_transaction(&self, hash: B256) -> Option<AnyTxEnvelope> {
         let tx = self
             .provider
             .get_transaction_by_hash(hash)
             .await
             .unwrap()
-            .map(|tx| tx.inner.into_inner());
+            .map(|tx| tx.into_inner().inner.into_inner());
         self.provider.anvil_drop_transaction(hash).await.unwrap();
         assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
         tx
@@ -387,7 +389,7 @@ impl Environment {
 }
 
 /// Mint ERC20s into the addresses.
-pub async fn mint_erc20s<P: Provider>(
+pub async fn mint_erc20s<P: Provider<AnyNetwork>>(
     erc20s: &[Address],
     addresses: &[Address],
     provider: P,
@@ -408,7 +410,7 @@ pub async fn mint_erc20s<P: Provider>(
 }
 
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
-async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
+async fn get_or_deploy_contracts<P: Provider<AnyNetwork> + WalletProvider<AnyNetwork>>(
     provider: &P,
 ) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
@@ -464,7 +466,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     Ok((delegation, entrypoint, erc20s))
 }
 
-async fn deploy_contract<P: Provider>(
+async fn deploy_contract<P: Provider<AnyNetwork>>(
     provider: &P,
     artifact_path: &Path,
     args: Option<Bytes>,
@@ -485,11 +487,11 @@ async fn deploy_contract<P: Provider>(
     bytecode.extend_from_slice(&args.unwrap_or_default());
 
     provider
-        .send_transaction(TransactionRequest {
+        .send_transaction(WithOtherFields::new(TransactionRequest {
             input: bytecode.into(),
             to: Some(TxKind::Create),
             ..Default::default()
-        })
+        }))
         .await?
         .get_receipt()
         .await?

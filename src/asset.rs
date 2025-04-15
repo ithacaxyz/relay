@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use alloy::{
-    network::TransactionBuilder,
+    network::{AnyNetwork, Network, TransactionBuilder},
     primitives::{
         Address, ChainId, U256,
         aliases::I512,
@@ -64,7 +64,7 @@ impl AssetInfoServiceHandle {
     ///
     /// # Note:
     /// Ensures that the returned map contains all the requested assets.
-    pub async fn get_asset_info_list<P: Provider>(
+    pub async fn get_asset_info_list<P: Provider<AnyNetwork>>(
         &self,
         provider: &P,
         assets: Vec<Asset>,
@@ -115,7 +115,7 @@ impl AssetInfoServiceHandle {
     ///
     /// After accumulating, each (credits, debits) tuple member is converted into a [I512] and
     /// finally obtain the net flow of `credits - debits`.
-    pub async fn calculate_asset_diff<P: Provider>(
+    pub async fn calculate_asset_diff<P: Provider<AnyNetwork>>(
         &self,
         logs: impl Iterator<Item = Log>,
         provider: &P,
@@ -282,7 +282,7 @@ impl Future for AssetInfoService {
 }
 
 /// Gets metadata from many assets on chain.
-async fn get_info<P: Provider>(
+async fn get_info<P: Provider<N>, N: Network>(
     provider: &P,
     assets: Vec<Address>,
 ) -> Result<Vec<AssetWithInfo>, RelayError> {

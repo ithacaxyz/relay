@@ -11,9 +11,11 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     },
+    network::AnyNetwork,
     primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
     providers::Provider,
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
+    serde::WithOtherFields,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
@@ -171,12 +173,12 @@ pub struct CallPermission {
 
 /// A Porto account.
 #[derive(Debug)]
-pub struct Account<P: Provider> {
-    delegation: DelegationInstance<P>,
+pub struct Account<P: Provider<AnyNetwork>> {
+    delegation: DelegationInstance<P, AnyNetwork>,
     overrides: StateOverride,
 }
 
-impl<P: Provider> Account<P> {
+impl<P: Provider<AnyNetwork>> Account<P> {
     /// Create a new instance of [`Account`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
@@ -211,11 +213,11 @@ impl<P: Provider> Account<P> {
         let keys = self
             .delegation
             .provider()
-            .call(
+            .call(WithOtherFields::new(
                 TransactionRequest::default()
                     .to(*self.delegation.address())
                     .input(IDelegation::getKeysCall::SELECTOR.to_vec().into()),
-            )
+            ))
             .overrides(self.overrides.clone())
             .await
             .and_then(|r| {

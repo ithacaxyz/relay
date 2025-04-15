@@ -1,5 +1,6 @@
 use crate::types::{CoinKind, CoinRegistry, IERC20::IERC20Instance};
 use alloy::{
+    network::AnyNetwork,
     primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
@@ -35,7 +36,7 @@ impl FeeTokens {
     pub async fn new(
         coin_registry: &CoinRegistry,
         tokens: &[Address],
-        providers: Vec<DynProvider>,
+        providers: Vec<DynProvider<AnyNetwork>>,
     ) -> Result<Self, eyre::Error> {
         // todo: this is ugly
         let futs = providers

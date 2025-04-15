@@ -3,6 +3,7 @@
 use crate::types::{Entry, UserOp};
 use alloy::{
     dyn_abi::TypedData,
+    network::AnyNetwork,
     primitives::{Address, B256},
     providers::DynProvider,
     sol_types::SolStruct,
@@ -17,7 +18,7 @@ use alloy::{
 pub async fn compute_eip712_data(
     op: &UserOp,
     entrypoint_address: Address,
-    provider: &DynProvider,
+    provider: &DynProvider<AnyNetwork>,
 ) -> eyre::Result<(B256, TypedData)> {
     // Create the entrypoint instance with the same overrides.
     let entrypoint = Entry::new(entrypoint_address, provider);
