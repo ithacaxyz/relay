@@ -136,7 +136,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             },
             // Failing transfer (different target)
             TxContext {
-                calls: vec![calls::transfer(env.erc20_alt, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![calls::transfer(env.erc20s[1], Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
                 key: Some(&session_key),
                 ..Default::default()
@@ -570,8 +570,7 @@ async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             auth: Some(AuthKind::Auth),
-            // Should fail since session key does not have any permissions.
-            expected: ExpectedOutcome::FailSend,
+            expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],

@@ -26,7 +26,7 @@ pub type PostTxCheck =
     Box<dyn for<'a> Fn(&'a Environment, &TxContext<'_>) -> BoxFuture<'a, eyre::Result<()>>>;
 
 /// Represents the expected outcome of a test case execution
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 #[allow(dead_code)]
 pub enum ExpectedOutcome {
     /// Test should pass completely
@@ -131,8 +131,7 @@ pub struct TxContext<'a> {
     /// List of keys to revoke that will be converted to calls on bottom of the UserOp.
     pub revoke_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
-    #[allow(dead_code)]
-    pub fee_token: Address,
+    pub fee_token: Option<Address>,
     /// Optional array of pre-ops to be executed before the UserOp.
     pub pre_ops: Vec<TxContext<'a>>,
     /// Optional nonce to be used.
@@ -152,19 +151,22 @@ impl TxContext<'_> {
         // If a signer is not defined, takes the first authorized key from the tx context.
         let op_signer = self.key.as_ref().unwrap_or(&self.authorization_keys[0]);
 
-        let bundle_id = prep_account(
+        if let Some(bundle_id) = prep_account(
             env,
             &self.calls,
             op_signer,
             &self.authorization_keys,
             &self.pre_ops,
             tx_num,
+            self.fee_token.unwrap_or(env.fee_token),
+            self.expected,
         )
-        .await;
-
-        // Check test expectations
-        let op_nonce = U256::ZERO; // first transaction
-        check_bundle(bundle_id, self, tx_num, None, op_nonce, &*env).await?;
+        .await?
+        {
+            // Check test expectations
+            let op_nonce = U256::ZERO; // first transaction
+            check_bundle(Ok(bundle_id), self, tx_num, None, op_nonce, &*env).await?;
+        }
 
         Ok(())
     }

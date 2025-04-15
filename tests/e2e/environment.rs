@@ -65,9 +65,12 @@ pub struct Environment {
     pub eoa: EoaKind,
     pub entrypoint: Address,
     pub delegation: Address,
+    /// Minted to the eoa.
     pub fee_token: Address,
+    /// Minted to the eoa.
     pub erc20: Address,
-    pub erc20_alt: Address,
+    /// Bunch of deployed erc20 which have not been minted to the eoa.
+    pub erc20s: Vec<Address>,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
@@ -192,7 +195,8 @@ impl Environment {
         };
 
         if !eoa.is_prep() {
-            mint_erc20s(&erc20s, &[eoa.address()], &provider).await?;
+            // mints erc20 and fee_token
+            mint_erc20s(&erc20s[..2], &[eoa.address()], &provider).await?;
         }
 
         // Ensure our registry has our tokens
@@ -271,7 +275,7 @@ impl Environment {
             delegation,
             fee_token: erc20s[1],
             erc20: erc20s[0],
-            erc20_alt: erc20s[1],
+            erc20s: erc20s[2..].to_vec(),
             chain_id,
             relay_endpoint,
             relay_handle,
@@ -443,7 +447,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         erc20s.push(Address::from_str(&entrypoint).wrap_err("ERC20 address parse failed.")?)
     };
 
-    while erc20s.len() != 2 {
+    while erc20s.len() != 10 {
         let erc20 = deploy_contract(
             &provider,
             &contracts_path.join("MockERC20.sol/MockERC20.json"),

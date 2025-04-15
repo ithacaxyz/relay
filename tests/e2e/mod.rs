@@ -68,6 +68,18 @@ where
         .await
 }
 
+/// Runs only the prep account configuration in ERC20.
+pub async fn run_e2e_prep_erc20<'a, F>(build_txs: F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
+{
+    run_configs(
+        build_txs,
+        iproduct!(iter::once(AccountConfig::Prep), iter::once(PaymentConfig::ERC20)),
+    )
+    .await
+}
+
 /// Runs a set of test configurations.
 pub async fn run_configs<'a, F>(
     build_txs: F,
@@ -232,7 +244,7 @@ pub async fn prepare_calls(
                 authorize_keys: tx.authorization_keys(Some(env.eoa.address())).await?,
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
-                    fee_token: env.fee_token,
+                    fee_token: tx.fee_token.unwrap_or(env.fee_token),
                     key_hash: signer.key_hash(),
                     nonce: tx.nonce,
                 },
