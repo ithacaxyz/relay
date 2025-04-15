@@ -77,23 +77,17 @@ where
                 let to_sequencer = self.sequencer.call(r.clone().into());
                 let to_inner = self.inner.call(req);
                 return Box::pin(async move {
-                    // TODO custom error handling here?
                     let (seq, inner) = futures_util::future::join(to_sequencer, to_inner).await;
 
+                    // Handle potential errors. We are not treating "already known" as fatal if at
+                    // least one of the endpoints accepted the transaction
                     match (seq, inner) {
-                        (Ok(seq), Ok(_)) => Ok(seq),
+                        (Ok(seq), _) => Ok(seq),
                         (Err(seq), Ok(inner)) => {
                             if seq.is_already_known() {
                                 Ok(inner)
                             } else {
                                 Err(seq)
-                            }
-                        }
-                        (Ok(seq), Err(inner)) => {
-                            if inner.is_already_known() {
-                                Ok(seq)
-                            } else {
-                                Err(inner)
                             }
                         }
                         (Err(seq), Err(inner)) => {
