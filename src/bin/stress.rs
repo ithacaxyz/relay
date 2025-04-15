@@ -29,7 +29,7 @@ use relay::{
     },
 };
 use tokio::{sync::Semaphore, time::Instant};
-use tracing::{error, info, level_filters::LevelFilter, trace};
+use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -52,23 +52,31 @@ impl StressAccount {
         fee_token: Address,
         relay_client: HttpClient,
     ) -> eyre::Result<()> {
+        let mut nonce = U256::ZERO;
         loop {
             let prepare_start = Instant::now();
-            let PrepareCallsResponse { context, digest, .. } = relay_client
+            let Ok(PrepareCallsResponse { context, digest, .. }) = relay_client
                 .prepare_calls(PrepareCallsParameters {
                     calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
                     chain_id,
                     from: self.address,
                     capabilities: PrepareCallsCapabilities {
                         authorize_keys: vec![],
-                        meta: Meta { fee_token, key_hash: self.key.key_hash(), nonce: None },
+                        meta: Meta { fee_token, key_hash: self.key.key_hash(), nonce: Some(nonce) },
                         revoke_keys: vec![],
                         pre_ops: vec![],
                         pre_op: false,
                     },
                 })
                 .await
-                .expect("prepare calls failed");
+            else {
+                error!(
+                     account = %self.address,
+                     nonce = %nonce,
+                     "Prepare calls failed"
+                );
+                continue;
+            };
             let signature =
                 self.key.sign_payload_hash(digest).await.expect("failed to sign bundle digest");
 
@@ -80,7 +88,7 @@ impl StressAccount {
                 "Prepared bundle"
             );
             let send_start = Instant::now();
-            let bundle_id = relay_client
+            match relay_client
                 .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
                     context,
                     signature: KeySignature {
@@ -91,31 +99,48 @@ impl StressAccount {
                     },
                 })
                 .await
-                .expect("send prepared calls failed");
-            info!(
-                %digest,
-                account = %self.address,
-                bundle_id = %bundle_id.id,
-                total_elapsed = ?prepare_start.elapsed(),
-                elapsed = ?send_start.elapsed(),
-                "Sent bundle"
-            );
-            loop {
-                let status = relay_client.get_calls_status(bundle_id.id).await;
-                trace!("got bundle status: {:?}", status);
-                if status.is_ok_and(|status| status.status.is_final()) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            {
+                Ok(bundle_id) => {
+                    info!(
+                        %digest,
+                        account = %self.address,
+                        bundle_id = %bundle_id.id,
+                        total_elapsed = ?prepare_start.elapsed(),
+                        elapsed = ?send_start.elapsed(),
+                        "Sent bundle"
+                    );
+                    nonce = nonce.saturating_add(U256::from(1));
 
-            info!(
-                %digest,
-                account = %self.address,
-                bundle_id = %bundle_id.id,
-                total_elapsed = ?prepare_start.elapsed(),
-                "Bundle confirmed"
-            );
+                    let inner_client = relay_client.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            let status = inner_client.get_calls_status(bundle_id.id).await;
+                            if status.is_ok_and(|status| status.status.is_final()) {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+
+                        info!(
+                            %digest,
+                            account = %self.address,
+                            bundle_id = %bundle_id.id,
+                            total_elapsed = ?prepare_start.elapsed(),
+                            "Bundle confirmed"
+                        );
+                    });
+                }
+                Err(err) => {
+                    error!(
+                        %digest,
+                        account = %self.address,
+                        total_elapsed = ?prepare_start.elapsed(),
+                        elapsed = ?prepare_start.elapsed(),
+                        ?err,
+                        "Bundle failed to send"
+                    );
+                }
+            }
         }
     }
 }
@@ -139,11 +164,8 @@ impl StressTester {
             .on_http(args.rpc_url.clone())
             .erased();
 
-        info!(
-            "Connected to relay at {}, version {}",
-            &args.relay_url,
-            relay_client.health().await?.version
-        );
+        let health = relay_client.health().await?;
+        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         let supports_fee_token =
             relay_client.fee_tokens().await?.contains(args.chain_id, &args.fee_token);
@@ -161,7 +183,7 @@ impl StressTester {
                     .prepare_create_account(PrepareCreateAccountParameters {
                         capabilities: PrepareCreateAccountCapabilities {
                             authorize_keys: vec![key.to_authorized(None).await?],
-                            delegation: args.delegation,
+                            delegation: health.delegation_proxy,
                         },
                         chain_id: args.chain_id,
                     })
@@ -260,9 +282,6 @@ struct Args {
     /// Number of accounts to create and test with.
     #[arg(long = "accounts", value_name = "COUNT", default_value_t = 1000)]
     accounts: usize,
-    /// Address of the delegation contract to use for testing.
-    #[arg(long = "delegation", value_name = "ADDRESS", required = true)]
-    delegation: Address,
 }
 
 impl Args {
