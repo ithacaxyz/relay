@@ -216,7 +216,7 @@ impl Relay {
         let entrypoint =
             Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
 
-        let (nonce, native_fee_estimate, eth_price, l1_fees) = try_join!(
+        let (nonce, native_fee_estimate, eth_price) = try_join!(
             // fetch nonce if not specified
             async {
                 if let Some(nonce) = request.op.nonce {
@@ -232,13 +232,6 @@ impl Relay {
                 // TODO: only handles eth as native fee token
                 Ok(self.inner.price_oracle.eth_price(token.coin).await)
             },
-            async {
-                if is_optimism {
-                    provider.fetch_l1_fees().await.map(Some).map_err(RelayError::from)
-                } else {
-                    Ok(None)
-                }
-            }
         )?;
 
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
@@ -321,7 +314,7 @@ impl Relay {
         let mut payment = op.combinedGas * op.paymentPerGas;
 
         // Include the L1 DA fees if we're on an OP rollup.
-        if let Some(l1_fees) = l1_fees {
+        if is_optimism {
             // Firstly prepare a transaction similar to the one that will actually be sent.
             let tx = TxEip1559 {
                 chain_id: request.chain_id,
@@ -345,7 +338,7 @@ impl Relay {
                 buf
             };
 
-            payment += l1_fees.estimate_l1_cost(&encoded)
+            payment += provider.estimate_l1_fee(encoded.into()).await?
                 * U256::from(10u128.pow(token.decimals as u32))
                 / eth_price;
         }

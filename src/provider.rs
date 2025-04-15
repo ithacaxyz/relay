@@ -1,7 +1,11 @@
 //! Alloy provider extensions.
 
-use crate::op::{L1_BLOCK_CONTRACT, L1Block, L1BlockFees};
-use alloy::{providers::Provider, transports::TransportResult};
+use crate::op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle};
+use alloy::{
+    primitives::{Bytes, U256},
+    providers::Provider,
+    transports::{TransportErrorKind, TransportResult},
+};
 
 /// Extension trait for [`Provider`] adding helpers for interacting with OP rollups.
 pub trait ProviderExt: Provider {
@@ -12,17 +16,26 @@ pub trait ProviderExt: Provider {
             if alloy_chains::Chain::from(chain_id).is_optimism() {
                 Ok(true)
             } else {
-                Ok(!self.get_code_at(L1_BLOCK_CONTRACT).await?.is_empty())
+                Ok(!self.get_code_at(OP_FEE_ORACLE_CONTRACT).await?.is_empty())
             }
         }
     }
 
-    /// Fetches [`L1BlockFees`] from the [`L1_BLOCK_CONTRACT`].
-    fn fetch_l1_fees(&self) -> impl Future<Output = TransportResult<L1BlockFees>> + Send
+    /// Estimates L1 DA fee for a given encoded transaction by using [`OpL1FeeOracle`].
+    fn estimate_l1_fee(
+        &self,
+        encoded_tx: Bytes,
+    ) -> impl Future<Output = TransportResult<U256>> + Send
     where
         Self: Sized,
     {
-        async move { L1Block::new(L1_BLOCK_CONTRACT, self).fetch_fees().await }
+        async move {
+            OpL1FeeOracle::new(OP_FEE_ORACLE_CONTRACT, self)
+                .getL1Fee(encoded_tx)
+                .call()
+                .await
+                .map_err(TransportErrorKind::custom)
+        }
     }
 }
 
