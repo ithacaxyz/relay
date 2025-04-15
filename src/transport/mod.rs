@@ -1,5 +1,6 @@
 //! L2 Transport implementation with `eth_sendRawTransaction` forwarding.
 
+use crate::transport::error::TransportErrExt;
 use alloy::{
     rpc::json_rpc::{RequestPacket, ResponsePacket},
     transports::{TransportError, TransportFut},
@@ -79,8 +80,30 @@ where
                     // TODO custom error handling here?
                     let (seq, inner) = futures_util::future::join(to_sequencer, to_inner).await;
 
-                    // TODO: should we treat sequencer submission as an error?
-                    seq.or(inner)
+                    match (seq, inner) {
+                        (Ok(seq), Ok(_)) => Ok(seq),
+                        (Err(seq), Ok(inner)) => {
+                            if seq.is_already_known() {
+                                Ok(inner)
+                            } else {
+                                Err(seq)
+                            }
+                        }
+                        (Ok(seq), Err(inner)) => {
+                            if inner.is_already_known() {
+                                Ok(seq)
+                            } else {
+                                Err(inner)
+                            }
+                        }
+                        (Err(seq), Err(inner)) => {
+                            if seq.is_already_known() {
+                                Err(inner)
+                            } else {
+                                Err(seq)
+                            }
+                        }
+                    }
                 });
             }
         }
