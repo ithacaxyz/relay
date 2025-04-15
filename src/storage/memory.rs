@@ -3,7 +3,7 @@
 use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
-    transactions::{PendingTransaction, TransactionStatus, TxId},
+    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::{
@@ -21,6 +21,7 @@ pub struct InMemoryStorage {
     pending_transactions: DashMap<TxId, PendingTransaction>,
     statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
+    queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
 }
 
 #[async_trait]
@@ -108,5 +109,24 @@ impl StorageApi for InMemoryStorage {
 
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>> {
         Ok(self.bundles.get(&bundle).as_deref().cloned().unwrap_or_default())
+    }
+
+    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()> {
+        self.queued_transactions.entry(tx.chain_id()).or_default().push(tx.clone());
+        Ok(())
+    }
+
+    async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>> {
+        Ok(self.queued_transactions.get(&chain_id).as_deref().cloned().unwrap_or_default())
+    }
+
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> Result<()> {
+        if let Some(mut queue) = self.queued_transactions.get_mut(&tx.chain_id()) {
+            if let Some(idx) = queue.iter().position(|t| t.id == tx.id) {
+                queue.remove(idx);
+            }
+        }
+
+        Ok(())
     }
 }

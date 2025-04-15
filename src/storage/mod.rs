@@ -7,7 +7,7 @@ mod memory;
 mod pg;
 
 use crate::{
-    transactions::{PendingTransaction, TransactionStatus, TxId},
+    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::{
@@ -96,5 +96,17 @@ impl StorageApi for RelayStorage {
 
     async fn get_bundle_transactions(&self, bundle: BundleId) -> api::Result<Vec<TxId>> {
         self.inner.get_bundle_transactions(bundle).await
+    }
+
+    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> api::Result<()> {
+        self.inner.write_queued_transaction(tx).await
+    }
+
+    async fn read_queued_transactions(&self, chain_id: u64) -> api::Result<Vec<RelayTransaction>> {
+        self.inner.read_queued_transactions(chain_id).await
+    }
+
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> api::Result<()> {
+        self.inner.remove_from_queue(tx).await
     }
 }

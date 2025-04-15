@@ -2,7 +2,7 @@
 
 use crate::{
     error::StorageError,
-    transactions::{PendingTransaction, TransactionStatus, TxId},
+    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, KeyID, rpc::BundleId},
 };
 use alloy::{
@@ -57,4 +57,13 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Gets all transactions in a bundle.
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>>;
+
+    /// Writes a queued transaction.
+    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()>;
+
+    /// Reads queued transactions for the given chain.
+    async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>>;
+
+    /// Removes a transaction from the queue. No-op if transaction is not in the queue.
+    async fn remove_from_queue(&self, tx: &RelayTransaction) -> Result<()>;
 }

@@ -83,6 +83,11 @@ impl RelayTransaction {
             .into()
         }
     }
+
+    /// Returns the chain id of the transaction.
+    pub fn chain_id(&self) -> u64 {
+        self.quote.ty().chain_id
+    }
 }
 
 pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}
