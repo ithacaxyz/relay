@@ -345,7 +345,9 @@ impl Relay {
                 buf
             };
 
-            payment += l1_fees.estimate_l1_cost(&encoded);
+            payment += l1_fees.estimate_l1_cost(&encoded)
+                * U256::from(10u128.pow(token.decimals as u32))
+                / eth_price;
         }
 
         // Calculate amount with updated paymentPerGas

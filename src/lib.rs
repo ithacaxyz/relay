@@ -11,6 +11,7 @@ pub mod eip712;
 pub mod error;
 pub mod metrics;
 pub mod nonce;
+pub mod op;
 pub mod otlp;
 pub mod price;
 pub mod provider;
