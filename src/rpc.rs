@@ -150,6 +150,7 @@ impl Relay {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         entrypoint: Address,
+        delegation_proxy: Address,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -161,6 +162,7 @@ impl Relay {
     ) -> Self {
         let inner = RelayInner {
             entrypoint,
+            delegation_proxy,
             chains,
             fee_tokens,
             fee_recipient,
@@ -526,6 +528,7 @@ impl RelayApiServer for Relay {
             version: RELAY_SHORT_VERSION.to_string(),
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
+            delegation_proxy: self.inner.delegation_proxy,
             quote_config: self.inner.quote_config.clone(),
         })
     }
@@ -1011,6 +1014,8 @@ impl RelayApiServer for Relay {
 struct RelayInner {
     /// The entrypoint address.
     entrypoint: Address,
+    /// The delegation proxy address.
+    delegation_proxy: Address,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.

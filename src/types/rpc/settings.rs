@@ -12,6 +12,8 @@ pub struct RelaySettings {
     pub entrypoint: Address,
     /// The fee recipient address.
     pub fee_recipient: Address,
+    /// The delegation proxy address.
+    pub delegation_proxy: Address,
     /// Quote related configuration.
     pub quote_config: QuoteConfig,
 }

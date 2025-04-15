@@ -41,6 +41,9 @@ pub struct Args {
     /// The address of the entrypoint.
     #[arg(long = "entrypoint", value_name = "ENTRYPOINT")]
     pub entrypoint: Address,
+    /// The address of the delegation proxy.
+    #[arg(long = "delegation-proxy", value_name = "DELEGATION")]
+    pub delegation_proxy: Address,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -106,6 +109,7 @@ impl Args {
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
             .with_entrypoint(self.entrypoint)
+            .with_delegation_proxy(self.delegation_proxy)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
@@ -151,6 +155,7 @@ mod tests {
                     metrics_port: get_available_port().unwrap(),
                     max_connections: Default::default(),
                     entrypoint: Default::default(),
+                    delegation_proxy: Default::default(),
                     endpoints: Default::default(),
                     fee_recipient: Default::default(),
                     quote_ttl: Default::default(),
