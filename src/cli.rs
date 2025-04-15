@@ -46,6 +46,12 @@ pub struct Args {
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
     #[arg(long = "endpoint", value_name = "RPC_ENDPOINT", required = true)]
     pub endpoints: Vec<Url>,
+    /// The fee recipient address.
+    ///
+    /// Defaults to the zero address, which means the fees will be accrued by the entrypoint
+    /// contract.
+    #[arg(long = "fee-recipient", value_name = "ADDRESS", default_value_t = Address::ZERO)]
+    pub fee_recipient: Address,
     /// The lifetime of a fee quote.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "5")]
     pub quote_ttl: Duration,
@@ -92,6 +98,7 @@ impl Args {
             .with_transaction_keys(&self.secret_keys)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
+            .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
             .with_port(self.port)
             .with_metrics_port(self.metrics_port)
@@ -145,6 +152,7 @@ mod tests {
                     max_connections: Default::default(),
                     entrypoint: Default::default(),
                     endpoints: Default::default(),
+                    fee_recipient: Default::default(),
                     quote_ttl: Default::default(),
                     rate_ttl: Default::default(),
                     quote_secret_key: key.to_string(),

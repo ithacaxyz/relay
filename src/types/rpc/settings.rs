@@ -10,6 +10,8 @@ pub struct RelaySettings {
     pub version: String,
     /// The entrypoint address.
     pub entrypoint: Address,
+    /// The fee recipient address.
+    pub fee_recipient: Address,
     /// Quote related configuration.
     pub quote_config: QuoteConfig,
 }

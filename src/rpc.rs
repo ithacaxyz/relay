@@ -155,6 +155,7 @@ impl Relay {
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
+        fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
     ) -> Self {
@@ -162,6 +163,7 @@ impl Relay {
             entrypoint,
             chains,
             fee_tokens,
+            fee_recipient,
             quote_signer,
             quote_config,
             price_oracle,
@@ -241,6 +243,7 @@ impl Relay {
             executionData: request.op.execution_data.clone(),
             nonce,
             paymentToken: token.address,
+            paymentRecipient: self.inner.fee_recipient,
             // we intentionally do not use the maximum amount of gas since the contracts add a small
             // overhead when checking if there is sufficient gas for the op
             combinedGas: U256::from(100_000_000),
@@ -522,6 +525,7 @@ impl RelayApiServer for Relay {
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
             entrypoint: self.inner.entrypoint,
+            fee_recipient: self.inner.fee_recipient,
             quote_config: self.inner.quote_config.clone(),
         })
     }
@@ -1011,6 +1015,8 @@ struct RelayInner {
     chains: Chains,
     /// Supported fee tokens.
     fee_tokens: FeeTokens,
+    /// The fee recipient address.
+    fee_recipient: Address,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
     /// Quote related configuration.
