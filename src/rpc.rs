@@ -12,7 +12,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     eip712::compute_eip712_data,
     types::{
-        AccountRegistry::AccountRegistryCalls,
+        AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
         Key, KeyHash, KeyHashWithID,
@@ -31,7 +31,7 @@ use alloy::{
         TransactionReceipt,
         state::{AccountOverride, StateOverridesBuilder},
     },
-    sol_types::SolValue,
+    sol_types::{SolCall, SolValue},
 };
 use futures_util::{
     TryFutureExt,
@@ -152,6 +152,7 @@ impl Relay {
     pub fn new(
         entrypoint: Address,
         delegation_proxy: Address,
+        account_registry: Address,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -164,6 +165,7 @@ impl Relay {
         let inner = RelayInner {
             entrypoint,
             delegation_proxy,
+            account_registry,
             chains,
             fee_tokens,
             fee_recipient,
@@ -497,7 +499,7 @@ impl Relay {
         for key in keys {
             // additional_calls: permission & account registry
             let (authorize_call, additional_calls) =
-                key.into_calls(self.inner.entrypoint, account)?;
+                key.into_calls(self.inner.account_registry, account)?;
             calls.push(authorize_call);
             calls.extend(additional_calls);
         }
@@ -529,6 +531,65 @@ impl Relay {
             .find(|key| key.hash == key_hash)
             .map(|k| k.authorize_key.key))
     }
+
+    /// Generates all calls from a [`PrepareCallsParameters`].
+    ///
+    /// `maybe_prep_init` should only be `Some`, if we're dealing with the first userop of a
+    /// PREPAccount.
+    async fn generate_calls(
+        &self,
+        maybe_prep_init: Option<&CreatableAccount>,
+        request: &PrepareCallsParameters,
+    ) -> Result<Vec<Call>, RelayError> {
+        // Generate all calls that will authorize  keys and set their permissions
+        let authorize_calls = self.authorize_into_calls(
+            request.capabilities.authorize_keys.clone(),
+            Some(request.from),
+        )?;
+
+        // Generate all revoke key calls
+        let revoke_calls = request
+            .capabilities
+            .revoke_keys
+            .iter()
+            .flat_map(|key| key.clone().into_calls(self.inner.account_registry));
+
+        // If we are planning to use a session key as the first userop signing key, we need to
+        // enable it to register the admin accounts in the AccountRegistry contract.
+        let account_registry_permission = request
+            .capabilities
+            .authorize_keys
+            .iter()
+            .filter(|auth| {
+                request.capabilities.pre_op && !auth.key.isSuperAdmin && maybe_prep_init.is_some()
+            })
+            .map(|auth| {
+                Call::set_can_execute(
+                    auth.key.key_hash(),
+                    self.inner.account_registry,
+                    AccountRegistry::registerCall::SELECTOR.into(),
+                    true,
+                )
+            });
+
+        // If this is the first user UserOP of this PREPAccount, we need to register the admin
+        // accounts into the AccountRegistry contract.
+        let account_registry_calls =
+            maybe_prep_init.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
+                acc.id_signatures
+                    .iter()
+                    .map(|id| id.to_call(self.inner.account_registry, acc.prep.address))
+            });
+
+        // Merges all previously generated calls.
+        Ok(authorize_calls
+            .into_iter()
+            .chain(account_registry_permission)
+            .chain(account_registry_calls)
+            .chain(request.calls.clone())
+            .chain(revoke_calls)
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -539,6 +600,7 @@ impl RelayApiServer for Relay {
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
+            account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
     }
@@ -594,7 +656,7 @@ impl RelayApiServer for Relay {
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
             keys.iter().map(|key| key.id).collect(),
-            self.inner.entrypoint,
+            self.inner.account_registry,
             self.provider(request.context.chain_id)?,
         )
         .await?;
@@ -620,9 +682,12 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        let mut accounts =
-            AccountRegistryCalls::accounts(request.id, self.inner.entrypoint, provider.clone())
-                .await?;
+        let mut accounts = AccountRegistryCalls::accounts(
+            request.id,
+            self.inner.account_registry,
+            provider.clone(),
+        )
+        .await?;
 
         if accounts.is_none() {
             // Only read from storage if the onchain mapping does not exist. It's possible that the
@@ -674,31 +739,6 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<PrepareCallsResponse> {
         let provider = self.provider(request.chain_id)?;
 
-        // Generate all calls that will authorize keys and set their permissions
-        let authorize_calls = self.authorize_into_calls(
-            request.capabilities.authorize_keys.clone(),
-            Some(request.from),
-        )?;
-
-        let revoke_calls = request
-            .capabilities
-            .revoke_keys
-            .iter()
-            .flat_map(|key| key.clone().into_calls(self.inner.entrypoint));
-
-        // Find the key that authorizes this userop
-        let Some(key) = self
-            .try_find_key(
-                request.from,
-                request.capabilities.meta.key_hash,
-                &request.capabilities.pre_ops,
-                request.chain_id,
-            )
-            .await?
-        else {
-            return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
-        };
-
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
         let account = Account::new(request.from, provider.clone());
@@ -717,17 +757,21 @@ impl RelayApiServer for Relay {
             None
         };
 
-        // Merges authorize, registry(from prepareAccount) and requested calls.
-        let all_calls = authorize_calls
-            .into_iter()
-            .chain(maybe_prep.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
-                acc.id_signatures
-                    .iter()
-                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
-            }))
-            .chain(request.calls)
-            .chain(revoke_calls)
-            .collect::<Vec<_>>();
+        // Generate all requested calls.
+        let calls = self.generate_calls(maybe_prep.as_ref(), &request).await?;
+
+        // Find the key that authorizes this userop
+        let Some(key) = self
+            .try_find_key(
+                request.from,
+                request.capabilities.meta.key_hash,
+                &request.capabilities.pre_ops,
+                request.chain_id,
+            )
+            .await?
+        else {
+            return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
+        };
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let (asset_diff, quote) = self
@@ -735,7 +779,7 @@ impl RelayApiServer for Relay {
                 PartialAction {
                     op: PartialUserOp {
                         eoa: request.from,
-                        execution_data: all_calls.abi_encode().into(),
+                        execution_data: calls.abi_encode().into(),
                         nonce: request.capabilities.meta.nonce,
                         init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
                         pre_ops: request.capabilities.pre_ops.clone(),
@@ -1026,6 +1070,8 @@ struct RelayInner {
     entrypoint: Address,
     /// The delegation proxy address.
     delegation_proxy: Address,
+    /// The account registry address.
+    account_registry: Address,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.

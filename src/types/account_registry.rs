@@ -37,10 +37,10 @@ impl AccountRegistry::AccountRegistryCalls {
     /// it's returned as `None`.
     pub async fn id_infos(
         ids: Vec<Address>,
-        entrypoint: Address,
+        account_registry: Address,
         provider: DynProvider,
     ) -> Result<Vec<Option<(KeyHash, Vec<Address>)>>, RelayError> {
-        AccountRegistry::AccountRegistryInstance::new(entrypoint, provider)
+        AccountRegistry::AccountRegistryInstance::new(account_registry, provider)
             .idInfos(ids.clone())
             .call()
             .await
@@ -62,10 +62,10 @@ impl AccountRegistry::AccountRegistryCalls {
     /// Returns all acounts of the requested [`KeyID`].
     pub async fn accounts(
         id: KeyID,
-        entrypoint: Address,
+        account_registry: Address,
         provider: DynProvider,
     ) -> Result<Option<Vec<Address>>, RelayError> {
-        Ok(Self::id_infos(vec![id], entrypoint, provider)
+        Ok(Self::id_infos(vec![id], account_registry, provider)
             .await?
             .pop()
             .expect("should exist")

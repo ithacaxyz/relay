@@ -25,6 +25,8 @@ pub struct RelayConfig {
     pub entrypoint: Address,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
+    /// Account registry address.
+    pub account_registry: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -151,6 +153,7 @@ impl Default for RelayConfig {
             transactions: TransactionServiceConfig::default(),
             entrypoint: Address::ZERO,
             delegation_proxy: Address::ZERO,
+            account_registry: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -257,6 +260,12 @@ impl RelayConfig {
     /// Sets the delegation address.
     pub fn with_delegation_proxy(mut self, delegation_proxy: Address) -> Self {
         self.delegation_proxy = delegation_proxy;
+        self
+    }
+
+    /// Sets the account registry address.
+    pub fn with_account_registry(mut self, account_registry: Address) -> Self {
+        self.account_registry = account_registry;
         self
     }
 

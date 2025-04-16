@@ -504,7 +504,6 @@ async fn session_key_pre_op() -> Result<()> {
                     authorization_keys: vec![&session_key],
                     calls: vec![
                         calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
-                        calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                         calls::can_execute_all(env.erc20, session_key.key_hash()),
                         calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     ],
@@ -542,7 +541,6 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
                 calls: vec![
                     calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                     calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
-                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
                 ],
                 expected: ExpectedOutcome::Pass,

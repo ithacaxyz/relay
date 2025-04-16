@@ -83,13 +83,13 @@ impl Call {
 
     /// Create a call to register an account.
     pub fn register_account(
-        registry: Address,
+        account_registry: Address,
         signature: Bytes,
         data: Bytes,
         account: Address,
     ) -> Self {
         Self {
-            to: registry,
+            to: account_registry,
             value: U256::ZERO,
             data: AccountRegistry::registerCall { signature, data, account }.abi_encode().into(),
         }

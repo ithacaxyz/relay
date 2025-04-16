@@ -63,9 +63,10 @@ jobs:
         if: ${{ matrix.variant == 'odyssey_fork' }}
         run: |
           echo "TEST_FORK_URL=https://odyssey-devnet.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_FORK_BLOCK_NUMBER_PINNED=620240" >> $GITHUB_ENV
+          echo "TEST_FORK_BLOCK_NUMBER_PINNED=673681" >> $GITHUB_ENV
           echo "TEST_ENTRYPOINT=0x1aabbc3023dcd83e049e65cdc13f1a72e8a04ddb" >> $GITHUB_ENV
           echo "TEST_DELEGATION=0x1b183b70b499563effe71152c724aeda5249dd77" >> $GITHUB_ENV
+          echo "TEST_ACCOUNT_REGISTRY=0x4c648b1c3ddc2b858e3a98137219743e3ea19b50" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}

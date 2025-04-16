@@ -31,12 +31,14 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
     )
     .await?;
 
+    let account_registry = env.relay_endpoint.health().await?.account_registry;
+
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();
 
         let (key_hash, addresses) = AccountRegistryCalls::id_infos(
             vec![admin_key.id()],
-            env.entrypoint,
+            account_registry,
             env.provider.clone(),
         )
         .await?
@@ -83,7 +85,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(
             AccountRegistryCalls::id_infos(
                 vec![admin_key.id()],
-                env.entrypoint,
+                account_registry,
                 env.provider.clone()
             )
             .await?
@@ -96,7 +98,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(
             AccountRegistryCalls::id_infos(
                 vec![backup_key.id()],
-                env.entrypoint,
+                account_registry,
                 env.provider.clone()
             )
             .await?
