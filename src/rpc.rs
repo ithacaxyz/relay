@@ -151,6 +151,7 @@ impl Relay {
     pub fn new(
         entrypoint: Address,
         delegation_proxy: Address,
+        account_registry: Address,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -163,6 +164,7 @@ impl Relay {
         let inner = RelayInner {
             entrypoint,
             delegation_proxy,
+            account_registry,
             chains,
             fee_tokens,
             fee_recipient,
@@ -487,7 +489,7 @@ impl Relay {
         for key in keys {
             // additional_calls: permission & account registry
             let (authorize_call, additional_calls) =
-                key.into_calls(self.inner.entrypoint, account)?;
+                key.into_calls(self.inner.account_registry, account)?;
             calls.push(authorize_call);
             calls.extend(additional_calls);
         }
@@ -540,7 +542,7 @@ impl Relay {
             .capabilities
             .revoke_keys
             .iter()
-            .flat_map(|key| key.clone().into_calls(self.inner.entrypoint));
+            .flat_map(|key| key.clone().into_calls(self.inner.account_registry));
 
         // If we are planning to use a session key as the first userop signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
@@ -548,17 +550,16 @@ impl Relay {
             .capabilities
             .authorize_keys
             .iter()
-            .filter(|_| request.capabilities.pre_op && maybe_prep_init.is_some())
-            .filter_map(|auth| {
-                if auth.key.isSuperAdmin {
-                    return None;
-                }
-                Some(Call::set_can_execute(
+            .filter(|auth| {
+                request.capabilities.pre_op && !auth.key.isSuperAdmin && maybe_prep_init.is_some()
+            })
+            .map(|auth| {
+                Call::set_can_execute(
                     auth.key.key_hash(),
-                    self.inner.entrypoint,
+                    self.inner.account_registry,
                     AccountRegistry::registerCall::SELECTOR.into(),
                     true,
-                ))
+                )
             });
 
         // If this is the first user UserOP of this PREPAccount, we need to register the admin
@@ -567,7 +568,7 @@ impl Relay {
             maybe_prep_init.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
                 acc.id_signatures
                     .iter()
-                    .map(|id| id.to_call(self.inner.entrypoint, acc.prep.address))
+                    .map(|id| id.to_call(self.inner.account_registry, acc.prep.address))
             });
 
         // Merges all previously generated calls.
@@ -589,6 +590,7 @@ impl RelayApiServer for Relay {
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
+            account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
     }
@@ -644,7 +646,7 @@ impl RelayApiServer for Relay {
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
             keys.iter().map(|key| key.id).collect(),
-            self.inner.entrypoint,
+            self.inner.account_registry,
             self.provider(request.context.chain_id)?,
         )
         .await?;
@@ -670,9 +672,12 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        let mut accounts =
-            AccountRegistryCalls::accounts(request.id, self.inner.entrypoint, provider.clone())
-                .await?;
+        let mut accounts = AccountRegistryCalls::accounts(
+            request.id,
+            self.inner.account_registry,
+            provider.clone(),
+        )
+        .await?;
 
         if accounts.is_none() {
             // Only read from storage if the onchain mapping does not exist. It's possible that the
@@ -1055,6 +1060,8 @@ struct RelayInner {
     entrypoint: Address,
     /// The delegation proxy address.
     delegation_proxy: Address,
+    /// The account registry address.
+    account_registry: Address,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.

@@ -114,6 +114,7 @@ impl Environment {
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
     /// - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
     /// - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
+    /// - `TEST_ACCOUNT_REGISTRY`: Address for AccountRegistry contract; deploys a mock if unset.
     /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
     ///
     /// Example `.env`:
@@ -125,6 +126,7 @@ impl Environment {
     /// TEST_CONTRACTS="./tests/account/out"
     /// TEST_ENTRYPOINT="0xEntryPointAddress"
     /// TEST_DELEGATION="0xDelegationAddress"
+    /// TEST_ACCOUNT_REGISTRY="0xAccountRegistryAddress"
     /// TEST_ERC20="0xYourErc20Address"
     /// ```
     pub async fn setup(config: EnvironmentConfig) -> eyre::Result<Self> {
@@ -179,7 +181,8 @@ impl Environment {
             .on_client(client);
 
         // Get or deploy mock contracts.
-        let (delegation, entrypoint, erc20s) = get_or_deploy_contracts(&provider).await?;
+        let (delegation, entrypoint, account_registry, erc20s) =
+            get_or_deploy_contracts(&provider).await?;
 
         let eoa = if config.is_prep {
             EoaKind::create_prep()
@@ -253,6 +256,7 @@ impl Environment {
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_entrypoint(entrypoint)
+                .with_account_registry(account_registry)
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
@@ -414,20 +418,29 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Vec<Address>), eyre::Error> {
+) -> Result<(Address, Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
+
     let mut entrypoint = deploy_contract(
         &provider,
         &contracts_path.join("EntryPoint.sol/EntryPoint.json"),
         Some(provider.default_signer_address().abi_encode().into()),
     )
     .await?;
+
     let mut delegation = deploy_contract(
         &provider,
         &contracts_path.join("Delegation.sol/Delegation.json"),
         Some(entrypoint.abi_encode().into()),
+    )
+    .await?;
+
+    let mut account_registry = deploy_contract(
+        &provider,
+        &contracts_path.join("AccountRegistry.sol/AccountRegistry.json"),
+        None,
     )
     .await?;
 
@@ -439,6 +452,12 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     // Delegation
     if let Ok(address) = std::env::var("TEST_DELEGATION") {
         delegation = Address::from_str(&address).wrap_err("Delegation address parse failed.")?
+    }
+
+    // Account Registry
+    if let Ok(address) = std::env::var("TEST_ACCOUNT_REGISTRY") {
+        account_registry =
+            Address::from_str(&address).wrap_err("Account Registry address parse failed.")?
     }
 
     // Have at least 2 erc20 deployed
@@ -465,7 +484,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
         erc20s.push(erc20)
     }
-    Ok((delegation, entrypoint, erc20s))
+    Ok((delegation, entrypoint, account_registry, erc20s))
 }
 
 async fn deploy_contract<P: Provider>(

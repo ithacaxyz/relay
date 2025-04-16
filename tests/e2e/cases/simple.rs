@@ -234,7 +234,6 @@ async fn spend_limits_bundle_failure() -> Result<()> {
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
                     calls::daily_limit(env.erc20, U256::from(15), session_key.key()),
                 ],

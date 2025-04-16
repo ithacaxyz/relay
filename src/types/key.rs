@@ -429,10 +429,10 @@ pub struct KeyHashWithID {
 }
 
 impl KeyHashWithID {
-    /// Converts self to [`Call`] given a registry and PREP account address.
-    pub fn to_call(&self, registry: Address, account: Address) -> Call {
+    /// Converts self to [`Call`] given a account registry and PREP account address.
+    pub fn to_call(&self, account_registry: Address, account: Address) -> Call {
         Call::register_account(
-            registry,
+            account_registry,
             self.signature.as_bytes().into(),
             self.hash.into(),
             account,

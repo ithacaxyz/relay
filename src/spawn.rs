@@ -153,6 +153,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let rpc = Relay::new(
         config.entrypoint,
         config.delegation_proxy,
+        config.account_registry,
         chains.clone(),
         quote_signer,
         config.quote,
