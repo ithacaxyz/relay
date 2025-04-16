@@ -32,7 +32,7 @@ pub struct RelayTransaction {
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
     /// Trace context for the transaction.
-    #[serde(with = "crate::serde::trace_context")]
+    #[serde(with = "crate::serde::trace_context", default)]
     pub trace_context: Context,
 }
 
