@@ -822,6 +822,7 @@ impl SignerTask {
 impl Future for SignerTask {
     type Output = ();
 
+    #[instrument(name = "signer", skip_all, fields(address = ?self.signer.address(), chain_id = self.signer.chain_id()))]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let instant = Instant::now();
 
