@@ -1,18 +1,20 @@
 use super::{
     Call,
     IDelegation::authorizeCall,
-    Key,
+    Key, KeyHash,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
 use crate::{error::RelayError, types::IDelegation};
-use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
+use Delegation::{
+    DelegationInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
         constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
-    providers::Provider,
+    providers::{MulticallError, Provider},
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -132,6 +134,16 @@ sol! {
 
         /// The entrypoint address.
         address public ENTRY_POINT;
+
+        /// Returns whether the given signature is valid and a keyHash that signed the digest.
+        function unwrapAndValidateSignature(bytes32 digest, bytes calldata signature)
+            public
+            view
+            virtual
+            returns (bool isValid, bytes32 keyHash);
+
+        /// Initializes PREP account with given `initData`.
+        function initializePREP(bytes calldata initData) public virtual returns (bool);
     }
 }
 
@@ -264,6 +276,43 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
+    }
+
+    /// Validates the given signature, returns `Some(key_hash)` if the signature is valid.
+    pub async fn validate_signature(
+        &self,
+        digest: B256,
+        signature: Bytes,
+    ) -> TransportResult<Option<KeyHash>> {
+        let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
+            .delegation
+            .unwrapAndValidateSignature(digest, signature)
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok(isValid.then_some(keyHash))
+    }
+
+    /// A helper to combine `initializePREP` and `validateSignature` calls into a single multicall.
+    pub async fn initialize_and_validate_signature(
+        &self,
+        init_data: Bytes,
+        digest: B256,
+        signature: Bytes,
+    ) -> Result<Option<B256>, MulticallError> {
+        let (_, unwrapAndValidateSignatureReturn { isValid, keyHash }) = self
+            .delegation
+            .provider()
+            .multicall()
+            .add(self.delegation.initializePREP(init_data))
+            .add(self.delegation.unwrapAndValidateSignature(digest, signature))
+            .overrides(self.overrides.clone())
+            .aggregate()
+            .await?;
+
+        Ok(isValid.then_some(keyHash))
     }
 }
 

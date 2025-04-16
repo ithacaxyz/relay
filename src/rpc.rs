@@ -35,7 +35,7 @@ use alloy::{
 };
 use futures_util::{
     TryFutureExt,
-    future::{try_join_all, try_join3},
+    future::{TryJoinAll, try_join_all, try_join3},
     join,
 };
 use jsonrpsee::{
@@ -64,6 +64,7 @@ use crate::{
             PrepareCreateAccountParameters, PrepareCreateAccountResponse,
             PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
             SendPreparedCallsResponse, UpgradeAccountParameters, UpgradeAccountResponse,
+            VerifySignatureParameters, VerifySignatureResponse,
         },
     },
 };
@@ -138,6 +139,15 @@ pub trait RelayApi {
     /// The identifier of the batch is the value returned from `send_prepared_calls`.
     #[method(name = "getCallsStatus", aliases = ["wallet_getCallsStatus"])]
     async fn get_calls_status(&self, parameters: BundleId) -> RpcResult<CallsStatus>;
+
+    /// Get the status of a call batch that was sent via `send_prepared_calls`.
+    ///
+    /// The identifier of the batch is the value returned from `send_prepared_calls`.
+    #[method(name = "verifySignature", aliases = ["wallet_verifySignature"])]
+    async fn verify_signature(
+        &self,
+        parameters: VerifySignatureParameters,
+    ) -> RpcResult<VerifySignatureResponse>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -1091,6 +1101,94 @@ impl RelayApiServer for Relay {
                 })
                 .collect(),
         })
+    }
+
+    async fn verify_signature(
+        &self,
+        parameters: VerifySignatureParameters,
+    ) -> RpcResult<VerifySignatureResponse> {
+        let VerifySignatureParameters { key_id, digest, signature, chain_id } = parameters;
+
+        let provider = self.provider(chain_id)?;
+
+        // Firstly try to fetch key hash and account from on-chain registry
+        if let Some((key_hash, account)) = AccountRegistryCalls::id_infos(
+            vec![key_id],
+            self.inner.account_registry,
+            provider.clone(),
+        )
+        .await?
+        .pop()
+        .flatten()
+        .and_then(|(key_hash, mut accounts)| Some((key_hash, accounts.pop()?)))
+        {
+            let valid = Account::new(account, &provider)
+                .validate_signature(digest, signature)
+                .await
+                .map_err(RelayError::from)?
+                .is_some_and(|hash| hash == key_hash);
+
+            return Ok(VerifySignatureResponse { valid });
+        }
+
+        // If the registry lookup failed, fall back to reading a created account from storage.
+        let (key_hash, stored_account) = self
+            .inner
+            .storage
+            // Read all stored accounts corresponding to the key id.
+            .read_accounts_from_id(&key_id)
+            .await?
+            .into_iter()
+            // Filter out accounts that are not delegated.
+            .map(async |account| {
+                if !Account::new(account, &provider).is_delegated().await? {
+                    Ok::<_, RelayError>(Some(account))
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<TryJoinAll<_>>()
+            .await?
+            .into_iter()
+            .flatten()
+            // Read the prep accounts from storage.
+            .map(async |account| self.inner.storage.read_prep(&account).await)
+            .collect::<TryJoinAll<_>>()
+            .await?
+            .into_iter()
+            .flatten()
+            // Find account containing the key id and fetch the key hash from it.
+            .find_map(|acc| {
+                let key_hash = acc.id_signatures.iter().find(|sig| sig.id == key_id)?.hash;
+
+                Some((key_hash, acc))
+            })
+            .ok_or(KeysError::UnknownKeyId(key_id))?;
+
+        // Override the PREP account bytecode as if it was already delegated.
+        let overrides = StateOverridesBuilder::with_capacity(1).append(
+            stored_account.address(),
+            AccountOverride::default().with_code(Bytes::from(
+                [
+                    &EIP7702_DELEGATION_DESIGNATOR,
+                    stored_account.prep.signed_authorization.address.as_slice(),
+                ]
+                .concat(),
+            )),
+        );
+
+        // Prepare initData for initializePREP call.
+        let init_data = stored_account.prep.init_data();
+
+        // Validate the signature.
+        let valid = Account::new(stored_account.address(), &provider)
+            .with_overrides(overrides.into())
+            .initialize_and_validate_signature(init_data, digest, signature)
+            .await
+            .map_err(RelayError::from)?
+            .is_some_and(|hash| hash == key_hash);
+
+        return Ok(VerifySignatureResponse { valid });
     }
 }
 

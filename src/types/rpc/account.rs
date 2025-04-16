@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, ChainId, Signature},
+    primitives::{Address, B256, Bytes, ChainId, Signature},
 };
 use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
@@ -199,6 +199,28 @@ pub struct AccountResponse {
     pub address: Address,
     /// Authorized keys belonging to the account.
     pub keys: Vec<AuthorizeKeyResponse>,
+}
+
+/// Request parameters for `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureParameters {
+    /// ID of the key to verify signature with.
+    pub key_id: KeyID,
+    /// Digest of the message to verify.
+    pub digest: B256,
+    /// The signature bytes
+    pub signature: Bytes,
+    /// Chain ID of the account with the given key configured.
+    pub chain_id: ChainId,
+}
+
+/// Response from `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureResponse {
+    /// Whether the signature is valid.
+    pub valid: bool,
 }
 
 #[cfg(test)]

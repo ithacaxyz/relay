@@ -19,6 +19,7 @@ pub use storage::StorageError;
 
 use alloy::{
     primitives::{Address, Bytes, ChainId},
+    providers::MulticallError,
     transports::TransportErrorKind,
 };
 use thiserror::Error;
@@ -64,6 +65,16 @@ pub enum RelayError {
 impl From<UserOpError> for RelayError {
     fn from(err: UserOpError) -> Self {
         Self::UserOp(Box::new(err))
+    }
+}
+
+impl From<MulticallError> for RelayError {
+    fn from(err: MulticallError) -> Self {
+        match err {
+            MulticallError::TransportError(err) => Self::RpcError(err),
+            MulticallError::DecodeError(err) => Self::AbiError(err),
+            _ => Self::InternalError(err.into()),
+        }
     }
 }
 
