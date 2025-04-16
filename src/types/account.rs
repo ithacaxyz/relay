@@ -1,7 +1,7 @@
 use super::{
     Call,
     IDelegation::authorizeCall,
-    Key, KeyHash,
+    Key, KeyHash, Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
 use crate::{error::RelayError, types::IDelegation};
@@ -282,11 +282,11 @@ impl<P: Provider> Account<P> {
     pub async fn validate_signature(
         &self,
         digest: B256,
-        signature: Bytes,
+        signature: Signature,
     ) -> TransportResult<Option<KeyHash>> {
         let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
             .delegation
-            .unwrapAndValidateSignature(digest, signature)
+            .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into())
             .call()
             .overrides(self.overrides.clone())
             .await
@@ -300,14 +300,17 @@ impl<P: Provider> Account<P> {
         &self,
         init_data: Bytes,
         digest: B256,
-        signature: Bytes,
+        signature: Signature,
     ) -> Result<Option<B256>, MulticallError> {
         let (_, unwrapAndValidateSignatureReturn { isValid, keyHash }) = self
             .delegation
             .provider()
             .multicall()
             .add(self.delegation.initializePREP(init_data))
-            .add(self.delegation.unwrapAndValidateSignature(digest, signature))
+            .add(
+                self.delegation
+                    .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into()),
+            )
             .overrides(self.overrides.clone())
             .aggregate()
             .await?;

@@ -1122,6 +1122,8 @@ impl RelayApiServer for Relay {
         .flatten()
         .and_then(|(key_hash, mut accounts)| Some((key_hash, accounts.pop()?)))
         {
+            let signature =
+                Signature { innerSignature: signature, keyHash: key_hash, prehash: false };
             let valid = Account::new(account, &provider)
                 .validate_signature(digest, signature)
                 .await
@@ -1179,6 +1181,8 @@ impl RelayApiServer for Relay {
 
         // Prepare initData for initializePREP call.
         let init_data = stored_account.prep.init_data();
+
+        let signature = Signature { innerSignature: signature, keyHash: key_hash, prehash: false };
 
         // Validate the signature.
         let valid = Account::new(stored_account.address(), &provider)
