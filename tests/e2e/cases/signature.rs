@@ -19,7 +19,7 @@ async fn verify_signature() -> eyre::Result<()> {
     let digest = B256::random();
     let signature = key.sign_payload_hash(digest).await?;
 
-    let VerifySignatureResponse { valid } = env
+    let VerifySignatureResponse { valid, .. } = env
         .relay_endpoint
         .verify_signature(VerifySignatureParameters {
             key_id: key.id(),

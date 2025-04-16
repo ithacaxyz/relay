@@ -16,7 +16,9 @@ use crate::{
         AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
         FeeTokens, Key, KeyHash, KeyHashWithID,
-        rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
+        rpc::{
+            CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings, ValidSignatureProof,
+        },
     },
     version::RELAY_SHORT_VERSION,
 };
@@ -1130,11 +1132,17 @@ impl RelayApiServer for Relay {
                 .map_err(RelayError::from)?
                 .is_some_and(|hash| hash == key_hash);
 
-            return Ok(VerifySignatureResponse { valid });
+            let proof = valid.then(|| ValidSignatureProof {
+                account,
+                prep_init_data: None,
+                id_signature: None,
+            });
+
+            return Ok(VerifySignatureResponse { valid, proof });
         }
 
         // If the registry lookup failed, fall back to reading a created account from storage.
-        let (key_hash, stored_account) = self
+        let (key_hash, mut stored_account) = self
             .inner
             .storage
             // Read all stored accounts corresponding to the key id.
@@ -1187,12 +1195,18 @@ impl RelayApiServer for Relay {
         // Validate the signature.
         let valid = Account::new(stored_account.address(), &provider)
             .with_overrides(overrides.into())
-            .initialize_and_validate_signature(init_data, digest, signature)
+            .initialize_and_validate_signature(init_data.clone(), digest, signature)
             .await
             .map_err(RelayError::from)?
             .is_some_and(|hash| hash == key_hash);
 
-        return Ok(VerifySignatureResponse { valid });
+        let proof = valid.then(|| ValidSignatureProof {
+            account: stored_account.address(),
+            prep_init_data: Some(init_data),
+            id_signature: stored_account.id_signatures.pop().map(|sig| sig.signature),
+        });
+
+        return Ok(VerifySignatureResponse { valid, proof });
     }
 }
 
