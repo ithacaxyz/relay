@@ -31,6 +31,7 @@ use alloy::{
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{FutureExt, StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
+use opentelemetry::trace::{SpanKind, TraceContextExt};
 use std::{
     fmt::Display,
     pin::Pin,
@@ -42,7 +43,9 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace, warn};
+use tracing::{Level, Span, debug, error, instrument, span, trace, warn};
+use tracing_futures::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Price bump for nonce gap transactions.
 const NONCE_GAP_PRICE_BUMP: u128 = 20;
@@ -223,6 +226,7 @@ impl Signer {
     }
 
     /// Sends a transaction status update.
+    #[instrument(skip_all)]
     async fn update_tx_status(
         &self,
         tx: TxId,
@@ -235,6 +239,7 @@ impl Signer {
     }
 
     /// Invoked when a transaction is confirmed.
+    #[instrument(skip_all)]
     async fn on_confirmed_transaction(
         &self,
         tx_id: TxId,
@@ -250,6 +255,7 @@ impl Signer {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn validate_transaction(
         &self,
         mut tx: RelayTransaction,
@@ -282,6 +288,7 @@ impl Signer {
     }
 
     /// Broadcasts a given transaction.
+    #[instrument(skip_all)]
     async fn send_transaction(&self, tx: TypedTransaction) -> Result<TxEnvelope, SignerError> {
         // Sign the transaction.
         let signed =
@@ -410,7 +417,11 @@ impl Signer {
     }
 
     /// Awaits the given [`PendingTransaction`] and watches it for status updates.
+    #[instrument(skip_all)]
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
+        Span::current().add_link(tx.tx.trace_context.span().span_context().clone());
+
+        // todo: set parent span to context in pendingtx
         self.metrics.pending.increment(1);
         if let Err(err) = self.watch_transaction_inner(&mut tx).await {
             // If we've failed to send the transaction, start closing the nonce gap to make sure we
@@ -512,6 +523,7 @@ impl Signer {
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
+    #[instrument(skip_all)]
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
 
@@ -780,7 +792,21 @@ impl SignerTask {
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.
     pub fn push_transaction(&self, tx: RelayTransaction) {
         let signer = self.signer.clone();
-        self.pending.push(Box::pin(async move { signer.send_and_watch_transaction(tx).await }));
+        self.pending.push(Box::pin(async move {
+            let span = span!(
+                Level::INFO,
+                "process tx",
+                otel.kind = ?SpanKind::Consumer,
+                messaging.system = "pg",
+                messaging.destination.name = "tx",
+                messaging.operation.name = "consume",
+                messaging.operation.type = "process",
+                messaging.message.id = %tx.id,
+            );
+            span.add_link(tx.trace_context.span().span_context().clone());
+
+            signer.send_and_watch_transaction(tx).instrument(span).await
+        }));
         if let Some(waker) = &self.waker {
             waker.wake_by_ref();
         }

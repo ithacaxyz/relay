@@ -6,6 +6,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use chrono::{DateTime, Utc};
+use opentelemetry::Context;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -30,6 +31,9 @@ pub struct RelayTransaction {
     pub entrypoint: Address,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
+    /// Trace context for the transaction.
+    #[serde(with = "crate::serde::trace_context")]
+    pub trace_context: Context,
 }
 
 impl RelayTransaction {
@@ -39,7 +43,13 @@ impl RelayTransaction {
         entrypoint: Address,
         authorization: Option<SignedAuthorization>,
     ) -> Self {
-        Self { id: TxId(quote.ty().digest()), quote, entrypoint, authorization }
+        Self {
+            id: TxId(quote.ty().digest()),
+            quote,
+            entrypoint,
+            authorization,
+            trace_context: Context::current(),
+        }
     }
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
