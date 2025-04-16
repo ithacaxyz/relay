@@ -42,8 +42,9 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
+use opentelemetry::trace::SpanKind;
 use std::{sync::Arc, time::SystemTime};
-use tracing::{debug, error, instrument};
+use tracing::{Level, debug, error, instrument, span};
 
 use crate::{
     chains::{Chain, Chains},
@@ -406,7 +407,16 @@ impl Relay {
         let bundle_id = BundleId(*tx.id);
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
-        transactions.send_transaction(tx);
+        span!(
+            Level::INFO, "send tx",
+            otel.kind = ?SpanKind::Producer,
+            messaging.system = "pg",
+            messaging.destination.name = "tx",
+            messaging.operation.name = "send",
+            messaging.operation.type = "send",
+            messaging.message.id = %tx.id
+        )
+        .in_scope(|| transactions.send_transaction(tx));
 
         Ok(bundle_id)
     }
