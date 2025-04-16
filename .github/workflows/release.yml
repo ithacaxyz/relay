@@ -8,12 +8,17 @@ on:
     tags:
       - v*
 
-env:
-  GHCR_REPO: ghcr.io/ithacaxyz/relay
-
 jobs:
   build:
     name: build and push
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            ghcr_repo: ghcr.io/ithacaxyz/relay
+          - dockerfile: Dockerfile.stress
+            ghcr_repo: ghcr.io/ithacaxyz/relay-stress
+        dockerfile: [Dockerfile, Dockerfile.stress]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
@@ -35,17 +40,18 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.GHCR_REPO }}:latest
-            ${{ env.GHCR_REPO }}:${{ github.ref_name }}
+            ${{ matrix.ghcr_repo }}:latest
+            ${{ matrix.ghcr_repo }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Notify Porto Repository
         env:
-          IMAGE_TAG: ${{ env.GHCR_REPO }}:${{ github.ref_name }}
+          IMAGE_TAG: ${{ matrix.ghcr_repo }}:${{ github.ref_name }}
         run: |
           curl --request POST \
             --url https://api.github.com/repos/ithacaxyz/porto/dispatches \
