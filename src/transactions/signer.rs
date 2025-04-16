@@ -682,12 +682,6 @@ impl Signer {
             warn!("signer is paused, but there are pending transactions loaded on startup");
         }
 
-        let span = tracing::debug_span!(
-            "signer",
-            address = ?self.address(),
-            chain_id = self.chain_id()
-        );
-
         let pending: FuturesUnordered<PendingTransactionFuture> = FuturesUnordered::new();
 
         for nonce in latest_nonce..*self.nonce.lock().await {
@@ -743,7 +737,7 @@ impl Signer {
             })
         };
 
-        Ok(SignerTask { signer: self, pending, nonce_check, balance_check, span, waker: None })
+        Ok(SignerTask { signer: self, pending, nonce_check, balance_check, waker: None })
     }
 }
 
@@ -780,8 +774,6 @@ pub struct SignerTask {
     /// A never ending task that checks signer balance.
     #[debug(skip)]
     balance_check: Pin<Box<dyn Future<Output = ()> + Send>>,
-    /// Span for logging.
-    span: tracing::Span,
     /// Waker used to wake the signer task when new transactions are pushed.
     waker: Option<Waker>,
 }
@@ -830,13 +822,11 @@ impl SignerTask {
 impl Future for SignerTask {
     type Output = ();
 
+    #[instrument(name = "signer", skip_all, fields(address = ?self.signer.address(), chain_id = self.signer.chain_id()))]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let instant = Instant::now();
 
-        let SignerTask { signer, pending, nonce_check, balance_check, span, waker } =
-            self.get_mut();
-
-        let _enter = span.enter();
+        let SignerTask { signer, pending, nonce_check, balance_check, waker } = self.get_mut();
 
         *waker = Some(cx.waker().clone());
 
