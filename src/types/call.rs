@@ -103,4 +103,26 @@ impl Call {
             data: AccountRegistry::removeAccountCall { id }.abi_encode().into(),
         }
     }
+
+    /// Whether this call is whitelisted for preops.
+    pub fn is_whitelisted_preop(&self, account: Address) -> bool {
+        // Selector needs be 4 bytes.
+        if self.data.len() < 4 {
+            return false;
+        }
+
+        let selector: [u8; 4] = self.data[..4].try_into().expect("qed");
+
+        (self.to == account || self.to == Address::ZERO)
+            && WHITELISTED_SELECTORS.contains(&selector)
+    }
 }
+
+/// All selectors allowed in preops.
+const WHITELISTED_SELECTORS: [[u8; 4]; 5] = [
+    authorizeCall::SELECTOR,
+    revokeCall::SELECTOR,
+    setCanExecuteCall::SELECTOR,
+    setSpendLimitCall::SELECTOR,
+    removeSpendLimitCall::SELECTOR,
+];
