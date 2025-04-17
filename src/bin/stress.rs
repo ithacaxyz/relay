@@ -1,4 +1,14 @@
 //! Relay stress testing tool.
+//!
+//! # Example
+//!
+//! ```sh
+//! cargo r --bin stress -- --relay-url https://relay-staging.ithaca.xyz --private-key $PRIVATE_KEY --chain-id 28403 --fee-token 0x541a5505620A658932e326D0dC996C460f5AcBE1 --rpc-url https://odyssey-devnet.ithaca.xyz --accounts 500
+//! ```
+//! The test script will transfer the fee token out of the account specified in --private-key, so it
+//! must have enough balance to cover for the accounts. The amount sent to each account is
+//! configurable
+// it will first create all the accounts and fund them - might take a while.
 
 use std::time::Duration;
 
