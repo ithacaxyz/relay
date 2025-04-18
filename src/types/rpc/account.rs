@@ -227,7 +227,7 @@ mod tests {
                     ttl: UNIX_EPOCH + Duration::from_secs(0),
                     authorization_address: None,
                     is_preop: false,
-                    entrypoint: Address::random(),
+                    entrypoint: Address::ZERO,
                 },
                 signature,
                 B256::ZERO,
@@ -244,7 +244,7 @@ mod tests {
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(&json).unwrap();
         assert_eq!(acc, from_json);
 
-        let s = r#"{"context":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","paymentRecipient":"0x0000000000000000000000000000000000000000","paymentAmount":"0x0","paymentMaxAmount":"0x0","paymentPerGas":"0x0","combinedGas":"0x0","signature":"0x","initData":"0x","encodedPreOps":[],"paymentSignature":"0x"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"isPreop":false,"r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"},"signature":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
+        let s = r#"{"context":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","paymentRecipient":"0x0000000000000000000000000000000000000000","paymentAmount":"0x0","paymentMaxAmount":"0x0","paymentPerGas":"0x0","combinedGas":"0x0","signature":"0x","initData":"0x","encodedPreOps":[],"paymentSignature":"0x"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"entrypoint":"0x0000000000000000000000000000000000000000","isPreop":false,"r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"},"signature":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
 "#;
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(s).unwrap();
         assert_eq!(acc, from_json);
