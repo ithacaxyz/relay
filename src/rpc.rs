@@ -15,7 +15,7 @@ use crate::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        Key, KeyHash, KeyHashWithID,
+        FeeTokens, Key, KeyHash, KeyHashWithID,
         rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
@@ -55,7 +55,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, Entry, FeeTokens, KeyWith712Signer, PREPAccount, PartialAction,
+        Account, CreatableAccount, Entry, KeyWith712Signer, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
@@ -232,7 +232,7 @@ impl Relay {
             // fetch price in eth
             async {
                 // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.coin).await)
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
             },
         )
         .await?;
@@ -606,7 +606,22 @@ impl RelayApiServer for Relay {
     }
 
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
-        Ok(self.inner.fee_tokens.clone())
+        let chains = self.inner.fee_tokens.iter().map(|(chain, tokens)| async move {
+            let rates_fut = tokens.iter().map(|token| async move {
+                // TODO: only handles eth as native fee token
+                Ok(token.clone().with_rate(
+                    self.inner
+                        .price_oracle
+                        .eth_price(token.kind)
+                        .await
+                        .ok_or(QuoteError::UnavailablePrice(token.address))?,
+                ))
+            });
+
+            Ok::<_, QuoteError>((*chain, try_join_all(rates_fut).await?))
+        });
+
+        Ok(FeeTokens::from_iter(try_join_all(chains).await?))
     }
 
     async fn prepare_create_account(

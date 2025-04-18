@@ -1,10 +1,11 @@
 use crate::types::{CoinKind, CoinRegistry, IERC20::IERC20Instance};
 use alloy::{
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{Address, ChainId, U256, map::HashMap},
     providers::{DynProvider, Provider},
 };
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
+use tokio::try_join;
 
 /// Token type with its address, decimals and [`CoinKind`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,14 +14,35 @@ pub struct Token {
     pub address: Address,
     /// Token decimals.
     pub decimals: u8,
+    /// Token symbol as defined in the contract.
+    pub symbol: String,
     /// Coin kind.
-    pub coin: CoinKind,
+    #[serde(skip_serializing)]
+    pub kind: CoinKind,
+    /// Rate of 1 whole token against the native chain token, expressed in the native token's
+    /// smallest indivisible unit.
+    ///
+    /// # Examples
+    /// - USDC decimals: 6
+    /// - ETH decimals: 18
+    ///
+    /// 1. **USDC on Ethereum**
+    ///    - 1 USDC = 0.000628 ETH ⇒   `native_rate = 0.000628 * 10^18 = 628_000_000_000_000 Wei`
+    /// 2. **Stablecoin chain where USDC _is_ the native token**
+    ///    - 1 USDC = 1 USDC ⇒   `native_rate = 1 * 10^6 = 1_000_000`
+    pub native_rate: Option<U256>,
 }
 
 impl Token {
     /// Create a new instance of [`Self`].
-    pub fn new(address: Address, decimals: u8, coin: CoinKind) -> Self {
-        Self { address, decimals, coin }
+    pub fn new(address: Address, decimals: u8, symbol: String, kind: CoinKind) -> Self {
+        Self { address, decimals, kind, symbol, native_rate: None }
+    }
+
+    /// Sets a native price rate.
+    pub fn with_rate(mut self, native_rate: U256) -> Self {
+        self.native_rate = Some(native_rate);
+        self
     }
 }
 
@@ -44,19 +66,23 @@ impl FeeTokens {
             .map(|(provider, token)| {
                 async move {
                     let chain = provider.get_chain_id().await?;
-                    let (decimals, coin_kind) = if token.is_zero() {
+                    let ((decimals, symbol), coin_kind) = if token.is_zero() {
                         // todo: native is ETH for now
-                        (18, CoinKind::ETH)
+                        ((18, "ETH".to_string()), CoinKind::ETH)
                     } else {
-                        (
-                            IERC20Instance::new(*token, provider).decimals().call().await?,
-                            CoinKind::get_token(coin_registry, chain, *token).ok_or_else(|| {
+                        let erc20 = IERC20Instance::new(*token, provider);
+                        let decimals = erc20.decimals();
+                        let symbol = erc20.symbol();
+
+                        let coin_kind = CoinKind::get_token(coin_registry, chain, *token)
+                            .ok_or_else(|| {
                                 eyre::eyre!("Token not supported: {token} @ {chain}.")
-                            })?,
-                        )
+                            })?;
+
+                        (try_join!(decimals.call(), symbol.call())?, coin_kind)
                     };
 
-                    Ok::<_, eyre::Error>((chain, Token::new(*token, decimals, coin_kind)))
+                    Ok::<_, eyre::Error>((chain, Token::new(*token, decimals, symbol, coin_kind)))
                 }
             });
         let fee_tokens = try_join_all(futs).await?;
@@ -77,6 +103,11 @@ impl FeeTokens {
     /// Return a reference to a fee [`Token`] if supported on the given chain.
     pub fn find(&self, chain_id: ChainId, fee_token: &Address) -> Option<&Token> {
         self.0.get(&chain_id).and_then(|tokens| tokens.iter().find(|t| t.address == *fee_token))
+    }
+
+    /// Return an iterator over all tokens per chain.
+    pub fn iter(&self) -> impl Iterator<Item = (&ChainId, &Vec<Token>)> {
+        self.0.iter()
     }
 }
 
