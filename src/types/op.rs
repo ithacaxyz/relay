@@ -161,7 +161,7 @@ impl UserOp {
         Ok(eip712::UserOp {
             multichain,
             eoa: self.eoa,
-            calls: <Vec<Call>>::abi_decode(&self.executionData)?,
+            calls: self.calls()?,
             nonce: self.nonce,
             payer: self.payer,
             paymentToken: self.paymentToken,
@@ -235,6 +235,11 @@ impl UserOp {
         keys.extend(self.pre_authorized_keys()?);
 
         Ok(keys)
+    }
+
+    /// Returns the decoded calls from `executionData`.
+    pub fn calls(&self) -> Result<Vec<Call>, alloy::sol_types::Error> {
+        <Vec<Call>>::abi_decode(&self.executionData)
     }
 }
 
