@@ -60,7 +60,7 @@ impl FeeContext {
     /// Returns whether priority fee of a transaction should be bumped.
     fn should_bump_priority_fee(&self, tx: &TxEnvelope) -> bool {
         self.recommended_priority_fee
-            >= tx.max_priority_fee_per_gas().unwrap_or_default() * (100 + PRIORITY_FEE_THRESHOLD)
+            > tx.max_priority_fee_per_gas().unwrap_or_default() * (100 + PRIORITY_FEE_THRESHOLD)
                 / 100
     }
 
