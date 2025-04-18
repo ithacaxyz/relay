@@ -227,6 +227,7 @@ mod tests {
                     ttl: UNIX_EPOCH + Duration::from_secs(0),
                     authorization_address: None,
                     is_preop: false,
+                    entrypoint: Address::random(),
                 },
                 signature,
                 B256::ZERO,

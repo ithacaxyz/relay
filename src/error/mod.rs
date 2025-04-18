@@ -18,7 +18,7 @@ mod storage;
 pub use storage::StorageError;
 
 use alloy::{
-    primitives::{Bytes, ChainId},
+    primitives::{Address, Bytes, ChainId},
     transports::TransportErrorKind,
 };
 use thiserror::Error;
@@ -47,6 +47,9 @@ pub enum RelayError {
     /// The chain is not supported.
     #[error("unsupported chain {0}")]
     UnsupportedChain(ChainId),
+    /// The entrypoint is not supported.
+    #[error("unsupported entrypoint {0}")]
+    UnsupportedEntrypoint(Address),
     /// An error occurred during ABI encoding/decoding.
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
@@ -76,6 +79,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::UnsupportedChain(_)
             | RelayError::AbiError(_)
             | RelayError::RpcError(_)
+            | RelayError::UnsupportedEntrypoint(_)
             | RelayError::InternalError(_) => internal_rpc(err.to_string()),
         }
     }
