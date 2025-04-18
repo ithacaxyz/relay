@@ -21,6 +21,7 @@ const BASE_FEE_DELTA: u128 = 20;
 /// priority fee reaches 110 gwei.
 const PRIORITY_FEE_THRESHOLD: u128 = 10;
 
+/// Errors which may occur while estimating fees for a replacement transaction.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum FeesError {
     /// Failed to bump the fees.
@@ -59,7 +60,8 @@ impl FeeContext {
     /// Returns whether priority fee of a transaction should be bumped.
     fn should_bump_priority_fee(&self, tx: &TxEnvelope) -> bool {
         self.recommended_priority_fee
-            >= tx.max_priority_fee_per_gas().unwrap_or_default() * (100 + PRIORITY_FEE_THRESHOLD) / 100
+            >= tx.max_priority_fee_per_gas().unwrap_or_default() * (100 + PRIORITY_FEE_THRESHOLD)
+                / 100
     }
 
     /// Returns whether we should bump the fees for a given transaction.

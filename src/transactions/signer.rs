@@ -443,7 +443,10 @@ impl Signer {
 
     /// Broadcasts a given transaction and waits for it to be confirmed, notifying `status_tx` on
     /// each status update.
-    async fn send_and_watch_transaction(&self, mut tx: RelayTransaction) -> Result<(), SignerError> {
+    async fn send_and_watch_transaction(
+        &self,
+        mut tx: RelayTransaction,
+    ) -> Result<(), SignerError> {
         // Make sure the transaction is no longer in the queue as we've started processing it.
         self.storage.remove_from_queue(&tx).await?;
 
