@@ -327,11 +327,10 @@ impl Signer {
         tx: &mut PendingTransaction,
     ) -> Result<(), SignerError> {
         let mut retries = 0;
+        let mut last_sent_at = Instant::now();
 
         loop {
-            if Utc::now().signed_duration_since(tx.received_at).num_milliseconds()
-                >= self.config.transaction_timeout as i64
-            {
+            if last_sent_at.elapsed().as_secs() >= self.config.transaction_timeout {
                 return Err(SignerError::TxDropped);
             }
 
@@ -409,6 +408,7 @@ impl Signer {
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
                     .await?;
                 tx.sent.push(replacement);
+                last_sent_at = Instant::now();
             } else if !self
                 .provider
                 .get_transaction_by_hash(*best_tx.tx_hash())

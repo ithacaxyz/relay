@@ -118,7 +118,7 @@ pub struct TransactionServiceConfig {
     /// Interval for checking nonce gaps.
     #[serde(with = "crate::serde::duration")]
     pub nonce_check_interval: Duration,
-    /// Timeout after which we consider transaction as failed, in milliseconds.
+    /// Timeout after which we consider transaction as failed, in seconds.
     pub transaction_timeout: u64,
 }
 
