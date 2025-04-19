@@ -329,6 +329,12 @@ impl Signer {
         let mut retries = 0;
 
         loop {
+            if Utc::now().signed_duration_since(tx.received_at).num_milliseconds()
+                >= self.config.transaction_timeout as i64
+            {
+                return Err(SignerError::TxDropped);
+            }
+
             let mut handles = FuturesUnordered::new();
             for sent in &tx.sent {
                 handles.push(
