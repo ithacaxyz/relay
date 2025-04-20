@@ -331,6 +331,7 @@ impl Signer {
 
         loop {
             if last_sent_at.elapsed().as_secs() >= self.config.transaction_timeout {
+                error!(?tx, "Transaction timed out");
                 return Err(SignerError::TxDropped);
             }
 
