@@ -5,6 +5,7 @@ use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
     time::Duration,
@@ -23,6 +24,8 @@ pub struct RelayConfig {
     pub transactions: TransactionServiceConfig,
     /// Entrypoint address.
     pub entrypoint: Address,
+    /// Previously deployed entrypoints.
+    pub legacy_entrypoints: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Account registry address.
@@ -151,6 +154,7 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             transactions: TransactionServiceConfig::default(),
+            legacy_entrypoints: BTreeSet::new(),
             entrypoint: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,

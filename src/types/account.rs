@@ -129,6 +129,9 @@ sol! {
         /// - `target` is in the upper 20 bytes.
         /// - `fnSel` is in the lower 4 bytes.
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
+
+        /// The entrypoint address.
+        address public ENTRY_POINT;
     }
 }
 
@@ -251,6 +254,16 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(key_hashes.zip(permissions).collect())
+    }
+
+    /// Fetch the entrypoint address from the delegation contract.
+    pub async fn get_entrypoint(&self) -> TransportResult<Address> {
+        self.delegation
+            .ENTRY_POINT()
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)
     }
 }
 
