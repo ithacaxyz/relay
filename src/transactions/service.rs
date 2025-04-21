@@ -127,6 +127,7 @@ impl TransactionService {
         };
 
         let queue = storage.read_queued_transactions(chain_id).await?;
+        metrics.queued.set(queue.len() as f64);
 
         let mut this = Self {
             signers: Default::default(),
