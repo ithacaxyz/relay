@@ -80,11 +80,18 @@ impl FeeContext {
         }
 
         let max_fee_per_gas = tx.max_fee_per_gas();
-        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or_default();
+        let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(max_fee_per_gas);
 
-        // Fail if we can't afford to send a replacement.
+        // Check if we can't afford to send a replacement.
         if max_fee_per_gas * (100 + MIN_GAS_PRICE_BUMP) / 100 > max_gas_price {
-            return Err(FeesError::CantAffordReplacement);
+            if self.should_bump_base_fee(tx) {
+                // If we need to bump the base fee, this is fatal because we don't want to wait for
+                // base fee to decrease.
+                return Err(FeesError::CantAffordReplacement);
+            } else {
+                // If we only need to bump the priority fee, it might be fine to wait a bit.
+                return Ok(None);
+            }
         }
 
         // Fail if we can't afford the latest base fee.
@@ -117,6 +124,12 @@ impl FeeContext {
         let mut new_tx = TypedTransaction::from(tx.clone());
 
         match &mut new_tx {
+            TypedTransaction::Legacy(tx) => {
+                tx.gas_price = new_max_fee;
+            }
+            TypedTransaction::Eip2930(tx) => {
+                tx.gas_price = new_max_fee;
+            }
             TypedTransaction::Eip1559(tx) => {
                 tx.max_fee_per_gas = new_max_fee;
                 tx.max_priority_fee_per_gas = new_priority_fee;
