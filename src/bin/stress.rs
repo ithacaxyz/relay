@@ -10,7 +10,7 @@
 //! configurable
 // it will first create all the accounts and fund them - might take a while.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy::{
     network::EthereumWallet,
@@ -163,50 +163,56 @@ impl StressTester {
         }
 
         info!("Initializing {} accounts", args.accounts);
-        let sema = Semaphore::new(10);
-        let accounts = futures_util::future::try_join_all((0..args.accounts).map(|_| async {
-            let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
-                .expect("failed to create key for account");
-            let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } =
+        let sema = Arc::new(Semaphore::new(10));
+        let accounts = futures_util::future::try_join_all((0..args.accounts).map(|acc_number| {
+            let relay_client = relay_client.clone();
+            let sema = sema.clone();
+            let provider = provider.clone();
+            let acc_target = args.accounts;
+            async move {
+                let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
+                    .expect("failed to create key for account");
+                let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } =
+                    relay_client
+                        .prepare_create_account(PrepareCreateAccountParameters {
+                            capabilities: PrepareCreateAccountCapabilities {
+                                authorize_keys: vec![key.to_authorized(None).await?],
+                                delegation: args.delegation,
+                            },
+                            chain_id: args.chain_id.id(),
+                        })
+                        .await
+                        .wrap_err("failed to prepare create account")?;
+
                 relay_client
-                    .prepare_create_account(PrepareCreateAccountParameters {
-                        capabilities: PrepareCreateAccountCapabilities {
-                            authorize_keys: vec![key.to_authorized(None).await?],
-                            delegation: args.delegation,
-                        },
-                        chain_id: args.chain_id.id(),
+                    .create_account(CreateAccountParameters {
+                        context,
+                        signatures: vec![KeySignature {
+                            public_key: key.publicKey.clone(),
+                            key_type: key.keyType,
+                            value: key.id_sign(address).await?.as_bytes().into(),
+                            prehash: false,
+                        }],
                     })
                     .await
-                    .wrap_err("failed to prepare create account")?;
+                    .wrap_err("failed to create account")?;
+                info!(account = %address, "#{}/{} Account initialized", acc_number, acc_target);
 
-            relay_client
-                .create_account(CreateAccountParameters {
-                    context,
-                    signatures: vec![KeySignature {
-                        public_key: key.publicKey.clone(),
-                        key_type: key.keyType,
-                        value: key.id_sign(address).await?.as_bytes().into(),
-                        prehash: false,
-                    }],
-                })
-                .await
-                .wrap_err("failed to create account")?;
-            info!(account = %address, "Account initialized");
+                let permit = sema.acquire().await.wrap_err("semaphore closed")?;
+                info!(account = %address, "#{}/{} Funding account", acc_number, acc_target);
+                IERC20Instance::new(args.fee_token, &provider)
+                    .transfer(address, args.fee_token_amount)
+                    .send()
+                    .await
+                    .wrap_err("funding account failed")?
+                    .get_receipt()
+                    .await
+                    .wrap_err("failed to get receipt for account funding")?;
+                info!(account = %address, "#{}/{} Account funded", acc_number, acc_target);
+                drop(permit);
 
-            let permit = sema.acquire().await.wrap_err("semaphore closed")?;
-            info!(account = %address, "Funding account");
-            IERC20Instance::new(args.fee_token, &provider)
-                .transfer(address, args.fee_token_amount)
-                .send()
-                .await
-                .wrap_err("funding account failed")?
-                .get_receipt()
-                .await
-                .wrap_err("failed to get receipt for account funding")?;
-            info!(account = %address, "Account funded");
-            drop(permit);
-
-            Ok::<_, eyre::Error>(StressAccount::new(address, key))
+                Ok::<_, eyre::Error>(StressAccount::new(address, key))
+            }
         }))
         .await?;
         info!("Initialized {} accounts", args.accounts);
