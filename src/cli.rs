@@ -83,7 +83,7 @@ pub struct Args {
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
     /// The maximum number of concurrent connections the relay can handle.
-    #[arg(long = "max-connections", value_name = "NUM", default_value_t = 1000)]
+    #[arg(long = "max-connections", value_name = "NUM", default_value_t = 5000)]
     pub max_connections: u32,
 }
 
