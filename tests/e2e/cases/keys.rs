@@ -1,6 +1,5 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, config::AccountConfig, process_tx,
-    run_e2e_prep,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, config::AccountConfig, run_e2e_prep,
 };
 use alloy::{primitives::U256, sol_types::SolCall};
 use relay::types::{
@@ -13,7 +12,7 @@ use relay::types::{
 #[tokio::test(flavor = "multi_thread")]
 async fn get_keys() -> eyre::Result<()> {
     let upgraded_account = AccountConfig::Upgraded;
-    let mut env = upgraded_account.setup_environment().await?;
+    let env = upgraded_account.setup_environment().await?;
 
     // Set session key permissions
     let permissions = vec![
@@ -54,27 +53,28 @@ async fn get_keys() -> eyre::Result<()> {
 
     // Upgrade account and check the first key has been added.
     {
-        let mut tx = TxContext {
+        TxContext {
             authorization_keys: vec![&keys[0]],
             expected: ExpectedOutcome::Pass,
             auth: Some(AuthKind::Auth),
             ..Default::default()
-        };
-        upgraded_account.handle_first_tx(&mut env, 0, &mut tx).await?;
+        }
+        .upgrade_account(&env, 0)
+        .await?;
 
         assert_eq!(env.get_eoa_authorized_keys().await?, expected_responses[..1]);
     }
 
     // Add the rest of the keys one by one.
     for (i, key) in [&keys[1], &keys[2]].into_iter().enumerate() {
-        let tx = TxContext {
+        TxContext {
             authorization_keys: vec![key],
             expected: ExpectedOutcome::Pass,
             key: Some(&keys[0]),
             ..Default::default()
-        };
-
-        process_tx(i + 1, tx, &env).await?;
+        }
+        .process(i + 1, &env)
+        .await?;
 
         assert_eq!(env.get_eoa_authorized_keys().await?, expected_responses[..(i + 2)]);
     }
@@ -93,7 +93,6 @@ async fn revoke_key() -> eyre::Result<()> {
             TxContext {
                 authorization_keys: vec![&key1],
                 expected: ExpectedOutcome::Pass,
-                auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             TxContext {
@@ -132,7 +131,6 @@ async fn revoke_backup_key() -> eyre::Result<()> {
             TxContext {
                 authorization_keys: vec![&key1],
                 expected: ExpectedOutcome::Pass,
-                auth: Some(AuthKind::Auth),
                 ..Default::default()
             },
             TxContext {
