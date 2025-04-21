@@ -1,7 +1,7 @@
 //! # Relay CLI
 use crate::{
     config::RelayConfig,
-    constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    constants::{DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
     spawn::try_spawn_with_args,
 };
 use alloy::primitives::Address;
@@ -12,7 +12,6 @@ use std::{
     time::Duration,
 };
 use url::Url;
-use crate::constants::DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS;
 
 /// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
 #[derive(Debug, Parser)]

@@ -10,7 +10,7 @@ pub const USER_OP_GAS_BUFFER: u64 = 25_000;
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(300);
 
 /// Default number of incoming RPC connections.
-pub const DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS: u32 = 5000;
+pub const DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS: u32 = 5_000;
 
 /// Extra buffer added to transaction gas estimates to pass the contract 63/64 check.
 pub const TX_GAS_BUFFER: u64 = 1_000_000; // todo: temporarily bumped to 1m from 50k to unblock
