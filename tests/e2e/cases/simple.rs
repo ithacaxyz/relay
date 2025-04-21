@@ -228,7 +228,6 @@ async fn spend_limits_bundle_failure() -> Result<()> {
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
             expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
@@ -266,8 +265,7 @@ async fn no_fee_tx() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate, // no balance on fee token
-            auth: Some(AuthKind::Auth),
-            fee_token: Some(env.erc20s[2]), // has not been minted
+            fee_token: Some(env.erc20s[2]),          // has not been minted
             calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
             ..Default::default()
         }]
