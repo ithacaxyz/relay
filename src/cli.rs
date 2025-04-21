@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 use url::Url;
+use crate::constants::DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS;
 
 /// The Ithaca relayer service sponsors transactions for EIP-7702 accounts.
 #[derive(Debug, Parser)]
@@ -83,7 +84,7 @@ pub struct Args {
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
     /// The maximum number of concurrent connections the relay can handle.
-    #[arg(long = "max-connections", value_name = "NUM", default_value_t = 5000)]
+    #[arg(long = "max-connections", value_name = "NUM", default_value_t = DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS)]
     pub max_connections: u32,
 }
 
