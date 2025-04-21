@@ -20,6 +20,7 @@ use alloy::{
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
     },
 };
+use alloy_chains::Chain;
 use clap::Parser;
 use eyre::Context;
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -144,7 +145,7 @@ impl StressTester {
             .disable_recommended_fillers()
             .filler(NonceFiller::new(CachedNonceManager::default()))
             .filler(GasFiller)
-            .filler(ChainIdFiller::new(Some(args.chain_id)))
+            .filler(ChainIdFiller::new(Some(args.chain_id.id())))
             .wallet(EthereumWallet::from(signer.0))
             .on_http(args.rpc_url.clone())
             .erased();
@@ -156,7 +157,7 @@ impl StressTester {
         );
 
         let supports_fee_token =
-            relay_client.fee_tokens().await?.contains(args.chain_id, &args.fee_token);
+            relay_client.fee_tokens().await?.contains(args.chain_id.id(), &args.fee_token);
         if !supports_fee_token {
             eyre::bail!("fee token {} is not supported on chain {}", args.fee_token, args.chain_id);
         }
@@ -173,7 +174,7 @@ impl StressTester {
                             authorize_keys: vec![key.to_authorized(None).await?],
                             delegation: args.delegation,
                         },
-                        chain_id: args.chain_id,
+                        chain_id: args.chain_id.id(),
                     })
                     .await
                     .wrap_err("failed to prepare create account")?;
@@ -228,7 +229,7 @@ impl StressTester {
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
             tasks.push(tokio::spawn(async move {
-                account.run(self.args.chain_id, self.args.fee_token, client).await
+                account.run(self.args.chain_id.id(), self.args.fee_token, client).await
             }));
         }
 
@@ -255,7 +256,7 @@ struct Args {
     rpc_url: Url,
     /// Chain ID of the chain to test on.
     #[arg(long = "chain-id", value_name = "CHAIN_ID", required = true)]
-    chain_id: ChainId,
+    chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
     /// This account should have sufficient fee tokens to cover the gas costs of the userops.
