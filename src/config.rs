@@ -123,7 +123,8 @@ pub struct TransactionServiceConfig {
     #[serde(with = "crate::serde::duration")]
     pub nonce_check_interval: Duration,
     /// Timeout after which we consider transaction as failed, in seconds.
-    pub transaction_timeout: u64,
+    #[serde(with = "crate::serde::duration")]
+    pub transaction_timeout: Duration,
 }
 
 impl Default for TransactionServiceConfig {
@@ -132,7 +133,7 @@ impl Default for TransactionServiceConfig {
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
-            transaction_timeout: 60,
+            transaction_timeout: Duration::from_secs(60),
         }
     }
 }

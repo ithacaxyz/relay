@@ -356,7 +356,7 @@ impl Signer {
         let mut last_sent_at = Instant::now();
 
         loop {
-            if last_sent_at.elapsed().as_secs() >= self.config.transaction_timeout {
+            if last_sent_at.elapsed() >= self.config.transaction_timeout {
                 error!(?tx, "Transaction timed out");
                 return Err(SignerError::TxDropped);
             }
