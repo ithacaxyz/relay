@@ -132,6 +132,9 @@ sol! {
 
         /// The entrypoint address.
         address public ENTRY_POINT;
+
+        /// The implementation address.
+        address public implementation;
     }
 }
 
