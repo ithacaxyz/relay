@@ -24,6 +24,15 @@ use tracing::debug;
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
+    contract DelegationProxy {
+        /// The default implementation address.
+        address public implementation;
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
     contract Delegation {
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
@@ -132,9 +141,6 @@ sol! {
 
         /// The entrypoint address.
         address public ENTRY_POINT;
-
-        /// The implementation address.
-        address public implementation;
     }
 }
 
@@ -192,6 +198,29 @@ impl<P: Provider> Account<P> {
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
+    }
+
+    /// Returns this account delegation implementation if it exists.
+    pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
+        if !self.is_delegated().await? {
+            return Ok(None);
+        }
+
+        let delegation = self
+            .delegation
+            .provider()
+            .call(
+                TransactionRequest::default()
+                    .to(*self.delegation.address())
+                    // TODO: temporary, while Delegation.sol does not have a public API to fetch the
+                    // implemention when querying a delegated EOA.
+                    .input(Bytes::from([1]).into()),
+            )
+            .await
+            .and_then(|ret| Address::abi_decode(&ret).map_err(TransportErrorKind::custom))
+            .map_err(RelayError::from)?;
+
+        Ok(Some(delegation))
     }
 
     /// Whether this account is delegated.
