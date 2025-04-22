@@ -13,7 +13,7 @@ use alloy::{
 };
 use futures_util::{
     StreamExt, TryStreamExt,
-    future::{join_all, try_join_all},
+    future::{TryJoinAll, join_all, try_join_all},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
@@ -264,7 +264,9 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await
+        .unwrap();
     for handle in handles {
         assert_confirmed(handle).await;
     }
@@ -284,7 +286,8 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
             tx_service_handle.send_transaction(tx)
         })
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     for handle in handles {
         wait_for_tx(handle).await;
@@ -312,7 +315,7 @@ async fn dropped_transaction() -> eyre::Result<()> {
     let tx = account.prepare_tx(&env).await;
 
     // send transaction and get its hash
-    let mut events = tx_service_handle.send_transaction(tx);
+    let mut events = tx_service_handle.send_transaction(tx).await?;
     let tx_hash = wait_for_tx_hash(&mut events).await;
 
     // drop the transaction from txpool
@@ -342,7 +345,7 @@ async fn fee_bump() -> eyre::Result<()> {
     let tx = account.prepare_tx(&env).await;
 
     // send transaction and get its hash
-    let mut events = tx_service_handle.send_transaction(tx);
+    let mut events = tx_service_handle.send_transaction(tx).await?;
     let tx_hash = wait_for_tx_hash(&mut events).await;
 
     // drop the transaction from txpool to ensure it won't get mined
@@ -398,7 +401,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // prepare and send first transaction
     let tx_0 = account_0.prepare_tx(&env).await;
-    let mut events_0 = tx_service_handle.send_transaction(tx_0.clone());
+    let mut events_0 = tx_service_handle.send_transaction(tx_0.clone()).await?;
     let hash_0 = wait_for_tx_hash(&mut events_0).await;
 
     // drop the transaction to make sure it's not mined
@@ -419,7 +422,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // prepare and send second transaction
     let tx_1 = account_1.prepare_tx(&env).await;
-    let events_1 = tx_service_handle.send_transaction(tx_1.clone());
+    let events_1 = tx_service_handle.send_transaction(tx_1.clone()).await?;
 
     // we should see the fee increase and account for it
     assert!(
@@ -477,7 +480,11 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         .buffered(10)
         .collect::<Vec<_>>()
         .await;
-    let handles = transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx));
+    let handles = transactions
+        .into_iter()
+        .map(|tx| tx_service_handle.send_transaction(tx))
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
@@ -561,7 +568,7 @@ async fn resume_paused() -> eyre::Result<()> {
     // send a batch of transactions and assert that all of them are handled by the last signer
     futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
-        let handle = tx_service_handle.send_transaction(tx);
+        let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
         let signer =
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
@@ -589,7 +596,7 @@ async fn resume_paused() -> eyre::Result<()> {
     // send a batch of transactions again and assert that all of them complete
     let seen_signers = join_all(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
-        let handle = tx_service_handle.send_transaction(tx);
+        let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
         env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
     }))
@@ -637,7 +644,8 @@ async fn diverged_nonce() -> eyre::Result<()> {
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     for handle in handles {
         assert_confirmed(handle).await;

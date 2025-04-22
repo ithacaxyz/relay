@@ -5,11 +5,12 @@ use super::{
 };
 use crate::{
     config::TransactionServiceConfig,
+    error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
 };
 use alloy::providers::{DynProvider, Provider};
-use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
@@ -30,18 +31,20 @@ pub enum TransactionServiceMessage {
 /// Handle to communicate with the [`TransactionService`].
 #[derive(Debug, Clone)]
 pub struct TransactionServiceHandle {
+    storage: RelayStorage,
     command_tx: mpsc::UnboundedSender<TransactionServiceMessage>,
 }
 
 impl TransactionServiceHandle {
-    /// Sends a transaction.
-    pub fn send_transaction(
+    /// Writes transaction to queue and sends it to transaction service.
+    pub async fn send_transaction(
         &self,
         tx: RelayTransaction,
-    ) -> mpsc::UnboundedReceiver<TransactionStatus> {
+    ) -> Result<mpsc::UnboundedReceiver<TransactionStatus>, StorageError> {
+        self.storage.write_queued_transaction(&tx).await?;
         let (status_tx, status_rx) = mpsc::unbounded_channel();
         let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
-        status_rx
+        Ok(status_rx)
     }
 }
 
@@ -68,8 +71,6 @@ pub struct TransactionService {
     to_service: mpsc::UnboundedSender<SignerEvent>,
     /// Message channel from signers to this service.
     from_signers: mpsc::UnboundedReceiver<SignerEvent>,
-    /// Sender half for transaction messages.
-    command_tx: mpsc::UnboundedSender<TransactionServiceMessage>,
     /// Incoming messages for the service.
     command_rx: mpsc::UnboundedReceiver<TransactionServiceMessage>,
     /// Subscriptions to transaction status updates back to the initiator of the transaction.
@@ -79,14 +80,6 @@ pub struct TransactionService {
     subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
     /// Metrics of the service.
     metrics: Arc<TransactionServiceMetrics>,
-
-    /// Channel for sending transactions to queue task.
-    to_queue_task: mpsc::UnboundedSender<RelayTransaction>,
-    /// Channel with queued transactions that has been written to storage.
-    from_queue_task: mpsc::UnboundedReceiver<RelayTransaction>,
-    /// Task writing queued transactions to storage.
-    #[debug(skip)]
-    queue_task: Pin<Box<dyn Future<Output = ()> + Send>>,
     /// Queue of transactions waiting for signers capacity.
     queue: VecDeque<RelayTransaction>,
 }
@@ -100,7 +93,7 @@ impl TransactionService {
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
-    ) -> eyre::Result<Self> {
+    ) -> eyre::Result<(Self, TransactionServiceHandle)> {
         let chain_id = provider.get_chain_id().await?;
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
             "chain_id",
@@ -109,25 +102,7 @@ impl TransactionService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
-        // Setup a task that receives queued transactions, writes them to the database, and sends
-        // them back to the service.
-        //
-        // We are doing this to make sure transactions only hit in-memory queue once they are
-        // persisted to storage.
-        let (to_queue_task, mut rx) = mpsc::unbounded_channel();
-        let (tx, from_queue_task) = mpsc::unbounded_channel();
-        let queue_task = {
-            let storage = storage.clone();
-            Box::pin(async move {
-                while let Some(transaction) = rx.recv().await {
-                    let _ = storage.write_queued_transaction(&transaction).await;
-                    let _ = tx.send(transaction);
-                }
-            })
-        };
-
         let queue = storage.read_queued_transactions(chain_id).await?;
-        metrics.queued.set(queue.len() as f64);
 
         let mut this = Self {
             signers: Default::default(),
@@ -137,13 +112,9 @@ impl TransactionService {
             signer_id: 0,
             to_service,
             from_signers,
-            command_tx,
             command_rx,
             subscriptions: Default::default(),
             metrics,
-            to_queue_task,
-            from_queue_task,
-            queue_task,
             queue: queue.into(),
         };
 
@@ -152,12 +123,9 @@ impl TransactionService {
             this.create_signer(signer, storage.clone(), provider.clone()).await?;
         }
 
-        Ok(this)
-    }
+        let handle = TransactionServiceHandle { command_tx, storage };
 
-    /// Returns a new handle connected to this service.
-    pub fn handle(&self) -> TransactionServiceHandle {
-        TransactionServiceHandle { command_tx: self.command_tx.clone() }
+        Ok((this, handle))
     }
 
     /// Creates a new [`Signer`] instance and spawns it.
@@ -305,21 +273,15 @@ impl TransactionService {
             self.metrics.sent.increment(1);
         } else {
             warn!("no signers available, enqueueing transaction for later");
-            let _ = self.to_queue_task.send(tx);
+            self.queue.push_back(tx);
+            self.metrics.queued.increment(1);
         }
     }
 
     /// Attempts advancing the queue by sending a transaction to an available signer.
     ///
     /// Returns `true` if any transaction was sent.
-    fn advance_queue(&mut self, cx: &mut Context<'_>) {
-        let _ = self.queue_task.poll_unpin(cx);
-
-        while let Poll::Ready(Some(tx)) = self.from_queue_task.poll_recv(cx) {
-            self.queue.push_back(tx);
-            self.metrics.queued.increment(1);
-        }
-
+    fn advance_queue(&mut self) {
         while let Some(tx) = self.queue.pop_front() {
             if let Some(signer) = self.best_signer() {
                 signer.push_transaction(tx);
@@ -345,7 +307,7 @@ impl Future for TransactionService {
         let _ = this.signers.poll_next_unpin(cx);
 
         // Try advancing the queue.
-        this.advance_queue(cx);
+        this.advance_queue();
 
         // drain all commands
         while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
