@@ -679,6 +679,16 @@ impl Signer {
             .await
             .wrap_err("failed to read pending transactions")?;
 
+        // Make sure that loaded transactions are not getting overriden by the new ones
+        {
+            let mut lock = self.nonce.lock().await;
+            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max() {
+                if nonce > *lock {
+                    *lock = nonce;
+                }
+            }
+        }
+
         let latest_nonce = self.provider.get_transaction_count(self.address()).await?;
         let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
             .filter(|nonce| {
@@ -794,7 +804,7 @@ pub struct SignerTask {
 }
 
 impl SignerTask {
-    /// Pushes a new transaction to the signer.
+    /// Pushes a new traаnsaction to the signer.
     ///
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.
     pub fn push_transaction(&self, tx: RelayTransaction) {
