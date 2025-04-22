@@ -9,6 +9,7 @@ use tokio::try_join;
 
 /// Token type with its address, decimals and [`CoinKind`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Token {
     /// Token address.
     pub address: Address,
