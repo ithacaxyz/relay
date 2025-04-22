@@ -5,6 +5,7 @@ use crate::e2e::{
 };
 use alloy::{
     consensus::Transaction,
+    eips::Encodable2718,
     primitives::{Address, B256, U256},
     providers::{Provider, ext::AnvilApi},
     signers::local::PrivateKeySigner,
@@ -349,6 +350,9 @@ async fn fee_bump() -> eyre::Result<()> {
 
     // mine blocks with higher priority fee
     env.mine_blocks_with_priority_fee(dropped.max_priority_fee_per_gas().unwrap() * 2).await;
+
+    // submit the transaction again to make sure it's not treated as dropped.
+    let _ = env.provider.send_raw_transaction(&dropped.encoded_2718()).await.unwrap();
 
     // wait for new transaction to be sent
     let new_tx_hash = wait_for_tx_hash(&mut events).await;
