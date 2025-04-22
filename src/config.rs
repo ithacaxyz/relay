@@ -132,7 +132,7 @@ impl Default for TransactionServiceConfig {
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
-            transaction_timeout: 60_000,
+            transaction_timeout: 60,
         }
     }
 }
