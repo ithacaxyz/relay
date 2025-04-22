@@ -38,7 +38,7 @@ use alloy::{
 use futures_util::{
     TryFutureExt,
     future::{TryJoinAll, try_join_all, try_join3},
-    join,
+    join, try_join,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -1109,31 +1109,76 @@ impl RelayApiServer for Relay {
         &self,
         parameters: VerifySignatureParameters,
     ) -> RpcResult<VerifySignatureResponse> {
-        let VerifySignatureParameters { key_id, digest, signature, chain_id } = parameters;
+        let VerifySignatureParameters { key_id_or_address, digest, signature, chain_id } =
+            parameters;
 
         let provider = self.provider(chain_id)?;
 
-        // Firstly try to fetch key hash and account from on-chain registry
-        if let Some((key_hash, account)) = AccountRegistryCalls::id_infos(
-            vec![key_id],
-            self.inner.account_registry,
-            provider.clone(),
-        )
-        .await?
-        .pop()
-        .flatten()
-        .and_then(|(key_hash, mut accounts)| Some((key_hash, accounts.pop()?)))
-        {
-            let signature =
-                Signature { innerSignature: signature, keyHash: key_hash, prehash: false };
-            let valid = Account::new(account, &provider)
-                .validate_signature(digest, signature)
-                .await
-                .map_err(RelayError::from)?
-                .is_some_and(|hash| hash == key_hash);
+        let (mut id_infos, is_delegated) = try_join!(
+            AccountRegistryCalls::id_infos(
+                vec![key_id_or_address],
+                self.inner.account_registry,
+                provider.clone(),
+            ),
+            async { Account::new(key_id_or_address, &provider).is_delegated().await }
+        )?;
+
+        // If we are requested to verify a signature against an account, we don't know the key hash,
+        // otherwise we do as it can be fetched by key id.
+        let maybe_account_and_key_hash = if is_delegated {
+            Some((key_id_or_address, None))
+        } else {
+            id_infos
+                .pop()
+                .flatten()
+                .and_then(|(key_hash, mut accounts)| Some((accounts.pop()?, Some(key_hash))))
+        };
+
+        // If we were able to fetch account from registry, proceed with it
+        if let Some((account, maybe_key_hash)) = maybe_account_and_key_hash {
+            let account = Account::new(account, &provider);
+
+            // Prepare signatures to verify
+            let signatures = if let Some(key_hash) = maybe_key_hash {
+                // Just one signature if we know the key hash
+                vec![Signature { innerSignature: signature, keyHash: key_hash, prehash: false }]
+            } else {
+                // Otherwise fetch keys from account and try verifying signature against all of them
+                account
+                    .keys()
+                    .await
+                    .map_err(RelayError::from)?
+                    .into_iter()
+                    // We only support verifying signatures from admin keys, session keys are
+                    // assumed to never sign messages.
+                    .filter_map(|(key_hash, key)| {
+                        if key.isSuperAdmin {
+                            Some(Signature {
+                                innerSignature: signature.clone(),
+                                keyHash: key_hash,
+                                prehash: false,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+
+            let results = try_join_all(
+                signatures
+                    .into_iter()
+                    .map(|signature| account.validate_signature(digest, signature)),
+            )
+            .await
+            .map_err(RelayError::from)?;
+
+            let valid = results.iter().any(|result| {
+                result.is_some_and(|hash| maybe_key_hash.is_none_or(|key_hash| key_hash == hash))
+            });
 
             let proof = valid.then(|| ValidSignatureProof {
-                account,
+                account: account.address(),
                 prep_init_data: None,
                 id_signature: None,
             });
@@ -1141,69 +1186,93 @@ impl RelayApiServer for Relay {
             return Ok(VerifySignatureResponse { valid, proof });
         }
 
-        // If the registry lookup failed, fall back to reading a created account from storage.
-        let (key_hash, mut stored_account) = self
-            .inner
-            .storage
-            // Read all stored accounts corresponding to the key id.
-            .read_accounts_from_id(&key_id)
-            .await?
-            .into_iter()
-            // Filter out accounts that are not delegated.
-            .map(async |account| {
-                if !Account::new(account, &provider).is_delegated().await? {
-                    Ok::<_, RelayError>(Some(account))
-                } else {
-                    Ok(None)
-                }
-            })
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .flatten()
-            // Read the prep accounts from storage.
-            .map(async |account| self.inner.storage.read_prep(&account).await)
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .flatten()
-            // Find account containing the key id and fetch the key hash from it.
-            .find_map(|acc| {
-                let key_hash = acc.id_signatures.iter().find(|sig| sig.id == key_id)?.hash;
+        let (mut account, maybe_key_hash) =
+            if let Some(account) = self.inner.storage.read_prep(&key_id_or_address).await? {
+                (account, None)
+            } else {
+                self.inner
+                    .storage
+                    // Read all stored accounts corresponding to the key id.
+                    .read_accounts_from_id(&key_id_or_address)
+                    .await?
+                    .into_iter()
+                    // Filter out accounts that are already delegated.
+                    .map(async |account| {
+                        if !Account::new(account, &provider).is_delegated().await? {
+                            Ok::<_, RelayError>(Some(account))
+                        } else {
+                            Ok(None)
+                        }
+                    })
+                    .collect::<TryJoinAll<_>>()
+                    .await?
+                    .into_iter()
+                    .flatten()
+                    // Read the prep accounts from storage.
+                    .map(async |account| self.inner.storage.read_prep(&account).await)
+                    .collect::<TryJoinAll<_>>()
+                    .await?
+                    .into_iter()
+                    .flatten()
+                    // Find account containing the key id and fetch the key hash from it.
+                    .find_map(|acc| {
+                        let key_hash =
+                            acc.id_signatures.iter().find(|sig| sig.id == key_id_or_address)?.hash;
 
-                Some((key_hash, acc))
-            })
-            .ok_or(KeysError::UnknownKeyId(key_id))?;
+                        Some((acc, Some(key_hash)))
+                    })
+                    .ok_or(KeysError::UnknownKeyId(key_id_or_address))?
+            };
+
+        // Prepare signatures to verify.
+        let signatures = if let Some(key_hash) = maybe_key_hash {
+            // Just one signature if we know the key hash
+            vec![Signature { innerSignature: signature, keyHash: key_hash, prehash: false }]
+        } else {
+            // Signatures of all admin keys otherwise
+            account
+                .id_signatures
+                .iter()
+                .map(|sig| Signature {
+                    innerSignature: signature.clone(),
+                    keyHash: sig.hash,
+                    prehash: false,
+                })
+                .collect()
+        };
 
         // Override the PREP account bytecode as if it was already delegated.
         let overrides = StateOverridesBuilder::with_capacity(1).append(
-            stored_account.address(),
+            account.address(),
             AccountOverride::default().with_code(Bytes::from(
                 [
                     &EIP7702_DELEGATION_DESIGNATOR,
-                    stored_account.prep.signed_authorization.address.as_slice(),
+                    account.prep.signed_authorization.address.as_slice(),
                 ]
                 .concat(),
             )),
         );
 
         // Prepare initData for initializePREP call.
-        let init_data = stored_account.prep.init_data();
+        let init_data = account.prep.init_data();
 
-        let signature = Signature { innerSignature: signature, keyHash: key_hash, prehash: false };
+        let results = try_join_all(signatures.into_iter().map(async |signature| {
+            Account::new(account.address(), &provider)
+                .with_overrides(overrides.clone().into())
+                .initialize_and_validate_signature(init_data.clone(), digest, signature)
+                .await
+        }))
+        .await
+        .map_err(RelayError::from)?;
 
-        // Validate the signature.
-        let valid = Account::new(stored_account.address(), &provider)
-            .with_overrides(overrides.into())
-            .initialize_and_validate_signature(init_data.clone(), digest, signature)
-            .await
-            .map_err(RelayError::from)?
-            .is_some_and(|hash| hash == key_hash);
+        let valid = results.iter().any(|result| {
+            result.is_some_and(|hash| maybe_key_hash.is_none_or(|key_hash| key_hash == hash))
+        });
 
         let proof = valid.then(|| ValidSignatureProof {
-            account: stored_account.address(),
+            account: account.address(),
             prep_init_data: Some(init_data),
-            id_signature: stored_account.id_signatures.pop().map(|sig| sig.signature),
+            id_signature: account.id_signatures.pop().map(|sig| sig.signature),
         });
 
         return Ok(VerifySignatureResponse { valid, proof });
