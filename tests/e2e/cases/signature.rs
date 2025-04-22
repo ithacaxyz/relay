@@ -3,10 +3,7 @@ use alloy_primitives::{Address, B256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
-    types::{
-        KeyType, KeyWith712Signer,
-        rpc::{VerifySignatureParameters},
-    },
+    types::{KeyType, KeyWith712Signer, rpc::VerifySignatureParameters},
 };
 
 #[tokio::test(flavor = "multi_thread")]
