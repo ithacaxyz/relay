@@ -1,7 +1,10 @@
 //! RPC calls-related request and response types.
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
-use crate::types::{AssetDiffs, Call, SignedQuote, UserOp};
+use crate::{
+    error::{RelayError, UserOpError},
+    types::{AssetDiffs, Call, SignedQuote, UserOp},
+};
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
@@ -34,6 +37,26 @@ pub struct PrepareCallsParameters {
     pub from: Address,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
+}
+
+impl PrepareCallsParameters {
+    /// Ensures there are only whitelisted calls in preops.
+    pub fn check_preop_calls(&self) -> Result<(), RelayError> {
+        let has_unallowed =
+            |calls: &[Call]| calls.iter().any(|call| !call.is_whitelisted_preop(self.from));
+
+        if self.capabilities.pre_op && has_unallowed(&self.calls) {
+            return Err(UserOpError::UnallowedPreOpCalls.into());
+        }
+
+        for op in &self.capabilities.pre_ops {
+            if has_unallowed(&op.calls().map_err(RelayError::from)?) {
+                return Err(UserOpError::UnallowedPreOpCalls.into());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Capabilities for `wallet_prepareCalls` request.

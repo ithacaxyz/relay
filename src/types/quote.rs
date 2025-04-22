@@ -33,6 +33,8 @@ pub struct Quote {
     ///
     /// The account in `op.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
+    /// Entrypoint to use for the transaction.
+    pub entrypoint: Address,
     /// Whether quote is referring to a preop.
     pub is_preop: bool,
 }
@@ -59,6 +61,7 @@ impl Quote {
                 .as_secs()
                 .to_be_bytes(),
         );
+        hasher.update(self.entrypoint);
         hasher.update([self.is_preop as u8]);
         hasher.finalize()
     }

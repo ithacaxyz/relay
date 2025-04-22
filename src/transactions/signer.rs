@@ -240,11 +240,16 @@ impl Signer {
     #[instrument(skip_all)]
     async fn on_confirmed_transaction(
         &self,
-        tx_id: TxId,
+        tx: &PendingTransaction,
         tx_hash: B256,
     ) -> Result<(), StorageError> {
-        self.update_tx_status(tx_id, TransactionStatus::Confirmed(tx_hash)).await?;
-        self.storage.remove_pending_transaction(tx_id).await?;
+        self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
+        self.storage.remove_pending_transaction(tx.id()).await?;
+
+        self.metrics
+            .confirmation_time
+            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
+        self.metrics.pending.decrement(1);
 
         // Spawn a task to record metrics.
         let this = self.clone();
@@ -346,10 +351,16 @@ impl Signer {
     async fn watch_transaction_inner(
         &self,
         tx: &mut PendingTransaction,
-    ) -> Result<(), SignerError> {
+    ) -> Result<B256, SignerError> {
         let mut retries = 0;
+        let mut last_sent_at = Instant::now();
 
         loop {
+            if last_sent_at.elapsed().as_secs() >= self.config.transaction_timeout {
+                error!(?tx, "Transaction timed out");
+                return Err(SignerError::TxDropped);
+            }
+
             let mut handles = FuturesUnordered::new();
             for sent in &tx.sent {
                 handles.push(
@@ -365,8 +376,7 @@ impl Signer {
             loop {
                 match handles.next().await {
                     Some(Ok(tx_hash)) => {
-                        self.on_confirmed_transaction(tx.id(), tx_hash).await?;
-                        return Ok(());
+                        return Ok(tx_hash);
                     }
                     Some(_) => continue,
                     None => break,
@@ -389,6 +399,7 @@ impl Signer {
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
                     .await?;
                 tx.sent.push(replacement);
+                last_sent_at = Instant::now();
             } else if !self
                 .provider
                 .get_transaction_by_hash(*best_tx.tx_hash())
@@ -409,35 +420,34 @@ impl Signer {
 
         // todo: set parent span to context in pendingtx
         self.metrics.pending.increment(1);
-        if let Err(err) = self.watch_transaction_inner(&mut tx).await {
-            // If we've failed to send the transaction, start closing the nonce gap to make sure we
-            // occupy the chosen nonce.
-            self.close_nonce_gap(tx.nonce(), Some(tx.fees())).await;
+        match self.watch_transaction_inner(&mut tx).await {
+            Ok(tx_hash) => {
+                self.on_confirmed_transaction(&tx, tx_hash).await?;
+            }
+            Err(err) => {
+                // If we've failed to send the transaction, start closing the nonce gap to make sure
+                // we occupy the chosen nonce.
+                self.close_nonce_gap(tx.nonce(), Some(tx.fees())).await;
 
-            // After making sure that the nonce is occupied, check if it was occupied by one of the
-            // transactions sent before.
-            for sent in &tx.sent {
-                if let Ok(Some(sent)) = self.provider.get_transaction_by_hash(*sent.tx_hash()).await
-                {
-                    if sent.block_number.is_some() {
-                        self.on_confirmed_transaction(tx.id(), *sent.inner.tx_hash()).await?;
-                        return Ok(());
+                // After making sure that the nonce is occupied, check if it was occupied by one of
+                // the transactions sent before.
+                for sent in &tx.sent {
+                    if let Ok(Some(sent)) =
+                        self.provider.get_transaction_by_hash(*sent.tx_hash()).await
+                    {
+                        if sent.block_number.is_some() {
+                            self.on_confirmed_transaction(&tx, *sent.inner.tx_hash()).await?;
+                            return Ok(());
+                        }
                     }
                 }
+
+                // None of the sent transactions confirmed, mark transaction as failed.
+                self.metrics.pending.decrement(1);
+                self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
+                self.storage.remove_pending_transaction(tx.id()).await?;
             }
-
-            // None of the sent transactions confirmed, mark transaction as failed.
-            self.metrics.pending.decrement(1);
-            self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
-            self.storage.remove_pending_transaction(tx.id()).await?;
-
-            return Ok(());
         }
-
-        self.metrics
-            .confirmation_time
-            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
-        self.metrics.pending.decrement(1);
 
         Ok(())
     }

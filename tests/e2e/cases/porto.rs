@@ -533,7 +533,6 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
         assert!(env.erc20 != env.fee_token);
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
             expected: ExpectedOutcome::Pass,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
@@ -567,7 +566,6 @@ async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
             expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {

@@ -157,7 +157,7 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(context, env.entrypoint, None)
+        RelayTransaction::new(context, None)
     }
 }
 

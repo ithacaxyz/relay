@@ -13,9 +13,9 @@ use crate::{
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
+        AssetDiffs, Call, Delegation, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        Key, KeyHash, KeyHashWithID,
+        FeeTokens, Key, KeyHash, KeyHashWithID,
         rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
     },
     version::RELAY_SHORT_VERSION,
@@ -28,10 +28,11 @@ use alloy::{
     primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::{
-        TransactionReceipt,
+        TransactionReceipt, TransactionRequest,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
+    transports::TransportErrorKind,
 };
 use futures_util::{
     TryFutureExt,
@@ -43,7 +44,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{sync::Arc, time::SystemTime};
+use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
 use tracing::{Level, debug, error, instrument, span};
 
 use crate::{
@@ -55,7 +56,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, Entry, FeeTokens, KeyWith712Signer, PREPAccount, PartialAction,
+        Account, CreatableAccount, Entry, KeyWith712Signer, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
@@ -151,6 +152,7 @@ impl Relay {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         entrypoint: Address,
+        legacy_entrypoints: BTreeSet<Address>,
         delegation_proxy: Address,
         account_registry: Address,
         chains: Chains,
@@ -164,6 +166,7 @@ impl Relay {
     ) -> Self {
         let inner = RelayInner {
             entrypoint,
+            legacy_entrypoints,
             delegation_proxy,
             account_registry,
             chains,
@@ -214,28 +217,33 @@ impl Relay {
             )
             .build();
 
-        // load account and entrypoint
-        let entrypoint =
-            Entry::new(self.inner.entrypoint, provider.clone()).with_overrides(overrides.clone());
+        let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
 
-        let (nonce, native_fee_estimate, eth_price) = try_join3(
-            // fetch nonce if not specified
+        let (entrypoint, native_fee_estimate, eth_price) = try_join3(
+            // fetch entrypoint from the account and ensure it is supported
             async {
-                if let Some(nonce) = request.op.nonce {
-                    Ok(nonce)
-                } else {
-                    entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await
+                let entrypoint = account.get_entrypoint().await?;
+                if !self.is_supported_entrypoint(&entrypoint) {
+                    return Err(RelayError::UnsupportedEntrypoint(entrypoint));
                 }
+                Ok(Entry::new(entrypoint, &provider).with_overrides(overrides.clone()))
             },
             // fetch chain fees
             provider.estimate_eip1559_fees().map_err(RelayError::from),
             // fetch price in eth
             async {
                 // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.coin).await)
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
             },
         )
         .await?;
+
+        // fetch nonce if not specified
+        let nonce = if let Some(nonce) = request.op.nonce {
+            nonce
+        } else {
+            entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await?
+        };
 
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         let Some(eth_price) = eth_price else {
@@ -327,6 +335,7 @@ impl Relay {
                 .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
             authorization_address,
+            entrypoint: *entrypoint.address(),
             is_preop: request.is_preop,
         };
         let sig = self
@@ -401,7 +410,7 @@ impl Relay {
             return Err(QuoteError::QuoteExpired.into());
         }
 
-        let tx = RelayTransaction::new(quote, self.inner.entrypoint, authorization);
+        let tx = RelayTransaction::new(quote, authorization);
 
         // TODO: Right now we only support a single transaction per action and per bundle, so we can
         // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
@@ -590,23 +599,59 @@ impl Relay {
             .chain(revoke_calls)
             .collect())
     }
+
+    /// Checks if the entrypoint is supported.
+    fn is_supported_entrypoint(&self, entrypoint: &Address) -> bool {
+        self.inner.entrypoint == *entrypoint || self.inner.legacy_entrypoints.contains(entrypoint)
+    }
 }
 
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<RelaySettings> {
+        let chain_id =
+            self.inner.chains.chain_ids_iter().next().expect("should have at least one chain");
+        let provider = self.provider(*chain_id)?;
+
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
+            delegation_implementation: provider
+                .call(
+                    TransactionRequest::default()
+                        .to(self.inner.delegation_proxy)
+                        .input(Bytes::from(Delegation::implementationCall::SELECTOR).into()),
+                )
+                .await
+                .and_then(|ret| {
+                    Delegation::implementationCall::abi_decode_returns(&ret)
+                        .map_err(TransportErrorKind::custom)
+                })
+                .map_err(RelayError::from)?,
             account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
     }
 
     async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
-        Ok(self.inner.fee_tokens.clone())
+        let chains = self.inner.fee_tokens.iter().map(|(chain, tokens)| async move {
+            let rates_fut = tokens.iter().map(|token| async move {
+                // TODO: only handles eth as native fee token
+                Ok(token.clone().with_rate(
+                    self.inner
+                        .price_oracle
+                        .eth_price(token.kind)
+                        .await
+                        .ok_or(QuoteError::UnavailablePrice(token.address))?,
+                ))
+            });
+
+            Ok::<_, QuoteError>((*chain, try_join_all(rates_fut).await?))
+        });
+
+        Ok(FeeTokens::from_iter(try_join_all(chains).await?))
     }
 
     async fn prepare_create_account(
@@ -737,6 +782,9 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
+        // Ensures we only have whitelisted preop calls.
+        request.check_preop_calls()?;
+
         let provider = self.provider(request.chain_id)?;
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
@@ -1068,6 +1116,8 @@ impl RelayApiServer for Relay {
 struct RelayInner {
     /// The entrypoint address.
     entrypoint: Address,
+    /// Previously deployed entrypoints.
+    legacy_entrypoints: BTreeSet<Address>,
     /// The delegation proxy address.
     delegation_proxy: Address,
     /// The account registry address.

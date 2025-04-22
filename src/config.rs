@@ -5,6 +5,7 @@ use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
     time::Duration,
@@ -23,6 +24,8 @@ pub struct RelayConfig {
     pub transactions: TransactionServiceConfig,
     /// Entrypoint address.
     pub entrypoint: Address,
+    /// Previously deployed entrypoints.
+    pub legacy_entrypoints: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Account registry address.
@@ -79,6 +82,7 @@ pub struct QuoteConfig {
 
 /// Gas estimate configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GasConfig {
     /// Extra buffer added to UserOp gas estimates.
     pub user_op_buffer: u64,
@@ -118,6 +122,8 @@ pub struct TransactionServiceConfig {
     /// Interval for checking nonce gaps.
     #[serde(with = "crate::serde::duration")]
     pub nonce_check_interval: Duration,
+    /// Timeout after which we consider transaction as failed, in seconds.
+    pub transaction_timeout: u64,
 }
 
 impl Default for TransactionServiceConfig {
@@ -126,6 +132,7 @@ impl Default for TransactionServiceConfig {
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
+            transaction_timeout: 60_000,
         }
     }
 }
@@ -151,6 +158,7 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             transactions: TransactionServiceConfig::default(),
+            legacy_entrypoints: BTreeSet::new(),
             entrypoint: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,

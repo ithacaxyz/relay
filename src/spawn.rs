@@ -4,6 +4,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
+    constants::DEFAULT_POLL_INTERVAL,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
@@ -118,6 +119,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
+                .map(|client| client.with_poll_interval(DEFAULT_POLL_INTERVAL))
                 .map(|client| ProviderBuilder::new().on_client(client).erased())
         }),
     )
@@ -152,6 +154,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
         config.entrypoint,
+        config.legacy_entrypoints,
         config.delegation_proxy,
         config.account_registry,
         chains.clone(),

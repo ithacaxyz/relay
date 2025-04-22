@@ -27,8 +27,6 @@ pub struct RelayTransaction {
     pub id: TxId,
     /// [`UserOp`] to send.
     pub quote: SignedQuote,
-    /// Destination entrypoint.
-    pub entrypoint: Address,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
     /// Trace context for the transaction.
@@ -38,15 +36,10 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(
-        quote: SignedQuote,
-        entrypoint: Address,
-        authorization: Option<SignedAuthorization>,
-    ) -> Self {
+    pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
         Self {
             id: TxId(quote.ty().digest()),
             quote,
-            entrypoint,
             authorization,
             trace_context: Context::current(),
         }
@@ -69,7 +62,7 @@ impl RelayTransaction {
                 authorization_list: vec![auth.clone()],
                 chain_id: self.quote.ty().chain_id,
                 nonce,
-                to: self.entrypoint,
+                to: self.quote.ty().entrypoint,
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -82,7 +75,7 @@ impl RelayTransaction {
             TxEip1559 {
                 chain_id: self.quote.ty().chain_id,
                 nonce,
-                to: self.entrypoint.into(),
+                to: self.quote.ty().entrypoint.into(),
                 input,
                 gas_limit,
                 max_fee_per_gas,

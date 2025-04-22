@@ -62,10 +62,9 @@ impl Chains {
         self.chains.get(&chain_id).cloned()
     }
 
-    /// Get the first provider in the collection.
-    // NOTE: TEMPORARY PLEASE DELETE THIS AFTER https://github.com/ithacaxyz/relay/pull/331
-    pub fn first(&self) -> Option<(&ChainId, &Chain)> {
-        self.chains.iter().next()
+    /// Get an iterator over the supported chain IDs.
+    pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
+        self.chains.keys()
     }
 }
 

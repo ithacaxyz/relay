@@ -1,6 +1,5 @@
 use crate::e2e::{
     ExpectedOutcome, TxContext, cases::prep_account, config::AccountConfig, eoa::EoaKind,
-    process_tx,
 };
 use relay::{
     rpc::RelayApiClient,
@@ -17,19 +16,12 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let backup_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let fee_token = env.fee_token;
 
-    prep_account(
-        &mut env,
-        &[],
-        &admin_key,
-        &[&admin_key, &backup_key],
-        &[],
-        0,
-        fee_token,
-        ExpectedOutcome::Pass,
-    )
-    .await?;
+    prep_account(&mut env, &[&admin_key, &backup_key]).await?;
+
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
 
     let account_registry = env.relay_endpoint.health().await?.account_registry;
 
@@ -61,16 +53,13 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(response[0].keys.contains(&admin_key.to_authorized(None).await?.into_response()));
         assert!(response[0].keys.contains(&backup_key.to_authorized(None).await?.into_response()));
 
-        process_tx(
-            1,
-            TxContext {
-                revoke_keys: vec![&admin_key],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&admin_key),
-                ..Default::default()
-            },
-            &env,
-        )
+        TxContext {
+            revoke_keys: vec![&admin_key],
+            expected: ExpectedOutcome::Pass,
+            key: Some(&admin_key),
+            ..Default::default()
+        }
+        .process(1, &env)
         .await?;
 
         // Ensure the onchain account registry no longer has the revoked key entry.
@@ -127,16 +116,13 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         );
 
         // Bork EOA with no admin keys by revoking the remaining backup key
-        process_tx(
-            2,
-            TxContext {
-                revoke_keys: vec![&backup_key],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&backup_key),
-                ..Default::default()
-            },
-            &env,
-        )
+        TxContext {
+            revoke_keys: vec![&backup_key],
+            expected: ExpectedOutcome::Pass,
+            key: Some(&backup_key),
+            ..Default::default()
+        }
+        .process(2, &env)
         .await?;
 
         // None of the keys should return any account
