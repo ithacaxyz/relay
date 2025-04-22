@@ -384,6 +384,7 @@ impl Signer {
                 fees.prepare_replacement(best_tx, tx.tx.max_fee_for_transaction())?
             {
                 let replacement = self.send_transaction(new_tx).await?;
+                self.metrics.replacements_sent.increment(1);
                 self.storage.add_pending_envelope(tx.id(), &replacement).await?;
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
                     .await?;

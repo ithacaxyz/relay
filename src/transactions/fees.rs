@@ -2,6 +2,7 @@ use alloy::{
     consensus::{Transaction, TxEnvelope, TypedTransaction},
     eips::eip1559::Eip1559Estimation,
 };
+use tracing::instrument;
 
 /// Minimum gas price bump that we assume to be accepted by the network.
 ///
@@ -70,6 +71,7 @@ impl FeeContext {
     }
 
     /// Returns whether we can bump the fees for a given transaction.
+    #[instrument(skip_all)]
     pub fn prepare_replacement(
         &self,
         tx: &TxEnvelope,
