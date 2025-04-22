@@ -13,7 +13,7 @@ use crate::{
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
+        AssetDiffs, Call, Delegation, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
         FeeTokens, Key, KeyHash, KeyHashWithID,
         rpc::{CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings},
@@ -28,10 +28,11 @@ use alloy::{
     primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::{
-        TransactionReceipt,
+        TransactionReceipt, TransactionRequest,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
+    transports::TransportErrorKind,
 };
 use futures_util::{
     TryFutureExt,
@@ -608,11 +609,27 @@ impl Relay {
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<RelaySettings> {
+        let chain_id =
+            self.inner.chains.chain_ids_iter().next().expect("should have at least one chain");
+        let provider = self.provider(*chain_id)?;
+
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
+            delegation_implementation: provider
+                .call(
+                    TransactionRequest::default()
+                        .to(self.inner.delegation_proxy)
+                        .input(Bytes::from(Delegation::implementationCall::SELECTOR).into()),
+                )
+                .await
+                .and_then(|ret| {
+                    Delegation::implementationCall::abi_decode_returns(&ret)
+                        .map_err(TransportErrorKind::custom)
+                })
+                .map_err(RelayError::from)?,
             account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
