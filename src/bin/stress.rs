@@ -150,11 +150,8 @@ impl StressTester {
             .on_http(args.rpc_url.clone())
             .erased();
 
-        info!(
-            "Connected to relay at {}, version {}",
-            &args.relay_url,
-            relay_client.health().await?.version
-        );
+        let health = relay_client.health().await?;
+        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         let supports_fee_token =
             relay_client.fee_tokens().await?.contains(args.chain_id.id(), &args.fee_token);
@@ -177,7 +174,7 @@ impl StressTester {
                         .prepare_create_account(PrepareCreateAccountParameters {
                             capabilities: PrepareCreateAccountCapabilities {
                                 authorize_keys: vec![key.to_authorized(None).await?],
-                                delegation: args.delegation,
+                                delegation: health.delegation_proxy,
                             },
                             chain_id: args.chain_id.id(),
                         })
@@ -277,9 +274,6 @@ struct Args {
     /// Number of accounts to create and test with.
     #[arg(long = "accounts", value_name = "COUNT", default_value_t = 1000)]
     accounts: usize,
-    /// Address of the delegation contract to use for testing.
-    #[arg(long = "delegation", value_name = "ADDRESS", required = true)]
-    delegation: Address,
 }
 
 impl Args {
