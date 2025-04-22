@@ -138,7 +138,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         price_oracle.spawn_fetcher(
             registry.clone(),
             PriceFetcher::CoinGecko,
-            &CoinPair::ethereum_pairs(&[CoinKind::USDT]),
+            &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
         );
     }
 
