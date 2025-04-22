@@ -82,6 +82,7 @@ pub struct QuoteConfig {
 
 /// Gas estimate configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GasConfig {
     /// Extra buffer added to UserOp gas estimates.
     pub user_op_buffer: u64,
