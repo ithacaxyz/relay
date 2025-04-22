@@ -3,7 +3,7 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, SendPreparedCallsResponse};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
+    types::{Key, KeyHash, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -240,9 +240,12 @@ pub struct VerifySignatureResponse {
 /// will have to be preceeded by `initializePREP` with [`ValidSignatureProof::prep_init_data`] and a
 /// state override delegating the account to `Delegation` contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ValidSignatureProof {
     /// Address of an account (either delegated or stored) that the signature was verified against.
     pub account: Address,
+    /// The key hash that signed the digest.
+    pub key_hash: KeyHash,
     /// PREP account initialization data. Provided, if account is a stored PREP account.
     pub prep_init_data: Option<Bytes>,
     /// Signature proving that account is associated with the requested `keyId`.

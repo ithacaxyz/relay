@@ -1,9 +1,17 @@
 use crate::e2e::{TxContext, cases::prep::prep_account, config::AccountConfig};
-use alloy_primitives::{Address, B256};
+use alloy::{
+    dyn_abi::SolType,
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
+};
+use alloy_primitives::{Address, B256, Bytes};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
-    types::{KeyType, KeyWith712Signer, rpc::VerifySignatureParameters},
+    types::{
+        Account, KeyType, KeyWith712Signer, PREPAccount, PREPInitData, Signature,
+        rpc::VerifySignatureParameters,
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -34,6 +42,43 @@ async fn verify_signature() -> eyre::Result<()> {
     // assert that verification fails for arbitrary id
     assert!(verify_with_id(Address::random()).await.is_err());
 
+    let proof = verify_with_id(key.id()).await?.proof.unwrap();
+
+    // firstly verify the key id has indeed signed this account's address
+    let Some(id_signature) = proof.id_signature else {
+        panic!("should have id signature");
+    };
+    assert_eq!(
+        id_signature.recover_address_from_prehash(&key.id_digest(account)).unwrap(),
+        key.id()
+    );
+
+    // now verify that this is indeed a PREP with the returned initdata
+    let Some(init_data) = proof.prep_init_data else {
+        panic!("should have init data");
+    };
+    let init_calls = PREPInitData::abi_decode_params(&init_data).unwrap().calls;
+    assert_eq!(PREPAccount::initialize(env.delegation, init_calls).address, account);
+
+    // Override the PREP account bytecode as if it was already delegated.
+    let overrides = StateOverridesBuilder::with_capacity(1).append(
+        account,
+        AccountOverride::default().with_code(Bytes::from(
+            [&EIP7702_DELEGATION_DESIGNATOR, env.delegation.as_slice()].concat(),
+        )),
+    );
+
+    // simulate an on-chain signature recovery
+    let signature =
+        Signature { innerSignature: signature.clone(), keyHash: proof.key_hash, prehash: false };
+
+    let key_hash = Account::new(account, &env.provider)
+        .with_overrides(overrides.into())
+        .initialize_and_validate_signature(init_data.clone(), digest, signature.clone())
+        .await?;
+
+    assert_eq!(key_hash, Some(proof.key_hash));
+
     // send dummy transaction to make sure account is getting deployed
     TxContext { key: Some(&key), ..Default::default() }.process(0, &env).await?;
 
@@ -45,6 +90,14 @@ async fn verify_signature() -> eyre::Result<()> {
 
     // assert that verification fails for arbitrary id
     assert!(verify_with_id(Address::random()).await.is_err());
+
+    let proof = verify_with_id(account).await?.proof.unwrap();
+
+    // for on-chain signatures we just need to directly call the account
+    let key_hash =
+        Account::new(account, &env.provider).validate_signature(digest, signature.clone()).await?;
+
+    assert_eq!(key_hash, Some(proof.key_hash));
 
     Ok(())
 }

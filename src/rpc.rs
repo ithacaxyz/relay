@@ -1190,17 +1190,22 @@ impl RelayApiServer for Relay {
             .await
             .map_err(RelayError::from)?;
 
-            let valid = results.iter().any(|result| {
-                result.is_some_and(|hash| maybe_key_hash.is_none_or(|key_hash| key_hash == hash))
+            let key_hash = results.iter().find_map(|result| {
+                let &Some(hash) = result else {
+                    return None;
+                };
+
+                maybe_key_hash.is_none_or(|key_hash| key_hash == hash).then_some(hash)
             });
 
-            let proof = valid.then(|| ValidSignatureProof {
+            let proof = key_hash.map(|key_hash| ValidSignatureProof {
                 account: account.address(),
+                key_hash,
                 prep_init_data: None,
                 id_signature: None,
             });
 
-            return Ok(VerifySignatureResponse { valid, proof });
+            return Ok(VerifySignatureResponse { valid: proof.is_some(), proof });
         }
 
         let (mut account, maybe_key_hash) =
@@ -1282,17 +1287,22 @@ impl RelayApiServer for Relay {
         .await
         .map_err(RelayError::from)?;
 
-        let valid = results.iter().any(|result| {
-            result.is_some_and(|hash| maybe_key_hash.is_none_or(|key_hash| key_hash == hash))
+        let key_hash = results.iter().find_map(|result| {
+            let &Some(hash) = result else {
+                return None;
+            };
+
+            maybe_key_hash.is_none_or(|key_hash| key_hash == hash).then_some(hash)
         });
 
-        let proof = valid.then(|| ValidSignatureProof {
+        let proof = key_hash.map(|key_hash| ValidSignatureProof {
             account: account.address(),
+            key_hash,
             prep_init_data: Some(init_data),
             id_signature: account.id_signatures.pop().map(|sig| sig.signature),
         });
 
-        return Ok(VerifySignatureResponse { valid, proof });
+        return Ok(VerifySignatureResponse { valid: proof.is_some(), proof });
     }
 }
 
