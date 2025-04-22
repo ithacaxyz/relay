@@ -503,27 +503,23 @@ impl Relay {
         account: Address,
         provider: DynProvider,
     ) -> Result<Address, RelayError> {
-        let delegation = match Account::new(account, provider.clone())
-            .delegation_implementation()
-            .await?
+        if let Some(delegation) =
+            Account::new(account, provider.clone()).delegation_implementation().await?
         {
-            Some(addr) => addr,
-            None => {
-                // Attempt to retrieve the delegation proxy from storage, since it might not be
-                // deployed yet.
-                let Some(prep) = self.inner.storage.read_prep(&account).await? else {
-                    return Err(RelayError::Auth(AuthError::EoaNotDelegated(account).boxed()));
-                };
+            return Ok(delegation);
+        }
 
-                DelegationProxyInstance::new(*prep.prep.signed_authorization.address(), provider)
-                    .implementation()
-                    .call()
-                    .await
-                    .map_err(TransportErrorKind::custom)?
-            }
+        // Attempt to retrieve the delegation proxy from storage, since it might not be
+        // deployed yet.
+        let Some(prep) = self.inner.storage.read_prep(&account).await? else {
+            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account).boxed()));
         };
 
-        Ok(delegation)
+        Ok(DelegationProxyInstance::new(*prep.prep.signed_authorization.address(), provider)
+            .implementation()
+            .call()
+            .await
+            .map_err(TransportErrorKind::custom)?)
     }
 
     /// Returns the chain [`DynProvider`].
