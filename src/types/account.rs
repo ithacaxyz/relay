@@ -144,6 +144,9 @@ sol! {
 
         /// Initializes PREP account with given `initData`.
         function initializePREP(bytes calldata initData) public virtual returns (bool);
+
+        /// The implementation address.
+        address public implementation;
     }
 }
 

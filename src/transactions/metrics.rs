@@ -21,6 +21,8 @@ pub struct TransactionServiceMetrics {
     pub pending: Gauge,
     /// Number of queued transactions.
     pub queued: Gauge,
+    /// Number of times we've replaced transactions.
+    pub replacements_sent: Counter,
     /// Number of timed out transactions.
     pub timed_out: Counter,
     /// Duration of polling the transaction service, in nanoseconds.

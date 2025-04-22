@@ -263,6 +263,7 @@ impl Environment {
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_entrypoint(entrypoint)
+                .with_delegation_proxy(delegation)
                 .with_account_registry(account_registry)
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
@@ -437,10 +438,17 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     )
     .await?;
 
-    let mut delegation = deploy_contract(
+    let delegation = deploy_contract(
         &provider,
         &contracts_path.join("Delegation.sol/Delegation.json"),
         Some(entrypoint.abi_encode().into()),
+    )
+    .await?;
+
+    let mut delegation_proxy = deploy_contract(
+        &provider,
+        &contracts_path.join("EIP7702Proxy.sol/EIP7702Proxy.json"),
+        Some((delegation, Address::ZERO).abi_encode().into()),
     )
     .await?;
 
@@ -458,7 +466,8 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     // Delegation
     if let Ok(address) = std::env::var("TEST_DELEGATION") {
-        delegation = Address::from_str(&address).wrap_err("Delegation address parse failed.")?
+        delegation_proxy =
+            Address::from_str(&address).wrap_err("Delegation address parse failed.")?
     }
 
     // Account Registry
@@ -496,7 +505,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((delegation, entrypoint, account_registry, erc20s))
+    Ok((delegation_proxy, entrypoint, account_registry, erc20s))
 }
 
 async fn deploy_contract<P: Provider>(
