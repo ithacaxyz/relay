@@ -65,6 +65,10 @@ pub enum SignerError {
     #[error("transaction was dropped")]
     TxDropped,
 
+    /// The transaction timed out while waiting for confirmation.
+    #[error("timed out while waiting for confirmation")]
+    TxTimeout,
+
     /// The growth of the gas fees exceeded the amount we are ready to pay
     #[error("transaction underpriced: {0}")]
     FeesTooHigh(#[from] FeesError),
@@ -358,7 +362,7 @@ impl Signer {
         loop {
             if last_sent_at.elapsed() >= self.config.transaction_timeout {
                 error!(?tx, "Transaction timed out");
-                return Err(SignerError::TxDropped);
+                return Err(SignerError::TxTimeout);
             }
 
             let mut handles = FuturesUnordered::new();
@@ -425,6 +429,8 @@ impl Signer {
                 self.on_confirmed_transaction(&tx, tx_hash).await?;
             }
             Err(err) => {
+                error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
+
                 // If we've failed to send the transaction, start closing the nonce gap to make sure
                 // we occupy the chosen nonce.
                 self.close_nonce_gap(tx.nonce(), Some(tx.fees())).await;
