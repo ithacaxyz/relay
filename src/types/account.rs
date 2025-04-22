@@ -200,6 +200,11 @@ impl<P: Provider> Account<P> {
         }
     }
 
+    /// Returns the address of the account.
+    pub fn address(&self) -> Address {
+        *self.delegation.address()
+    }
+
     /// Sets overrides for all calls on this account.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;

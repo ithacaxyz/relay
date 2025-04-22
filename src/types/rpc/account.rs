@@ -206,7 +206,7 @@ pub struct AccountResponse {
 #[serde(rename_all = "camelCase")]
 pub struct VerifySignatureParameters {
     /// ID of the key to verify signature with.
-    pub key_id: KeyID,
+    pub key_id_or_address: Address,
     /// Digest of the message to verify.
     pub digest: B256,
     /// The signature bytes
