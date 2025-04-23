@@ -421,7 +421,7 @@ impl Relay {
         let bundle_id = BundleId(*tx.id);
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
-        span!(
+        let span = span!(
             Level::INFO, "send tx",
             otel.kind = ?SpanKind::Producer,
             messaging.system = "pg",
@@ -429,8 +429,9 @@ impl Relay {
             messaging.operation.name = "send",
             messaging.operation.type = "send",
             messaging.message.id = %tx.id
-        )
-        .in_scope(|| transactions.send_transaction(tx));
+        );
+        let _enter = span.enter();
+        transactions.send_transaction(tx).await?;
 
         Ok(bundle_id)
     }
