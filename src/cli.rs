@@ -1,7 +1,10 @@
 //! # Relay CLI
 use crate::{
     config::RelayConfig,
-    constants::{DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    constants::{
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS, TX_GAS_BUFFER,
+        USER_OP_GAS_BUFFER,
+    },
     spawn::try_spawn_with_args,
 };
 use alloy::primitives::Address;
@@ -85,6 +88,10 @@ pub struct Args {
     /// The maximum number of concurrent connections the relay can handle.
     #[arg(long = "max-connections", value_name = "NUM", default_value_t = DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS)]
     pub max_connections: u32,
+    /// The maximum number of pending transactions that can be processed by transaction service
+    /// simultaneously.
+    #[arg(long = "max-pending-transactions", value_name = "NUM", default_value_t = DEFAULT_MAX_TRANSACTIONS)]
+    pub max_pending_transactions: usize,
 }
 
 impl Args {
@@ -117,6 +124,7 @@ impl Args {
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
+            .with_max_pending_transactions(self.max_pending_transactions)
     }
 }
 
@@ -171,6 +179,7 @@ mod tests {
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
                     database_url: Default::default(),
+                    max_pending_transactions: Default::default(),
                 },
                 config.clone(),
                 registry.clone(),
