@@ -41,3 +41,6 @@ pub const BASE_SEPOLIA_PUBLIC_RPC_URL: &str = "https://sepolia.base.org";
 
 /// Default cap on maximum number of pending transactions per chain.
 pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;
+
+/// Default number of signers to derive from mnemonic and use for sending transactions.
+pub const DEFAULT_NUM_SIGNERS: usize = 16;

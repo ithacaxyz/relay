@@ -36,6 +36,7 @@ alloy = { version = "0.15", features = [
     "network",
     "json-rpc",
     "reqwest-rustls-tls",
+    "signer-mnemonic",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"

@@ -99,11 +99,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         RelayStorage::in_memory()
     };
 
-    // construct provider
-    let signers = futures_util::future::try_join_all(
-        config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)),
-    )
-    .await?;
+    // setup signers
+    let signers = DynSigner::derive_from_mnemonic(
+        config.secrets.signers_mnemonic,
+        config.transactions.num_signers,
+    )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
     // setup metrics exporter and periodic metric collectors
@@ -112,6 +112,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
         .await?;
 
+    // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
