@@ -114,6 +114,8 @@ pub struct SecretsConfig {
 /// Configuration for transaction service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
+    /// Maximum number of transactions that can be pending at any given time.
+    pub max_pending_transactions: usize,
     /// Maximum number of pending transactions that can be handled by a single signer.
     pub max_transactions_per_signer: usize,
     /// Interval for checking signer balances.
@@ -130,6 +132,7 @@ pub struct TransactionServiceConfig {
 impl Default for TransactionServiceConfig {
     fn default() -> Self {
         Self {
+            max_pending_transactions: 100,
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),

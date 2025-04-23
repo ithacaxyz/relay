@@ -273,6 +273,7 @@ impl TransactionService {
     fn best_signer(&self) -> Option<&SignerTask> {
         let mut best_signer = None;
         let mut best_capacity = 0;
+        let mut total_pending = 0;
 
         for signer in self.signers.iter() {
             let capacity = signer.capacity();
@@ -280,9 +281,11 @@ impl TransactionService {
                 best_signer = Some(signer);
                 best_capacity = capacity;
             }
+
+            total_pending += signer.pending();
         }
 
-        best_signer
+        best_signer.filter(|_| total_pending < self.config.max_pending_transactions)
     }
 
     /// Sends the given transaction to an available signer.
