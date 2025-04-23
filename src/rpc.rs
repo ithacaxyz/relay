@@ -49,7 +49,7 @@ use jsonrpsee::{
 };
 use opentelemetry::trace::SpanKind;
 use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
-use tracing::{Level, debug, error, instrument, span};
+use tracing::{Instrument, Level, debug, error, instrument, span};
 
 use crate::{
     chains::{Chain, Chains},
@@ -441,8 +441,7 @@ impl Relay {
             messaging.operation.type = "send",
             messaging.message.id = %tx.id
         );
-        let _enter = span.enter();
-        transactions.send_transaction(tx).await?;
+        transactions.send_transaction(tx).instrument(span).await?;
 
         Ok(bundle_id)
     }
