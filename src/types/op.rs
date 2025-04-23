@@ -306,19 +306,20 @@ impl Op for PreOp {
     }
 
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        let multichain = self.is_multichain();
-
-        Ok(eip712::PreOp { multichain, eoa: self.eoa, calls: self.calls()?, nonce: self.nonce })
+        Ok(eip712::PreOp {
+            multichain: self.is_multichain(),
+            eoa: self.eoa,
+            calls: self.calls()?,
+            nonce: self.nonce,
+        })
     }
 }
 
 impl Op for UserOp {
     /// Get the EIP712 encoding of the [`UserOp`].
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        let multichain = self.is_multichain();
-
         Ok(eip712::UserOp {
-            multichain,
+            multichain: self.is_multichain(),
             eoa: self.eoa,
             calls: self.calls()?,
             nonce: self.nonce,
