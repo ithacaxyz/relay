@@ -9,6 +9,7 @@ use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
     primitives::{Address, B256, BlockHash, BlockNumber, ChainId, TxHash, wrap_fixed_bytes},
+    providers::DynProvider,
     rpc::types::Log,
     sol_types::SolEvent,
 };
@@ -113,13 +114,75 @@ pub struct PrepareCallsResponse {
 }
 
 /// Response context from `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct PrepareCallsContext {
+pub enum PrepareCallsContext {
     /// The [`SignedQuote`] of the prepared call bundle.
-    pub user_op_quote: Option<SignedQuote>,
+    #[serde(rename = "quote")]
+    Quote(Box<SignedQuote>),
     /// The [`PreOp`] of the prepared call bundle.
-    pub preop: Option<PreOp>,
+    #[serde(rename = "preop")]
+    PreOp(PreOp),
+}
+
+impl PrepareCallsContext {
+    /// Initializes [`PrepareCallsContext`] with a [`SignedQuote`].
+    pub fn with_quote(quote: SignedQuote) -> Self {
+        Self::Quote(Box::new(quote))
+    }
+
+    /// Initializes [`PrepareCallsContext`] with a [`PreOp`].
+    pub fn with_preop(preop: PreOp) -> Self {
+        Self::PreOp(preop)
+    }
+
+    /// Returns quote mutable reference if it exists.
+    pub fn quote(&self) -> Option<&SignedQuote> {
+        match self {
+            PrepareCallsContext::Quote(signed) => Some(signed),
+            PrepareCallsContext::PreOp(_) => None,
+        }
+    }
+
+    /// Returns quote mutable reference if it exists.
+    pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
+        match self {
+            PrepareCallsContext::Quote(signed) => Some(signed),
+            PrepareCallsContext::PreOp(_) => None,
+        }
+    }
+
+    /// Consumes self and returns quote if it exists.
+    pub fn take_quote(self) -> Option<SignedQuote> {
+        match self {
+            PrepareCallsContext::Quote(signed) => Some(*signed),
+            PrepareCallsContext::PreOp(_) => None,
+        }
+    }
+
+    /// Consumes self and returns preop if it exists.
+    pub fn take_preop(self) -> Option<PreOp> {
+        match self {
+            PrepareCallsContext::Quote(_) => None,
+            PrepareCallsContext::PreOp(preop) => Some(preop),
+        }
+    }
+
+    /// Calculate the eip712 digest that the user will need to sign.
+    pub async fn compute_eip712_data(
+        &self,
+        entrypoint_address: Address,
+        provider: &DynProvider,
+    ) -> eyre::Result<(B256, TypedData)> {
+        match self {
+            PrepareCallsContext::Quote(quote) => {
+                quote.ty().op.compute_eip712_data(entrypoint_address, provider).await
+            }
+            PrepareCallsContext::PreOp(pre_op) => {
+                pre_op.compute_eip712_data(entrypoint_address, provider).await
+            }
+        }
+    }
 }
 
 /// Request parameters for `wallet_sendPreparedCalls`.

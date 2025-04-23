@@ -149,7 +149,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.user_op_quote.as_mut().unwrap().ty_mut().op.signature = Signature {
+        context.quote_mut().unwrap().ty_mut().op.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,
@@ -157,7 +157,7 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(context.user_op_quote.unwrap(), None)
+        RelayTransaction::new(context.take_quote().unwrap(), None)
     }
 }
 

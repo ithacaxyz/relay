@@ -131,10 +131,15 @@ pub async fn prepare_calls(
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
 
+    // Deliberately omit the `from` address for the very first UserOp preops
+    // to test the path where prepops are signed before the PREPAddress is known. eg. during
+    // creation of the first passkey.
+    let from = (tx_num != 0 || !pre_op).then_some(env.eoa.address());
+
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            from: Some(env.eoa.address()),
+            from,
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {

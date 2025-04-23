@@ -202,7 +202,7 @@ impl TxContext<'_> {
             return Ok(());
         };
 
-        let op_nonce = context.user_op_quote.as_ref().unwrap().ty().op.nonce;
+        let op_nonce = context.quote().as_ref().unwrap().ty().op.nonce;
 
         // Submit signed call
         let bundle = send_prepared_calls(env, signer, signature, context).await;
@@ -296,7 +296,7 @@ pub async fn build_pre_ops<'a>(
         let signer = tx.key.expect("userop should have a key");
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = context.preop.unwrap();
+        let mut op = context.take_preop().unwrap();
         op.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()

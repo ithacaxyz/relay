@@ -10,6 +10,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    error::UserOpError,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call,
@@ -284,14 +285,11 @@ impl Relay {
             ..Default::default()
         };
 
-        if !request.is_preop {
-            // this will force the simulation to go through payment code paths, and get a better
-            // estimation.
-            op.paymentAmount = U256::from(1);
-            op.paymentMaxAmount = U256::from(1);
-            op.paymentPerGas =
-                (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
-        }
+        // this will force the simulation to go through payment code paths, and get a better
+        // estimation.
+        op.paymentAmount = U256::from(1);
+        op.paymentMaxAmount = U256::from(1);
+        op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
         // sign userop
         let signature = mock_key
@@ -350,7 +348,6 @@ impl Relay {
                 .expect("should never overflow"),
             authorization_address,
             entrypoint: *entrypoint.address(),
-            is_preop: request.is_preop,
         };
         let sig = self
             .inner
@@ -368,10 +365,6 @@ impl Relay {
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<BundleId> {
-        if quote.ty().is_preop {
-            return Err(QuoteError::PreOpUnsupported.into());
-        }
-
         let chain_id = quote.ty().chain_id;
         let Chain { provider, transactions } =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
@@ -604,12 +597,21 @@ impl Relay {
 
         // If we are planning to use a session key as the first userop signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
+        //
+        // This is done by adding an extra call to the preop to give it permission to do so.
+        //
+        // We assume that this is the first userop if ANY of the following options is true:
+        // * `maybe_prep_init` is `Some` as described in `generate_calls`
+        // * `request.from` is `None`. This is the case when the user is signing up and needs to
+        //   authorize a session key before even going through PREPAccount generation flow.
         let account_registry_permission = request
             .capabilities
             .authorize_keys
             .iter()
             .filter(|auth| {
-                request.capabilities.pre_op && !auth.key.isSuperAdmin && maybe_prep_init.is_some()
+                request.capabilities.pre_op
+                    && !auth.key.isSuperAdmin
+                    && (maybe_prep_init.is_some() || request.from.is_none())
             })
             .map(|auth| {
                 Call::set_can_execute(
@@ -842,35 +844,19 @@ impl RelayApiServer for Relay {
         // Generate all requested calls.
         let calls = self.generate_calls(maybe_prep.as_ref(), &request).await?;
 
-        let mut asset_diff = AssetDiffs(vec![]);
-        let mut context = PrepareCallsContext::default();
-
-        // Set common fields to both PreOp and UserOp
-        let execution_data = calls.abi_encode().into();
-        let nonce = request.capabilities.meta.nonce;
-
         // If we're dealing with a PreOp do not estimate
-        let (digest, typed_data) = if request.capabilities.pre_op {
+        let (asset_diff, context) = if request.capabilities.pre_op {
             let preop = PreOp {
                 eoa: request.from.unwrap_or_default(),
-                executionData: execution_data,
-                nonce: nonce.unwrap_or(U256::MAX),
+                executionData: calls.abi_encode().into(),
+                // An none nonce is represented by uint256.max
+                nonce: request.capabilities.meta.nonce.unwrap_or(U256::MAX),
                 signature: Bytes::new(),
             };
 
-            // Add to context response
-            context.preop = Some(preop);
-
-            // Calculate the eip712 digest that the user will need to sign.
-            context
-                .preop
-                .as_ref()
-                .expect("qed")
-                .compute_eip712_data(self.inner.entrypoint, &provider)
-                .await
-                .map_err(RelayError::from)?
+            (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
         } else {
-            let Some(eoa) = request.from else { panic!("todo") };
+            let Some(eoa) = request.from else { return Err(UserOpError::MissingSender.into()) };
 
             // Find the key that authorizes this userop
             let Some(key) = self
@@ -886,18 +872,17 @@ impl RelayApiServer for Relay {
             };
 
             // Call estimateFee to give us a quote with a complete userOp that the user can sign
-            let (assets, quote) = self
+            let (asset_diff, quote) = self
                 .estimate_fee(
                     PartialAction {
                         op: PartialUserOp {
                             eoa,
-                            execution_data,
-                            nonce,
+                            execution_data: calls.abi_encode().into(),
+                            nonce: request.capabilities.meta.nonce,
                             init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
                             pre_ops: request.capabilities.pre_ops.clone(),
                         },
                         chain_id: request.chain_id,
-                        is_preop: request.capabilities.pre_op,
                     },
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
@@ -911,21 +896,14 @@ impl RelayApiServer for Relay {
                     );
                 })?;
 
-            // Add to context response
-            context.user_op_quote = Some(quote);
-            asset_diff = assets;
-
-            // Calculate the eip712 digest that the user will need to sign.
-            context
-                .user_op_quote
-                .as_ref()
-                .expect("qed")
-                .ty()
-                .op
-                .compute_eip712_data(self.inner.entrypoint, &provider)
-                .await
-                .map_err(RelayError::from)?
+            (asset_diff, PrepareCallsContext::with_quote(quote))
         };
+
+        // Calculate the eip712 digest that the user will need to sign.
+        let (digest, typed_data) = context
+            .compute_eip712_data(self.inner.entrypoint, &provider)
+            .await
+            .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
             context,
@@ -979,7 +957,6 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
-                    is_preop: false,
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
@@ -1002,7 +979,7 @@ impl RelayApiServer for Relay {
             .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
-            context: PrepareCallsContext { user_op_quote: Some(quote), preop: None },
+            context: PrepareCallsContext::with_quote(quote),
             digest,
             typed_data,
             capabilities: PrepareCallsResponseCapabilities {
@@ -1025,8 +1002,8 @@ impl RelayApiServer for Relay {
         request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
         let SendPreparedCallsParameters { context, signature } = request;
-        let Some(mut quote) = context.user_op_quote else {
-            panic!("todo");
+        let Some(mut quote) = context.take_quote() else {
+            return Err(QuoteError::QuoteNotFound.into());
         };
 
         let op = &mut quote.ty_mut().op;
@@ -1074,8 +1051,8 @@ impl RelayApiServer for Relay {
         request: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse> {
         let UpgradeAccountParameters { context, signature, authorization } = request;
-        let Some(mut quote) = context.user_op_quote else {
-            panic!("todo");
+        let Some(mut quote) = context.take_quote() else {
+            return Err(QuoteError::QuoteNotFound.into());
         };
 
         // Ensure that we have a signed delegation and its address matches the quote's.
