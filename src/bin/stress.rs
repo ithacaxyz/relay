@@ -69,7 +69,7 @@ impl StressAccount {
                 .prepare_calls(PrepareCallsParameters {
                     calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
                     chain_id,
-                    from: self.address,
+                    from: Some(self.address),
                     capabilities: PrepareCallsCapabilities {
                         authorize_keys: vec![],
                         meta: Meta { fee_token, key_hash: self.key.key_hash(), nonce: None },

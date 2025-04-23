@@ -3,7 +3,7 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
-    types::{AssetDiffs, Call, SignedQuote, UserOp},
+    types::{AssetDiffs, Call, Op, PreOp, SignedQuote},
 };
 use alloy::{
     consensus::Eip658Value,
@@ -33,8 +33,9 @@ pub struct PrepareCallsParameters {
     /// Target chain ID.
     #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
-    /// Address of the account to prepare the call bundle for.
-    pub from: Address,
+    /// Address of the account to prepare the call bundle for. It can only be None, if we are
+    /// handling a preop
+    pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
 }
@@ -42,8 +43,9 @@ pub struct PrepareCallsParameters {
 impl PrepareCallsParameters {
     /// Ensures there are only whitelisted calls in preops.
     pub fn check_preop_calls(&self) -> Result<(), RelayError> {
-        let has_unallowed =
-            |calls: &[Call]| calls.iter().any(|call| !call.is_whitelisted_preop(self.from));
+        let has_unallowed = |calls: &[Call]| {
+            calls.iter().any(|call| !call.is_whitelisted_preop(self.from.unwrap_or_default()))
+        };
 
         if self.capabilities.pre_op && has_unallowed(&self.calls) {
             return Err(UserOpError::UnallowedPreOpCalls.into());
@@ -75,7 +77,7 @@ pub struct PrepareCallsCapabilities {
     ///
     /// See [`UserOp::encodedPreOps`].
     #[serde(default)]
-    pub pre_ops: Vec<UserOp>,
+    pub pre_ops: Vec<PreOp>,
     /// Whether the call bundle is to be considered a preop.
     #[serde(default)]
     pub pre_op: bool,
@@ -99,8 +101,8 @@ pub struct PrepareCallsResponseCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
-    /// The [`SignedQuote`] of the prepared call bundle.
-    pub context: SignedQuote,
+    /// The [`PrepareCallsContext`] of the prepared call bundle.
+    pub context: PrepareCallsContext,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
@@ -110,12 +112,22 @@ pub struct PrepareCallsResponse {
     pub capabilities: PrepareCallsResponseCapabilities,
 }
 
+/// Response context from `wallet_prepareCalls`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareCallsContext {
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub user_op_quote: Option<SignedQuote>,
+    /// The [`PreOp`] of the prepared call bundle.
+    pub preop: Option<PreOp>,
+}
+
 /// Request parameters for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
-    /// The [`SignedQuote`] of the prepared call bundle.
-    pub context: SignedQuote,
+    /// The [`PrepareCallsContext`] of the prepared call bundle.
+    pub context: PrepareCallsContext,
     /// UserOp key signature.
     pub signature: KeySignature,
 }

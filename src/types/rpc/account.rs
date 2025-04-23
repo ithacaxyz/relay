@@ -1,9 +1,12 @@
 //! RPC account-related request and response types.
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, SendPreparedCallsResponse};
+use super::{
+    AuthorizeKey, AuthorizeKeyResponse, KeySignature, PrepareCallsContext,
+    SendPreparedCallsResponse,
+};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
+    types::{Key, KeyHashWithID, KeyID, PREPAccount, PreOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -144,11 +147,9 @@ pub struct UpgradeAccountCapabilities {
     /// Defaults to the native token.
     #[serde(default)]
     pub fee_token: Address,
-    /// Optional preOps to execute before signature verification.
-    ///
-    /// See [`UserOp::encodedPreOps`].
+    /// Optional [`PreOp`] to execute before signature verification.
     #[serde(default)]
-    pub pre_ops: Vec<UserOp>,
+    pub pre_ops: Vec<PreOp>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
@@ -167,8 +168,8 @@ pub struct PrepareUpgradeAccountParameters {
 /// Request parameters for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
-    /// The [`SignedQuote`] of the prepared call bundle.
-    pub context: SignedQuote,
+    /// The [`PrepareCallsContext`] of the prepared call bundle.
+    pub context: PrepareCallsContext,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signature: Signature,
@@ -215,23 +216,26 @@ mod tests {
     fn upgrade_account_params_serde() {
         let signature = Signature::new(U256::ZERO, U256::ZERO, false);
         let acc = UpgradeAccountParameters {
-            context: Signed::new_unchecked(
-                Quote {
-                    chain_id: 0,
-                    op: Default::default(),
-                    tx_gas: 0,
-                    native_fee_estimate: Eip1559Estimation {
-                        max_fee_per_gas: 0,
-                        max_priority_fee_per_gas: 0,
+            context: PrepareCallsContext {
+                user_op_quote: Some(Signed::new_unchecked(
+                    Quote {
+                        chain_id: 0,
+                        op: Default::default(),
+                        tx_gas: 0,
+                        native_fee_estimate: Eip1559Estimation {
+                            max_fee_per_gas: 0,
+                            max_priority_fee_per_gas: 0,
+                        },
+                        ttl: UNIX_EPOCH + Duration::from_secs(0),
+                        authorization_address: None,
+                        is_preop: false,
+                        entrypoint: Address::ZERO,
                     },
-                    ttl: UNIX_EPOCH + Duration::from_secs(0),
-                    authorization_address: None,
-                    is_preop: false,
-                    entrypoint: Address::ZERO,
-                },
-                signature,
-                B256::ZERO,
-            ),
+                    signature,
+                    B256::ZERO,
+                )),
+                preop: None,
+            },
             signature,
             authorization: Authorization {
                 chain_id: Default::default(),
