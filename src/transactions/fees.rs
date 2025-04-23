@@ -44,13 +44,20 @@ pub struct FeeContext {
 
 impl FeeContext {
     /// Returns the fee estimation for a new transaction.
-    pub fn fees_for_new_transaction(&self, max_fee: u128) -> Eip1559Estimation {
-        Eip1559Estimation {
-            max_fee_per_gas: max_fee.min(
-                self.last_base_fee * (100 + BASE_FEE_DELTA) / 100 + self.recommended_priority_fee,
-            ),
-            max_priority_fee_per_gas: self.recommended_priority_fee,
+    pub fn fees_for_new_transaction(
+        &self,
+        max_tx_fee: u128,
+    ) -> Result<Eip1559Estimation, FeesError> {
+        if max_tx_fee < self.last_base_fee {
+            return Err(FeesError::CantAffordBaseFee);
         }
+
+        let max_fee_per_gas = max_tx_fee.min(self.last_base_fee * (100 + BASE_FEE_DELTA) / 100);
+
+        Ok(Eip1559Estimation {
+            max_fee_per_gas,
+            max_priority_fee_per_gas: self.recommended_priority_fee.min(max_fee_per_gas),
+        })
     }
 
     /// Returns whether base fee of a transaction should be bumped.
