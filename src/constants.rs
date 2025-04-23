@@ -38,3 +38,6 @@ pub const BASE_MAINNET_PUBLIC_RPC_URL: &str = "https://mainnet.base.org";
 /// This endpoint is rate-limited.
 /// See also <https://docs.base.org/chain/network-information>
 pub const BASE_SEPOLIA_PUBLIC_RPC_URL: &str = "https://sepolia.base.org";
+
+/// Default cap on maximum number of pending transactions per chain.
+pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;

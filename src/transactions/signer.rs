@@ -829,6 +829,11 @@ impl SignerTask {
         }
     }
 
+    /// Returns the number of pending transactions currently being processed by the signer.
+    pub fn pending(&self) -> usize {
+        self.pending.len()
+    }
+
     /// Returns the current capacity of the signer.
     pub fn capacity(&self) -> usize {
         if self.is_paused() {

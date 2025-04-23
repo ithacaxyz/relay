@@ -1,5 +1,5 @@
 //! Relay configuration.
-use crate::constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER};
+use crate::constants::{DEFAULT_MAX_TRANSACTIONS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER};
 use alloy::primitives::Address;
 use eyre::Context;
 use reqwest::Url;
@@ -114,6 +114,8 @@ pub struct SecretsConfig {
 /// Configuration for transaction service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
+    /// Maximum number of transactions that can be pending at any given time.
+    pub max_pending_transactions: usize,
     /// Maximum number of pending transactions that can be handled by a single signer.
     pub max_transactions_per_signer: usize,
     /// Interval for checking signer balances.
@@ -130,6 +132,7 @@ pub struct TransactionServiceConfig {
 impl Default for TransactionServiceConfig {
     fn default() -> Self {
         Self {
+            max_pending_transactions: DEFAULT_MAX_TRANSACTIONS,
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
@@ -281,6 +284,12 @@ impl RelayConfig {
     /// Sets the database URL.
     pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
         self.database_url = database_url;
+        self
+    }
+
+    /// Sets the maximum number of pending transactions.
+    pub fn with_max_pending_transactions(mut self, max_pending_transactions: usize) -> Self {
+        self.transactions.max_pending_transactions = max_pending_transactions;
         self
     }
 
