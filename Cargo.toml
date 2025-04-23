@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "0.1.0"
+version = "6.1.0"
 edition = "2024"
 publish = false
 
@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "0.14", features = [
+alloy = { version = "0.15", features = [
     "std",
     "essentials",
     "getrandom",
@@ -92,7 +92,7 @@ sqlx = { version = "0.8.4", features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "0.14", features = [
+alloy = { version = "0.15", features = [
     "eips",
     "provider-anvil-node",
 ], default-features = false }

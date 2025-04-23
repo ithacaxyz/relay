@@ -1,3 +1,4 @@
+use alloy::primitives::Address;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{KeyHashWithID, PREPAccount};
@@ -16,5 +17,10 @@ impl CreatableAccount {
     /// Return a new [`CreateAccount`].
     pub fn new(account: PREPAccount, id_signatures: Vec<KeyHashWithID>) -> Self {
         Self { prep: account, id_signatures }
+    }
+
+    /// Returns the address of the PREP account.
+    pub fn address(&self) -> Address {
+        self.prep.address
     }
 }

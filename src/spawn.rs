@@ -120,7 +120,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
                 .connect(url.as_str())
                 .await
                 .map(|client| client.with_poll_interval(DEFAULT_POLL_INTERVAL))
-                .map(|client| ProviderBuilder::new().on_client(client).erased())
+                .map(|client| ProviderBuilder::new().connect_client(client).erased())
         }),
     )
     .await?;
@@ -138,7 +138,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         price_oracle.spawn_fetcher(
             registry.clone(),
             PriceFetcher::CoinGecko,
-            &CoinPair::ethereum_pairs(&[CoinKind::USDT]),
+            &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
         );
     }
 

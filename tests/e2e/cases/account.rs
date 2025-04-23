@@ -156,3 +156,35 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ensure_delegation_implementation() -> eyre::Result<()> {
+    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    let settings = env.relay_endpoint.health().await?;
+
+    // Account will be stored on storage
+    prep_account(&mut env, &[&admin_key]).await?;
+
+    // Ensure the delegation is the expected one (from storage)
+    let accounts = env
+        .relay_endpoint
+        .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+        .await?;
+    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
+
+    // Deploy on chain
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    // Ensure the delegation is the expected one (on chain)
+    let accounts = env
+        .relay_endpoint
+        .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+        .await?;
+    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
+
+    Ok(())
+}

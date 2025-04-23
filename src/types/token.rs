@@ -9,6 +9,7 @@ use tokio::try_join;
 
 /// Token type with its address, decimals and [`CoinKind`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Token {
     /// Token address.
     pub address: Address,
@@ -17,7 +18,6 @@ pub struct Token {
     /// Token symbol as defined in the contract.
     pub symbol: String,
     /// Coin kind.
-    #[serde(skip_serializing)]
     pub kind: CoinKind,
     /// Rate of 1 whole token against the native chain token, expressed in the native token's
     /// smallest indivisible unit.

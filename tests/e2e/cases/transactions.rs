@@ -5,6 +5,7 @@ use crate::e2e::{
 };
 use alloy::{
     consensus::Transaction,
+    eips::Encodable2718,
     primitives::{Address, B256, U256},
     providers::{Provider, ext::AnvilApi},
     signers::local::PrivateKeySigner,
@@ -12,19 +13,19 @@ use alloy::{
 };
 use futures_util::{
     StreamExt, TryStreamExt,
-    future::{join_all, try_join_all},
+    future::{JoinAll, TryJoinAll, join_all, try_join_all},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
-    signers::Eip712PayLoadSigner,
+    signers::{DynSigner, Eip712PayLoadSigner},
     storage::StorageApi,
-    transactions::{RelayTransaction, TransactionStatus},
+    transactions::{RelayTransaction, TransactionService, TransactionStatus},
     types::{
         Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
+            BundleId, CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
             PrepareCreateAccountParameters, PrepareCreateAccountResponse,
         },
@@ -263,7 +264,9 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await
+        .unwrap();
     for handle in handles {
         assert_confirmed(handle).await;
     }
@@ -283,7 +286,8 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
             tx_service_handle.send_transaction(tx)
         })
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     for handle in handles {
         wait_for_tx(handle).await;
@@ -311,7 +315,7 @@ async fn dropped_transaction() -> eyre::Result<()> {
     let tx = account.prepare_tx(&env).await;
 
     // send transaction and get its hash
-    let mut events = tx_service_handle.send_transaction(tx);
+    let mut events = tx_service_handle.send_transaction(tx).await?;
     let tx_hash = wait_for_tx_hash(&mut events).await;
 
     // drop the transaction from txpool
@@ -341,7 +345,7 @@ async fn fee_bump() -> eyre::Result<()> {
     let tx = account.prepare_tx(&env).await;
 
     // send transaction and get its hash
-    let mut events = tx_service_handle.send_transaction(tx);
+    let mut events = tx_service_handle.send_transaction(tx).await?;
     let tx_hash = wait_for_tx_hash(&mut events).await;
 
     // drop the transaction from txpool to ensure it won't get mined
@@ -349,6 +353,9 @@ async fn fee_bump() -> eyre::Result<()> {
 
     // mine blocks with higher priority fee
     env.mine_blocks_with_priority_fee(dropped.max_priority_fee_per_gas().unwrap() * 2).await;
+
+    // submit the transaction again to make sure it's not treated as dropped.
+    let _ = env.provider.send_raw_transaction(&dropped.encoded_2718()).await.unwrap();
 
     // wait for new transaction to be sent
     let new_tx_hash = wait_for_tx_hash(&mut events).await;
@@ -394,7 +401,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // prepare and send first transaction
     let tx_0 = account_0.prepare_tx(&env).await;
-    let mut events_0 = tx_service_handle.send_transaction(tx_0.clone());
+    let mut events_0 = tx_service_handle.send_transaction(tx_0.clone()).await?;
     let hash_0 = wait_for_tx_hash(&mut events_0).await;
 
     // drop the transaction to make sure it's not mined
@@ -415,7 +422,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // prepare and send second transaction
     let tx_1 = account_1.prepare_tx(&env).await;
-    let events_1 = tx_service_handle.send_transaction(tx_1.clone());
+    let events_1 = tx_service_handle.send_transaction(tx_1.clone()).await?;
 
     // we should see the fee increase and account for it
     assert!(
@@ -473,7 +480,11 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
         .buffered(10)
         .collect::<Vec<_>>()
         .await;
-    let handles = transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx));
+    let handles = transactions
+        .into_iter()
+        .map(|tx| tx_service_handle.send_transaction(tx))
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
@@ -557,7 +568,7 @@ async fn resume_paused() -> eyre::Result<()> {
     // send a batch of transactions and assert that all of them are handled by the last signer
     futures_util::stream::iter(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
-        let handle = tx_service_handle.send_transaction(tx);
+        let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
         let signer =
             env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
@@ -585,7 +596,7 @@ async fn resume_paused() -> eyre::Result<()> {
     // send a batch of transactions again and assert that all of them complete
     let seen_signers = join_all(accounts.iter().map(|acc| async {
         let tx = acc.prepare_tx(&env).await;
-        let handle = tx_service_handle.send_transaction(tx);
+        let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
         env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
     }))
@@ -633,10 +644,98 @@ async fn diverged_nonce() -> eyre::Result<()> {
     let handles = transactions
         .into_iter()
         .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<Vec<_>>();
+        .collect::<TryJoinAll<_>>()
+        .await?;
 
     for handle in handles {
         assert_confirmed(handle).await;
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_with_pending() -> eyre::Result<()> {
+    let mut config = EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1.0),
+        transaction_service_config: TransactionServiceConfig {
+            max_transactions_per_signer: 3,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let signers = try_join_all(
+        config.signers.iter().map(async |s| DynSigner::load(&s.to_string(), None).await),
+    )
+    .await
+    .unwrap();
+    let env = Environment::setup(config.clone()).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let storage = env.relay_handle.storage.clone();
+    let provider = env.provider.clone();
+
+    // spam some transactions
+    let num_accounts = 10;
+    let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
+        let account = MockAccount::new(&env).await.unwrap();
+        let tx = account.prepare_tx(&env).await;
+        // TODO: figure out if we should remove this, right now status is only written if this is
+        // called
+        storage.add_bundle_tx(BundleId::random(), env.chain_id, tx.id).await.unwrap();
+        tx
+    }))
+    .buffered(10)
+    .collect::<Vec<_>>()
+    .await;
+
+    // send transactions to the tx service
+    let mut handles = transactions
+        .iter()
+        .map(|tx| tx_service_handle.send_transaction(tx.clone()))
+        .collect::<TryJoinAll<_>>()
+        .await?;
+
+    // wait for the first transactions to be sent
+    let sent = handles[..config.transaction_service_config.max_transactions_per_signer]
+        .iter_mut()
+        .map(wait_for_tx_hash)
+        .collect::<JoinAll<_>>()
+        .await;
+
+    drop(tx_service_handle);
+    drop(env.relay_handle);
+
+    // drop one of the transactions
+    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+
+    // restart the service
+    // increase signers capacity to make sure transactions are getting included quickly
+    config.transaction_service_config.max_transactions_per_signer = 10;
+    let (service, _handle) = TransactionService::new(
+        provider,
+        signers,
+        storage.clone(),
+        config.transaction_service_config.clone(),
+    )
+    .await
+    .unwrap();
+    tokio::spawn(service);
+
+    // ensure that all transactions are getting confirmed after restart
+    'outer: loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        for tx in &transactions {
+            let (_, status) = storage.read_transaction_status(tx.id).await.unwrap().unwrap();
+            match status {
+                TransactionStatus::Pending(_) | TransactionStatus::InFlight => continue 'outer,
+                TransactionStatus::Failed(err) => panic!("transaction {} failed: {err}", tx.id),
+                TransactionStatus::Confirmed(_) => continue,
+            }
+        }
+
+        break;
     }
 
     Ok(())

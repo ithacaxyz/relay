@@ -25,7 +25,6 @@ use relay::{
 
 /// It will attempt to create a PREPAccount by calling [`RelayApiClient::prepare_create_account`]
 /// and  [`RelayApiClient::create_account`].
-#[allow(clippy::too_many_arguments)]
 pub async fn prep_account(
     env: &mut Environment,
     authorize_keys: &[&KeyWith712Signer],

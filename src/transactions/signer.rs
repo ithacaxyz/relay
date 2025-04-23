@@ -1,4 +1,5 @@
 use super::{
+    fees::{FeeContext, FeesError, MIN_GAS_PRICE_BUMP},
     metrics::{SignerMetrics, TransactionServiceMetrics},
     transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
 };
@@ -47,9 +48,6 @@ use tracing::{Level, Span, debug, error, instrument, span, trace, warn};
 use tracing_futures::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-/// Price bump for nonce gap transactions.
-const NONCE_GAP_PRICE_BUMP: u128 = 20;
-
 /// Lower bound of gas a signer should be able to afford before getting paused until being funded.
 const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
 
@@ -67,9 +65,13 @@ pub enum SignerError {
     #[error("transaction was dropped")]
     TxDropped,
 
+    /// The transaction timed out while waiting for confirmation.
+    #[error("timed out while waiting for confirmation")]
+    TxTimeout,
+
     /// The growth of the gas fees exceeded the amount we are ready to pay
-    #[error("transaction underpriced")]
-    FeesTooHigh,
+    #[error("transaction underpriced: {0}")]
+    FeesTooHigh(#[from] FeesError),
 
     /// Error occurred while signing transaction.
     #[error(transparent)]
@@ -260,15 +262,38 @@ impl Signer {
         Ok(())
     }
 
+    /// Fetches the [`FeeContext`].
+    async fn get_fee_context(&self) -> Result<FeeContext, SignerError> {
+        let fee_history = self
+            .provider
+            .get_fee_history(
+                EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                Default::default(),
+                &[EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+            )
+            .await?;
+
+        let last_base_fee = fee_history.latest_block_base_fee().unwrap_or_default();
+
+        let fee_estimate = Eip1559Estimator::default()
+            .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
+
+        Ok(FeeContext {
+            last_base_fee,
+            recommended_priority_fee: fee_estimate.max_priority_fee_per_gas,
+        })
+    }
+
     #[instrument(skip_all)]
     async fn validate_transaction(
         &self,
-        mut tx: RelayTransaction,
-    ) -> Result<RelayTransaction, SignerError> {
+        tx: &mut RelayTransaction,
+        fees: Eip1559Estimation,
+    ) -> Result<(), SignerError> {
         // Set payment recipient to us
         tx.quote.ty_mut().op.paymentRecipient = self.address();
 
-        let mut request: TransactionRequest = tx.build(0).into();
+        let mut request: TransactionRequest = tx.build(0, fees).into();
         // Unset nonce to avoid race condition.
         request.nonce = None;
         request.from = Some(self.address());
@@ -289,38 +314,40 @@ impl Signer {
                 Ok(())
             })?;
 
-        Ok(tx)
+        Ok(())
+    }
+
+    /// Signs a given transaction.
+    #[instrument(skip_all)]
+    async fn sign_transaction(&self, tx: TypedTransaction) -> Result<TxEnvelope, SignerError> {
+        Ok(NetworkWallet::<Ethereum>::sign_transaction_from(&self.wallet, self.address(), tx)
+            .await?)
     }
 
     /// Broadcasts a given transaction.
     #[instrument(skip_all)]
-    async fn send_transaction(&self, tx: TypedTransaction) -> Result<TxEnvelope, SignerError> {
-        // Sign the transaction.
-        let signed =
-            NetworkWallet::<Ethereum>::sign_transaction_from(&self.wallet, self.address(), tx)
-                .await?;
-
+    async fn send_transaction(&self, tx: &TxEnvelope) -> Result<(), SignerError> {
         let _ = self
             .provider
-            .send_raw_transaction(&signed.encoded_2718())
+            .send_raw_transaction(&tx.encoded_2718())
             .await
             .inspect(|_| {
                 trace!(
-                    tx_hash = %signed.hash(),
-                    nonce = %signed.nonce(),
+                    tx_hash = %tx.hash(),
+                    nonce = %tx.nonce(),
                     "Sent transaction"
                 );
             })
             .inspect_err(|err| {
                 error!(
-                    tx_hash = %signed.hash(),
-                    nonce = %signed.nonce(),
+                    tx_hash = %tx.hash(),
+                    nonce = %tx.nonce(),
                     err = %err,
                     "Failed to send transaction"
                 );
             })?;
 
-        Ok(signed)
+        Ok(())
     }
 
     /// Waits for a pending transaction to be confirmed.
@@ -335,9 +362,9 @@ impl Signer {
         let mut last_sent_at = Instant::now();
 
         loop {
-            if last_sent_at.elapsed().as_secs() >= self.config.transaction_timeout {
+            if last_sent_at.elapsed() >= self.config.transaction_timeout {
                 error!(?tx, "Transaction timed out");
-                return Err(SignerError::TxDropped);
+                return Err(SignerError::TxTimeout);
             }
 
             let mut handles = FuturesUnordered::new();
@@ -366,50 +393,16 @@ impl Signer {
                 return Err(SignerError::TxDropped);
             }
 
-            let fee_history = self
-                .provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
-                )
-                .await?;
-
-            let last_base_fee = fee_history.latest_block_base_fee().unwrap_or_default();
-
-            let fee_estimate = Eip1559Estimator::default()
-                .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
-
+            let fees = self.get_fee_context().await?;
             let best_tx = tx.best_tx();
 
-            // if the latest block base fee is higher than max_fee, we don't want to block on
-            // waiting for it to go down
-            if best_tx.max_fee_per_gas() < last_base_fee {
-                return Err(SignerError::FeesTooHigh);
-            }
-
-            // TODO: figure out a more reasonable condition here or whether we should just always
-            // set max_priority_fee = max_fee
-            if fee_estimate.max_priority_fee_per_gas
-                > best_tx.max_priority_fee_per_gas().unwrap_or(best_tx.max_fee_per_gas()) * 11 / 10
+            if let Some(new_tx) =
+                fees.prepare_replacement(best_tx, tx.tx.max_fee_for_transaction())?
             {
-                // Fees went up, assume we need to bump them
-                let new_tip_cap = fee_estimate.max_priority_fee_per_gas;
-
-                // Ensure we can afford the bump given the current base fee
-                if (best_tx.max_fee_per_gas() - last_base_fee) < new_tip_cap {
-                    return Err(SignerError::FeesTooHigh);
-                }
-
-                let mut typed = TypedTransaction::from(best_tx.clone());
-                match &mut typed {
-                    TypedTransaction::Eip1559(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
-                    TypedTransaction::Eip7702(tx) => tx.max_priority_fee_per_gas = new_tip_cap,
-                    _ => {}
-                };
-
-                let replacement = self.send_transaction(typed).await?;
+                let replacement = self.sign_transaction(new_tx).await?;
                 self.storage.add_pending_envelope(tx.id(), &replacement).await?;
+                self.send_transaction(&replacement).await?;
+                self.metrics.replacements_sent.increment(1);
                 self.update_tx_status(tx.id(), TransactionStatus::Pending(*replacement.tx_hash()))
                     .await?;
                 tx.sent.push(replacement);
@@ -439,6 +432,8 @@ impl Signer {
                 self.on_confirmed_transaction(&tx, tx_hash).await?;
             }
             Err(err) => {
+                error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
+
                 // If we've failed to send the transaction, start closing the nonce gap to make sure
                 // we occupy the chosen nonce.
                 self.close_nonce_gap(tx.nonce(), Some(tx.fees())).await;
@@ -468,19 +463,19 @@ impl Signer {
 
     /// Broadcasts a given transaction and waits for it to be confirmed, notifying `status_tx` on
     /// each status update.
-    async fn send_and_watch_transaction(&self, tx: RelayTransaction) -> Result<(), SignerError> {
-        let tx_id = tx.id;
+    async fn send_and_watch_transaction(
+        &self,
+        mut tx: RelayTransaction,
+    ) -> Result<(), SignerError> {
+        // Fetch the fees for the first transaction.
+        let fees =
+            self.get_fee_context().await?.fees_for_new_transaction(tx.max_fee_for_transaction());
 
-        // Make sure the transaction is no longer in the queue as we've started processing it.
-        self.storage.remove_from_queue(&tx).await?;
-
-        let tx = match self.validate_transaction(tx).await {
-            Ok(tx) => tx,
-            Err(err) => {
-                self.update_tx_status(tx_id, TransactionStatus::Failed(Arc::new(err))).await?;
-                return Ok(());
-            }
-        };
+        // Validate the transaction.
+        if let Err(err) = self.validate_transaction(&mut tx, fees).await {
+            self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
+            return Ok(());
+        }
 
         // Choose nonce for the transaction.
         let nonce = {
@@ -490,12 +485,34 @@ impl Signer {
             current_nonce
         };
 
-        let sent = match self.send_transaction(tx.build(nonce)).await {
-            Ok(sent) => sent,
+        let tx_id = tx.id;
+
+        let try_send = async {
+            // sign transaction
+            let signed = self.sign_transaction(tx.build(nonce, fees)).await?;
+
+            // write pending transaction to storage first to avoid race condition
+            let tx = PendingTransaction {
+                tx,
+                sent: vec![signed.clone()],
+                signer: self.address(),
+                received_at: Utc::now(),
+            };
+            self.storage.replace_queued_tx_with_pending(&tx).await?;
+
+            // send transaction and update status
+            self.send_transaction(&signed).await?;
+            self.update_tx_status(tx.id(), TransactionStatus::Pending(*signed.hash())).await?;
+
+            Ok::<_, SignerError>(tx)
+        };
+
+        match try_send.await {
+            Ok(tx) => self.watch_transaction(tx).await,
             Err(err) => {
                 error!(%err, "failed to send a transaction");
 
-                self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
+                self.update_tx_status(tx_id, TransactionStatus::Failed(Arc::new(err))).await?;
 
                 // If no other transaction occupied the next nonce, we can just reset it.
                 {
@@ -509,21 +526,9 @@ impl Signer {
                 // Otherwise, we need to close the nonce gap.
                 self.close_nonce_gap(nonce, None).await;
 
-                return Ok(());
+                Ok(())
             }
-        };
-
-        self.update_tx_status(tx.id, TransactionStatus::Pending(*sent.tx_hash())).await?;
-
-        let tx = PendingTransaction {
-            tx,
-            sent: vec![sent],
-            signer: self.address(),
-            received_at: Utc::now(),
-        };
-        self.storage.write_pending_transaction(&tx).await?;
-
-        self.watch_transaction(tx).await
+        }
     }
 
     /// Closes the nonce gap by sending a dummy transaction to the signer.
@@ -543,9 +548,8 @@ impl Signer {
                 // If we are provided with `min_fees`, this means, we are going to replace some
                 // existing transaction. Nodes usually require us to bump the fees by some margin to
                 // replace a transaction, so we are enforcing that assigned fees are not too low.
-                let min_fee = min_fees.max_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
-                let min_tip =
-                    min_fees.max_priority_fee_per_gas * (100 + NONCE_GAP_PRICE_BUMP) / 100;
+                let min_fee = min_fees.max_fee_per_gas * (100 + MIN_GAS_PRICE_BUMP) / 100;
+                let min_tip = min_fees.max_priority_fee_per_gas * (100 + MIN_GAS_PRICE_BUMP) / 100;
 
                 (
                     min_fee.max(fee_estimate.max_fee_per_gas),
@@ -565,7 +569,8 @@ impl Signer {
                 ..Default::default()
             });
 
-            let tx = self.send_transaction(tx).await?;
+            let tx = self.sign_transaction(tx).await?;
+            self.send_transaction(&tx).await?;
             // Give transaction 10 blocks to be mined.
             self.provider
                 .watch_pending_transaction(
@@ -673,6 +678,16 @@ impl Signer {
             .read_pending_transactions(self.address(), self.chain_id)
             .await
             .wrap_err("failed to read pending transactions")?;
+
+        // Make sure that loaded transactions are not getting overriden by the new ones
+        {
+            let mut lock = self.nonce.lock().await;
+            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max() {
+                if nonce > *lock {
+                    *lock = nonce;
+                }
+            }
+        }
 
         let latest_nonce = self.provider.get_transaction_count(self.address()).await?;
         let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
@@ -789,7 +804,7 @@ pub struct SignerTask {
 }
 
 impl SignerTask {
-    /// Pushes a new transaction to the signer.
+    /// Pushes a new traаnsaction to the signer.
     ///
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.
     pub fn push_transaction(&self, tx: RelayTransaction) {

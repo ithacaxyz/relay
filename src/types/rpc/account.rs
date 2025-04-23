@@ -6,11 +6,11 @@ use super::{
 };
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, KeyID, PREPAccount, PreOp},
+    types::{Key, KeyHash, KeyHashWithID, KeyID, PREPAccount, PreOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, ChainId, Signature},
+    primitives::{Address, B256, Bytes, ChainId, Signature},
 };
 use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
@@ -198,8 +198,61 @@ pub struct GetAccountsParameters {
 pub struct AccountResponse {
     /// Address of the account.
     pub address: Address,
+    /// Delegation implementation address.
+    pub delegation: Address,
     /// Authorized keys belonging to the account.
     pub keys: Vec<AuthorizeKeyResponse>,
+}
+
+/// Request parameters for `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureParameters {
+    /// ID of the key to verify signature with.
+    pub key_id_or_address: Address,
+    /// Digest of the message to verify.
+    pub digest: B256,
+    /// The signature bytes
+    pub signature: Bytes,
+    /// Chain ID of the account with the given key configured.
+    pub chain_id: ChainId,
+}
+
+/// Response from `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureResponse {
+    /// Whether the signature is valid.
+    pub valid: bool,
+    /// Proof that can be used to verify the signature.
+    pub proof: Option<ValidSignatureProof>,
+}
+
+/// Proof that can be used to verify output of `wallet_verifySignature`.
+///
+/// Signature is always verified against an account (either deployed or stored in relay storage).
+/// [`ValidSignatureProof::account`] contains the address of account signature was verified against.
+///
+/// To verify that provided account is related to the provided `keyId`, user can either
+/// 1. Query the `AccountRegistry` contract.
+/// 2. Verify the returned [`ValidSignatureProof::id_signature`]. It is only returned for accounts
+///    that are not yet delegated.
+///
+/// To verify that signature is valid for the returned account, user can call
+/// `unwrapAndValidateSignature` on the returned account. For non-delegated PREP accounts, this call
+/// will have to be preceeded by `initializePREP` with [`ValidSignatureProof::prep_init_data`] and a
+/// state override delegating the account to `Delegation` contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidSignatureProof {
+    /// Address of an account (either delegated or stored) that the signature was verified against.
+    pub account: Address,
+    /// The key hash that signed the digest.
+    pub key_hash: KeyHash,
+    /// PREP account initialization data. Provided, if account is a stored PREP account.
+    pub prep_init_data: Option<Bytes>,
+    /// Signature proving that account is associated with the requested `keyId`.
+    pub id_signature: Option<Signature>,
 }
 
 #[cfg(test)]
