@@ -103,6 +103,7 @@ impl TransactionService {
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
         let queue = storage.read_queued_transactions(chain_id).await?;
+        metrics.queued.set(queue.len() as f64);
 
         let mut this = Self {
             signers: Default::default(),
