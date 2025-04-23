@@ -189,7 +189,7 @@ impl Environment {
         let client = ClientBuilder::default().layer(RETRY_LAYER.clone()).http(endpoint.clone());
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(deployer.0.clone()))
-            .on_client(client);
+            .connect_client(client);
 
         // Get or deploy mock contracts.
         let (delegation, entrypoint, account_registry, erc20s) =

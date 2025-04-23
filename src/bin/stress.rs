@@ -147,7 +147,7 @@ impl StressTester {
             .filler(GasFiller)
             .filler(ChainIdFiller::new(Some(args.chain_id.id())))
             .wallet(EthereumWallet::from(signer.0))
-            .on_http(args.rpc_url.clone())
+            .connect_http(args.rpc_url.clone())
             .erased();
 
         let health = relay_client.health().await?;
