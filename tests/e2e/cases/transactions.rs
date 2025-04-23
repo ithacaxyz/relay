@@ -13,19 +13,19 @@ use alloy::{
 };
 use futures_util::{
     StreamExt, TryStreamExt,
-    future::{TryJoinAll, join_all, try_join_all},
+    future::{JoinAll, TryJoinAll, join_all, try_join_all},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
-    signers::Eip712PayLoadSigner,
+    signers::{DynSigner, Eip712PayLoadSigner},
     storage::StorageApi,
-    transactions::{RelayTransaction, TransactionStatus},
+    transactions::{RelayTransaction, TransactionService, TransactionStatus},
     types::{
         Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
+            BundleId, CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
             PrepareCreateAccountParameters, PrepareCreateAccountResponse,
         },
@@ -649,6 +649,93 @@ async fn diverged_nonce() -> eyre::Result<()> {
 
     for handle in handles {
         assert_confirmed(handle).await;
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_with_pending() -> eyre::Result<()> {
+    let mut config = EnvironmentConfig {
+        is_prep: true,
+        block_time: Some(1.0),
+        transaction_service_config: TransactionServiceConfig {
+            max_transactions_per_signer: 3,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let signers = try_join_all(
+        config.signers.iter().map(async |s| DynSigner::load(&s.to_string(), None).await),
+    )
+    .await
+    .unwrap();
+    let env = Environment::setup(config.clone()).await.unwrap();
+    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let storage = env.relay_handle.storage.clone();
+    let provider = env.provider.clone();
+
+    // spam some transactions
+    let num_accounts = 10;
+    let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
+        let account = MockAccount::new(&env).await.unwrap();
+        let tx = account.prepare_tx(&env).await;
+        // TODO: figure out if we should remove this, right now status is only written if this is
+        // called
+        storage.add_bundle_tx(BundleId::random(), env.chain_id, tx.id).await.unwrap();
+        tx
+    }))
+    .buffered(10)
+    .collect::<Vec<_>>()
+    .await;
+
+    // send transactions to the tx service
+    let mut handles = transactions
+        .iter()
+        .map(|tx| tx_service_handle.send_transaction(tx.clone()))
+        .collect::<TryJoinAll<_>>()
+        .await?;
+
+    // wait for the first transactions to be sent
+    let sent = handles[..config.transaction_service_config.max_transactions_per_signer]
+        .iter_mut()
+        .map(wait_for_tx_hash)
+        .collect::<JoinAll<_>>()
+        .await;
+
+    drop(tx_service_handle);
+    drop(env.relay_handle);
+
+    // drop one of the transactions
+    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+
+    // restart the service
+    // increase signers capacity to make sure transactions are getting included quickly
+    config.transaction_service_config.max_transactions_per_signer = 10;
+    let (service, _handle) = TransactionService::new(
+        provider,
+        signers,
+        storage.clone(),
+        config.transaction_service_config.clone(),
+    )
+    .await
+    .unwrap();
+    tokio::spawn(service);
+
+    // ensure that all transactions are getting confirmed after restart
+    'outer: loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        for tx in &transactions {
+            let (_, status) = storage.read_transaction_status(tx.id).await.unwrap().unwrap();
+            match status {
+                TransactionStatus::Pending(_) | TransactionStatus::InFlight => continue 'outer,
+                TransactionStatus::Failed(err) => panic!("transaction {} failed: {err}", tx.id),
+                TransactionStatus::Confirmed(_) => continue,
+            }
+        }
+
+        break;
     }
 
     Ok(())

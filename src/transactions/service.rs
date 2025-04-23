@@ -310,11 +310,17 @@ impl Future for TransactionService {
         this.advance_queue();
 
         // drain all commands
-        while let Poll::Ready(Some(action)) = this.command_rx.poll_recv(cx) {
-            match action {
-                TransactionServiceMessage::SendTransaction(tx, status_tx) => {
-                    this.send_transaction(tx, status_tx);
+        while let Poll::Ready(action_opt) = this.command_rx.poll_recv(cx) {
+            if let Some(action) = action_opt {
+                match action {
+                    TransactionServiceMessage::SendTransaction(tx, status_tx) => {
+                        this.send_transaction(tx, status_tx);
+                    }
                 }
+            } else {
+                // command channel closed, shut down
+                debug!("command channel closed");
+                return Poll::Ready(());
             }
         }
 
