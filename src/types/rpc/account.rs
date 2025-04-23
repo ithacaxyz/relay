@@ -197,6 +197,8 @@ pub struct GetAccountsParameters {
 pub struct AccountResponse {
     /// Address of the account.
     pub address: Address,
+    /// Delegation implementation address.
+    pub delegation: Address,
     /// Authorized keys belonging to the account.
     pub keys: Vec<AuthorizeKeyResponse>,
 }

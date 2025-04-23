@@ -13,7 +13,9 @@ use crate::{
     eip712::compute_eip712_data,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call, Delegation, ENTRYPOINT_NO_ERROR,
+        AssetDiffs, Call,
+        DelegationProxy::DelegationProxyInstance,
+        ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
         FeeTokens, Key, KeyHash, KeyHashWithID,
         rpc::{
@@ -30,7 +32,7 @@ use alloy::{
     primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::{
-        TransactionReceipt, TransactionRequest,
+        TransactionReceipt,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
@@ -430,7 +432,7 @@ impl Relay {
         let bundle_id = BundleId(*tx.id);
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
-        span!(
+        let span = span!(
             Level::INFO, "send tx",
             otel.kind = ?SpanKind::Producer,
             messaging.system = "pg",
@@ -438,8 +440,9 @@ impl Relay {
             messaging.operation.name = "send",
             messaging.operation.type = "send",
             messaging.message.id = %tx.id
-        )
-        .in_scope(|| transactions.send_transaction(tx));
+        );
+        let _enter = span.enter();
+        transactions.send_transaction(tx).await?;
 
         Ok(bundle_id)
     }
@@ -503,6 +506,32 @@ impl Relay {
                 },
             })
             .collect())
+    }
+
+    /// Returns the delegation implementation address from the requested account.
+    #[instrument(skip_all)]
+    async fn get_delegation_implementation(
+        &self,
+        account: Address,
+        provider: DynProvider,
+    ) -> Result<Address, RelayError> {
+        if let Some(delegation) =
+            Account::new(account, provider.clone()).delegation_implementation().await?
+        {
+            return Ok(delegation);
+        }
+
+        // Attempt to retrieve the delegation proxy from storage, since it might not be
+        // deployed yet.
+        let Some(prep) = self.inner.storage.read_prep(&account).await? else {
+            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account).boxed()));
+        };
+
+        Ok(DelegationProxyInstance::new(*prep.prep.signed_authorization.address(), provider)
+            .implementation()
+            .call()
+            .await
+            .map_err(TransportErrorKind::custom)?)
     }
 
     /// Returns the chain [`DynProvider`].
@@ -623,25 +652,20 @@ impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<RelaySettings> {
         let chain_id =
             self.inner.chains.chain_ids_iter().next().expect("should have at least one chain");
-        let provider = self.provider(*chain_id)?;
+        let delegation_implementation =
+            DelegationProxyInstance::new(self.inner.delegation_proxy, self.provider(*chain_id)?)
+                .implementation()
+                .call()
+                .await
+                .map_err(TransportErrorKind::custom)
+                .map_err(RelayError::from)?;
 
         Ok(RelaySettings {
             version: RELAY_SHORT_VERSION.to_string(),
             entrypoint: self.inner.entrypoint,
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
-            delegation_implementation: provider
-                .call(
-                    TransactionRequest::default()
-                        .to(self.inner.delegation_proxy)
-                        .input(Bytes::from(Delegation::implementationCall::SELECTOR).into()),
-                )
-                .await
-                .and_then(|ret| {
-                    Delegation::implementationCall::abi_decode_returns(&ret)
-                        .map_err(TransportErrorKind::custom)
-                })
-                .map_err(RelayError::from)?,
+            delegation_implementation,
             account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
@@ -776,12 +800,12 @@ impl RelayApiServer for Relay {
         };
 
         try_join_all(accounts.into_iter().map(async |address| {
-            Ok(AccountResponse {
-                address,
-                keys: self
-                    .get_keys(GetKeysParameters { address, chain_id: request.chain_id })
-                    .await?,
-            })
+            let (delegation, keys) = try_join!(
+                self.get_delegation_implementation(address, provider.clone()),
+                self.get_keys(GetKeysParameters { address, chain_id: request.chain_id })
+            )?;
+
+            Ok(AccountResponse { address, delegation, keys })
         }))
         .await
     }
