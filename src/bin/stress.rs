@@ -247,7 +247,7 @@ impl StressTester {
                 .disperseToken(
                     args.fee_token,
                     batch.iter().map(|acc| acc.address).collect(),
-                    core::iter::repeat(args.fee_token_amount).take(batch.len()).collect(),
+                    std::iter::repeat_n(args.fee_token_amount, batch.len()).collect(),
                 )
                 .send()
                 .await?
