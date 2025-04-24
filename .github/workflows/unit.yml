@@ -64,8 +64,8 @@ jobs:
         run: |
           echo "TEST_FORK_URL=https://odyssey-devnet.ithaca.xyz" >> $GITHUB_ENV
           echo "TEST_FORK_BLOCK_NUMBER_PINNED=1356382" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0xc3f871544c70a504ccff2b28acae55825cec22b0" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0xaf2d8d582711eb5edfd847e7fa8bdce61268ee34" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0x8107d0967ed9292e50c4e38988ca5ada45546400" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0xb5e08dd02e99a1ce78519d47bb70f7032f7fb153" >> $GITHUB_ENV
           echo "TEST_ACCOUNT_REGISTRY=0x4c648b1c3ddc2b858e3a98137219743e3ea19b50" >> $GITHUB_ENV
 
       - name: Set database URL
