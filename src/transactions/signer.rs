@@ -1,7 +1,9 @@
 use super::{
     fees::{FeeContext, FeesError, MIN_GAS_PRICE_BUMP},
     metrics::{SignerMetrics, TransactionServiceMetrics},
-    transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transaction::{
+        PendingTransaction, RelayTransaction, TransactionFailureReason, TransactionStatus, TxId,
+    },
 };
 use crate::{
     config::TransactionServiceConfig,
@@ -262,6 +264,23 @@ impl Signer {
         Ok(())
     }
 
+    /// Invoked when a transaction fails.
+    #[instrument(skip_all)]
+    async fn on_failed_transaction(
+        &self,
+        tx: TxId,
+        err: impl TransactionFailureReason + 'static,
+    ) -> Result<(), SignerError> {
+        // Remove transaction from storage
+        self.storage.remove_queued(tx).await?;
+        self.storage.remove_pending_transaction(tx).await?;
+
+        // Update status
+        self.update_tx_status(tx, TransactionStatus::Failed(Arc::new(err))).await?;
+
+        Ok(())
+    }
+
     /// Fetches the [`FeeContext`].
     async fn get_fee_context(&self) -> Result<FeeContext, SignerError> {
         let fee_history = self
@@ -453,8 +472,7 @@ impl Signer {
 
                 // None of the sent transactions confirmed, mark transaction as failed.
                 self.metrics.pending.decrement(1);
-                self.update_tx_status(tx.id(), TransactionStatus::Failed(Arc::new(err))).await?;
-                self.storage.remove_pending_transaction(tx.id()).await?;
+                self.on_failed_transaction(tx.id(), err).await?;
             }
         }
 
@@ -468,12 +486,21 @@ impl Signer {
         mut tx: RelayTransaction,
     ) -> Result<(), SignerError> {
         // Fetch the fees for the first transaction.
-        let fees =
-            self.get_fee_context().await?.fees_for_new_transaction(tx.max_fee_for_transaction())?;
+        let fees = match self
+            .get_fee_context()
+            .await
+            .and_then(|fees| Ok(fees.fees_for_new_transaction(tx.max_fee_for_transaction())?))
+        {
+            Ok(fees) => fees,
+            Err(err) => {
+                self.on_failed_transaction(tx.id, err).await?;
+                return Ok(());
+            }
+        };
 
         // Validate the transaction.
         if let Err(err) = self.validate_transaction(&mut tx, fees).await {
-            self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
+            self.on_failed_transaction(tx.id, err).await?;
             return Ok(());
         }
 
@@ -512,8 +539,7 @@ impl Signer {
             Err(err) => {
                 error!(%err, "failed to send a transaction");
 
-                self.storage.remove_queued(tx_id).await?;
-                self.update_tx_status(tx_id, TransactionStatus::Failed(Arc::new(err))).await?;
+                self.on_failed_transaction(tx_id, err).await?;
 
                 // If no other transaction occupied the next nonce, we can just reset it.
                 {
