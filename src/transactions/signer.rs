@@ -512,6 +512,7 @@ impl Signer {
             Err(err) => {
                 error!(%err, "failed to send a transaction");
 
+                self.storage.remove_queued(tx_id).await?;
                 self.update_tx_status(tx_id, TransactionStatus::Failed(Arc::new(err))).await?;
 
                 // If no other transaction occupied the next nonce, we can just reset it.

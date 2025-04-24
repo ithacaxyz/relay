@@ -120,6 +120,15 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    async fn remove_queued(&self, tx_id: TxId) -> Result<()> {
+        sqlx::query!("delete from queued_txs where tx_id = $1", tx_id.as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
     #[instrument(skip(self, envelope))]
     async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()> {
         sqlx::query!(

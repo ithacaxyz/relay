@@ -30,6 +30,9 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Replaces previously queued transaction with a pending transaction.
     async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> Result<()>;
 
+    /// Removes a queued transaction from storage.
+    async fn remove_queued(&self, tx_id: TxId) -> Result<()>;
+
     /// Pushes a new [`TxEnvelope`] to [`PendingTransaction::sent`].
     async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> Result<()>;
 
