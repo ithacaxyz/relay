@@ -179,9 +179,8 @@ impl Environment {
         };
 
         // Load signers.
-        let deployer = DynSigner::load(
+        let deployer = DynSigner::from_signing_key(
             "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
-            None,
         )
         .await
         .wrap_err("Relay signer load failed")?;
@@ -208,9 +207,8 @@ impl Environment {
             EoaKind::create_prep()
         } else {
             EoaKind::create_upgraded(
-                DynSigner::load(
+                DynSigner::from_signing_key(
                     &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
-                    None,
                 )
                 .await
                 .wrap_err("EOA signer load failed")?,
