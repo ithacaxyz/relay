@@ -85,7 +85,7 @@ where
 {
     let test_cases = configs.into_iter().map(async |config| {
         let config: TestConfig = config.into();
-        config.run(build_txs).await.with_context(|| format!("Error in config {:?}", config))
+        config.run(build_txs).await.with_context(|| format!("Error in config {config:?}"))
     });
 
     try_join_all(test_cases).await?;

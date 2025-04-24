@@ -178,13 +178,11 @@ impl TransactionService {
 
             debug_assert!(
                 self.is_paused_signer(&signer_id),
-                "signer is still paused {:?}; duplicate entry",
-                signer_id
+                "signer is still paused {signer_id:?}; duplicate entry"
             );
             debug_assert!(
                 !self.is_active_signer(&signer_id),
-                "signer is already active {:?}",
-                signer_id
+                "signer is already active {signer_id:?}"
             );
 
             // remove signer from paused
@@ -203,13 +201,11 @@ impl TransactionService {
 
             debug_assert!(
                 self.is_active_signer(&signer_id),
-                "signer is still active {:?}; duplicate entry",
-                signer_id
+                "signer is still active {signer_id:?}; duplicate entry"
             );
             debug_assert!(
                 !self.is_paused_signer(&signer_id),
-                "signer is already paused {:?}",
-                signer_id
+                "signer is already paused {signer_id:?}"
             );
 
             // remove signer from active
