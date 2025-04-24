@@ -13,8 +13,10 @@ use crate::{
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
+    primitives::B256,
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::ClientBuilder,
+    signers::local::LocalSigner,
     transports::layers::RetryBackoffLayer,
 };
 use http::header;
@@ -127,7 +129,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     .await?;
 
     // construct quote signer
-    let quote_signer = DynSigner::load(&config.secrets.quote_key, None).await?;
+    let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
     let quote_signer_addr = quote_signer.address();
 
     // construct rpc module

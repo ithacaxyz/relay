@@ -5,9 +5,6 @@ use alloy::primitives::{Address, B256, FixedBytes, address, b256, fixed_bytes};
 pub const EOA_PRIVATE_KEY: B256 =
     b256!("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 
-pub const RELAY_PRIVATE_KEY: B256 =
-    b256!("0xffffffbec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-
 pub const SIGNERS_MNEMONIC: &str =
     "forget sound story reveal safe minimum wasp mechanic solar predict harsh catch";
 

@@ -76,9 +76,6 @@ pub struct Args {
     /// Extra buffer added to transaction gas estimates.
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
-    /// The secret key to sign fee quotes with.
-    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_FEE_SK")]
-    pub quote_secret_key: String,
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     pub fee_tokens: Vec<Address>,
@@ -113,7 +110,6 @@ impl Args {
     /// Merges [`Args`] values into an existing [`RelayConfig`] instance.
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
-            .with_quote_key(self.quote_secret_key)
             .with_signers_mnemonic(self.signers_mnemonic)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
@@ -162,7 +158,6 @@ mod tests {
         let dir = temp_dir();
         let config = dir.join("relay.toml");
         let registry = dir.join("registry.toml");
-        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let mnemonic = "test test test test test test test test test test test junk";
 
         for _ in 0..=1 {
@@ -181,7 +176,6 @@ mod tests {
                     fee_recipient: Default::default(),
                     quote_ttl: Default::default(),
                     rate_ttl: Default::default(),
-                    quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
