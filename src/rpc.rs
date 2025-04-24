@@ -170,6 +170,7 @@ impl Relay {
         legacy_entrypoints: BTreeSet<Address>,
         delegation_proxy: Address,
         account_registry: Address,
+        simulator: Address,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -184,6 +185,7 @@ impl Relay {
             legacy_entrypoints,
             delegation_proxy,
             account_registry,
+            simulator,
             chains,
             fee_tokens,
             fee_recipient,
@@ -230,6 +232,12 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
+            // todo
+            // .append(
+            //     simulator,
+            //     AccountOverride::default()
+            //         .with_balance(AccountOverride::default().with_balance(U256::MAX))
+            // )
             .build();
 
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
@@ -264,6 +272,8 @@ impl Relay {
         let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
         };
+        let payment_per_gas =
+            (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
         // fill userop
         let mut op = UserOp {
@@ -287,9 +297,7 @@ impl Relay {
 
         // this will force the simulation to go through payment code paths, and get a better
         // estimation.
-        op.paymentAmount = U256::from(1);
-        op.paymentMaxAmount = U256::from(1);
-        op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+        op.set_legacy_payment_amount(U256::from(1));
 
         // sign userop
         let signature = mock_key
@@ -310,7 +318,13 @@ impl Relay {
 
         // we estimate gas and fees
         let (asset_diff, mut gas_estimate) = entrypoint
-            .simulate_execute(mock_signer_address, &op, self.inner.asset_info.clone())
+            .simulate_execute(
+                self.inner.simulator,
+                mock_signer_address,
+                &op,
+                payment_per_gas,
+                self.inner.asset_info.clone(),
+            )
             .await?;
 
         // for 7702 designations there is an additional gas charge
@@ -335,8 +349,7 @@ impl Relay {
         op.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.paymentAmount = op.paymentPerGas * op.combinedGas;
-        op.paymentMaxAmount = op.paymentAmount;
+        op.set_legacy_payment_amount(payment_per_gas * op.combinedGas);
 
         let quote = Quote {
             chain_id: request.chain_id,
@@ -665,6 +678,7 @@ impl RelayApiServer for Relay {
             fee_recipient: self.inner.fee_recipient,
             delegation_proxy: self.inner.delegation_proxy,
             delegation_implementation,
+            simulator: self.inner.simulator,
             account_registry: self.inner.account_registry,
             quote_config: self.inner.quote_config.clone(),
         })
@@ -1017,8 +1031,9 @@ impl RelayApiServer for Relay {
         .abi_encode_packed()
         .into();
 
-        // Set `paymentAmount`. It is not included into the signature so we need to enforce it here.
-        op.paymentAmount = op.paymentMaxAmount;
+        // Set non-eip712 payment fields. Since they are not included into the signature so we need
+        // to enforce it here.
+        op.set_legacy_payment_amount(op.prePaymentMaxAmount);
 
         // If there's initData we need to fetch the signed authorization from storage.
         let authorization = if op.initData.is_empty() {
@@ -1365,6 +1380,8 @@ struct RelayInner {
     delegation_proxy: Address,
     /// The account registry address.
     account_registry: Address,
+    /// The simulator address.
+    simulator: Address,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.

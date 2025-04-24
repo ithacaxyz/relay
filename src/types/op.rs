@@ -66,39 +66,46 @@ sol! {
         address payer;
         /// The ERC20 or native token used to pay for gas.
         address paymentToken;
-        /// The payment recipient for the ERC20 token.
-        ///
-        /// Excluded from signature. The filler can replace this with their own address.
-        ///
-        /// This enables multiple fillers, allowing for competitive filling, better uptime.
-        /// If `address(0)`, the payment will be accrued by the entry point.
-        address paymentRecipient;
-        /// The amount of the token to pay.
-        ///
-        /// Excluded from signature.
-        ///
-        /// This will be required to be less than `paymentMaxAmount`.
-        uint256 paymentAmount;
+        /// The amount of the token to pay, before the call batch is executed
+        /// This will be required to be less than `totalPaymentMaxAmount`.
+        uint256 prePaymentMaxAmount;
         /// The maximum amount of the token to pay.
-        uint256 paymentMaxAmount;
-        /// The amount of ERC20 to pay per gas spent. For calculation of refunds.
-        ///
-        /// If this is left at zero, it will be treated as infinity (i.e. no refunds).
-        uint256 paymentPerGas;
+        uint256 totalPaymentMaxAmount;
         /// The combined gas limit for payment, verification, and calling the EOA.
         uint256 combinedGas;
-        /// The wrapped signature.
-        ///
-        /// The format is `abi.encodePacked(innerSignature, keyHash, prehash)` for most signatures,
-        /// except if it is signed by the EOA root key, in which case `abi.encodePacked(r, s, v)` is valid as well.
-        bytes signature;
         /// Optional data for `initPREP` on the delegation.
-        ///
-        /// Excluded from signature.
+        /// This is encoded using ERC7821 style batch execution encoding.
+        /// (ERC7821 is a variant of ERC7579).
+        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
+        /// where `calls` is of type `Call[]`,
+        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
         bytes initData;
-        /// Optional array of encoded PreOps that will be verified and executed
+        /// Optional array of encoded UserOps that will be verified and executed
         /// after PREP (if any) and before the validation of the overall UserOp.
+        /// A PreOp will NOT have its gas limit or payment applied.
+        /// The overall UserOp's gas limit and payment will be applied, encompassing all its PreOps.
+        /// The execution of a PreOp will check and increment the nonce in the PreOp.
+        /// If at any point, any PreOp cannot be verified to be correct, or fails in execution,
+        /// the overall UserOp will revert before validation, and execute will return a non-zero error.
+        /// A PreOp can contain PreOps, forming a tree structure.
+        /// The `executionData` tree will be executed in post-order (i.e. left -> right -> current).
+        /// The `encodedPreOps` are included in the EIP712 signature, which enables execution order
+        /// to be enforced on-the-fly even if the nonces are from different sequences.
         bytes[] encodedPreOps;
+        ////////////////////////////////////////////////////////////////////////
+        // Additional Fields (Not included in EIP-712)
+        ////////////////////////////////////////////////////////////////////////
+        /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
+        uint256 prePaymentAmount;
+        /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
+        uint256 totalPaymentAmount;
+        /// The payment recipient for the ERC20 token.
+        /// Excluded from signature. The filler can replace this with their own address.
+        /// This enables multiple fillers, allowing for competitive filling, better uptime.
+        address paymentRecipient;
+        /// The wrapped signature.
+        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        bytes signature;
         /// Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
@@ -172,8 +179,8 @@ mod eip712 {
             uint256 nonce;
             address payer;
             address paymentToken;
-            uint256 paymentMaxAmount;
-            uint256 paymentPerGas;
+            uint256 prePaymentMaxAmount;
+            uint256 totalPaymentMaxAmount;
             uint256 combinedGas;
             bytes[] encodedPreOps;
         }
@@ -189,6 +196,14 @@ mod eip712 {
 }
 
 impl UserOp {
+    /// Sets the payment amount fields so it has the same behaviour as legacy UserOp.
+    pub fn set_legacy_payment_amount(&mut self, amount: U256) {
+        self.prePaymentAmount = amount;
+        self.prePaymentMaxAmount = amount;
+        self.totalPaymentAmount = amount;
+        self.totalPaymentMaxAmount = amount;
+    }
+
     /// Calculate a digest of the [`UserOp`], used for checksumming.
     ///
     /// # Note
@@ -202,8 +217,8 @@ impl UserOp {
         hasher.update(self.nonce.to_be_bytes::<32>());
         hasher.update(self.payer);
         hasher.update(self.paymentToken);
-        hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
-        hasher.update(self.paymentPerGas.to_be_bytes::<32>());
+        hasher.update(self.prePaymentMaxAmount.to_be_bytes::<32>());
+        hasher.update(self.totalPaymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.combinedGas.to_be_bytes::<32>());
         let pre_ops_hash = {
             let mut hasher = Keccak256::new();
@@ -323,8 +338,8 @@ impl Op for UserOp {
             nonce: self.nonce,
             payer: self.payer,
             paymentToken: self.paymentToken,
-            paymentMaxAmount: self.paymentMaxAmount,
-            paymentPerGas: self.paymentPerGas,
+            prePaymentMaxAmount: self.prePaymentMaxAmount,
+            totalPaymentMaxAmount: self.totalPaymentMaxAmount,
             combinedGas: self.combinedGas,
             encodedPreOps: self.encodedPreOps.clone(),
         })
@@ -399,14 +414,15 @@ mod tests {
             nonce: U256::from(31338),
             payer: Address::ZERO,
             paymentToken: address!("0xc7183455a4c133ae270771860664b6b7ec320bb1"),
-            paymentRecipient: Address::ZERO,
-            paymentAmount: U256::from(3822601006u64),
-            paymentMaxAmount: U256::from(3822601006u64),
-            paymentPerGas: U256::ZERO,
+            prePaymentMaxAmount: U256::from(3822601006u64),
+            totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
-            signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            prePaymentAmount: U256::from(3822601006u64),
+            totalPaymentAmount: U256::from(3822601006u64),
+            paymentRecipient: Address::ZERO,
+            signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedDelegationImplementation: Address::ZERO,
         };
@@ -448,14 +464,15 @@ mod tests {
             nonce: U256::from(1),
             payer: Address::ZERO,
             paymentToken: address!("0xc7183455a4c133ae270771860664b6b7ec320bb1"),
-            paymentRecipient: Address::ZERO,
-            paymentAmount: U256::from(1021265804),
-            paymentMaxAmount: U256::from(1021265804),
-            paymentPerGas: U256::ZERO,
+            prePaymentMaxAmount: U256::from(1021265804),
+            totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
-            signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            prePaymentAmount: U256::from(1021265804),
+            totalPaymentAmount: U256::from(1021265804),
+            paymentRecipient: Address::ZERO,
+            signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedDelegationImplementation: Address::ZERO,
         };

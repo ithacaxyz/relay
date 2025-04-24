@@ -47,6 +47,9 @@ pub use call::*;
 mod webauthn;
 pub use webauthn::*;
 
+mod simulator;
+pub use simulator::*;
+
 mod storage;
 pub use storage::*;
 

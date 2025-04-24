@@ -192,7 +192,7 @@ impl Environment {
             .connect_client(client);
 
         // Get or deploy mock contracts.
-        let (delegation, entrypoint, account_registry, erc20s) =
+        let (simulator, delegation, entrypoint, account_registry, erc20s) =
             get_or_deploy_contracts(&provider).await?;
 
         let eoa = if config.is_prep {
@@ -269,6 +269,7 @@ impl Environment {
                 .with_entrypoint(entrypoint)
                 .with_delegation_proxy(delegation)
                 .with_account_registry(account_registry)
+                .with_simulator(simulator)
                 .with_user_op_gas_buffer(40_000) // todo: temp
                 .with_tx_gas_buffer(50_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
@@ -430,7 +431,7 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Address, Vec<Address>), eyre::Error> {
+) -> Result<(Address, Address, Address, Address, Vec<Address>), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
@@ -463,6 +464,10 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     )
     .await?;
 
+    let mut simulator =
+        deploy_contract(&provider, &contracts_path.join("Simulator.sol/Simulator.json"), None)
+            .await?;
+
     // Entrypoint
     if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
         entrypoint = Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?;
@@ -478,6 +483,11 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     if let Ok(address) = std::env::var("TEST_ACCOUNT_REGISTRY") {
         account_registry =
             Address::from_str(&address).wrap_err("Account Registry address parse failed.")?
+    }
+
+    // Simulator
+    if let Ok(address) = std::env::var("TEST_SIMULATOR") {
+        simulator = Address::from_str(&address).wrap_err("Simulator address parse failed.")?
     }
 
     // Have at least 2 erc20 deployed
@@ -509,7 +519,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((delegation_proxy, entrypoint, account_registry, erc20s))
+    Ok((simulator, delegation_proxy, entrypoint, account_registry, erc20s))
 }
 
 async fn deploy_contract<P: Provider>(

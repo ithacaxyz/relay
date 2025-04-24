@@ -15,6 +15,7 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use super::Simulator::SimulatorInstance;
 use crate::{
     asset::AssetInfoServiceHandle,
     error::{RelayError, UserOpError},
@@ -57,15 +58,13 @@ sol! {
 
         /// For returning the gas used and the error from a simulation.
         ///
-        /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
         /// - `gCombined` is the recommendation for `gCombined` in the UserOp.
         /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
         ///
         /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
         struct SimulationResult {
-            uint256 gExecute;
-            uint256 gCombined;
             uint256 gUsed;
+            uint256 gCombined;
         }
 
 
@@ -189,12 +188,22 @@ impl<P: Provider> Entry<P> {
     /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
+        simulator: Address,
         from: Address,
         op: &UserOp,
+        payment_per_gas: U256,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, GasEstimate), RelayError> {
-        let simulate_call =
-            self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
+        // todo: temporary, simulator will become its own deployed contract
+        let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
+            .simulateV1Logs(
+                *self.address(),
+                true,
+                dbg!(payment_per_gas),
+                U256::from(15_000),
+                op.abi_encode().into(),
+            )
+            .into_transaction_request();
 
         let result = self
             .entrypoint
@@ -218,8 +227,11 @@ impl<P: Provider> Entry<P> {
             return Err(UserOpError::op_revert(result.return_data).into());
         }
 
-        let Ok(gas_estimate) = EntryPoint::SimulationResult::abi_decode(&result.return_data)
-            .map(|gas| GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() })
+        let Ok(gas_estimate) =
+            EntryPoint::SimulationResult::abi_decode(&result.return_data).map(|gas| GasEstimate {
+                tx: gas.gCombined.to::<u64>() + 25_000,
+                op: gas.gCombined.to(),
+            })
         else {
             return Err(TransportErrorKind::custom_str(&format!(
                 "could not decode op simulation return data: {}",
