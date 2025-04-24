@@ -1,12 +1,9 @@
 //! RPC account-related request and response types.
 
-use super::{
-    AuthorizeKey, AuthorizeKeyResponse, KeySignature, PrepareCallsContext,
-    SendPreparedCallsResponse,
-};
+use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, SendPreparedCallsResponse};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHash, KeyHashWithID, KeyID, PREPAccount, PreOp},
+    types::{Key, KeyHash, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -147,9 +144,11 @@ pub struct UpgradeAccountCapabilities {
     /// Defaults to the native token.
     #[serde(default)]
     pub fee_token: Address,
-    /// Optional [`PreOp`] to execute before signature verification.
+    /// Optional preOps to execute before signature verification.
+    ///
+    /// See [`UserOp::encodedPreOps`].
     #[serde(default)]
-    pub pre_ops: Vec<PreOp>,
+    pub pre_ops: Vec<UserOp>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
@@ -168,8 +167,8 @@ pub struct PrepareUpgradeAccountParameters {
 /// Request parameters for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
-    /// The [`PrepareCallsContext`] of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signature: Signature,
@@ -269,7 +268,7 @@ mod tests {
     fn upgrade_account_params_serde() {
         let signature = Signature::new(U256::ZERO, U256::ZERO, false);
         let acc = UpgradeAccountParameters {
-            context: PrepareCallsContext::with_quote(Signed::new_unchecked(
+            context: Signed::new_unchecked(
                 Quote {
                     chain_id: 0,
                     op: Default::default(),
@@ -280,11 +279,12 @@ mod tests {
                     },
                     ttl: UNIX_EPOCH + Duration::from_secs(0),
                     authorization_address: None,
+                    is_preop: false,
                     entrypoint: Address::ZERO,
                 },
                 signature,
                 B256::ZERO,
-            )),
+            ),
             signature,
             authorization: Authorization {
                 chain_id: Default::default(),
@@ -297,7 +297,7 @@ mod tests {
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(&json).unwrap();
         assert_eq!(acc, from_json);
 
-        let s = r#"{"context":{"quote":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","paymentRecipient":"0x0000000000000000000000000000000000000000","paymentAmount":"0x0","paymentMaxAmount":"0x0","paymentPerGas":"0x0","combinedGas":"0x0","signature":"0x","initData":"0x","encodedPreOps":[],"paymentSignature":"0x","supportedDelegationImplementation":"0x0000000000000000000000000000000000000000"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"entrypoint":"0x0000000000000000000000000000000000000000","isPreop":false,"r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"}},"signature":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
+        let s = r#"{"context":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","paymentRecipient":"0x0000000000000000000000000000000000000000","paymentAmount":"0x0","paymentMaxAmount":"0x0","paymentPerGas":"0x0","combinedGas":"0x0","signature":"0x","initData":"0x","encodedPreOps":[],"paymentSignature":"0x"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"entrypoint":"0x0000000000000000000000000000000000000000","isPreop":false,"r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"},"signature":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
 "#;
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(s).unwrap();
         assert_eq!(acc, from_json);

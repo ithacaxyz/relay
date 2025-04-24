@@ -3,13 +3,12 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
-    types::{AssetDiffs, Call, Op, PreOp, SignedQuote},
+    types::{AssetDiffs, Call, SignedQuote, UserOp},
 };
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
     primitives::{Address, B256, BlockHash, BlockNumber, ChainId, TxHash, wrap_fixed_bytes},
-    providers::DynProvider,
     rpc::types::Log,
     sol_types::SolEvent,
 };
@@ -34,9 +33,8 @@ pub struct PrepareCallsParameters {
     /// Target chain ID.
     #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
-    /// Address of the account to prepare the call bundle for. It can only be None, if we are
-    /// handling a preop
-    pub from: Option<Address>,
+    /// Address of the account to prepare the call bundle for.
+    pub from: Address,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
 }
@@ -44,9 +42,8 @@ pub struct PrepareCallsParameters {
 impl PrepareCallsParameters {
     /// Ensures there are only whitelisted calls in preops.
     pub fn check_preop_calls(&self) -> Result<(), RelayError> {
-        let has_unallowed = |calls: &[Call]| {
-            calls.iter().any(|call| !call.is_whitelisted_preop(self.from.unwrap_or_default()))
-        };
+        let has_unallowed =
+            |calls: &[Call]| calls.iter().any(|call| !call.is_whitelisted_preop(self.from));
 
         if self.capabilities.pre_op && has_unallowed(&self.calls) {
             return Err(UserOpError::UnallowedPreOpCalls.into());
@@ -78,7 +75,7 @@ pub struct PrepareCallsCapabilities {
     ///
     /// See [`UserOp::encodedPreOps`].
     #[serde(default)]
-    pub pre_ops: Vec<PreOp>,
+    pub pre_ops: Vec<UserOp>,
     /// Whether the call bundle is to be considered a preop.
     #[serde(default)]
     pub pre_op: bool,
@@ -102,8 +99,8 @@ pub struct PrepareCallsResponseCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsResponse {
-    /// The [`PrepareCallsContext`] of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// Digest of the prepared call bundle for the user to sign over
     /// with an authorized key.
     pub digest: B256,
@@ -113,84 +110,12 @@ pub struct PrepareCallsResponse {
     pub capabilities: PrepareCallsResponseCapabilities,
 }
 
-/// Response context from `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum PrepareCallsContext {
-    /// The [`SignedQuote`] of the prepared call bundle.
-    #[serde(rename = "quote")]
-    Quote(Box<SignedQuote>),
-    /// The [`PreOp`] of the prepared call bundle.
-    #[serde(rename = "preop")]
-    PreOp(PreOp),
-}
-
-impl PrepareCallsContext {
-    /// Initializes [`PrepareCallsContext`] with a [`SignedQuote`].
-    pub fn with_quote(quote: SignedQuote) -> Self {
-        Self::Quote(Box::new(quote))
-    }
-
-    /// Initializes [`PrepareCallsContext`] with a [`PreOp`].
-    pub fn with_preop(preop: PreOp) -> Self {
-        Self::PreOp(preop)
-    }
-
-    /// Returns quote mutable reference if it exists.
-    pub fn quote(&self) -> Option<&SignedQuote> {
-        match self {
-            PrepareCallsContext::Quote(signed) => Some(signed),
-            PrepareCallsContext::PreOp(_) => None,
-        }
-    }
-
-    /// Returns quote mutable reference if it exists.
-    pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
-        match self {
-            PrepareCallsContext::Quote(signed) => Some(signed),
-            PrepareCallsContext::PreOp(_) => None,
-        }
-    }
-
-    /// Consumes self and returns quote if it exists.
-    pub fn take_quote(self) -> Option<SignedQuote> {
-        match self {
-            PrepareCallsContext::Quote(signed) => Some(*signed),
-            PrepareCallsContext::PreOp(_) => None,
-        }
-    }
-
-    /// Consumes self and returns preop if it exists.
-    pub fn take_preop(self) -> Option<PreOp> {
-        match self {
-            PrepareCallsContext::Quote(_) => None,
-            PrepareCallsContext::PreOp(preop) => Some(preop),
-        }
-    }
-
-    /// Calculate the eip712 digest that the user will need to sign.
-    pub async fn compute_eip712_data(
-        &self,
-        entrypoint_address: Address,
-        provider: &DynProvider,
-    ) -> eyre::Result<(B256, TypedData)> {
-        match self {
-            PrepareCallsContext::Quote(quote) => {
-                quote.ty().op.compute_eip712_data(entrypoint_address, provider).await
-            }
-            PrepareCallsContext::PreOp(pre_op) => {
-                pre_op.compute_eip712_data(entrypoint_address, provider).await
-            }
-        }
-    }
-}
-
 /// Request parameters for `wallet_sendPreparedCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsParameters {
-    /// The [`PrepareCallsContext`] of the prepared call bundle.
-    pub context: PrepareCallsContext,
+    /// The [`SignedQuote`] of the prepared call bundle.
+    pub context: SignedQuote,
     /// UserOp key signature.
     pub signature: KeySignature,
 }

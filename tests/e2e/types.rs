@@ -16,7 +16,7 @@ use relay::{
     types::{
         Call, ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        KeyWith712Signer, PreOp, Signature,
+        KeyWith712Signer, Signature, UserOp,
         rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
     },
 };
@@ -196,16 +196,16 @@ impl TxContext<'_> {
     pub async fn process(self, tx_num: usize, env: &Environment) -> eyre::Result<()> {
         let signer = self.key.expect("should have key");
 
-        let Some((signature, context)) = prepare_calls(tx_num, &self, signer, env, false).await?
+        let Some((signature, quote)) = prepare_calls(tx_num, &self, signer, env, false).await?
         else {
             // We had an expected failure so we should exit.
             return Ok(());
         };
 
-        let op_nonce = context.quote().as_ref().unwrap().ty().op.nonce;
+        let op_nonce = quote.ty().op.nonce;
 
         // Submit signed call
-        let bundle = send_prepared_calls(env, signer, signature, context).await;
+        let bundle = send_prepared_calls(env, signer, signature, quote).await;
 
         self.check_bundle(bundle, tx_num, None, op_nonce, env).await
     }
@@ -291,12 +291,12 @@ pub async fn build_pre_ops<'a>(
     env: &Environment,
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<Vec<PreOp>> {
+) -> eyre::Result<Vec<UserOp>> {
     let pre_ops = join_all(pre_ops.iter().map(|tx| async move {
         let signer = tx.key.expect("userop should have a key");
-        let (signature, context) =
+        let (signature, quote) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = context.take_preop().unwrap();
+        let mut op = quote.ty().op.clone();
         op.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()
