@@ -469,7 +469,7 @@ impl Signer {
     ) -> Result<(), SignerError> {
         // Fetch the fees for the first transaction.
         let fees =
-            self.get_fee_context().await?.fees_for_new_transaction(tx.max_fee_for_transaction());
+            self.get_fee_context().await?.fees_for_new_transaction(tx.max_fee_for_transaction())?;
 
         // Validate the transaction.
         if let Err(err) = self.validate_transaction(&mut tx, fees).await {
