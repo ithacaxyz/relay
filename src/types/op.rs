@@ -1,12 +1,8 @@
-use crate::types::Entry;
-
 use super::{Call, IDelegation::authorizeCall, Key, PREPInitData};
 use alloy::{
-    dyn_abi::TypedData,
     primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
-    providers::DynProvider,
     sol,
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolValue},
     uint,
 };
 use serde::{Deserialize, Serialize};
@@ -96,43 +92,12 @@ sol! {
         ///
         /// Excluded from signature.
         bytes initData;
-        /// Optional array of encoded PreOps that will be verified and executed
+        /// Optional array of encoded UserOps that will be verified and executed
         /// after PREP (if any) and before the validation of the overall UserOp.
         bytes[] encodedPreOps;
         /// Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
-        /// Optional. If non-zero, the EOA must use `supportedDelegationImplementation`.
-        /// Otherwise, if left as `address(0)`, any EOA implementation will be supported.
-        /// This field is NOT included in the EIP712 signature.
-        address supportedDelegationImplementation;
-    }
-
-
-    /// A struct to hold the fields for a PreOp.
-    /// Like a UserOp with a subset of fields.
-    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct PreOp {
-        /// The user's address.
-        ///
-        /// This can be set to `address(0)`, which allows it to be
-        /// coalesced to the parent UserOp's EOA.
-        address eoa;
-        /// An encoded array of calls, using ERC7579 batch execution encoding.
-        ///
-        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
-        /// This allows for more efficient safe forwarding to the EOA.
-        bytes executionData;
-        /// Per delegated EOA. Same logic as the `nonce` in UserOp.
-        ///
-        /// A nonce of `type(uint256).max` skips the check, incrementing,
-        /// and the emission of the {UserOpExecuted} event.
-        uint256 nonce;
-        /// The wrapped signature.
-        ///
-        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
-        bytes signature;
     }
 }
 
@@ -154,9 +119,9 @@ pub struct PartialUserOp {
     ///
     /// Excluded from signature.
     pub init_data: Option<Bytes>,
-    /// Optional array of encoded PreOps that will be verified and executed before the
+    /// Optional array of encoded UserOps that will be verified and executed before the
     /// verification of the overall UserOp.
-    pub pre_ops: Vec<PreOp>,
+    pub pre_ops: Vec<UserOp>,
 }
 
 mod eip712 {
@@ -177,18 +142,36 @@ mod eip712 {
             uint256 combinedGas;
             bytes[] encodedPreOps;
         }
-
-        #[derive(serde::Serialize)]
-        struct PreOp {
-            bool multichain;
-            address eoa;
-            Call[] calls;
-            uint256 nonce;
-        }
     }
 }
 
 impl UserOp {
+    /// Whether this [`UserOp`] is multichain.
+    ///
+    /// If the op is multichain, the EIP712 domain used for the signing hash of the op should not
+    /// include a chain ID.
+    pub fn is_multichain(&self) -> bool {
+        self.nonce >> 240 == MULTICHAIN_NONCE_PREFIX
+    }
+
+    /// Get the EIP712 encoding of the [`UserOp`].
+    pub fn as_eip712(&self) -> Result<eip712::UserOp, alloy::sol_types::Error> {
+        let multichain = self.is_multichain();
+
+        Ok(eip712::UserOp {
+            multichain,
+            eoa: self.eoa,
+            calls: self.calls()?,
+            nonce: self.nonce,
+            payer: self.payer,
+            paymentToken: self.paymentToken,
+            paymentMaxAmount: self.paymentMaxAmount,
+            paymentPerGas: self.paymentPerGas,
+            combinedGas: self.combinedGas,
+            encodedPreOps: self.encodedPreOps.clone(),
+        })
+    }
+
     /// Calculate a digest of the [`UserOp`], used for checksumming.
     ///
     /// # Note
@@ -220,128 +203,20 @@ impl UserOp {
     pub fn pre_authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         let mut all_keys = Vec::with_capacity(self.encodedPreOps.len());
         for encoded_op in &self.encodedPreOps {
-            let pre_op = PreOp::abi_decode(encoded_op)?;
-            all_keys.extend(pre_op.authorized_keys_from_execution_data()?);
+            let op = UserOp::abi_decode(encoded_op)?;
+            all_keys.extend(op.authorized_keys().into_iter().flatten());
         }
         Ok(all_keys)
-    }
-}
-
-/// Shared behaviour between [`UserOp`] and [`PreOp`].
-pub trait Op {
-    /// Returns `executionData`.
-    fn execution_data(&self) -> &[u8];
-
-    /// Returns `nonce`.
-    fn nonce(&self) -> U256;
-
-    /// Returns the decoded calls from `executionData`.
-    fn calls(&self) -> Result<Vec<Call>, alloy::sol_types::Error> {
-        <Vec<Call>>::abi_decode(self.execution_data())
-    }
-
-    /// Returns all keys authorized in `executionData`.
-    fn authorized_keys_from_execution_data(
-        &self,
-    ) -> Result<impl Iterator<Item = Key>, alloy::sol_types::Error> {
-        // Decode keys from the execution data.
-        Ok(self.calls()?.into_iter().filter_map(|call| {
-            // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
-            authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
-        }))
-    }
-
-    /// Returns all keys authorized in the current op.
-    fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        Ok(self.authorized_keys_from_execution_data()?.collect())
-    }
-
-    /// Whether this op is multichain.
-    ///
-    /// If the op is multichain, the EIP712 domain used for the signing hash of the op should not
-    /// include a chain ID.
-    fn is_multichain(&self) -> bool {
-        self.nonce() >> 240 == MULTICHAIN_NONCE_PREFIX
-    }
-
-    /// Get the EIP712 encoding of the op.
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
-
-    /// Computes the EIP-712 digest that the user must sign.
-    fn compute_eip712_data(
-        &self,
-        entrypoint_address: Address,
-        provider: &DynProvider,
-    ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
-    where
-        Self: Sync,
-    {
-        async move {
-            // Create the entrypoint instance with the same overrides.
-            let entrypoint = Entry::new(entrypoint_address, provider);
-
-            // Prepare the EIP-712 payload and domain
-            let payload = self.as_eip712()?;
-            let domain = entrypoint.eip712_domain(self.is_multichain()).await?;
-
-            // Return the computed signing hash (digest).
-            let digest = payload.eip712_signing_hash(&domain);
-            let typed_data = TypedData::from_struct(&payload, Some(domain));
-
-            debug_assert_eq!(Ok(digest), typed_data.eip712_signing_hash());
-
-            Ok((digest, typed_data))
-        }
-    }
-}
-
-impl Op for PreOp {
-    fn execution_data(&self) -> &[u8] {
-        &self.executionData
-    }
-
-    fn nonce(&self) -> U256 {
-        self.nonce
-    }
-
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        Ok(eip712::PreOp {
-            multichain: self.is_multichain(),
-            eoa: self.eoa,
-            calls: self.calls()?,
-            nonce: self.nonce,
-        })
-    }
-}
-
-impl Op for UserOp {
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        Ok(eip712::UserOp {
-            multichain: self.is_multichain(),
-            eoa: self.eoa,
-            calls: self.calls()?,
-            nonce: self.nonce,
-            payer: self.payer,
-            paymentToken: self.paymentToken,
-            paymentMaxAmount: self.paymentMaxAmount,
-            paymentPerGas: self.paymentPerGas,
-            combinedGas: self.combinedGas,
-            encodedPreOps: self.encodedPreOps.clone(),
-        })
-    }
-
-    fn execution_data(&self) -> &[u8] {
-        &self.executionData
-    }
-
-    fn nonce(&self) -> U256 {
-        self.nonce
     }
 
     /// Returns all keys authorized in the current [`UserOp`] including `pre_ops`, `executionData`
     /// and `initData`.
-    fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        let keys = self.authorized_keys_from_execution_data()?;
+    pub fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
+        // Decode keys from the execution data.
+        let keys = Vec::<Call>::abi_decode(&self.executionData)?.into_iter().filter_map(|call| {
+            // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
+            authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
+        });
 
         // Decode keys from initData, if it exists.
         let mut keys: Vec<Key> = if !self.initData.is_empty() {
@@ -360,6 +235,11 @@ impl Op for UserOp {
         keys.extend(self.pre_authorized_keys()?);
 
         Ok(keys)
+    }
+
+    /// Returns the decoded calls from `executionData`.
+    pub fn calls(&self) -> Result<Vec<Call>, alloy::sol_types::Error> {
+        <Vec<Call>>::abi_decode(&self.executionData)
     }
 }
 
@@ -408,7 +288,6 @@ mod tests {
             initData: bytes!(""),
             encodedPreOps: vec![],
             paymentSignature: bytes!(""),
-            supportedDelegationImplementation: Address::ZERO,
         };
 
         // Single chain op
@@ -457,7 +336,6 @@ mod tests {
             initData: bytes!(""),
             encodedPreOps: vec![],
             paymentSignature: bytes!(""),
-            supportedDelegationImplementation: Address::ZERO,
         };
 
         let expected_digest =
@@ -491,7 +369,7 @@ mod tests {
         assert_eq!(
             Bytes::from(user_op.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a19600000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000000034000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000000000000000000000000000000000000000003e00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000410c1fd77b93e9bf66c4a106d26287942478393b1d5529d447b2def03665bf4e533a20fe5f0bcf8aa90b3102489a796f923f569e5d4828cbe7ecb13e2f2716026f1c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a19600000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000000032000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000000000000000000000000000000000000000003e000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000410c1fd77b93e9bf66c4a106d26287942478393b1d5529d447b2def03665bf4e533a20fe5f0bcf8aa90b3102489a796f923f569e5d4828cbe7ecb13e2f2716026f1c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )
         );
     }

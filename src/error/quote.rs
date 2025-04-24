@@ -8,12 +8,12 @@ pub enum QuoteError {
     /// The quote expired.
     #[error("quote expired")]
     QuoteExpired,
-    /// The quote was not found.
-    #[error("expected quote was not found")]
-    QuoteNotFound,
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
+    /// Preop quotes are not supported.
+    #[error("preop are not supported.")]
+    PreOpUnsupported,
     /// The provided fee token is not supported.
     #[error("fee token not supported: {0}")]
     UnsupportedFeeToken(Address),
@@ -37,8 +37,8 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: QuoteError) -> Self {
         match err {
             QuoteError::QuoteExpired
-            | QuoteError::QuoteNotFound
             | QuoteError::InvalidQuoteSignature
+            | QuoteError::PreOpUnsupported
             | QuoteError::UnsupportedFeeToken(..)
             | QuoteError::InvalidFeeAmount { .. } => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {

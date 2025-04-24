@@ -10,17 +10,16 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::UserOpError,
+    eip712::compute_eip712_data,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call,
         DelegationProxy::DelegationProxyInstance,
         ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        FeeTokens, Key, KeyHash, KeyHashWithID, Op, PreOp,
+        FeeTokens, Key, KeyHash, KeyHashWithID,
         rpc::{
-            CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext, RelaySettings,
-            ValidSignatureProof,
+            CallReceipt, CallStatusCode, CreateAccountContext, RelaySettings, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -285,11 +284,14 @@ impl Relay {
             ..Default::default()
         };
 
-        // this will force the simulation to go through payment code paths, and get a better
-        // estimation.
-        op.paymentAmount = U256::from(1);
-        op.paymentMaxAmount = U256::from(1);
-        op.paymentPerGas = (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+        if !request.is_preop {
+            // this will force the simulation to go through payment code paths, and get a better
+            // estimation.
+            op.paymentAmount = U256::from(1);
+            op.paymentMaxAmount = U256::from(1);
+            op.paymentPerGas =
+                (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+        }
 
         // sign userop
         let signature = mock_key
@@ -348,6 +350,7 @@ impl Relay {
                 .expect("should never overflow"),
             authorization_address,
             entrypoint: *entrypoint.address(),
+            is_preop: request.is_preop,
         };
         let sig = self
             .inner
@@ -365,6 +368,10 @@ impl Relay {
         quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<BundleId> {
+        if quote.ty().is_preop {
+            return Err(QuoteError::PreOpUnsupported.into());
+        }
+
         let chain_id = quote.ty().chain_id;
         let Chain { provider, transactions } =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
@@ -548,14 +555,14 @@ impl Relay {
         Ok(calls)
     }
 
-    /// Given a key hash and a list of [`PreOp`], it tries to find a key from a requested EOA.
+    /// Given a key hash and a list of [`UserOp`], it tries to find a key from a requested EOA.
     ///
     /// If it cannot find it, it will attempt to fetch it from storage or on-chain.
     async fn try_find_key(
         &self,
         from: Address,
         key_hash: KeyHash,
-        ops: &[PreOp],
+        ops: &[UserOp],
         chain_id: ChainId,
     ) -> Result<Option<Key>, RelayError> {
         for pre_op in ops {
@@ -584,8 +591,10 @@ impl Relay {
         request: &PrepareCallsParameters,
     ) -> Result<Vec<Call>, RelayError> {
         // Generate all calls that will authorize  keys and set their permissions
-        let authorize_calls =
-            self.authorize_into_calls(request.capabilities.authorize_keys.clone(), request.from)?;
+        let authorize_calls = self.authorize_into_calls(
+            request.capabilities.authorize_keys.clone(),
+            Some(request.from),
+        )?;
 
         // Generate all revoke key calls
         let revoke_calls = request
@@ -596,21 +605,12 @@ impl Relay {
 
         // If we are planning to use a session key as the first userop signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
-        //
-        // This is done by adding an extra call to the preop to give it permission to do so.
-        //
-        // We assume that this is the first userop if ANY of the following options is true:
-        // * `maybe_prep_init` is `Some` as described in `generate_calls`
-        // * `request.from` is `None`. This is the case when the user is signing up and needs to
-        //   authorize a session key before even going through PREPAccount generation flow.
         let account_registry_permission = request
             .capabilities
             .authorize_keys
             .iter()
             .filter(|auth| {
-                request.capabilities.pre_op
-                    && !auth.key.isSuperAdmin
-                    && (maybe_prep_init.is_some() || request.from.is_none())
+                request.capabilities.pre_op && !auth.key.isSuperAdmin && maybe_prep_init.is_some()
             })
             .map(|auth| {
                 Call::set_can_execute(
@@ -824,88 +824,72 @@ impl RelayApiServer for Relay {
 
         // Find if the address is delegated or if we have a PREPAccount in storage that can use to
         // delegate.
-        let mut maybe_prep = None;
-        if let Some(from) = &request.from {
-            if !Account::new(*from, provider.clone()).is_delegated().await? {
-                maybe_prep = Some(
-                    self.inner
-                        .storage
-                        .read_prep(from)
-                        .await
-                        .map_err(|e| RelayError::InternalError(e.into()))?
-                        .ok_or_else(|| {
-                            RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed())
-                        })?,
-                );
-            }
-        }
+        let account = Account::new(request.from, provider.clone());
+        let maybe_prep = if !account.is_delegated().await? {
+            Some(
+                self.inner
+                    .storage
+                    .read_prep(&request.from)
+                    .await
+                    .map_err(|err| RelayError::InternalError(err.into()))?
+                    .ok_or_else(|| {
+                        RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
+                    })?,
+            )
+        } else {
+            None
+        };
 
         // Generate all requested calls.
         let calls = self.generate_calls(maybe_prep.as_ref(), &request).await?;
 
-        // If we're dealing with a PreOp do not estimate
-        let (asset_diff, context) = if request.capabilities.pre_op {
-            let preop = PreOp {
-                eoa: request.from.unwrap_or_default(),
-                executionData: calls.abi_encode().into(),
-                // An none nonce is represented by uint256.max
-                nonce: request.capabilities.meta.nonce.unwrap_or(U256::MAX),
-                signature: Bytes::new(),
-            };
-
-            (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
-        } else {
-            let Some(eoa) = request.from else { return Err(UserOpError::MissingSender.into()) };
-
-            // Find the key that authorizes this userop
-            let Some(key) = self
-                .try_find_key(
-                    eoa,
-                    request.capabilities.meta.key_hash,
-                    &request.capabilities.pre_ops,
-                    request.chain_id,
-                )
-                .await?
-            else {
-                return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
-            };
-
-            // Call estimateFee to give us a quote with a complete userOp that the user can sign
-            let (asset_diff, quote) = self
-                .estimate_fee(
-                    PartialAction {
-                        op: PartialUserOp {
-                            eoa,
-                            execution_data: calls.abi_encode().into(),
-                            nonce: request.capabilities.meta.nonce,
-                            init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
-                            pre_ops: request.capabilities.pre_ops.clone(),
-                        },
-                        chain_id: request.chain_id,
-                    },
-                    request.capabilities.meta.fee_token,
-                    maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
-                    key,
-                )
-                .await
-                .inspect_err(|err| {
-                    error!(
-                        %err,
-                        "Failed to create a quote.",
-                    );
-                })?;
-
-            (asset_diff, PrepareCallsContext::with_quote(quote))
+        // Find the key that authorizes this userop
+        let Some(key) = self
+            .try_find_key(
+                request.from,
+                request.capabilities.meta.key_hash,
+                &request.capabilities.pre_ops,
+                request.chain_id,
+            )
+            .await?
+        else {
+            return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
         };
 
-        // Calculate the eip712 digest that the user will need to sign.
-        let (digest, typed_data) = context
-            .compute_eip712_data(self.inner.entrypoint, &provider)
+        // Call estimateFee to give us a quote with a complete userOp that the user can sign
+        let (asset_diff, quote) = self
+            .estimate_fee(
+                PartialAction {
+                    op: PartialUserOp {
+                        eoa: request.from,
+                        execution_data: calls.abi_encode().into(),
+                        nonce: request.capabilities.meta.nonce,
+                        init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
+                        pre_ops: request.capabilities.pre_ops.clone(),
+                    },
+                    chain_id: request.chain_id,
+                    is_preop: request.capabilities.pre_op,
+                },
+                request.capabilities.meta.fee_token,
+                maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
+                key,
+            )
             .await
-            .map_err(RelayError::from)?;
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to create a quote.",
+                );
+            })?;
+
+        // Calculate the eip712 digest that the user will need to sign.
+        let (digest, typed_data) =
+            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+                .await
+                .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
-            context,
+            context: quote,
             digest,
             typed_data,
             capabilities: PrepareCallsResponseCapabilities {
@@ -956,6 +940,7 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
+                    is_preop: false,
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
@@ -970,15 +955,13 @@ impl RelayApiServer for Relay {
             })?;
 
         // Calculate the eip712 digest that the user will need to sign.
-        let (digest, typed_data) = quote
-            .ty()
-            .op
-            .compute_eip712_data(self.inner.entrypoint, &provider)
-            .await
-            .map_err(RelayError::from)?;
+        let (digest, typed_data) =
+            compute_eip712_data(&quote.ty().op, self.inner.entrypoint, &provider)
+                .await
+                .map_err(RelayError::from)?;
 
         let response = PrepareCallsResponse {
-            context: PrepareCallsContext::with_quote(quote),
+            context: quote,
             digest,
             typed_data,
             capabilities: PrepareCallsResponseCapabilities {
@@ -998,21 +981,16 @@ impl RelayApiServer for Relay {
 
     async fn send_prepared_calls(
         &self,
-        request: SendPreparedCallsParameters,
+        mut request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
-        let SendPreparedCallsParameters { context, signature } = request;
-        let Some(mut quote) = context.take_quote() else {
-            return Err(QuoteError::QuoteNotFound.into());
-        };
-
-        let op = &mut quote.ty_mut().op;
+        let op = &mut request.context.ty_mut().op;
 
         // Fill UserOp with the user signature.
-        let key_hash = signature.key_hash();
+        let key_hash = request.signature.key_hash();
         op.signature = Signature {
-            innerSignature: signature.value,
+            innerSignature: request.signature.value,
             keyHash: key_hash,
-            prehash: signature.prehash,
+            prehash: request.signature.prehash,
         }
         .abi_encode_packed()
         .into();
@@ -1032,7 +1010,7 @@ impl RelayApiServer for Relay {
         };
 
         // Broadcast transaction with UserOp
-        let id = self.send_action(quote, authorization).await.inspect_err(|err| {
+        let id = self.send_action(request.context, authorization).await.inspect_err(|err| {
             error!(
                 %err,
                 "Failed to submit call bundle transaction.",
@@ -1047,34 +1025,31 @@ impl RelayApiServer for Relay {
 
     async fn upgrade_account(
         &self,
-        request: UpgradeAccountParameters,
+        mut request: UpgradeAccountParameters,
     ) -> RpcResult<UpgradeAccountResponse> {
-        let UpgradeAccountParameters { context, signature, authorization } = request;
-        let Some(mut quote) = context.take_quote() else {
-            return Err(QuoteError::QuoteNotFound.into());
-        };
-
         // Ensure that we have a signed delegation and its address matches the quote's.
-        if quote.ty().authorization_address != Some(authorization.address) {
+        if request.context.ty().authorization_address != Some(request.authorization.address) {
             return Err(AuthError::InvalidAuthAddress {
-                expected: quote.ty().authorization_address.expect("should exist"),
-                got: authorization.address,
+                expected: request.context.ty().authorization_address.expect("should exist"),
+                got: request.authorization.address,
             }
             .into());
         }
 
-        let op = &mut quote.ty_mut().op;
+        let op = &mut request.context.ty_mut().op;
 
         // Fill UserOp with the user signature.
-        op.signature = signature.as_bytes().into();
+        op.signature = request.signature.as_bytes().into();
 
         // Broadcast transaction with UserOp
-        let id = self.send_action(quote, Some(authorization)).await.inspect_err(|err| {
-            error!(
-                %err,
-                "Failed to submit upgrade account transaction.",
-            );
-        })?;
+        let id = self.send_action(request.context, Some(request.authorization)).await.inspect_err(
+            |err| {
+                error!(
+                    %err,
+                    "Failed to submit upgrade account transaction.",
+                );
+            },
+        )?;
 
         // TODO: for now it's fine, but this will change in the future.
         let response = UpgradeAccountResponse { bundles: vec![SendPreparedCallsResponse { id }] };

@@ -101,7 +101,7 @@ impl MockAccount {
                         .into(),
                 }],
                 chain_id: env.chain_id,
-                from: Some(address),
+                from: address,
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_token: Address::ZERO, key_hash: key.key_hash(), nonce: None },
@@ -133,7 +133,7 @@ impl MockAccount {
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![],
                 chain_id: env.chain_id,
-                from: Some(self.address),
+                from: self.address,
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta {
@@ -149,7 +149,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().op.signature = Signature {
+        context.ty_mut().op.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,
@@ -157,7 +157,7 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(context.take_quote().unwrap(), None)
+        RelayTransaction::new(context, None)
     }
 }
 

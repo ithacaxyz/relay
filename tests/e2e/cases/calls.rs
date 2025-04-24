@@ -53,7 +53,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![erc20_transfer.clone()],
                 chain_id: env.chain_id,
-                from: Some(env.eoa.address()),
+                from: env.eoa.address(),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: Vec::new(), // todo: add test authorize "inline"
                     revoke_keys: Vec::new(),
