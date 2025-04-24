@@ -264,11 +264,6 @@ pub trait Op {
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
 
     /// Computes the EIP-712 digest that the user must sign.
-    ///
-    /// If a delegation is passed it will override the EOA account and manually etch the 7702
-    /// designator. Otherwise, it will assumed it's already delegated.
-    ///
-    /// Returns the eip712 digest that user will need to sign.
     fn compute_eip712_data(
         &self,
         entrypoint_address: Address,
