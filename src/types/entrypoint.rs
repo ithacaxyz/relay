@@ -193,7 +193,6 @@ impl<P: Provider> Entry<P> {
         payment_per_gas: U256,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, GasEstimate), RelayError> {
-        // todo: temporary, simulator will become its own deployed contract
         let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
             .simulateV1Logs(
                 *self.address(),
