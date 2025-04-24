@@ -473,6 +473,7 @@ impl Signer {
 
         // Validate the transaction.
         if let Err(err) = self.validate_transaction(&mut tx, fees).await {
+            self.storage.remove_queued(tx.id).await?;
             self.update_tx_status(tx.id, TransactionStatus::Failed(Arc::new(err))).await?;
             return Ok(());
         }
