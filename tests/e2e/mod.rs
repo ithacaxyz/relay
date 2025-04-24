@@ -26,10 +26,11 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Delegation, KeyWith712Signer, SignedQuote,
+        Delegation, KeyWith712Signer,
         rpc::{
             BundleId, CallsStatus, KeySignature, Meta, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareCallsResponse, SendPreparedCallsParameters,
+            PrepareCallsContext, PrepareCallsParameters, PrepareCallsResponse,
+            SendPreparedCallsParameters,
         },
     },
 };
@@ -127,13 +128,18 @@ pub async fn prepare_calls(
     signer: &KeyWith712Signer,
     env: &Environment,
     pre_op: bool,
-) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
+) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
+
+    // Deliberately omit the `from` address for the very first UserOp preops
+    // to test the path where prepops are signed before the PREPAddress is known. eg. during
+    // creation of the first passkey.
+    let from = (tx_num != 0 || !pre_op).then_some(env.eoa.address());
 
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            from: env.eoa.address(),
+            from,
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
@@ -171,12 +177,12 @@ pub async fn send_prepared_calls(
     env: &Environment,
     signer: &KeyWith712Signer,
     signature: Bytes,
-    quote: SignedQuote,
+    context: PrepareCallsContext,
 ) -> eyre::Result<BundleId> {
     let response = env
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
-            context: quote,
+            context,
             signature: KeySignature {
                 public_key: signer.publicKey.clone(),
                 key_type: signer.keyType,

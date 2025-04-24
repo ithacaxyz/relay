@@ -5,7 +5,7 @@ use alloy::{eips::eip7702::SignedAuthorization, primitives::Address, providers::
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer, UserOp,
+        KeyType, KeyWith712Signer, PreOp,
         rpc::{
             AuthorizeKey, BundleId, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters,
@@ -17,7 +17,7 @@ pub async fn upgrade_account(
     env: &Environment,
     authorize_keys: &[AuthorizeKey],
     auth: AuthKind,
-    pre_ops: Vec<UserOp>,
+    pre_ops: Vec<PreOp>,
 ) -> eyre::Result<(BundleId, SignedAuthorization)> {
     let response = env
         .relay_endpoint

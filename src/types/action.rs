@@ -15,6 +15,4 @@ pub struct PartialAction {
     pub op: PartialUserOp,
     /// The destination chain ID.
     pub chain_id: ChainId,
-    /// Whether it is a preop.
-    pub is_preop: bool,
 }
