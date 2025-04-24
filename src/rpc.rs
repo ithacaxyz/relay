@@ -17,7 +17,7 @@ use crate::{
         DelegationProxy::DelegationProxyInstance,
         ENTRYPOINT_NO_ERROR,
         EntryPoint::UserOpExecuted,
-        FeeTokens, Key, KeyHash, KeyHashWithID, Op, PreOp,
+        FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, Op, PreOp,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext, RelaySettings,
             ValidSignatureProof,
@@ -218,7 +218,7 @@ impl Relay {
 
         // mocking key storage for the eoa, and the balance for the mock signer
         let overrides = StateOverridesBuilder::with_capacity(2)
-            // simulateExecute requires it, so the function can only be called under a testing
+            // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.inner.simulator, AccountOverride::default().with_balance(U256::MAX))
             .append(
@@ -268,7 +268,8 @@ impl Relay {
         let payment_per_gas =
             (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
-        // Add some leeway, since the actual simulation may no be enough. For example, signature validation varies significantly.
+        // Add some leeway, since the actual simulation may no be enough. For example, signature
+        // validation varies significantly.
         let mut combined_gas = U256::from(self.inner.quote_config.user_op_buffer());
 
         // for 7702 designations there is an additional gas charge
@@ -320,18 +321,21 @@ impl Relay {
         .into();
 
         // we estimate gas and fees
-        let (asset_diff, mut gas_estimate) = entrypoint
+        let (asset_diff, sim_result) = entrypoint
             .simulate_execute(
                 self.inner.simulator,
                 &op,
+                account_key.keyType,
                 payment_per_gas,
                 self.inner.asset_info.clone(),
             )
             .await?;
 
-        // Add some leeway, since the actual simulation may no be enough.
         // todo: re-evaluate if this is still necessary
-        gas_estimate.tx += self.inner.quote_config.tx_buffer();
+        let gas_estimate = GasEstimate {
+            tx: sim_result.gCombined.to::<u64>() + self.inner.quote_config.tx_buffer(),
+            op: sim_result.gCombined.to(),
+        };
 
         debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
 

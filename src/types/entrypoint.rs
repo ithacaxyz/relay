@@ -15,7 +15,7 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::Simulator::SimulatorInstance;
+use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
     error::{RelayError, UserOpError},
@@ -55,18 +55,6 @@ sol! {
 
         /// @dev The order has already been filled.
         error OrderAlreadyFilled();
-
-        /// For returning the gas used and the error from a simulation.
-        ///
-        /// - `gCombined` is the recommendation for `gCombined` in the UserOp.
-        /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
-        ///
-        /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        struct SimulationResult {
-            uint256 gUsed;
-            uint256 gCombined;
-        }
-
 
         /// The simulate execute run has failed. Try passing in more gas to the simulation.
         error SimulateExecuteFailed();
@@ -131,9 +119,6 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
-        /// Simulates an execution and reverts with the amount of gas used, and the error selector.
-        function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
-
         /// Return current nonce with sequence key.
         function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256);
 
@@ -183,22 +168,28 @@ impl<P: Provider> Entry<P> {
         self
     }
 
-    /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
+    /// Call `Simulator.simulateV1Logs` with the provided [`UserOp`].
     ///
-    /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
+    /// `simulator` contract address should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
         simulator: Address,
         op: &UserOp,
+        key_type: KeyType,
         payment_per_gas: U256,
         asset_info_handle: AssetInfoServiceHandle,
-    ) -> Result<(AssetDiffs, GasEstimate), RelayError> {
+    ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
+        // Allows to account for gas variation in P256 sig verification.
+        let gas_validation_offset =
+            if key_type.is_secp256k1() { U256::ZERO } else { U256::from(10_000) };
+
         let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
             .simulateV1Logs(
                 *self.address(),
                 true,
                 payment_per_gas,
-                U256::from(15_000),
+                U256::from(11_000),
+                gas_validation_offset,
                 op.abi_encode().into(),
             )
             .into_transaction_request();
@@ -225,12 +216,7 @@ impl<P: Provider> Entry<P> {
             return Err(UserOpError::op_revert(result.return_data).into());
         }
 
-        let Ok(gas_estimate) =
-            EntryPoint::SimulationResult::abi_decode(&result.return_data).map(|gas| GasEstimate {
-                tx: gas.gCombined.to::<u64>() + 25_000,
-                op: gas.gCombined.to(),
-            })
-        else {
+        let Ok(simulation_result) = SimulationResult::abi_decode(&result.return_data) else {
             return Err(TransportErrorKind::custom_str(&format!(
                 "could not decode op simulation return data: {}",
                 result.return_data
@@ -242,7 +228,7 @@ impl<P: Provider> Entry<P> {
             .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
             .await?;
 
-        Ok((asset_diffs, gas_estimate))
+        Ok((asset_diffs, simulation_result))
     }
 
     /// Call `EntryPoint.execute` with the provided [`UserOp`].

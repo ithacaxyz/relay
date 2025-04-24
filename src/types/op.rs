@@ -73,13 +73,6 @@ sol! {
         uint256 totalPaymentMaxAmount;
         /// The combined gas limit for payment, verification, and calling the EOA.
         uint256 combinedGas;
-        /// Optional data for `initPREP` on the delegation.
-        /// This is encoded using ERC7821 style batch execution encoding.
-        /// (ERC7821 is a variant of ERC7579).
-        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
-        /// where `calls` is of type `Call[]`,
-        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
-        bytes initData;
         /// Optional array of encoded UserOps that will be verified and executed
         /// after PREP (if any) and before the validation of the overall UserOp.
         /// A PreOp will NOT have its gas limit or payment applied.
@@ -95,6 +88,13 @@ sol! {
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
+        /// Optional data for `initPREP` on the delegation.
+        /// This is encoded using ERC7821 style batch execution encoding.
+        /// (ERC7821 is a variant of ERC7579).
+        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
+        /// where `calls` is of type `Call[]`,
+        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
+        bytes initData;
         /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
         uint256 prePaymentAmount;
         /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
