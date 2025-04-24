@@ -102,6 +102,10 @@ sol! {
         /// Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
+        /// Optional. If non-zero, the EOA must use `supportedDelegationImplementation`.
+        /// Otherwise, if left as `address(0)`, any EOA implementation will be supported.
+        /// This field is NOT included in the EIP712 signature.
+        address supportedDelegationImplementation;
     }
 
 
