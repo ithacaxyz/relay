@@ -189,7 +189,6 @@ impl<P: Provider> Entry<P> {
     pub async fn simulate_execute(
         &self,
         simulator: Address,
-        from: Address,
         op: &UserOp,
         payment_per_gas: U256,
         asset_info_handle: AssetInfoServiceHandle,
@@ -199,7 +198,7 @@ impl<P: Provider> Entry<P> {
             .simulateV1Logs(
                 *self.address(),
                 true,
-                dbg!(payment_per_gas),
+                payment_per_gas,
                 U256::from(15_000),
                 op.abi_encode().into(),
             )
@@ -212,7 +211,7 @@ impl<P: Provider> Entry<P> {
                 &SimulatePayload::default()
                     .extend(
                         SimBlock::default()
-                            .call(simulate_call.from(from))
+                            .call(simulate_call)
                             .with_state_overrides(self.overrides.clone()),
                     )
                     .with_trace_transfers(),

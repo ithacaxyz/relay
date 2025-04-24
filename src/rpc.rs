@@ -212,7 +212,6 @@ impl Relay {
         };
 
         // create key
-        let mock_signer_address = self.inner.quote_signer.address();
         let mock_key = KeyWith712Signer::random_admin(account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
@@ -221,7 +220,7 @@ impl Relay {
         let overrides = StateOverridesBuilder::with_capacity(2)
             // simulateExecute requires it, so the function can only be called under a testing
             // environment
-            .append(mock_signer_address, AccountOverride::default().with_balance(U256::MAX))
+            .append(self.inner.simulator, AccountOverride::default().with_balance(U256::MAX))
             .append(
                 request.op.eoa,
                 AccountOverride::default()
@@ -232,12 +231,6 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
-            // todo
-            // .append(
-            //     simulator,
-            //     AccountOverride::default()
-            //         .with_balance(AccountOverride::default().with_balance(U256::MAX))
-            // )
             .build();
 
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
@@ -275,6 +268,18 @@ impl Relay {
         let payment_per_gas =
             (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
+        // Add some leeway, since the actual simulation may no be enough. For example, signature validation varies significantly.
+        let mut combined_gas = U256::from(self.inner.quote_config.user_op_buffer());
+
+        // for 7702 designations there is an additional gas charge
+        //
+        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
+        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
+        // need to charge for the account being presumed empty.
+        if authorization_address.is_some() {
+            combined_gas += U256::from(PER_AUTH_BASE_COST) + U256::from(PER_EMPTY_ACCOUNT_COST);
+        }
+
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
@@ -282,9 +287,7 @@ impl Relay {
             nonce,
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
-            // we intentionally do not use the maximum amount of gas since the contracts add a small
-            // overhead when checking if there is sufficient gas for the op
-            combinedGas: U256::from(100_000_000),
+            combinedGas: combined_gas,
             initData: request.op.init_data.unwrap_or_default(),
             encodedPreOps: request
                 .op
@@ -320,26 +323,14 @@ impl Relay {
         let (asset_diff, mut gas_estimate) = entrypoint
             .simulate_execute(
                 self.inner.simulator,
-                mock_signer_address,
                 &op,
                 payment_per_gas,
                 self.inner.asset_info.clone(),
             )
             .await?;
 
-        // for 7702 designations there is an additional gas charge
-        //
-        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-        // need to charge for the account being presumed empty.
-        if authorization_address.is_some() {
-            gas_estimate.tx += PER_AUTH_BASE_COST + PER_EMPTY_ACCOUNT_COST;
-        }
-
         // Add some leeway, since the actual simulation may no be enough.
         // todo: re-evaluate if this is still necessary
-        gas_estimate.op += self.inner.quote_config.user_op_buffer();
-        gas_estimate.tx += self.inner.quote_config.user_op_buffer();
         gas_estimate.tx += self.inner.quote_config.tx_buffer();
 
         debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");

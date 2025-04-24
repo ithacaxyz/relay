@@ -490,7 +490,7 @@ impl Signer {
         let try_send = async {
             // sign transaction
             let signed = self.sign_transaction(tx.build(nonce, fees)).await?;
-            dbg!(&signed);
+
             // write pending transaction to storage first to avoid race condition
             let tx = PendingTransaction {
                 tx,
