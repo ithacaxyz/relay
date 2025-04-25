@@ -42,10 +42,10 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Level, Span, debug, error, instrument, span, trace, warn};
 use tracing_futures::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -734,23 +734,23 @@ impl Signer {
             warn!("signer is paused, but there are pending transactions loaded on startup");
         }
 
-        let pending: FuturesUnordered<PendingTransactionFuture> = FuturesUnordered::new();
+        let mut pending: JoinSet<_> = JoinSet::new();
 
         for nonce in latest_nonce..*self.nonce.lock().await {
             if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
                 warn!(%nonce, "nonce gap on startup");
                 let this = self.clone();
-                pending.push(Box::pin(async move {
+                pending.spawn(async move {
                     this.close_nonce_gap(nonce, None).await;
                     Ok(())
-                }));
+                });
             }
         }
 
         // Watch pending transactions that were loaded from storage
         for tx in loaded_transactions {
             let signer = self.clone();
-            pending.push(Box::pin(async move { signer.watch_transaction(tx).await }));
+            pending.spawn(async move { signer.watch_transaction(tx).await });
         }
 
         // Create a never ending task that checks if on-chain nonce has diverged from local
@@ -789,7 +789,7 @@ impl Signer {
             })
         };
 
-        Ok(SignerTask { signer: self, pending, nonce_check, balance_check, waker: None })
+        Ok(SignerTask { signer: self, pending, nonce_check, balance_check })
     }
 }
 
@@ -810,8 +810,6 @@ impl Display for SignerId {
     }
 }
 
-type PendingTransactionFuture = Pin<Box<dyn Future<Output = Result<(), SignerError>> + Send>>;
-
 /// A never ending future operating on [`Signer`] and handling transactions sending.
 #[derive(derive_more::Debug)]
 pub struct SignerTask {
@@ -819,24 +817,22 @@ pub struct SignerTask {
     signer: Signer,
     /// All currently pending tasks. Those include pending transactions and nonce gap closing
     /// tasks.
-    pending: FuturesUnordered<PendingTransactionFuture>,
+    pending: JoinSet<Result<(), SignerError>>,
     /// A never ending task that checks if on-chain nonce has diverged from local nonce.
     #[debug(skip)]
     nonce_check: Pin<Box<dyn Future<Output = ()> + Send>>,
     /// A never ending task that checks signer balance.
     #[debug(skip)]
     balance_check: Pin<Box<dyn Future<Output = ()> + Send>>,
-    /// Waker used to wake the signer task when new transactions are pushed.
-    waker: Option<Waker>,
 }
 
 impl SignerTask {
     /// Pushes a new traаnsaction to the signer.
     ///
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.
-    pub fn push_transaction(&self, tx: RelayTransaction) {
+    pub fn push_transaction(&mut self, tx: RelayTransaction) {
         let signer = self.signer.clone();
-        self.pending.push(Box::pin(async move {
+        self.pending.spawn(async move {
             let span = span!(
                 Level::INFO,
                 "process tx",
@@ -850,10 +846,7 @@ impl SignerTask {
             span.add_link(tx.trace_context.span().span_context().clone());
 
             signer.send_and_watch_transaction(tx).instrument(span).await
-        }));
-        if let Some(waker) = &self.waker {
-            waker.wake_by_ref();
-        }
+        });
     }
 
     /// Returns the number of pending transactions currently being processed by the signer.
@@ -883,11 +876,13 @@ impl Future for SignerTask {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let instant = Instant::now();
 
-        let SignerTask { signer, pending, nonce_check, balance_check, waker } = self.get_mut();
+        let SignerTask { signer, pending, nonce_check, balance_check } = self.get_mut();
 
-        *waker = Some(cx.waker().clone());
-
-        while let Poll::Ready(Some(_)) = pending.poll_next_unpin(cx) {}
+        while let Poll::Ready(Some(result)) = pending.poll_join_next(cx) {
+            if !matches!(result, Ok(Ok(_))) {
+                error!("signer task failed: {:?}", result);
+            }
+        }
         let _ = nonce_check.poll_unpin(cx);
         let _ = balance_check.poll_unpin(cx);
 
