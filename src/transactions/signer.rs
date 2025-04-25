@@ -33,7 +33,7 @@ use alloy::{
 };
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
-use futures_util::{FutureExt, StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
+use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
 use opentelemetry::trace::{SpanKind, TraceContextExt};
 use std::{
     fmt::Display,
@@ -734,7 +734,8 @@ impl Signer {
             warn!("signer is paused, but there are pending transactions loaded on startup");
         }
 
-        let mut pending: JoinSet<_> = JoinSet::new();
+        let mut pending = JoinSet::new();
+        let mut maintenance = JoinSet::new();
 
         for nonce in latest_nonce..*self.nonce.lock().await {
             if !loaded_transactions.iter().any(|tx| tx.nonce() == nonce) {
@@ -755,41 +756,37 @@ impl Signer {
 
         // Create a never ending task that checks if on-chain nonce has diverged from local
         // nonce
-        let nonce_check = {
-            let this = self.clone();
-            Box::pin(async move {
-                loop {
-                    tokio::time::sleep(this.config.nonce_check_interval).await;
+        let this = self.clone();
+        maintenance.spawn(async move {
+            loop {
+                tokio::time::sleep(this.config.nonce_check_interval).await;
 
-                    if let Ok(nonce) =
-                        this.provider.get_transaction_count(this.address()).pending().await
-                    {
-                        this.metrics.nonce.absolute(nonce);
-                        let mut lock = this.nonce.lock().await;
-                        if nonce > *lock {
-                            warn!(%nonce, "on-chain nonce is ahead of local");
-                            *lock = nonce;
-                        }
+                if let Ok(nonce) =
+                    this.provider.get_transaction_count(this.address()).pending().await
+                {
+                    this.metrics.nonce.absolute(nonce);
+                    let mut lock = this.nonce.lock().await;
+                    if nonce > *lock {
+                        warn!(%nonce, "on-chain nonce is ahead of local");
+                        *lock = nonce;
                     }
                 }
-            })
-        };
+            }
+        });
 
         // create a never ending task that checks signer balance.
-        let balance_check = {
-            let this = self.clone();
-            Box::pin(async move {
-                loop {
-                    tokio::time::sleep(this.config.balance_check_interval).await;
+        let this = self.clone();
+        maintenance.spawn(async move {
+            loop {
+                tokio::time::sleep(this.config.balance_check_interval).await;
 
-                    if let Err(err) = this.record_and_check_balance().await {
-                        warn!(%err, "failed to check signer balance");
-                    }
+                if let Err(err) = this.record_and_check_balance().await {
+                    warn!(%err, "failed to check signer balance");
                 }
-            })
-        };
+            }
+        });
 
-        Ok(SignerTask { signer: self, pending, nonce_check, balance_check })
+        Ok(SignerTask { signer: self, pending, _maintenance: maintenance })
     }
 }
 
@@ -818,12 +815,14 @@ pub struct SignerTask {
     /// All currently pending tasks. Those include pending transactions and nonce gap closing
     /// tasks.
     pending: JoinSet<Result<(), SignerError>>,
-    /// A never ending task that checks if on-chain nonce has diverged from local nonce.
-    #[debug(skip)]
-    nonce_check: Pin<Box<dyn Future<Output = ()> + Send>>,
-    /// A never ending task that checks signer balance.
-    #[debug(skip)]
-    balance_check: Pin<Box<dyn Future<Output = ()> + Send>>,
+    /// All running maintenance tasks. Those are never ending futures that are performing various
+    /// checks and potentially modify the signer state.
+    ///
+    /// Right now those include nonce gaps detection and balance checks.
+    ///
+    /// We don't poll this [`JoinSet`] as it will never yield anything and simply keep it to make
+    /// sure the tasks are aborted once [`SignerTask`] is dropped.
+    _maintenance: JoinSet<()>,
 }
 
 impl SignerTask {
@@ -876,15 +875,13 @@ impl Future for SignerTask {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let instant = Instant::now();
 
-        let SignerTask { signer, pending, nonce_check, balance_check } = self.get_mut();
+        let SignerTask { signer, pending, _maintenance: _ } = self.get_mut();
 
         while let Poll::Ready(Some(result)) = pending.poll_join_next(cx) {
             if !matches!(result, Ok(Ok(_))) {
                 error!("signer task failed: {:?}", result);
             }
         }
-        let _ = nonce_check.poll_unpin(cx);
-        let _ = balance_check.poll_unpin(cx);
 
         signer.metrics.poll_duration.record(instant.elapsed().as_nanos() as f64);
 
