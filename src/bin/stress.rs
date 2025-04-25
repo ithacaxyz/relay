@@ -153,7 +153,7 @@ struct StressTester {
 impl StressTester {
     async fn new(args: Args) -> eyre::Result<Self> {
         let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-        let signer = DynSigner::load(&args.private_key, None).await?;
+        let signer = DynSigner::from_signing_key(&args.private_key).await?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .filler(NonceFiller::new(CachedNonceManager::default()))

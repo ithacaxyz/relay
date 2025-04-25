@@ -67,9 +67,10 @@ async fn invalid_auth_nonce() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let dummy_signer =
-        DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
-            .await?;
+    let dummy_signer = DynSigner::from_signing_key(
+        "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    )
+    .await?;
 
     run_e2e_upgraded(|_env| {
         vec![TxContext {

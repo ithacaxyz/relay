@@ -1,12 +1,11 @@
 //! Multi-signer abstraction.
 //!
-//! A signer abstracted over multiple underlying signers, e.g. local or AWS.
+//! A signer abstracted over multiple underlying signers.
 use super::Eip712PayLoadSigner;
 use alloy::{
     network::{FullSigner, TxSigner},
     primitives::{Address, B256, Bytes, Signature},
     signers::{
-        aws::AwsSigner,
         k256::ecdsa::SigningKey,
         local::{
             PrivateKeySigner,
@@ -14,10 +13,9 @@ use alloy::{
         },
     },
 };
-use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
-/// Abstraction over local signer or AWS.
+/// Abstraction over local signer.
 #[derive(Clone)]
 pub struct DynSigner(pub Arc<dyn FullSigner<Signature> + Send + Sync>);
 
@@ -43,15 +41,9 @@ impl DynSigner {
             .collect()
     }
 
-    /// Load a private key or AWS signer from environment variables.
-    pub async fn load(key: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
-        if let Ok(wallet) = PrivateKeySigner::from_str(key) {
-            return Ok(Self(Arc::new(wallet)));
-        }
-
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = aws_sdk_kms::Client::new(&config);
-        Ok(Self(Arc::new(AwsSigner::new(client, key.to_string(), chain_id).await?)))
+    /// Load a private key.
+    pub async fn from_signing_key(key: &str) -> eyre::Result<Self> {
+        Ok(Self(Arc::new(PrivateKeySigner::from_str(key)?)))
     }
 
     /// Returns the signer's Ethereum Address.

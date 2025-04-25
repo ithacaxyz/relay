@@ -29,7 +29,6 @@ alloy = { version = "0.15", features = [
     "rpc-types",
     "serde",
     "signers",
-    "signer-aws",
     "signer-local",
     "sol-types",
     "transports",
@@ -40,8 +39,6 @@ alloy = { version = "0.15", features = [
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
-aws-config = "1.6"
-aws-sdk-kms = { version = "1", default-features = false }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = "0.4"
