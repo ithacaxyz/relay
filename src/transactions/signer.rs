@@ -39,10 +39,9 @@ use std::{
     fmt::Display,
     pin::Pin,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, Ordering}, Arc
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::JoinSet};
@@ -786,7 +785,7 @@ impl Signer {
             }
         });
 
-        Ok(SignerTask { signer: self, pending, _maintenance: maintenance })
+        Ok(SignerTask { signer: self, pending, _maintenance: maintenance, waker: None })
     }
 }
 
@@ -823,6 +822,8 @@ pub struct SignerTask {
     /// We don't poll this [`JoinSet`] as it will never yield anything and simply keep it to make
     /// sure the tasks are aborted once [`SignerTask`] is dropped.
     _maintenance: JoinSet<()>,
+    /// Waker used to wake the signer task when new transactions are pushed.
+    waker: Option<Waker>,
 }
 
 impl SignerTask {
@@ -846,6 +847,9 @@ impl SignerTask {
 
             signer.send_and_watch_transaction(tx).instrument(span).await
         });
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref();
+        }
     }
 
     /// Returns the number of pending transactions currently being processed by the signer.
@@ -875,7 +879,9 @@ impl Future for SignerTask {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let instant = Instant::now();
 
-        let SignerTask { signer, pending, _maintenance: _ } = self.get_mut();
+        let SignerTask { signer, pending, _maintenance: _, waker } = self.get_mut();
+
+        *waker = Some(cx.waker().clone());
 
         while let Poll::Ready(Some(result)) = pending.poll_join_next(cx) {
             if !matches!(result, Ok(Ok(_))) {
