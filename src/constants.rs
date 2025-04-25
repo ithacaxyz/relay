@@ -27,6 +27,13 @@ pub const BASE_MAINNET_SEQUENCER_URL: &str = "https://mainnet-sequencer.base.org
 /// are disabled.
 pub const BASE_SEPOLIA_SEQUENCER_URL: &str = "https://sepolia-sequencer.base.org";
 
+/// The Base Sepolia URL for flashblocks: <https://docs.base.org/chain/flashblocks#rpc-api>
+///
+/// Supports:
+///   - `eth_getTransactionReceipt`: returns (pre-)confirmed receipt.
+///   - `eth_getBlockByNumber`: returns the latest flashblock.
+pub const BASE_SEPOLIA_PRECONF_HTTP_URL: &str = "https://sepolia-preconf.base.org";
+
 /// The public Base Mainnet RPC URL.
 ///
 /// This endpoint is rate-limited.
