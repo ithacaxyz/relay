@@ -39,7 +39,8 @@ use std::{
     fmt::Display,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering}, Arc
+        Arc,
+        atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
