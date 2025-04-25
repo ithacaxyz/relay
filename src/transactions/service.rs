@@ -235,19 +235,19 @@ impl TransactionService {
 
     /// Picks the best signer for dispatching a transaction. Signer with the highest capacity is
     /// returned.
-    fn best_signer(&self) -> Option<&SignerTask> {
+    fn best_signer(&mut self) -> Option<&mut SignerTask> {
         let mut best_signer = None;
         let mut best_capacity = 0;
         let mut total_pending = 0;
 
-        for signer in self.signers.iter() {
+        for signer in self.signers.iter_mut() {
+            total_pending += signer.pending();
+
             let capacity = signer.capacity();
             if capacity > best_capacity {
                 best_signer = Some(signer);
                 best_capacity = capacity;
             }
-
-            total_pending += signer.pending();
         }
 
         best_signer.filter(|_| total_pending < self.config.max_pending_transactions)
