@@ -5,7 +5,14 @@ use super::Eip712PayLoadSigner;
 use alloy::{
     network::{FullSigner, TxSigner},
     primitives::{Address, B256, Bytes, Signature},
-    signers::{aws::AwsSigner, local::PrivateKeySigner},
+    signers::{
+        aws::AwsSigner,
+        k256::ecdsa::SigningKey,
+        local::{
+            PrivateKeySigner,
+            coins_bip39::{English, Mnemonic},
+        },
+    },
 };
 use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
@@ -21,6 +28,21 @@ impl fmt::Debug for DynSigner {
 }
 
 impl DynSigner {
+    /// Derives given number of signers from a mnemonic.
+    pub fn derive_from_mnemonic(
+        mnemonic: Mnemonic<English>,
+        num: usize,
+    ) -> eyre::Result<Vec<Self>> {
+        (0..num)
+            .map(|idx| {
+                let path = format!("m/44'/60'/0'/0/{idx}");
+                let key = mnemonic.derive_key(path.as_str(), None)?;
+                let key: &SigningKey = key.as_ref();
+                Ok(Self(Arc::new(PrivateKeySigner::from_signing_key(key.clone()))))
+            })
+            .collect()
+    }
+
     /// Load a private key or AWS signer from environment variables.
     pub async fn load(key: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
         if let Ok(wallet) = PrivateKeySigner::from_str(key) {

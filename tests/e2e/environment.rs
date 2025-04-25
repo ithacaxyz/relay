@@ -50,7 +50,6 @@ const MULTICALL3_BYTECODE: Bytes = bytes!(
 pub struct EnvironmentConfig {
     pub is_prep: bool,
     pub block_time: Option<f64>,
-    pub signers: Vec<B256>,
     pub transaction_service_config: TransactionServiceConfig,
     /// The default block number to use for forking.
     ///
@@ -63,8 +62,10 @@ impl Default for EnvironmentConfig {
         Self {
             is_prep: false,
             block_time: None,
-            signers: vec![RELAY_PRIVATE_KEY],
-            transaction_service_config: Default::default(),
+            transaction_service_config: TransactionServiceConfig {
+                num_signers: 1,
+                ..Default::default()
+            },
             fork_block_number: None,
         }
     }
@@ -191,6 +192,14 @@ impl Environment {
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .connect_client(client);
 
+        // fund relay signers
+        for signer in DynSigner::derive_from_mnemonic(
+            SIGNERS_MNEMONIC.parse()?,
+            config.transaction_service_config.num_signers,
+        )? {
+            provider.anvil_set_balance(signer.address(), U256::from(1000e18)).await?;
+        }
+
         // Get or deploy mock contracts.
         let (delegation, entrypoint, account_registry, erc20s) =
             get_or_deploy_contracts(&provider).await?;
@@ -208,29 +217,14 @@ impl Environment {
             )
         };
 
+        // fund EOA
         if !eoa.is_prep() {
             // mints erc20 and fee_token
             mint_erc20s(&erc20s[..2], &[eoa.address()], &provider).await?;
-        }
 
-        // Ensure our registry has our tokens
-        let chain_id = provider.get_chain_id().await?;
-        let mut registry = CoinRegistry::default();
-        registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
-
-        // Fund relay signers and EOA
-        let relay_signers =
-            config.signers.iter().map(|s| PrivateKeySigner::from_bytes(s).unwrap().address());
-        let fundable_addresses = if eoa.is_prep() {
-            relay_signers.collect::<Vec<_>>()
-        } else {
-            relay_signers.chain(iter::once(eoa.address())).collect()
-        };
-
-        for address in fundable_addresses {
             provider
                 .send_transaction(TransactionRequest {
-                    to: Some(TxKind::Call(address)),
+                    to: Some(TxKind::Call(eoa.address())),
                     value: Some(U256::from(1000e18)),
                     ..Default::default()
                 })
@@ -238,6 +232,11 @@ impl Environment {
                 .get_receipt()
                 .await?;
         }
+
+        // Ensure our registry has our tokens
+        let chain_id = provider.get_chain_id().await?;
+        let mut registry = CoinRegistry::default();
+        registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
             let opts = PgConnectOptions::from_str(&db_url)?;
@@ -260,10 +259,8 @@ impl Environment {
                 .with_endpoints(&[endpoint.clone()])
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
-                .with_quote_key(config.signers[0].clone().to_string())
-                .with_transaction_keys(
-                    &config.signers.into_iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                )
+                .with_quote_key(RELAY_PRIVATE_KEY.to_string())
+                .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_entrypoint(entrypoint)
