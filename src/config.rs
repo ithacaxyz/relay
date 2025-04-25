@@ -114,8 +114,6 @@ pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signers_mnemonic: Mnemonic<English>,
-    /// The secret key to sign fee quotes with.
-    pub quote_key: String,
 }
 
 impl Default for SecretsConfig {
@@ -125,7 +123,6 @@ impl Default for SecretsConfig {
                 "test test test test test test test test test test test junk",
             )
             .unwrap(),
-            quote_key: String::new(),
         }
     }
 }
@@ -264,12 +261,6 @@ impl RelayConfig {
     /// Sets the fee recipient address.
     pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
         self.chain.fee_recipient = fee_recipient;
-        self
-    }
-
-    /// Sets the secret key used to sign fee quotes.
-    pub fn with_quote_key(mut self, quote_secret_key: String) -> Self {
-        self.secrets.quote_key = quote_secret_key;
         self
     }
 
