@@ -47,7 +47,7 @@ eyre = "0.6.12"
 futures-util = "0.3"
 http = "1"
 http-body = "1"
-jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
+jsonrpsee = { version = "0.25", features = ["server", "client", "macros"] }
 metrics = "0.24.2"
 metrics-exporter-prometheus = "0.17"
 opentelemetry = { version = "0.29.1", features = ["trace"] }
