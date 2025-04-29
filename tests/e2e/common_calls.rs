@@ -3,7 +3,7 @@ use alloy::{
     primitives::{Address, B256, U256, bytes},
     sol_types::SolCall,
 };
-use relay::types::{Call, Delegation::SpendPeriod, Key};
+use relay::types::{Call, Delegation::SpendPeriod, IERC721, Key};
 
 /// Native transfer value call.
 pub fn transfer_native(recipient: Address, amount: U256) -> Call {
@@ -16,6 +16,15 @@ pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
         to: erc20,
         value: U256::ZERO,
         data: MockErc20::transferCall { recipient, amount }.abi_encode().into(),
+    }
+}
+
+/// ERC20 transfer call.
+pub fn transfer_721(erc20: Address, from: Address, to: Address, id: U256) -> Call {
+    Call {
+        to: erc20,
+        value: U256::ZERO,
+        data: IERC721::safeTransferFromCall { from, to, id }.abi_encode().into(),
     }
 }
 

@@ -4,6 +4,7 @@ use crate::{
     types::{
         Asset, AssetDiff, AssetDiffs, AssetWithInfo,
         IERC20::{self, IERC20Events},
+        IERC721::IERC721Events,
     },
 };
 use alloy::{
@@ -18,7 +19,7 @@ use alloy::{
         Log, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
     },
-    sol_types::{SolCall, SolEvent, SolEventInterface},
+    sol_types::{SolCall, SolEventInterface},
 };
 use schnellru::{ByLength, LruMap};
 use std::{
@@ -110,89 +111,106 @@ impl AssetInfoServiceHandle {
 
     /// Calculates the net asset difference for each account and asset based on logs.
     ///
-    /// This function processes logs by filtering for [`IERC20::Transfer`] events and accumulating
-    /// transfers as tuples of (credits, debits) for each account per asset.
+    /// ERC20: We first accumulate for each EOA and asset a tuple of credits and debits, only
+    /// calculating its final result at the end.
     ///
-    /// After accumulating, each (credits, debits) tuple member is converted into a [I512] and
-    /// finally obtain the net flow of `credits - debits`.
+    /// ERC721: a positive [`AssetDiff`] value represents an inflow of the token ID. A negative
+    /// value represents an outflow.
     pub async fn calculate_asset_diff<P: Provider>(
         &self,
         logs: impl Iterator<Item = Log>,
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
-        let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
+        let mut seen_assets: HashSet<Asset> = HashSet::default();
+        let mut fungible_diffs: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
+        let mut non_fungible_diffs: HashSet<(Address, Asset, I512)> = HashSet::default();
+        let mut asset_diffs: HashMap<Address, Vec<AssetDiff>> = HashMap::default();
 
-        let mut assets = HashSet::new();
         for log in logs {
-            if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
-                continue;
-            }
-
-            let Some((asset, transfer)) =
+            // ERC-20
+            if let Some((asset, transfer)) =
                 IERC20Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
-                    IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
+                    IERC20Events::Transfer(t) => (Asset::from(log.inner.address), t),
                 })
-            else {
-                continue;
-            };
+            {
+                seen_assets.insert(asset);
 
-            // Need to collect all assets so we can fetch their metadata
-            assets.insert(asset);
+                // credits
+                fungible_diffs
+                    .entry(transfer.to)
+                    .or_default()
+                    .entry(asset)
+                    .and_modify(|(c, _)| *c += transfer.amount)
+                    .or_insert((transfer.amount, U256::ZERO));
+                // debits
+                fungible_diffs
+                    .entry(transfer.from)
+                    .or_default()
+                    .entry(asset)
+                    .and_modify(|(_, d)| *d += transfer.amount)
+                    .or_insert((U256::ZERO, transfer.amount));
+            }
+            // ERC-721
+            else if let Some((asset, transfer)) =
+                IERC721Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
+                    IERC721Events::Transfer(t) => (Asset::from(log.inner.address), t),
+                })
+            {
+                seen_assets.insert(asset);
 
-            // For the receiver, add transfer.amount to credits.
-            accounts
-                .entry(transfer.to)
-                .or_default()
-                .entry(asset)
-                .and_modify(|(credit, _)| *credit += transfer.amount)
-                .or_insert((transfer.amount, U256::ZERO));
+                let id = I512::try_from_le_slice(transfer.amount.as_le_slice())
+                    .expect("should convert from u256");
 
-            // For the sender, add transfer.amount to debits.
-            accounts
-                .entry(transfer.from)
-                .or_default()
-                .entry(asset)
-                .and_modify(|(_, debit)| *debit += transfer.amount)
-                .or_insert((U256::ZERO, transfer.amount));
+                for &(eoa, change) in &[(transfer.from, -id), (transfer.to, id)] {
+                    // if there's an opposite change for the given id, remove it. eg [-id,+id]
+                    if !non_fungible_diffs.remove(&(eoa, asset, -change)) {
+                        // no opposite found, so insert it
+                        non_fungible_diffs.insert((eoa, asset, change));
+                    }
+                }
+            }
         }
 
-        let assets_map = self.get_asset_info_list(&provider, assets.into_iter().collect()).await?;
+        // fetch assets metadata
+        let metadata =
+            self.get_asset_info_list(provider, seen_assets.into_iter().collect()).await?;
 
-        // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
-        Ok(AssetDiffs(
-            accounts
-                .into_iter()
-                .map(|(address, assets)| {
-                    (
-                        address,
-                        assets
-                            .into_iter()
-                            .map(|(asset, (credits, debits))| {
-                                let value = I512::try_from_le_slice(credits.as_le_slice())
-                                    .expect("should convert from u256")
-                                    - I512::try_from_le_slice(debits.as_le_slice())
-                                        .expect("should convert from u256");
+        // calculate fungible diffs from credit & debit entries
+        for (owner, asset_map) in fungible_diffs {
+            for (asset, (credit, debit)) in asset_map {
+                let net = I512::try_from_le_slice(credit.as_le_slice())
+                    .expect("should convert from u256")
+                    - I512::try_from_le_slice(debit.as_le_slice())
+                        .expect("should convert from u256");
+                if net.is_zero() {
+                    continue;
+                }
+                let info = &metadata[&asset];
+                asset_diffs.entry(owner).or_default().push(AssetDiff {
+                    address: (!asset.is_native()).then(|| asset.address()),
+                    name: info.name.clone(),
+                    symbol: info.symbol.clone(),
+                    decimals: info.decimals,
+                    value: net,
+                });
+            }
+        }
 
-                                // `get_asset_info_list` ensures we have the asset
-                                let AssetWithInfo { name, symbol, decimals, .. } =
-                                    assets_map.get(&asset).cloned().expect("should have");
+        // push non fungible entries
+        for (owner, asset, id) in non_fungible_diffs {
+            let info = &metadata[&asset];
+            asset_diffs.entry(owner).or_default().push(AssetDiff {
+                address: Some(asset.address()),
+                name: info.name.clone(),
+                symbol: info.symbol.clone(),
+                decimals: info.decimals,
+                value: id,
+            });
+        }
 
-                                AssetDiff {
-                                    address: (!asset.is_native()).then(|| asset.address()),
-                                    name,
-                                    symbol,
-                                    decimals,
-                                    value,
-                                }
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ))
+        Ok(AssetDiffs(asset_diffs.into_iter().collect()))
     }
 }
-
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
 ///
 /// TODO: apart from onchain, there should be a more trusted source that can be passed when

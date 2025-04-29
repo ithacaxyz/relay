@@ -15,3 +15,13 @@ sol! {
         function allowance(address owner, address spender) external view returns (uint256);
     }
 }
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    interface IERC721 {
+        event Transfer(address indexed from, address indexed to, uint256 indexed amount);
+
+        function safeTransferFrom(address from, address to, uint256 id);
+    }
+}

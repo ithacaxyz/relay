@@ -329,3 +329,10 @@ alloy::sol! {
         function transfer(address recipient, uint256 amount);
     }
 }
+
+alloy::sol! {
+    #[sol(rpc)]
+    interface MockErc721 {
+        function mint() external;
+    }
+}
