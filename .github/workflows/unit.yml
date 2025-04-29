@@ -58,15 +58,15 @@ jobs:
           cache-on-failure: true
       - uses: taiki-e/install-action@nextest
 
-      - name: Set odyssey environment
+      - name: Set fork environment
         # when updating deployed address, also update TEST_FORK_BLOCK_NUMBER_PINNED
         if: ${{ matrix.variant == 'base_sepolia' }}
         run: |
           echo "TEST_FORK_URL=https://base-sepolia.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_FORK_BLOCK_NUMBER_PINNED=25076378" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0x53b6cc10588eda83ece28929b46ff4245200c03e" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0xa6d574edb4f8c08a871f60ddc815bec4dd29f350" >> $GITHUB_ENV
-          echo "TEST_ACCOUNT_REGISTRY=0xd0b0c8cede567e179fc11acfef6c32c54479d82d" >> $GITHUB_ENV
+          echo "TEST_FORK_BLOCK_NUMBER_PINNED=25077241" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0x84a9c32db444bb831d1f425729ded15e65970511" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x9dcb3249b6beb3146f87b0317e7a00ac83d76a91" >> $GITHUB_ENV
+          echo "TEST_ACCOUNT_REGISTRY=0x8694bcd337f2e14af6d2f5491d3d6f20c798fb96" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}
