@@ -9,11 +9,16 @@ use tracing::{Level, span};
 use tracing_futures::Instrument;
 pub use transport::*;
 
-use futures_util::future::BoxFuture;
-use jsonrpsee::{MethodResponse, server::middleware::rpc::RpcServiceT, types::Request};
+use jsonrpsee::{
+    MethodResponse,
+    core::middleware::Batch,
+    server::middleware::rpc::RpcServiceT,
+    types::{Notification, Request},
+};
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::{
+    borrow::Cow,
     net::SocketAddr,
     sync::Mutex,
     time::{Duration, Instant},
@@ -32,16 +37,18 @@ impl<S> RpcMetricsService<S> {
     }
 }
 
-impl<'a, S> RpcServiceT<'a> for RpcMetricsService<S>
+impl<S> RpcServiceT for RpcMetricsService<S>
 where
-    S: RpcServiceT<'a> + Send + Sync + Clone + 'static,
+    S: RpcServiceT<MethodResponse = MethodResponse> + Send + Sync + Clone + 'static,
 {
-    type Future = BoxFuture<'a, MethodResponse>;
+    type MethodResponse = S::MethodResponse;
+    type NotificationResponse = S::NotificationResponse;
+    type BatchResponse = S::BatchResponse;
 
-    fn call(&self, req: Request<'a>) -> Self::Future {
+    fn call<'a>(&self, req: Request<'a>) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let service = self.service.clone();
 
-        Box::pin(async move {
+        async move {
             let method = req.method_name().replace("wallet_", "relay_");
             let span = span!(
                 Level::INFO,
@@ -80,7 +87,24 @@ where
             }
 
             rp
-        })
+        }
+    }
+
+    fn batch<'a>(
+        &self,
+        requests: Batch<'a>,
+    ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
+        // todo(onbjerg): this is assuming no one uses batching right now which might be ok
+        self.service.batch(requests)
+    }
+
+    fn notification<'a>(
+        &self,
+        n: Notification<'a, Option<Cow<'a, serde_json::value::RawValue>>>,
+    ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
+        // todo(onbjerg): this is assuming no notifications - we don't have these right now, so
+        // that's okay
+        self.service.notification(n)
     }
 }
 
