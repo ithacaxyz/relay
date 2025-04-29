@@ -341,6 +341,11 @@ async fn fee_bump() -> eyre::Result<()> {
 
     env.disable_mining().await;
 
+    // set priority fee to be ~basefee for deterministic gas estimation
+    let base_fee =
+        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    env.mine_blocks_with_priority_fee(base_fee as u128).await;
+
     // prepare transaction to send
     let tx = account.prepare_tx(&env).await;
 
@@ -396,6 +401,11 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // set priority fee to be ~basefee for deterministic gas estimation
+    let base_fee =
+        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    env.mine_blocks_with_priority_fee(base_fee as u128).await;
 
     // setup 2 accounts
     let account_0 = MockAccount::new(&env).await.unwrap();
