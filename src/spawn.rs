@@ -22,7 +22,8 @@ use alloy::{
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
-    RpcServiceBuilder, Server, ServerHandle, middleware::http::ProxyGetRequestLayer,
+    Server, ServerConfig, ServerHandle,
+    middleware::{http::ProxyGetRequestLayer, rpc::RpcServiceBuilder},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
@@ -179,12 +180,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     // start server
     let server = Server::builder()
-        .http_only()
-        .max_connections(config.server.max_connections)
+        .set_config(
+            ServerConfig::builder()
+                .http_only()
+                .max_connections(config.server.max_connections)
+                .build(),
+        )
         .set_http_middleware(
             ServiceBuilder::new()
                 .layer(cors)
-                .layer(ProxyGetRequestLayer::new("/health", "health")?),
+                .layer(ProxyGetRequestLayer::new([("/health", "health")])?),
         )
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
