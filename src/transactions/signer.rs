@@ -751,7 +751,7 @@ impl Signer {
         }
 
         // Watch pending transactions that were loaded from storage
-        for tx in loaded_transactions.clone() {
+        for tx in loaded_transactions.iter().cloned() {
             let signer = self.clone();
             pending.spawn(async move { signer.watch_transaction(tx).await });
         }
