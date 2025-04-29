@@ -84,6 +84,9 @@ pub struct TransactionService {
     /// Metrics of the service.
     metrics: Arc<TransactionServiceMetrics>,
     /// Queue of transactions waiting for signers capacity.
+    ///
+    /// Each received transaction must hit this queue first, and then popped from it via
+    /// [`TxQueue::pop_ready`] to be sent to a signer.
     queue: TxQueue,
     /// Storage of the relay.
     storage: RelayStorage,
@@ -391,15 +394,18 @@ impl Future for TransactionService {
     }
 }
 
-/// Errors that can occur while processing transactions by queue.
-#[derive(Debug, thiserror::Error)]
-enum QueueError {
-    /// Returned when we don't have enough capacity to push the transaction.
-    #[error("transaction is over queue capacity")]
-    CapacityOverflow,
-}
-
 /// Pool of transactions managed by the service.
+///
+/// Invariants:
+/// - EOA can have at most one pending or ready transaction.
+/// - If EOA has any blocked transactions, it must have either one pending or one ready transaction.
+///
+/// Transaction lifecycle:
+/// - [`TxQueue::push_transaction`] must be called for every queued transaction.
+/// - [`TxQueue::on_sent_transaction`] must be called when a transaction is sent.
+/// - [`TxQueue::pop_ready`] yields a transaction that is ready to be sent, and invokes
+///   [`TxQueue::on_sent_transaction`] with it.
+/// - [`TxQueue::on_finished_pending`] must be called when a transaction has confirmed or failed.
 #[derive(Debug, Default)]
 struct TxQueue {
     /// Mapping of an EOA to a currently pending transaction for it.
@@ -468,7 +474,12 @@ impl TxQueue {
     /// and accounts for it.
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
-            self.ready_per_eoa.entry(*tx.eoa()).and_modify(|value| *value -= 1);
+            if let Some(ready) = self.ready_per_eoa.get_mut(tx.eoa()) {
+                *ready -= 1;
+                if *ready == 0 {
+                    self.ready_per_eoa.remove(tx.eoa());
+                }
+            }
             self.on_sent_transaction(tx)
         })
     }
@@ -484,7 +495,19 @@ impl TxQueue {
 
         // promote blocked, if any
         let Some(blocked) = self.blocked.get_mut(&eoa) else { return };
-        let Some(tx) = blocked.pop_front() else { return };
-        self.ready.push_back(tx);
+        if let Some(tx) = blocked.pop_front() {
+            self.ready.push_back(tx);
+        };
+        if blocked.is_empty() {
+            self.blocked.remove(&eoa);
+        }
     }
+}
+
+/// Errors that can occur while processing transactions by queue.
+#[derive(Debug, thiserror::Error)]
+enum QueueError {
+    /// Returned when we don't have enough capacity to push the transaction.
+    #[error("transaction is over queue capacity")]
+    CapacityOverflow,
 }

@@ -419,19 +419,18 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     let hash_0 = wait_for_tx_hash(&mut events_0).await;
 
     // drop the transaction to make sure it's not mined
-    let dropped = env.drop_transaction(hash_0).await.unwrap();
+    env.drop_transaction(hash_0).await.unwrap();
+
+    let max_fee = tx_0.quote.ty().native_fee_estimate.max_fee_per_gas;
 
     // randomly choose whether we are increasing basefee or inflating priority fee market
     if rand::random_bool(0.5) {
         // set next block base fee to a high value to make it look like tx is underpriced
-        env.provider
-            .anvil_set_next_block_base_fee_per_gas(dropped.max_fee_per_gas() * 2)
-            .await
-            .unwrap();
+        env.provider.anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
         env.mine_block().await;
     } else {
         // mine blocks with priority fee set to max_fee of dropped tx
-        env.mine_blocks_with_priority_fee(dropped.max_fee_per_gas()).await;
+        env.mine_blocks_with_priority_fee(max_fee).await;
     }
 
     // prepare and send second transaction
