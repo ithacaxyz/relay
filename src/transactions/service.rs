@@ -478,7 +478,9 @@ impl TxQueue {
     fn on_finished_pending(&mut self, tx_id: &TxId) {
         // remove transaction from pending set
         let Some(eoa) = self.pending_to_eoa.remove(tx_id) else { return };
-        self.eoa_to_pending.remove(&eoa);
+        if let Some(pending) = self.eoa_to_pending.get_mut(&eoa) {
+            pending.remove(tx_id);
+        }
 
         // promote blocked, if any
         let Some(blocked) = self.blocked.get_mut(&eoa) else { return };
