@@ -439,7 +439,7 @@ impl TxQueue {
         }
 
         // if we have a pending transaction for this eoa, next transaction is blocked.
-        if self.eoa_to_pending.contains_key(tx.eoa()) {
+        if self.eoa_to_pending.get(tx.eoa()).is_some_and(|p| !p.is_empty()) {
             self.blocked.entry(*tx.eoa()).or_default().push_back(tx);
         } else if self.ready_per_eoa.get(tx.eoa()).copied().unwrap_or_default() == 0 {
             // if there are no pending or ready transactions, push to ready queue
