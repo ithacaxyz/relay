@@ -181,7 +181,7 @@ impl<P: Provider> Entry<P> {
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
         let gas_validation_offset =
-            if key_type.is_secp256k1() { U256::ZERO } else { U256::from(10_000) };
+            if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
 
         let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
             .simulateV1Logs(
@@ -282,15 +282,4 @@ impl<P: Provider> Entry<P> {
             .await
             .map_err(TransportErrorKind::custom)
     }
-}
-
-/// A gas estimate result for a [`UserOp`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GasEstimate {
-    /// The recommended gas limit for the transaction.
-    #[serde(with = "alloy::serde::quantity")]
-    pub tx: u64,
-    /// The recommended gas limit for the [`UserOp`].
-    #[serde(with = "alloy::serde::quantity")]
-    pub op: u64,
 }
