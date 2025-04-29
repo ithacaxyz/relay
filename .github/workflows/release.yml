@@ -36,8 +36,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push tagged
         uses: docker/build-push-action@v6
+        if: env.GITHUB_EVENT_NAME != 'workflow_dispatch'
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -46,6 +47,24 @@ jobs:
           tags: |
             ${{ matrix.ghcr_repo }}:latest
             ${{ matrix.ghcr_repo }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Get short commit
+        if: env.GITHUB_EVENT_NAME != 'workflow_dispatch'
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build and push dispatched
+        uses: docker/build-push-action@v6
+        if: env.GITHUB_EVENT_NAME != 'workflow_dispatch'
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ matrix.ghcr_repo }}:${{ steps.vars.outputs.sha_short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
