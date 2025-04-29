@@ -96,6 +96,11 @@ impl RelayTransaction {
     pub fn max_fee_for_transaction(&self) -> u128 {
         self.quote.ty().native_fee_estimate.max_fee_per_gas
     }
+
+    /// Returns the EOA of the userop.
+    pub fn eoa(&self) -> &Address {
+        &self.quote.ty().op.eoa
+    }
 }
 
 pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}

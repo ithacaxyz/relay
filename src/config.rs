@@ -138,6 +138,8 @@ pub struct TransactionServiceConfig {
     pub max_pending_transactions: usize,
     /// Maximum number of pending transactions that can be handled by a single signer.
     pub max_transactions_per_signer: usize,
+    /// Maximum number of transactions that can be queued for a single EOA.
+    pub max_queued_per_eoa: usize,
     /// Interval for checking signer balances.
     #[serde(with = "crate::serde::duration")]
     pub balance_check_interval: Duration,
@@ -158,6 +160,7 @@ impl Default for TransactionServiceConfig {
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
+            max_queued_per_eoa: 1,
         }
     }
 }
