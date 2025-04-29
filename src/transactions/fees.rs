@@ -52,7 +52,8 @@ impl FeeContext {
             return Err(FeesError::CantAffordBaseFee);
         }
 
-        let max_fee_per_gas = max_tx_fee.min(self.last_base_fee * (100 + BASE_FEE_DELTA) / 100);
+        let max_fee_per_gas = max_tx_fee
+            .min(self.last_base_fee * (100 + BASE_FEE_DELTA) / 100 + self.recommended_priority_fee);
 
         Ok(Eip1559Estimation {
             max_fee_per_gas,

@@ -2,12 +2,15 @@
 use crate::{
     config::RelayConfig,
     constants::{
-        DEFAULT_MAX_TRANSACTIONS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS, TX_GAS_BUFFER,
-        USER_OP_GAS_BUFFER,
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS,
+        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
     },
     spawn::try_spawn_with_args,
 };
-use alloy::primitives::Address;
+use alloy::{
+    primitives::Address,
+    signers::local::coins_bip39::{English, Mnemonic},
+};
 use clap::Parser;
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -76,15 +79,9 @@ pub struct Args {
     /// Extra buffer added to transaction gas estimates.
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
-    /// The secret key to sign fee quotes with.
-    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_FEE_SK")]
-    pub quote_secret_key: String,
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     pub fee_tokens: Vec<Address>,
-    /// The secret key to sign transactions with.
-    #[arg(long = "secret-key", value_name = "SECRET_KEY", num_args=1.., value_delimiter = ',', env = "RELAY_SK")]
-    pub secret_keys: Vec<String>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
@@ -95,6 +92,12 @@ pub struct Args {
     /// simultaneously.
     #[arg(long = "max-pending-transactions", value_name = "NUM", default_value_t = DEFAULT_MAX_TRANSACTIONS)]
     pub max_pending_transactions: usize,
+    /// The mnemonic to use for deriving transaction signers.
+    #[arg(long = "signers-mnemonic", value_name = "MNEMONIC", env = "RELAY_MNEMONIC")]
+    pub signers_mnemonic: Mnemonic<English>,
+    /// The number of signers to derive from mnemonic and use to send transactions.
+    #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
+    pub num_signers: usize,
 }
 
 impl Args {
@@ -110,8 +113,7 @@ impl Args {
     /// Merges [`Args`] values into an existing [`RelayConfig`] instance.
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
-            .with_quote_key(self.quote_secret_key)
-            .with_transaction_keys(&self.secret_keys)
+            .with_signers_mnemonic(self.signers_mnemonic)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
             .with_fee_recipient(self.fee_recipient)
@@ -129,6 +131,7 @@ impl Args {
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)
+            .with_num_signers(self.num_signers)
     }
 }
 
@@ -159,7 +162,7 @@ mod tests {
         let dir = temp_dir();
         let config = dir.join("relay.toml");
         let registry = dir.join("registry.toml");
-        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let mnemonic = "test test test test test test test test test test test junk";
 
         for _ in 0..=1 {
             let _ = try_spawn_with_args(
@@ -178,13 +181,13 @@ mod tests {
                     fee_recipient: Default::default(),
                     quote_ttl: Default::default(),
                     rate_ttl: Default::default(),
-                    quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
-                    secret_keys: vec![key.to_string()],
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
                     database_url: Default::default(),
                     max_pending_transactions: Default::default(),
+                    num_signers: Default::default(),
+                    signers_mnemonic: mnemonic.parse().unwrap(),
                 },
                 config.clone(),
                 registry.clone(),

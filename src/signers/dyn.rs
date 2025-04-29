@@ -1,16 +1,21 @@
 //! Multi-signer abstraction.
 //!
-//! A signer abstracted over multiple underlying signers, e.g. local or AWS.
+//! A signer abstracted over multiple underlying signers.
 use super::Eip712PayLoadSigner;
 use alloy::{
     network::{FullSigner, TxSigner},
     primitives::{Address, B256, Bytes, Signature},
-    signers::{aws::AwsSigner, local::PrivateKeySigner},
+    signers::{
+        k256::ecdsa::SigningKey,
+        local::{
+            PrivateKeySigner,
+            coins_bip39::{English, Mnemonic},
+        },
+    },
 };
-use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
-/// Abstraction over local signer or AWS.
+/// Abstraction over local signer.
 #[derive(Clone)]
 pub struct DynSigner(pub Arc<dyn FullSigner<Signature> + Send + Sync>);
 
@@ -21,15 +26,24 @@ impl fmt::Debug for DynSigner {
 }
 
 impl DynSigner {
-    /// Load a private key or AWS signer from environment variables.
-    pub async fn load(key: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
-        if let Ok(wallet) = PrivateKeySigner::from_str(key) {
-            return Ok(Self(Arc::new(wallet)));
-        }
+    /// Derives given number of signers from a mnemonic.
+    pub fn derive_from_mnemonic(
+        mnemonic: Mnemonic<English>,
+        num: usize,
+    ) -> eyre::Result<Vec<Self>> {
+        (0..num)
+            .map(|idx| {
+                let path = format!("m/44'/60'/0'/0/{idx}");
+                let key = mnemonic.derive_key(path.as_str(), None)?;
+                let key: &SigningKey = key.as_ref();
+                Ok(Self(Arc::new(PrivateKeySigner::from_signing_key(key.clone()))))
+            })
+            .collect()
+    }
 
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = aws_sdk_kms::Client::new(&config);
-        Ok(Self(Arc::new(AwsSigner::new(client, key.to_string(), chain_id).await?)))
+    /// Load a private key.
+    pub async fn from_signing_key(key: &str) -> eyre::Result<Self> {
+        Ok(Self(Arc::new(PrivateKeySigner::from_str(key)?)))
     }
 
     /// Returns the signer's Ethereum Address.

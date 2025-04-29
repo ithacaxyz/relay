@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "6.1.1"
+version = "6.2.0"
 edition = "2024"
 publish = false
 
@@ -29,18 +29,16 @@ alloy = { version = "0.15", features = [
     "rpc-types",
     "serde",
     "signers",
-    "signer-aws",
     "signer-local",
     "sol-types",
     "transports",
     "network",
     "json-rpc",
     "reqwest-rustls-tls",
+    "signer-mnemonic",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
-aws-config = "1.6"
-aws-sdk-kms = { version = "1", default-features = false }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = "0.4"
@@ -84,7 +82,7 @@ itertools = "0.14"
 derive_more = { version = "2", features = ["debug"] }
 bytes = "1"
 metrics-derive = "0.1"
-sqlx = { version = "0.8.4", features = [
+sqlx = { version = "0.8.5", features = [
     "chrono",
     "postgres",
     "runtime-tokio",

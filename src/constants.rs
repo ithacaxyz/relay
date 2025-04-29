@@ -34,6 +34,13 @@ pub const BASE_MAINNET_SEQUENCER_URL: &str = "https://mainnet-sequencer.base.org
 /// are disabled.
 pub const BASE_SEPOLIA_SEQUENCER_URL: &str = "https://sepolia-sequencer.base.org";
 
+/// The Base Sepolia URL for flashblocks: <https://docs.base.org/chain/flashblocks#rpc-api>
+///
+/// Supports:
+///   - `eth_getTransactionReceipt`: returns (pre-)confirmed receipt.
+///   - `eth_getBlockByNumber`: returns the latest flashblock.
+pub const BASE_SEPOLIA_PRECONF_HTTP_URL: &str = "https://sepolia-preconf.base.org";
+
 /// The public Base Mainnet RPC URL.
 ///
 /// This endpoint is rate-limited.
@@ -48,3 +55,6 @@ pub const BASE_SEPOLIA_PUBLIC_RPC_URL: &str = "https://sepolia.base.org";
 
 /// Default cap on maximum number of pending transactions per chain.
 pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;
+
+/// Default number of signers to derive from mnemonic and use for sending transactions.
+pub const DEFAULT_NUM_SIGNERS: usize = 16;

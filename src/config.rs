@@ -1,6 +1,11 @@
 //! Relay configuration.
-use crate::constants::{DEFAULT_MAX_TRANSACTIONS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER};
-use alloy::primitives::Address;
+use crate::constants::{
+    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+};
+use alloy::{
+    primitives::Address,
+    signers::local::coins_bip39::{English, Mnemonic},
+};
 use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -8,6 +13,7 @@ use std::{
     collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
+    str::FromStr,
     time::Duration,
 };
 
@@ -105,17 +111,29 @@ impl QuoteConfig {
 }
 
 /// Secrets (kept out of serialized output).
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct SecretsConfig {
     /// The secret key to sign transactions with.
-    pub transaction_keys: Vec<String>,
-    /// The secret key to sign fee quotes with.
-    pub quote_key: String,
+    #[serde(with = "alloy::serde::displayfromstr")]
+    pub signers_mnemonic: Mnemonic<English>,
+}
+
+impl Default for SecretsConfig {
+    fn default() -> Self {
+        Self {
+            signers_mnemonic: Mnemonic::<English>::from_str(
+                "test test test test test test test test test test test junk",
+            )
+            .unwrap(),
+        }
+    }
 }
 
 /// Configuration for transaction service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
+    /// Number of signers to derive from mnemonic and use for sending transactions.
+    pub num_signers: usize,
     /// Maximum number of transactions that can be pending at any given time.
     pub max_pending_transactions: usize,
     /// Maximum number of pending transactions that can be handled by a single signer.
@@ -134,6 +152,7 @@ pub struct TransactionServiceConfig {
 impl Default for TransactionServiceConfig {
     fn default() -> Self {
         Self {
+            num_signers: DEFAULT_NUM_SIGNERS,
             max_pending_transactions: DEFAULT_MAX_TRANSACTIONS,
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
@@ -248,21 +267,9 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the secret key used to sign fee quotes.
-    pub fn with_quote_key(mut self, quote_secret_key: String) -> Self {
-        self.secrets.quote_key = quote_secret_key;
-        self
-    }
-
     /// Sets the secret key used to sign transactions.
-    pub fn with_transaction_key(mut self, secret_key: String) -> Self {
-        self.secrets.transaction_keys.push(secret_key);
-        self
-    }
-
-    /// Sets the secret key used to sign transactions.
-    pub fn with_transaction_keys(mut self, secret_keys: &[String]) -> Self {
-        self.secrets.transaction_keys.extend_from_slice(secret_keys);
+    pub fn with_signers_mnemonic(mut self, mnemonic: Mnemonic<English>) -> Self {
+        self.secrets.signers_mnemonic = mnemonic;
         self
     }
 
@@ -299,6 +306,12 @@ impl RelayConfig {
     /// Sets the maximum number of pending transactions.
     pub fn with_max_pending_transactions(mut self, max_pending_transactions: usize) -> Self {
         self.transactions.max_pending_transactions = max_pending_transactions;
+        self
+    }
+
+    /// Sets the number of signers to derive from mnemonic and use for sending transactions.
+    pub fn with_num_signers(mut self, num_signers: usize) -> Self {
+        self.transactions.num_signers = num_signers;
         self
     }
 

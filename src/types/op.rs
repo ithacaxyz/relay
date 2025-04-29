@@ -490,9 +490,8 @@ mod tests {
             expected_digest
         );
 
-        let signer = DynSigner::load(
+        let signer = DynSigner::from_signing_key(
             "0x44a8f44ef7307087c960f8bfcbd95f7a1c9a2f505d438d1750dc947cfedb4b4a",
-            None,
         )
         .await
         .unwrap();

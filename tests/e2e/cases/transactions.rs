@@ -1,5 +1,5 @@
 use crate::e2e::{
-    MockErc20, await_calls_status,
+    FIRST_RELAY_SIGNER, MockErc20, SIGNERS_MNEMONIC, await_calls_status,
     environment::{Environment, EnvironmentConfig},
     send_prepared_calls,
 };
@@ -332,7 +332,7 @@ async fn dropped_transaction() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_bump() -> eyre::Result<()> {
     let config = EnvironmentConfig { is_prep: true, block_time: Some(1.0), ..Default::default() };
-    let signer = PrivateKeySigner::from_bytes(config.signers.first().unwrap()).unwrap().address();
+    let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup(config).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
@@ -340,6 +340,11 @@ async fn fee_bump() -> eyre::Result<()> {
     let account = MockAccount::new(&env).await.unwrap();
 
     env.disable_mining().await;
+
+    // set priority fee to be ~basefee for deterministic gas estimation
+    let base_fee =
+        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    env.mine_blocks_with_priority_fee(base_fee as u128).await;
 
     // prepare transaction to send
     let tx = account.prepare_tx(&env).await;
@@ -366,8 +371,12 @@ async fn fee_bump() -> eyre::Result<()> {
     assert!(
         new_tx.max_priority_fee_per_gas().unwrap() > dropped.max_priority_fee_per_gas().unwrap()
     );
-    let pending_txs =
-        env.relay_handle.storage.read_pending_transactions(signer, env.chain_id).await.unwrap();
+    let pending_txs = env
+        .relay_handle
+        .storage
+        .read_pending_transactions(signer.address(), env.chain_id)
+        .await
+        .unwrap();
     assert_eq!(pending_txs.len(), 1);
     assert_eq!(pending_txs.first().unwrap().sent.len(), 2);
 
@@ -392,6 +401,11 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    // set priority fee to be ~basefee for deterministic gas estimation
+    let base_fee =
+        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    env.mine_blocks_with_priority_fee(base_fee as u128).await;
 
     // setup 2 accounts
     let account_0 = MockAccount::new(&env).await.unwrap();
@@ -444,12 +458,12 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_out_of_funds() -> eyre::Result<()> {
-    let signers = (0..3).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
+    let num_signers = 3;
     let env = Environment::setup(EnvironmentConfig {
         is_prep: true,
         block_time: Some(0.2),
-        signers: signers.iter().map(|s| B256::from_slice(&s.credential().to_bytes())).collect(),
         transaction_service_config: TransactionServiceConfig {
+            num_signers,
             // set lower interval to make sure that we hit the pause logic
             balance_check_interval: Duration::from_millis(100),
             // set lower throughput to make sure that transactions are not getting included too
@@ -462,6 +476,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     })
     .await
     .unwrap();
+    let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // use a consistent seed
@@ -526,12 +541,12 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resume_paused() -> eyre::Result<()> {
-    let signers = (0..5).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
+    let num_signers = 5;
     let env = Environment::setup(EnvironmentConfig {
         is_prep: true,
         block_time: Some(0.2),
-        signers: signers.iter().map(|s| B256::from_slice(&s.credential().to_bytes())).collect(),
         transaction_service_config: TransactionServiceConfig {
+            num_signers,
             // set lower interval to make sure that we hit the pause logic
             balance_check_interval: Duration::from_millis(100),
             // set lower throughput to make sure that transactions are not getting included too
@@ -545,6 +560,8 @@ async fn resume_paused() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+
+    let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
 
     // setup 10 accounts
     let num_accounts = 10;
@@ -621,7 +638,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         },
         ..Default::default()
     };
-    let signer = PrivateKeySigner::from_bytes(&config.signers[0]).unwrap();
+    let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup(config.clone()).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
@@ -665,10 +682,10 @@ async fn restart_with_pending() -> eyre::Result<()> {
         },
         ..Default::default()
     };
-    let signers = try_join_all(
-        config.signers.iter().map(async |s| DynSigner::load(&s.to_string(), None).await),
+    let signers = DynSigner::derive_from_mnemonic(
+        SIGNERS_MNEMONIC.parse()?,
+        config.transaction_service_config.num_signers,
     )
-    .await
     .unwrap();
     let env = Environment::setup(config.clone()).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
