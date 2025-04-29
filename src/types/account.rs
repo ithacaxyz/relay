@@ -1,5 +1,6 @@
 use super::{
     Call,
+    EntryPoint::delegationImplementationOfCall,
     IDelegation::authorizeCall,
     Key, KeyHash, Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
@@ -226,19 +227,18 @@ impl<P: Provider> Account<P> {
             return Ok(None);
         }
 
-        let delegation = self
-            .delegation
-            .provider()
-            .call(
-                TransactionRequest::default()
-                    .to(*self.delegation.address())
-                    // TODO: temporary, while Delegation.sol does not have a public API to fetch the
-                    // implemention when querying a delegated EOA.
-                    .input(Bytes::from([1]).into()),
-            )
-            .await
-            .and_then(|ret| Address::abi_decode(&ret).map_err(TransportErrorKind::custom))
-            .map_err(RelayError::from)?;
+        let delegation =
+            self.delegation
+                .provider()
+                .call(TransactionRequest::default().to(self.get_entrypoint().await?).input(
+                    delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
+                ))
+                .await
+                .and_then(|ret| {
+                    delegationImplementationOfCall::abi_decode_returns(&ret)
+                        .map_err(TransportErrorKind::custom)
+                })
+                .map_err(RelayError::from)?;
 
         Ok(Some(delegation))
     }
