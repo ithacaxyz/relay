@@ -121,7 +121,7 @@ pub enum PrepareCallsContext {
     #[serde(rename = "quote")]
     Quote(Box<SignedQuote>),
     /// The [`PreOp`] of the prepared call bundle.
-    #[serde(rename = "preop")]
+    #[serde(rename = "preOp")]
     PreOp(PreOp),
 }
 
