@@ -20,6 +20,8 @@ pub struct RelaySettings {
     pub delegation_implementation: Address,
     /// The account registry address.
     pub account_registry: Address,
+    /// The simulator address.
+    pub simulator: Address,
     /// Quote related configuration.
     pub quote_config: QuoteConfig,
 }

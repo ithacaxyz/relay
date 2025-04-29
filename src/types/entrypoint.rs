@@ -12,11 +12,12 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
-use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
+    constants::P256_GAS_BUFFER,
     error::{RelayError, UserOpError},
     types::{AssetDiffs, UserOp},
 };
@@ -54,20 +55,6 @@ sol! {
 
         /// @dev The order has already been filled.
         error OrderAlreadyFilled();
-
-        /// For returning the gas used and the error from a simulation.
-        ///
-        /// - `gExecute` is the recommended amount of gas to use for the transaction when calling `execute`.
-        /// - `gCombined` is the recommendation for `gCombined` in the UserOp.
-        /// - `gUsed` is the amount of gas that has definitely been used by the UserOp.
-        ///
-        /// If the `err` is non-zero, it means that the simulation with `gExecute` has not resulted in a successful execution.
-        struct SimulationResult {
-            uint256 gExecute;
-            uint256 gCombined;
-            uint256 gUsed;
-        }
-
 
         /// The simulate execute run has failed. Try passing in more gas to the simulation.
         error SimulateExecuteFailed();
@@ -132,9 +119,6 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
-        /// Simulates an execution and reverts with the amount of gas used, and the error selector.
-        function simulateExecute(bytes calldata encodedUserOp) public payable virtual;
-
         /// Return current nonce with sequence key.
         function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256);
 
@@ -184,17 +168,31 @@ impl<P: Provider> Entry<P> {
         self
     }
 
-    /// Call `EntryPoint.simulateExecute` with the provided [`UserOp`].
+    /// Call `Simulator.simulateV1Logs` with the provided [`UserOp`].
     ///
-    /// `from` will be used as `msg.sender`, and it should have its balance set to `uint256.max`.
+    /// `simulator` contract address should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
-        from: Address,
+        simulator: Address,
         op: &UserOp,
+        key_type: KeyType,
+        payment_per_gas: U256,
         asset_info_handle: AssetInfoServiceHandle,
-    ) -> Result<(AssetDiffs, GasEstimate), RelayError> {
-        let simulate_call =
-            self.entrypoint.simulateExecute(op.abi_encode().into()).into_transaction_request();
+    ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
+        // Allows to account for gas variation in P256 sig verification.
+        let gas_validation_offset =
+            if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
+
+        let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
+            .simulateV1Logs(
+                *self.address(),
+                true,
+                payment_per_gas,
+                U256::from(11_000),
+                gas_validation_offset,
+                op.abi_encode().into(),
+            )
+            .into_transaction_request();
 
         let result = self
             .entrypoint
@@ -203,7 +201,7 @@ impl<P: Provider> Entry<P> {
                 &SimulatePayload::default()
                     .extend(
                         SimBlock::default()
-                            .call(simulate_call.from(from))
+                            .call(simulate_call)
                             .with_state_overrides(self.overrides.clone()),
                     )
                     .with_trace_transfers(),
@@ -218,9 +216,7 @@ impl<P: Provider> Entry<P> {
             return Err(UserOpError::op_revert(result.return_data).into());
         }
 
-        let Ok(gas_estimate) = EntryPoint::SimulationResult::abi_decode(&result.return_data)
-            .map(|gas| GasEstimate { tx: gas.gExecute.to(), op: gas.gCombined.to() })
-        else {
+        let Ok(simulation_result) = SimulationResult::abi_decode(&result.return_data) else {
             return Err(TransportErrorKind::custom_str(&format!(
                 "could not decode op simulation return data: {}",
                 result.return_data
@@ -232,7 +228,7 @@ impl<P: Provider> Entry<P> {
             .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
             .await?;
 
-        Ok((asset_diffs, gas_estimate))
+        Ok((asset_diffs, simulation_result))
     }
 
     /// Call `EntryPoint.execute` with the provided [`UserOp`].
@@ -286,15 +282,4 @@ impl<P: Provider> Entry<P> {
             .await
             .map_err(TransportErrorKind::custom)
     }
-}
-
-/// A gas estimate result for a [`UserOp`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GasEstimate {
-    /// The recommended gas limit for the transaction.
-    #[serde(with = "alloy::serde::quantity")]
-    pub tx: u64,
-    /// The recommended gas limit for the [`UserOp`].
-    #[serde(with = "alloy::serde::quantity")]
-    pub op: u64,
 }

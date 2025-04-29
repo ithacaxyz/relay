@@ -36,6 +36,8 @@ pub struct RelayConfig {
     pub delegation_proxy: Address,
     /// Account registry address.
     pub account_registry: Address,
+    /// Simulator address.
+    pub simulator: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -185,6 +187,7 @@ impl Default for RelayConfig {
             entrypoint: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,
+            simulator: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -285,6 +288,12 @@ impl RelayConfig {
     /// Sets the account registry address.
     pub fn with_account_registry(mut self, account_registry: Address) -> Self {
         self.account_registry = account_registry;
+        self
+    }
+
+    /// Sets the simulator address.
+    pub fn with_simulator(mut self, simulator: Address) -> Self {
+        self.simulator = simulator;
         self
     }
 

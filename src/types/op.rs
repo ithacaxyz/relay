@@ -66,39 +66,46 @@ sol! {
         address payer;
         /// The ERC20 or native token used to pay for gas.
         address paymentToken;
-        /// The payment recipient for the ERC20 token.
-        ///
-        /// Excluded from signature. The filler can replace this with their own address.
-        ///
-        /// This enables multiple fillers, allowing for competitive filling, better uptime.
-        /// If `address(0)`, the payment will be accrued by the entry point.
-        address paymentRecipient;
-        /// The amount of the token to pay.
-        ///
-        /// Excluded from signature.
-        ///
-        /// This will be required to be less than `paymentMaxAmount`.
-        uint256 paymentAmount;
+        /// The amount of the token to pay, before the call batch is executed
+        /// This will be required to be less than `totalPaymentMaxAmount`.
+        uint256 prePaymentMaxAmount;
         /// The maximum amount of the token to pay.
-        uint256 paymentMaxAmount;
-        /// The amount of ERC20 to pay per gas spent. For calculation of refunds.
-        ///
-        /// If this is left at zero, it will be treated as infinity (i.e. no refunds).
-        uint256 paymentPerGas;
+        uint256 totalPaymentMaxAmount;
         /// The combined gas limit for payment, verification, and calling the EOA.
         uint256 combinedGas;
-        /// The wrapped signature.
-        ///
-        /// The format is `abi.encodePacked(innerSignature, keyHash, prehash)` for most signatures,
-        /// except if it is signed by the EOA root key, in which case `abi.encodePacked(r, s, v)` is valid as well.
-        bytes signature;
-        /// Optional data for `initPREP` on the delegation.
-        ///
-        /// Excluded from signature.
-        bytes initData;
-        /// Optional array of encoded PreOps that will be verified and executed
+        /// Optional array of encoded UserOps that will be verified and executed
         /// after PREP (if any) and before the validation of the overall UserOp.
+        /// A PreOp will NOT have its gas limit or payment applied.
+        /// The overall UserOp's gas limit and payment will be applied, encompassing all its PreOps.
+        /// The execution of a PreOp will check and increment the nonce in the PreOp.
+        /// If at any point, any PreOp cannot be verified to be correct, or fails in execution,
+        /// the overall UserOp will revert before validation, and execute will return a non-zero error.
+        /// A PreOp can contain PreOps, forming a tree structure.
+        /// The `executionData` tree will be executed in post-order (i.e. left -> right -> current).
+        /// The `encodedPreOps` are included in the EIP712 signature, which enables execution order
+        /// to be enforced on-the-fly even if the nonces are from different sequences.
         bytes[] encodedPreOps;
+        ////////////////////////////////////////////////////////////////////////
+        // Additional Fields (Not included in EIP-712)
+        ////////////////////////////////////////////////////////////////////////
+        /// Optional data for `initPREP` on the delegation.
+        /// This is encoded using ERC7821 style batch execution encoding.
+        /// (ERC7821 is a variant of ERC7579).
+        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
+        /// where `calls` is of type `Call[]`,
+        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
+        bytes initData;
+        /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
+        uint256 prePaymentAmount;
+        /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
+        uint256 totalPaymentAmount;
+        /// The payment recipient for the ERC20 token.
+        /// Excluded from signature. The filler can replace this with their own address.
+        /// This enables multiple fillers, allowing for competitive filling, better uptime.
+        address paymentRecipient;
+        /// The wrapped signature.
+        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        bytes signature;
         /// Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
@@ -172,8 +179,8 @@ mod eip712 {
             uint256 nonce;
             address payer;
             address paymentToken;
-            uint256 paymentMaxAmount;
-            uint256 paymentPerGas;
+            uint256 prePaymentMaxAmount;
+            uint256 totalPaymentMaxAmount;
             uint256 combinedGas;
             bytes[] encodedPreOps;
         }
@@ -189,6 +196,14 @@ mod eip712 {
 }
 
 impl UserOp {
+    /// Sets the payment amount fields so it has the same behaviour as legacy UserOp.
+    pub fn set_legacy_payment_amount(&mut self, amount: U256) {
+        self.prePaymentAmount = amount;
+        self.prePaymentMaxAmount = amount;
+        self.totalPaymentAmount = amount;
+        self.totalPaymentMaxAmount = amount;
+    }
+
     /// Calculate a digest of the [`UserOp`], used for checksumming.
     ///
     /// # Note
@@ -202,8 +217,8 @@ impl UserOp {
         hasher.update(self.nonce.to_be_bytes::<32>());
         hasher.update(self.payer);
         hasher.update(self.paymentToken);
-        hasher.update(self.paymentMaxAmount.to_be_bytes::<32>());
-        hasher.update(self.paymentPerGas.to_be_bytes::<32>());
+        hasher.update(self.prePaymentMaxAmount.to_be_bytes::<32>());
+        hasher.update(self.totalPaymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.combinedGas.to_be_bytes::<32>());
         let pre_ops_hash = {
             let mut hasher = Keccak256::new();
@@ -323,8 +338,8 @@ impl Op for UserOp {
             nonce: self.nonce,
             payer: self.payer,
             paymentToken: self.paymentToken,
-            paymentMaxAmount: self.paymentMaxAmount,
-            paymentPerGas: self.paymentPerGas,
+            prePaymentMaxAmount: self.prePaymentMaxAmount,
+            totalPaymentMaxAmount: self.totalPaymentMaxAmount,
             combinedGas: self.combinedGas,
             encodedPreOps: self.encodedPreOps.clone(),
         })
@@ -399,14 +414,15 @@ mod tests {
             nonce: U256::from(31338),
             payer: Address::ZERO,
             paymentToken: address!("0xc7183455a4c133ae270771860664b6b7ec320bb1"),
-            paymentRecipient: Address::ZERO,
-            paymentAmount: U256::from(3822601006u64),
-            paymentMaxAmount: U256::from(3822601006u64),
-            paymentPerGas: U256::ZERO,
+            prePaymentMaxAmount: U256::from(3822601006u64),
+            totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
-            signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            prePaymentAmount: U256::from(3822601006u64),
+            totalPaymentAmount: U256::from(3822601006u64),
+            paymentRecipient: Address::ZERO,
+            signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedDelegationImplementation: Address::ZERO,
         };
@@ -421,7 +437,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0xa151c1bc143d2f0ead71e2f41355a3d945677a92085ab1597a5b53685c63a73e")
+            b256!("0xbd81056e33133c05750c5d203d7016828d1489750a5b4025c927f50f5eb73acf")
         );
 
         // Multichain op
@@ -434,7 +450,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0xcb826e8a1d22dcc0318a262bfe4c09cbe8b0641478699b58b0fe5c1a909b6093")
+            b256!("0xd572ea7b6dd17e36cf3ccbd40510428f1bab273a1b52bbb58639356a461577f8")
         );
     }
 
@@ -448,20 +464,21 @@ mod tests {
             nonce: U256::from(1),
             payer: Address::ZERO,
             paymentToken: address!("0xc7183455a4c133ae270771860664b6b7ec320bb1"),
-            paymentRecipient: Address::ZERO,
-            paymentAmount: U256::from(1021265804),
-            paymentMaxAmount: U256::from(1021265804),
-            paymentPerGas: U256::ZERO,
+            prePaymentMaxAmount: U256::from(1021265804),
+            totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
-            signature: bytes!(""),
             initData: bytes!(""),
             encodedPreOps: vec![],
+            prePaymentAmount: U256::from(1021265804),
+            totalPaymentAmount: U256::from(1021265804),
+            paymentRecipient: Address::ZERO,
+            signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedDelegationImplementation: Address::ZERO,
         };
 
         let expected_digest =
-            b256!("0x92a8e751180c87f9aff0ec759f2caab9e91e6485584f8605b6379217d3a41846");
+            b256!("0x14e830a607161a7905565356517352a18f8c105f10b940a74bd65c11a22f25c0");
         assert_eq!(
             user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("EntryPoint".into()),
@@ -483,14 +500,14 @@ mod tests {
         assert_eq!(
             user_op.signature,
             bytes!(
-                "0x0c1fd77b93e9bf66c4a106d26287942478393b1d5529d447b2def03665bf4e533a20fe5f0bcf8aa90b3102489a796f923f569e5d4828cbe7ecb13e2f2716026f1c"
+                "0xc48dd8e13f7a09954ff888dc115a9e358c6d8ccc5de8823b7b22242f251ab7333d91ea4e4263e07c60e744dd9f569f4f4b3de4b0ef3949867226a865098769421b"
             )
         );
 
         assert_eq!(
             Bytes::from(user_op.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a19600000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000000034000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000000000000000000000000000000000000000003e00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000410c1fd77b93e9bf66c4a106d26287942478393b1d5529d447b2def03665bf4e533a20fe5f0bcf8aa90b3102489a796f923f569e5d4828cbe7ecb13e2f2716026f1c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003600000000000000000000000000000000000000000000000000000000000000380000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a00000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041c48dd8e13f7a09954ff888dc115a9e358c6d8ccc5de8823b7b22242f251ab7333d91ea4e4263e07c60e744dd9f569f4f4b3de4b0ef3949867226a865098769421b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )
         );
     }

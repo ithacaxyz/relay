@@ -161,6 +161,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         config.legacy_entrypoints,
         config.delegation_proxy,
         config.account_registry,
+        config.simulator,
         chains.clone(),
         quote_signer,
         config.quote,
