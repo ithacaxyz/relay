@@ -5,8 +5,9 @@ use std::time::Duration;
 
 /// Extra buffer added to UserOp gas estimates signed by P256 keys to cover execution overhead
 /// and ensure sufficient gas is provided.
-/// 
-/// P256 signature verification has high gas usage variance and the 10_000 value seems to be a safe bet.
+///
+/// P256 signature verification has high gas usage variance and the 10_000 value seems to be a safe
+/// bet.
 pub const P256_GAS_BUFFER: U256 = uint!(10_000_U256);
 
 /// Extra buffer added to UserOp gas estimates to cover execution overhead
