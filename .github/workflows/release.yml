@@ -38,7 +38,7 @@ jobs:
 
       - name: Build and push tagged
         uses: docker/build-push-action@v6
-        if: env.GITHUB_EVENT_NAME != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch'
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -51,13 +51,13 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Get short commit
-        if: env.GITHUB_EVENT_NAME == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Build and push dispatched
         uses: docker/build-push-action@v6
-        if: env.GITHUB_EVENT_NAME == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         with:
           context: .
           file: ${{ matrix.dockerfile }}
