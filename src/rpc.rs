@@ -333,7 +333,8 @@ impl Relay {
 
         // todo: re-evaluate if this is still necessary
         let gas_estimate = GasEstimate {
-            tx: sim_result.gCombined.to::<u64>() + self.inner.quote_config.tx_buffer(),
+            tx: (((sim_result.gCombined.to::<u64>() + 110_000) * 64) / 63)
+                + self.inner.quote_config.tx_buffer(),
             op: sim_result.gCombined.to(),
         };
 

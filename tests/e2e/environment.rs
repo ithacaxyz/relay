@@ -270,8 +270,8 @@ impl Environment {
                 .with_delegation_proxy(delegation)
                 .with_account_registry(account_registry)
                 .with_simulator(simulator)
-                .with_user_op_gas_buffer(55_000) // todo: temp
-                .with_tx_gas_buffer(50_000) // todo: temp
+                .with_user_op_gas_buffer(40_000) // todo: temp
+                .with_tx_gas_buffer(80_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_database_url(database_url),
             registry,
