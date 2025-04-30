@@ -42,6 +42,8 @@ async fn asset_info() -> eyre::Result<()> {
 
     Ok(())
 }
+
+/// Ensures that asset diffs coming from prepare_calls are as expected for both ERC721 and ERC20.
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_diff() -> eyre::Result<()> {
     // setup environment and prep account

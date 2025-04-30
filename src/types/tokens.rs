@@ -20,7 +20,7 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     interface IERC721 {
-        event Transfer(address indexed from, address indexed to, uint256 indexed amount);
+        event Transfer(address indexed from, address indexed to, uint256 indexed id);
 
         function safeTransferFrom(address from, address to, uint256 id);
     }

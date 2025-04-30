@@ -158,7 +158,7 @@ impl AssetInfoServiceHandle {
             {
                 seen_assets.insert(asset);
 
-                let id = I512::try_from_le_slice(transfer.amount.as_le_slice())
+                let id = I512::try_from_le_slice(transfer.id.as_le_slice())
                     .expect("should convert from u256");
 
                 for &(eoa, change) in &[(transfer.from, -id), (transfer.to, id)] {
