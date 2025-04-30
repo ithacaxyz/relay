@@ -496,6 +496,7 @@ impl TxQueue {
         // promote blocked, if any
         let Some(blocked) = self.blocked.get_mut(&eoa) else { return };
         if let Some(tx) = blocked.pop_front() {
+            *self.ready_per_eoa.entry(*tx.eoa()).or_default() += 1;
             self.ready.push_back(tx);
         };
         if blocked.is_empty() {
@@ -510,4 +511,74 @@ enum QueueError {
     /// Returned when we don't have enough capacity to push the transaction.
     #[error("transaction is over queue capacity")]
     CapacityOverflow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Quote, SignedQuote, UserOp};
+    use alloy::{
+        eips::eip1559::Eip1559Estimation,
+        primitives::{Signature, U256},
+    };
+    use std::time::SystemTime;
+
+    fn create_tx(sender: Address) -> RelayTransaction {
+        let quote = Quote {
+            chain_id: Default::default(),
+            tx_gas: Default::default(),
+            native_fee_estimate: Eip1559Estimation {
+                max_fee_per_gas: Default::default(),
+                max_priority_fee_per_gas: Default::default(),
+            },
+            ttl: SystemTime::now(),
+            authorization_address: Default::default(),
+            entrypoint: Default::default(),
+            op: UserOp { eoa: sender, nonce: U256::random(), ..Default::default() },
+        };
+        let sig = Signature::new(Default::default(), Default::default(), Default::default());
+        let quote = SignedQuote::new_unchecked(quote, sig, Default::default());
+        RelayTransaction::new(quote, None)
+    }
+
+    #[test]
+    fn test_lifecycle() {
+        let mut pool = TxQueue::new(100);
+        let sender = Address::random();
+
+        let tx = create_tx(sender);
+        pool.push_transaction(tx.clone()).unwrap();
+        let ready = pool.pop_ready().unwrap();
+        assert_eq!(ready.id, tx.id);
+        pool.on_finished_pending(&tx.id);
+
+        assert_eq!(pool.count_queued(&sender), 0)
+    }
+
+    #[test]
+    fn test_limit() {
+        let mut pool = TxQueue::new(1);
+        let sender = Address::random();
+
+        let tx_0 = create_tx(sender);
+        pool.push_transaction(tx_0.clone()).unwrap();
+
+        // assert that we can't push new tx while another one is in queue
+        assert!(pool.push_transaction(create_tx(sender)).is_err());
+
+        // pop the queued tx
+        let ready = pool.pop_ready().unwrap();
+        assert_eq!(ready.id, tx_0.id);
+        assert_eq!(pool.count_queued(&sender), 0);
+
+        // assert that we can push now when another tx is pending
+        let tx_1 = create_tx(sender);
+        pool.push_transaction(tx_1.clone()).unwrap();
+        pool.on_finished_pending(&tx_0.id);
+        assert_eq!(pool.count_queued(&sender), 1);
+
+        let ready = pool.pop_ready().unwrap();
+        assert_eq!(ready.id, tx_1.id);
+        assert_eq!(pool.count_queued(&sender), 0);
+    }
 }
