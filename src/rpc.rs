@@ -43,8 +43,8 @@ use alloy::{
 };
 use futures_util::{
     TryFutureExt,
-    future::{TryJoinAll, try_join_all},
-    join, try_join,
+    future::{TryJoinAll, try_join_all, try_join3},
+    join,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -52,6 +52,7 @@ use jsonrpsee::{
 };
 use opentelemetry::trace::SpanKind;
 use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
+use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
 use crate::{
@@ -241,8 +242,8 @@ impl Relay {
 
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
 
-        let (entrypoint, native_fee_estimate, eth_price) = try_join!(
-            // fetch entrypoint from the account and ensure it is supported
+        let (entrypoint, native_fee_estimate, eth_price) = try_join3(
+            // fetch entrypoint from the account and ensure it is supporte
             async {
                 let entrypoint = account.get_entrypoint().await?;
                 if !self.is_supported_entrypoint(&entrypoint) {
@@ -257,7 +258,8 @@ impl Relay {
                 // TODO: only handles eth as native fee token
                 Ok(self.inner.price_oracle.eth_price(token.kind).await)
             },
-        )?;
+        )
+        .await?;
 
         // fetch nonce if not specified
         let nonce = if let Some(nonce) = request.op.nonce {
@@ -357,6 +359,10 @@ impl Relay {
             U256::ZERO
         };
 
+        if !extra_payment.is_zero() {
+            op.set_legacy_payment_amount(extra_payment);
+        }
+
         // we estimate gas and fees
         let (mut asset_diff, sim_result) = entrypoint
             .simulate_execute(
@@ -381,7 +387,7 @@ impl Relay {
         op.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.set_legacy_payment_amount(payment_per_gas * op.combinedGas);
+        op.set_legacy_payment_amount(extra_payment + payment_per_gas * op.combinedGas);
 
         // If the EOA is the one paying, subtract the fee from the asset diff as to not confuse the
         // user.
