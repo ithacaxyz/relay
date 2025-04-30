@@ -204,7 +204,7 @@ impl Environment {
         }
 
         // Get or deploy mock contracts.
-        let (simulator, delegation, entrypoint, account_registry, erc20s,  erc721) =
+        let (simulator, delegation, entrypoint, account_registry, erc20s, erc721) =
             get_or_deploy_contracts(&provider).await?;
 
         let eoa = if config.is_prep {

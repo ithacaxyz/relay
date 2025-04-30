@@ -2,18 +2,14 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiff, AssetDiffs, AssetWithInfo,
+        Asset, AssetDiffs, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::IERC721Events,
     },
 };
 use alloy::{
     network::TransactionBuilder,
-    primitives::{
-        Address, ChainId, U256,
-        aliases::I512,
-        map::{HashMap, HashSet},
-    },
+    primitives::{Address, ChainId, map::HashMap},
     providers::Provider,
     rpc::types::{
         Log, TransactionRequest,
@@ -121,11 +117,7 @@ impl AssetInfoServiceHandle {
         logs: impl Iterator<Item = Log>,
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
-        let mut seen_assets: HashSet<Asset> = HashSet::default();
-        let mut fungible_diffs: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
-        let mut non_fungible_diffs: HashSet<(Address, Asset, I512)> = HashSet::default();
-        let mut asset_diffs: HashMap<Address, Vec<AssetDiff>> = HashMap::default();
-
+        let mut builder = AssetDiffs::builder();
         for log in logs {
             // ERC-20
             if let Some((asset, transfer)) =
@@ -133,22 +125,7 @@ impl AssetInfoServiceHandle {
                     IERC20Events::Transfer(t) => (Asset::from(log.inner.address), t),
                 })
             {
-                seen_assets.insert(asset);
-
-                // credits
-                fungible_diffs
-                    .entry(transfer.to)
-                    .or_default()
-                    .entry(asset)
-                    .and_modify(|(c, _)| *c += transfer.amount)
-                    .or_insert((transfer.amount, U256::ZERO));
-                // debits
-                fungible_diffs
-                    .entry(transfer.from)
-                    .or_default()
-                    .entry(asset)
-                    .and_modify(|(_, d)| *d += transfer.amount)
-                    .or_insert((U256::ZERO, transfer.amount));
+                builder.record_erc20(asset, transfer);
             }
             // ERC-721
             else if let Some((asset, transfer)) =
@@ -156,68 +133,15 @@ impl AssetInfoServiceHandle {
                     IERC721Events::Transfer(t) => (Asset::from(log.inner.address), t),
                 })
             {
-                seen_assets.insert(asset);
-
-                let id = I512::try_from_le_slice(transfer.id.as_le_slice())
-                    .expect("should convert from u256");
-
-                for &(eoa, change) in &[
-                    (transfer.from, -id), // sent
-                    (transfer.to, id),    // received
-                ] {
-                    // we are only interested in collapsed/net diffs. When a eoa sends and
-                    // receives the same NFT, it should not have an entry.
-                    //
-                    // * if there is no other diff: insert it
-                    // * if the eoa is sending (negative number), but there is a diff with a
-                    //   receiving event (positive number): just remove existing
-                    // * if the eoa is receiving (positive number), but there is a diff with a
-                    //   sending event (negative number): just remove existing
-                    if !non_fungible_diffs.remove(&(eoa, asset, -change)) {
-                        non_fungible_diffs.insert((eoa, asset, change));
-                    }
-                }
+                builder.record_erc721(asset, transfer);
             }
         }
 
         // fetch assets metadata
         let metadata =
-            self.get_asset_info_list(provider, seen_assets.into_iter().collect()).await?;
+            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
 
-        // calculate fungible diffs from credit & debit entries
-        for (owner, asset_map) in fungible_diffs {
-            for (asset, (credit, debit)) in asset_map {
-                let net = I512::try_from_le_slice(credit.as_le_slice())
-                    .expect("should convert from u256")
-                    - I512::try_from_le_slice(debit.as_le_slice())
-                        .expect("should convert from u256");
-                if net.is_zero() {
-                    continue;
-                }
-                let info = &metadata[&asset];
-                asset_diffs.entry(owner).or_default().push(AssetDiff {
-                    address: (!asset.is_native()).then(|| asset.address()),
-                    name: info.name.clone(),
-                    symbol: info.symbol.clone(),
-                    decimals: info.decimals,
-                    value: net,
-                });
-            }
-        }
-
-        // push non fungible entries
-        for (owner, asset, id) in non_fungible_diffs {
-            let info = &metadata[&asset];
-            asset_diffs.entry(owner).or_default().push(AssetDiff {
-                address: Some(asset.address()),
-                name: info.name.clone(),
-                symbol: info.symbol.clone(),
-                decimals: info.decimals,
-                value: id,
-            });
-        }
-
-        Ok(AssetDiffs(asset_diffs.into_iter().collect()))
+        Ok(builder.build(metadata))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
