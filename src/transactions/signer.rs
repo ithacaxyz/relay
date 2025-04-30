@@ -699,9 +699,9 @@ impl Signer {
         self.metrics.successful_user_ops.increment(1);
     }
 
-    /// Spawns a new [`Signer`] instance. Returns [`SignerHandle`] and the number of futures that
-    /// are spawned on signer startup (loaded pending transactions or nonce gap closing tasks).
-    pub async fn into_future(self) -> eyre::Result<SignerTask> {
+    /// Spawns a new [`Signer`] instance. Returns [`SignerTask`] and the pending transactions that
+    /// were loaded on startup.
+    pub async fn into_future(self) -> eyre::Result<(SignerTask, Vec<PendingTransaction>)> {
         let loaded_transactions = self
             .storage
             .read_pending_transactions(self.address(), self.chain_id)
@@ -751,7 +751,7 @@ impl Signer {
         }
 
         // Watch pending transactions that were loaded from storage
-        for tx in loaded_transactions {
+        for tx in loaded_transactions.iter().cloned() {
             let signer = self.clone();
             pending.spawn(async move { signer.watch_transaction(tx).await });
         }
@@ -788,7 +788,10 @@ impl Signer {
             }
         });
 
-        Ok(SignerTask { signer: self, pending, _maintenance: maintenance, waker: None })
+        Ok((
+            SignerTask { signer: self, pending, _maintenance: maintenance, waker: None },
+            loaded_transactions,
+        ))
     }
 }
 
