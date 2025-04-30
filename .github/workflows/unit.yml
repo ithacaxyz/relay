@@ -51,6 +51,7 @@ jobs:
           cd tests/account
           forge build
           forge build lib/solady/test/utils/mocks/MockERC20.sol
+          forge build lib/solady/test/utils/mocks/MockERC721.sol
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

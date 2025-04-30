@@ -1,9 +1,24 @@
-use alloy::primitives::{Address, address, aliases::I512};
+use super::{
+    IERC20::{self},
+    IERC721,
+};
+use alloy::primitives::{
+    Address, U256, address,
+    aliases::I512,
+    map::{HashMap, HashSet},
+};
 use serde::{Deserialize, Serialize};
 
 /// Net flow per account and asset based on simulated execution logs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetDiffs(pub Vec<(Address, Vec<AssetDiff>)>);
+
+impl AssetDiffs {
+    /// Returns a [`AssetDiffBuilder`] that can build [`AssetDiffs`].
+    pub fn builder() -> AssetDiffBuilder {
+        AssetDiffBuilder::default()
+    }
+}
 
 /// Asset with metadata and value diff.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -71,4 +86,126 @@ pub struct AssetWithInfo {
     pub symbol: Option<String>,
     /// Decimals.
     pub decimals: Option<u8>,
+}
+
+/// Builds a collapsed diff for both fungible & non-fungible tokens into [`AssetDiff`].
+#[derive(Debug, Default)]
+pub struct AssetDiffBuilder {
+    /// Assets seen in events.
+    seen_assets: HashSet<Asset>,
+    // For each account: fungible token credits/debits & non fungible token in/out.
+    per_account: HashMap<Address, AccountChanges>,
+}
+
+#[derive(Debug, Default)]
+struct AccountChanges {
+    /// Account debits and credits per asset.
+    fungible: HashMap<Asset, (U256, U256)>,
+    /// Account nft sends (negative id value) and receives (positive id value).
+    non_fungible: HashSet<(Asset, I512)>,
+}
+
+impl AssetDiffBuilder {
+    /// Returns an iterator over seen assets.
+    pub fn seen_assets(&self) -> impl Iterator<Item = &Asset> {
+        self.seen_assets.iter()
+    }
+
+    /// Records a [`IERC20::Transfer`] event.
+    pub fn record_erc20(&mut self, asset: Asset, transfer: IERC20::Transfer) {
+        self.seen_assets.insert(asset);
+
+        // credits
+        self.per_account
+            .entry(transfer.to)
+            .or_default()
+            .fungible
+            .entry(asset)
+            .and_modify(|(c, _)| *c += transfer.amount)
+            .or_insert((transfer.amount, U256::ZERO));
+
+        // debits
+        self.per_account
+            .entry(transfer.from)
+            .or_default()
+            .fungible
+            .entry(asset)
+            .and_modify(|(_, d)| *d += transfer.amount)
+            .or_insert((U256::ZERO, transfer.amount));
+    }
+
+    /// Records a [`IERC721::Transfer`] event.
+    pub fn record_erc721(&mut self, asset: Asset, transfer: IERC721::Transfer) {
+        self.seen_assets.insert(asset);
+
+        let id = I512::try_from_le_slice(transfer.id.as_le_slice()).expect("u256→i512");
+
+        for &(eoa, diff) in &[
+            (transfer.from, -id), // sent
+            (transfer.to, id),    // received
+        ] {
+            // we are only interested in collapsed/net diffs. When a eoa sends and
+            // receives the same NFT, it should not have an entry.
+            //
+            // * if there is no other diff: insert it
+            // * if the eoa is sending (negative number), but there is a diff with a receiving event
+            //   (positive number): just remove existing
+            // * if the eoa is receiving (positive number), but there is a diff with a sending event
+            //   (negative number): just remove existing
+
+            let nft_set = &mut self.per_account.entry(eoa).or_default().non_fungible;
+
+            if !nft_set.remove(&(asset, -diff)) {
+                nft_set.insert((asset, diff));
+            }
+        }
+    }
+
+    /// Builds and returns [`AssetDiffs`].
+    pub fn build(self, metadata: HashMap<Asset, AssetWithInfo>) -> AssetDiffs {
+        let mut entries = Vec::with_capacity(self.per_account.len());
+
+        for (eoa, changes) in self.per_account {
+            let mut account_diffs =
+                Vec::with_capacity(changes.fungible.len() + changes.non_fungible.len());
+
+            // fungible tokens
+            for (asset, (credit, debit)) in changes.fungible {
+                let net = I512::try_from_le_slice(credit.as_le_slice()).expect("u256→i512")
+                    - I512::try_from_le_slice(debit.as_le_slice()).expect("u256→i512");
+
+                if net.is_zero() {
+                    continue;
+                }
+
+                let info = &metadata[&asset];
+                account_diffs.push(AssetDiff {
+                    address: (!asset.is_native()).then(|| asset.address()),
+                    name: info.name.clone(),
+                    symbol: info.symbol.clone(),
+                    decimals: info.decimals,
+                    value: net,
+                });
+            }
+
+            // non-fungible tokens
+            for (asset, id) in changes.non_fungible {
+                let info = &metadata[&asset];
+                account_diffs.push(AssetDiff {
+                    address: Some(asset.address()),
+                    name: info.name.clone(),
+                    symbol: info.symbol.clone(),
+                    decimals: info.decimals,
+                    value: id,
+                });
+            }
+
+            // only include accounts that actually changed
+            if !account_diffs.is_empty() {
+                entries.push((eoa, account_diffs));
+            }
+        }
+
+        AssetDiffs(entries)
+    }
 }

@@ -83,6 +83,8 @@ pub struct Environment {
     pub erc20: Address,
     /// Bunch of deployed erc20 which have not been minted to the eoa.
     pub erc20s: Vec<Address>,
+    /// Usable ERC721 contract.
+    pub erc721: Address,
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
@@ -128,6 +130,7 @@ impl Environment {
     /// - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
     /// - `TEST_ACCOUNT_REGISTRY`: Address for AccountRegistry contract; deploys a mock if unset.
     /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
+    /// - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
     ///
     /// Example `.env`:
     /// ```env
@@ -140,6 +143,7 @@ impl Environment {
     /// TEST_DELEGATION="0xDelegationAddress"
     /// TEST_ACCOUNT_REGISTRY="0xAccountRegistryAddress"
     /// TEST_ERC20="0xYourErc20Address"
+    /// TEST_ERC721="0xYourErc721Address"
     /// ```
     pub async fn setup(config: EnvironmentConfig) -> eyre::Result<Self> {
         dotenvy::dotenv().ok();
@@ -200,7 +204,7 @@ impl Environment {
         }
 
         // Get or deploy mock contracts.
-        let (simulator, delegation, entrypoint, account_registry, erc20s) =
+        let (simulator, delegation, entrypoint, account_registry, erc20s, erc721) =
             get_or_deploy_contracts(&provider).await?;
 
         let eoa = if config.is_prep {
@@ -287,6 +291,7 @@ impl Environment {
             fee_token: erc20s[1],
             erc20: erc20s[0],
             erc20s: erc20s[2..].to_vec(),
+            erc721,
             chain_id,
             relay_endpoint,
             relay_handle,
@@ -425,7 +430,7 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Address, Address, Vec<Address>), eyre::Error> {
+) -> Result<(Address, Address, Address, Address, Vec<Address>, Address), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
@@ -509,11 +514,18 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         erc20s.push(erc20)
     }
 
+    let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
+        Address::from_str(&address).wrap_err("ERC721 address parse failed.")?
+    } else {
+        deploy_contract(&provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None)
+            .await?
+    };
+
     if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((simulator, delegation_proxy, entrypoint, account_registry, erc20s))
+    Ok((simulator, delegation_proxy, entrypoint, account_registry, erc20s, erc721))
 }
 
 async fn deploy_contract<P: Provider>(
