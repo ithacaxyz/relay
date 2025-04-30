@@ -161,10 +161,19 @@ impl AssetInfoServiceHandle {
                 let id = I512::try_from_le_slice(transfer.id.as_le_slice())
                     .expect("should convert from u256");
 
-                for &(eoa, change) in &[(transfer.from, -id), (transfer.to, id)] {
-                    // if there's an opposite change for the given id, remove it. eg [-id,+id]
+                for &(eoa, change) in &[
+                    (transfer.from, -id), // sent
+                    (transfer.to, id),    // received
+                ] {
+                    // we are only interested in collapsed/net diffs. When a eoa sends and
+                    // receives the same NFT, it should not have an entry.
+                    //
+                    // * if there is no other diff: insert it
+                    // * if the eoa is sending (negative number), but there is a diff with a
+                    //   receiving event (positive number): just remove existing
+                    // * if the eoa is receiving (positive number), but there is a diff with a
+                    //   sending event (negative number): just remove existing
                     if !non_fungible_diffs.remove(&(eoa, asset, -change)) {
-                        // no opposite found, so insert it
                         non_fungible_diffs.insert((eoa, asset, change));
                     }
                 }
