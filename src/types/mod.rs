@@ -20,8 +20,8 @@ pub use coin_registry::*;
 mod entrypoint;
 pub use entrypoint::*;
 
-mod erc20;
-pub use erc20::*;
+mod tokens;
+pub use tokens::*;
 
 mod key;
 use alloy::primitives::Uint;
@@ -46,6 +46,9 @@ pub use call::*;
 
 mod webauthn;
 pub use webauthn::*;
+
+mod simulator;
+pub use simulator::*;
 
 mod storage;
 pub use storage::*;

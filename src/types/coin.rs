@@ -24,7 +24,7 @@ impl CoinPair {
     }
 }
 
-/// Chain and address agonistic coins.
+/// Chain, address and contract agonistic coins.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum CoinKind {

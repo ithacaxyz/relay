@@ -41,19 +41,18 @@ impl Chains {
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
-                let service = TransactionService::new(
+                let (service, handle) = TransactionService::new(
                     provider.clone(),
                     tx_signers.clone(),
                     storage.clone(),
                     config.clone(),
                 )
                 .await?;
-                let transactions = service.handle();
                 tokio::spawn(service);
 
                 let chain_id = provider.get_chain_id().await?;
                 let is_optimism = provider.is_optimism().await?;
-                eyre::Ok((chain_id, Chain { provider, transactions, is_optimism }))
+                eyre::Ok((chain_id, Chain { provider, transactions: handle, is_optimism }))
             }))
             .await?,
         );
@@ -66,10 +65,9 @@ impl Chains {
         self.chains.get(&chain_id).cloned()
     }
 
-    /// Get the first provider in the collection.
-    // NOTE: TEMPORARY PLEASE DELETE THIS AFTER https://github.com/ithacaxyz/relay/pull/331
-    pub fn first(&self) -> Option<(&ChainId, &Chain)> {
-        self.chains.iter().next()
+    /// Get an iterator over the supported chain IDs.
+    pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
+        self.chains.keys()
     }
 }
 

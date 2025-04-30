@@ -67,9 +67,10 @@ async fn invalid_auth_nonce() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    let dummy_signer =
-        DynSigner::load("0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d", None)
-            .await?;
+    let dummy_signer = DynSigner::from_signing_key(
+        "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    )
+    .await?;
 
     run_e2e_upgraded(|_env| {
         vec![TxContext {
@@ -228,13 +229,11 @@ async fn spend_limits_bundle_failure() -> Result<()> {
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
-            expected: ExpectedOutcome::FailSend, // todo should fail on FailEstimate
+            expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
-                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
                     calls::daily_limit(env.erc20, U256::from(15), session_key.key()),
                 ],
@@ -253,4 +252,24 @@ async fn spend_limits_bundle_failure() -> Result<()> {
     })
     .await?;
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_fee_tx() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    // User with no balance on the fee token should fail on prepareCalls.
+    run_e2e_prep_erc20(|env| {
+        let to = Address::random();
+        let transfer_amount = U256::from(10);
+
+        vec![TxContext {
+            authorization_keys: vec![&key],
+            expected: ExpectedOutcome::FailEstimate, // no balance on fee token
+            fee_token: Some(env.erc20s[2]),          // has not been minted
+            calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
+            ..Default::default()
+        }]
+    })
+    .await
 }

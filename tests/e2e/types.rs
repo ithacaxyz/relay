@@ -1,12 +1,11 @@
 use super::{
-    cases::{prep_account, upgrade_account},
-    check_bundle,
-    environment::Environment,
-    prepare_calls,
+    await_calls_status, cases::upgrade_account, environment::Environment, prepare_calls,
+    send_prepared_calls,
 };
 use alloy::{
-    eips::eip7702::SignedAuthorization,
+    eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, U256},
+    providers::Provider,
     sol_types::SolValue,
 };
 use derive_more::Debug;
@@ -15,8 +14,10 @@ use futures_util::future::{BoxFuture, join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
-        Call, KeyWith712Signer, Signature, UserOp,
-        rpc::{AuthorizeKey, RevokeKey},
+        Call, ENTRYPOINT_NO_ERROR,
+        EntryPoint::UserOpExecuted,
+        KeyWith712Signer, PreOp, Signature,
+        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
     },
 };
 
@@ -26,7 +27,7 @@ pub type PostTxCheck =
     Box<dyn for<'a> Fn(&'a Environment, &TxContext<'_>) -> BoxFuture<'a, eyre::Result<()>>>;
 
 /// Represents the expected outcome of a test case execution
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 #[allow(dead_code)]
 pub enum ExpectedOutcome {
     /// Test should pass completely
@@ -122,7 +123,7 @@ pub struct TxContext<'a> {
     pub calls: Vec<Call>,
     /// Expected outcome of the transaction
     pub expected: ExpectedOutcome,
-    /// Optional authorization.
+    /// Optional authorization. Used only for upgrading existing EOAs.
     pub auth: Option<AuthKind>,
     /// Optional Key that will sign the UserOp
     pub key: Option<&'a KeyWith712Signer>,
@@ -131,8 +132,7 @@ pub struct TxContext<'a> {
     /// List of keys to revoke that will be converted to calls on bottom of the UserOp.
     pub revoke_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
-    #[allow(dead_code)]
-    pub fee_token: Address,
+    pub fee_token: Option<Address>,
     /// Optional array of pre-ops to be executed before the UserOp.
     pub pre_ops: Vec<TxContext<'a>>,
     /// Optional nonce to be used.
@@ -143,32 +143,6 @@ pub struct TxContext<'a> {
 }
 
 impl TxContext<'_> {
-    /// Creates a PREPAccount from the first [`TxContext`] of a test case.
-    pub async fn prep_account(
-        &mut self,
-        env: &mut Environment,
-        tx_num: usize,
-    ) -> Result<(), eyre::Error> {
-        // If a signer is not defined, takes the first authorized key from the tx context.
-        let op_signer = self.key.as_ref().unwrap_or(&self.authorization_keys[0]);
-
-        let bundle_id = prep_account(
-            env,
-            &self.calls,
-            op_signer,
-            &self.authorization_keys,
-            &self.pre_ops,
-            tx_num,
-        )
-        .await;
-
-        // Check test expectations
-        let op_nonce = U256::ZERO; // first transaction
-        check_bundle(bundle_id, self, tx_num, None, op_nonce, &*env).await?;
-
-        Ok(())
-    }
-
     /// Upgrades an account from the first [`TxContext`] of a test case.
     ///
     /// Since upgrade account cannot bundle a list of [`Call`], it returns them so they can be
@@ -190,7 +164,7 @@ impl TxContext<'_> {
 
         // Check test expectations
         let op_nonce = U256::ZERO; // first transaction
-        check_bundle(tx_hash, self, tx_num, authorization, op_nonce, env).await?;
+        self.check_bundle(tx_hash, tx_num, authorization, op_nonce, env).await?;
 
         Ok(self.calls.clone())
     }
@@ -208,18 +182,121 @@ impl TxContext<'_> {
     pub fn revoke_keys(&self) -> Vec<RevokeKey> {
         self.revoke_keys.iter().map(|k| k.to_revoked()).collect()
     }
+
+    /// Processes a single transaction, returning error on a unexpected failure.
+    ///
+    /// The process follows these steps:
+    /// 1. Obtains a signed quote and UserOp signature from [`prepare_calls`].
+    /// 2. Submits and verifies execution with [`send_prepared_calls`].
+    ///    - Sends the prepared calls and signature to the relay
+    ///    - Handles expected send failures
+    ///    - Retrieves and checks transaction receipt
+    ///    - Verifies transaction status matches expectations
+    ///    - Confirms UserOp success by checking nonce invalidation
+    pub async fn process(self, tx_num: usize, env: &Environment) -> eyre::Result<()> {
+        let signer = self.key.expect("should have key");
+
+        let Some((signature, context)) = prepare_calls(tx_num, &self, signer, env, false).await?
+        else {
+            // We had an expected failure so we should exit.
+            return Ok(());
+        };
+
+        let op_nonce = context.quote().as_ref().unwrap().ty().op.nonce;
+
+        // Submit signed call
+        let bundle = send_prepared_calls(env, signer, signature, context).await;
+
+        self.check_bundle(bundle, tx_num, None, op_nonce, env).await
+    }
+
+    /// Checks that the submitted bundle has had the expected test outcome.
+    pub async fn check_bundle(
+        &self,
+        bundle_id: eyre::Result<BundleId>,
+        tx_num: usize,
+        authorization: Option<SignedAuthorization>,
+        _op_nonce: U256,
+        env: &Environment,
+    ) -> Result<(), eyre::Error> {
+        match bundle_id {
+            Ok(bundle_id) => {
+                let calls_status =
+                    await_calls_status(env, bundle_id).await.wrap_err("Failed to get receipt")?;
+                if self.expected.failed_send() && calls_status.status != CallStatusCode::Failed {
+                    return Err(eyre::eyre!(
+                        "Send action {tx_num} passed when it should have failed.",
+                    ));
+                } else if !self.expected.failed_send()
+                    && calls_status.status == CallStatusCode::Failed
+                {
+                    return Err(eyre::eyre!(
+                        "Send action {tx_num} failed when it should have passed.",
+                    ));
+                } else if self.expected.failed_send()
+                    && calls_status.status == CallStatusCode::Failed
+                {
+                    return Ok(());
+                }
+
+                let receipt = &calls_status.receipts[0];
+                if receipt.status.coerce_status() {
+                    if self.expected.reverted_tx() {
+                        return Err(eyre::eyre!(
+                            "Transaction {tx_num} passed when it should have reverted.",
+                        ));
+                    }
+                } else if !self.expected.reverted_tx() {
+                    return Err(eyre::eyre!("Transaction {tx_num} failed: {receipt:#?}"));
+                }
+
+                if authorization.is_some()
+                    && env.provider.get_code_at(env.eoa.address()).await?
+                        != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
+                {
+                    return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
+                }
+
+                // UserOp has succeeded if the nonce has been invalidated.
+                let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
+                    event.incremented && event.err == ENTRYPOINT_NO_ERROR
+                } else {
+                    false
+                };
+                if success && self.expected.failed_user_op() {
+                    return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
+                } else if !success && !self.expected.failed_user_op() {
+                    return Err(eyre::eyre!(
+                        "Transaction succeeded but UserOp failed for transaction {tx_num}",
+                    ));
+                }
+
+                // Make any additional custom checks
+                for post_tx_check in &self.post_tx {
+                    post_tx_check(env, self).await?
+                }
+            }
+            Err(err) => {
+                if self.expected.failed_send() {
+                    return Ok(());
+                }
+                return Err(eyre::eyre!("Send error for transaction {tx_num}: {err}"));
+            }
+        };
+        Ok(())
+    }
 }
 
 pub async fn build_pre_ops<'a>(
     env: &Environment,
     pre_ops: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<Vec<UserOp>> {
+) -> eyre::Result<Vec<PreOp>> {
     let pre_ops = join_all(pre_ops.iter().map(|tx| async move {
         let signer = tx.key.expect("userop should have a key");
-        let (signature, quote) =
+        let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = quote.ty().op.clone();
+        let mut op = context.take_preop().unwrap();
         op.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()
@@ -250,5 +327,12 @@ alloy::sol! {
         }
         function mint(address a, uint256 val) external;
         function transfer(address recipient, uint256 amount);
+    }
+}
+
+alloy::sol! {
+    #[sol(rpc)]
+    interface MockErc721 {
+        function mint() external;
     }
 }

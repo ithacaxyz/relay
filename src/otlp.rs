@@ -2,10 +2,11 @@
 
 use std::str::FromStr;
 
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::{global, trace::TracerProvider};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    Resource, resource::SdkProvidedResourceDetector, trace::SdkTracerProvider,
+    Resource, propagation::TraceContextPropagator, resource::SdkProvidedResourceDetector,
+    trace::SdkTracerProvider,
 };
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
@@ -27,6 +28,8 @@ impl OtelGuard {
     where
         S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
     {
+        global::set_text_map_propagator(TraceContextPropagator::new());
+
         let tracer = self.tracer("relay");
         tracing_opentelemetry::layer()
             .with_tracer(tracer)

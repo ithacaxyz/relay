@@ -1,18 +1,21 @@
 use super::{
     Call,
+    EntryPoint::delegationImplementationOfCall,
     IDelegation::authorizeCall,
-    Key,
+    Key, KeyHash, Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
 use crate::{error::RelayError, types::IDelegation};
-use Delegation::{DelegationInstance, spendAndExecuteInfosReturn};
+use Delegation::{
+    DelegationInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+};
 use alloy::{
     eips::eip7702::{
         SignedAuthorization,
         constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
-    providers::Provider,
+    providers::{MulticallError, Provider},
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -20,6 +23,15 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    contract DelegationProxy {
+        /// The default implementation address.
+        address public implementation;
+    }
+}
 
 sol! {
     #[sol(rpc)]
@@ -129,6 +141,22 @@ sol! {
         /// - `target` is in the upper 20 bytes.
         /// - `fnSel` is in the lower 4 bytes.
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
+
+        /// The entrypoint address.
+        address public ENTRY_POINT;
+
+        /// Returns whether the given signature is valid and a keyHash that signed the digest.
+        function unwrapAndValidateSignature(bytes32 digest, bytes calldata signature)
+            public
+            view
+            virtual
+            returns (bool isValid, bytes32 keyHash);
+
+        /// Initializes PREP account with given `initData`.
+        function initializePREP(bytes calldata initData) public virtual returns (bool);
+
+        /// The implementation address.
+        address public implementation;
     }
 }
 
@@ -182,10 +210,37 @@ impl<P: Provider> Account<P> {
         }
     }
 
+    /// Returns the address of the account.
+    pub fn address(&self) -> Address {
+        *self.delegation.address()
+    }
+
     /// Sets overrides for all calls on this account.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
+    }
+
+    /// Returns this account delegation implementation if it exists.
+    pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
+        if !self.is_delegated().await? {
+            return Ok(None);
+        }
+
+        let delegation =
+            self.delegation
+                .provider()
+                .call(TransactionRequest::default().to(self.get_entrypoint().await?).input(
+                    delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
+                ))
+                .await
+                .and_then(|ret| {
+                    delegationImplementationOfCall::abi_decode_returns(&ret)
+                        .map_err(TransportErrorKind::custom)
+                })
+                .map_err(RelayError::from)?;
+
+        Ok(Some(delegation))
     }
 
     /// Whether this account is delegated.
@@ -251,6 +306,56 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(key_hashes.zip(permissions).collect())
+    }
+
+    /// Fetch the entrypoint address from the delegation contract.
+    pub async fn get_entrypoint(&self) -> TransportResult<Address> {
+        self.delegation
+            .ENTRY_POINT()
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)
+    }
+
+    /// Validates the given signature, returns `Some(key_hash)` if the signature is valid.
+    pub async fn validate_signature(
+        &self,
+        digest: B256,
+        signature: Signature,
+    ) -> TransportResult<Option<KeyHash>> {
+        let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
+            .delegation
+            .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into())
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok(isValid.then_some(keyHash))
+    }
+
+    /// A helper to combine `initializePREP` and `validateSignature` calls into a single multicall.
+    pub async fn initialize_and_validate_signature(
+        &self,
+        init_data: Bytes,
+        digest: B256,
+        signature: Signature,
+    ) -> Result<Option<B256>, MulticallError> {
+        let (_, unwrapAndValidateSignatureReturn { isValid, keyHash }) = self
+            .delegation
+            .provider()
+            .multicall()
+            .add(self.delegation.initializePREP(init_data))
+            .add(
+                self.delegation
+                    .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into()),
+            )
+            .overrides(self.overrides.clone())
+            .aggregate()
+            .await?;
+
+        Ok(isValid.then_some(keyHash))
     }
 }
 

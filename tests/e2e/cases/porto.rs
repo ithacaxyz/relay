@@ -136,7 +136,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             },
             // Failing transfer (different target)
             TxContext {
-                calls: vec![calls::transfer(env.erc20_alt, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![calls::transfer(env.erc20s[1], Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
                 key: Some(&session_key),
                 ..Default::default()
@@ -504,7 +504,6 @@ async fn session_key_pre_op() -> Result<()> {
                     authorization_keys: vec![&session_key],
                     calls: vec![
                         calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
-                        calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                         calls::can_execute_all(env.erc20, session_key.key_hash()),
                         calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
                     ],
@@ -534,7 +533,6 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
         assert!(env.erc20 != env.fee_token);
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
             expected: ExpectedOutcome::Pass,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
@@ -542,7 +540,6 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
                 calls: vec![
                     calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
                     calls::daily_limit(env.erc20, U256::from(10000000u64), session_key.key()),
-                    calls::can_execute_all(env.entrypoint, session_key.key_hash()),
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
                 ],
                 expected: ExpectedOutcome::Pass,
@@ -569,9 +566,7 @@ async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
-            auth: Some(AuthKind::Auth),
-            // Should fail since session key does not have any permissions.
-            expected: ExpectedOutcome::FailSend,
+            expected: ExpectedOutcome::FailEstimate,
             // Bundle session key authorization as a pre-op
             pre_ops: vec![TxContext {
                 authorization_keys: vec![&session_key],

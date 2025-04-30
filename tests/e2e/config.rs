@@ -1,5 +1,4 @@
-use super::{TxContext, environment::Environment, process_tx};
-use relay::types::Call;
+use super::{TxContext, cases::prep_account, environment::Environment};
 use strum::EnumIter;
 
 /// Test configuration that will prepare the desired [`Environment`] before a run.
@@ -23,26 +22,33 @@ impl TestConfig {
         // Apply native or ERC20 payment method
         env = self.payment.apply(env);
 
-        // Once contracts are deployed, this should go away
-        if env.eoa.is_prep() && std::env::var("TEST_CI_FORK").is_ok() {
-            eprintln!("Skipping configuration: {:?} with {:?}", self.account, self.payment);
-            return Ok(());
-        }
-
         // Generate transactions from test case
         let txs = build_txs(&env);
 
-        let mut first_tx_calls = Vec::new();
-        for (tx_num, mut tx) in txs.into_iter().enumerate() {
+        let mut txs = txs.into_iter().enumerate().peekable();
+        while let Some((tx_num, mut tx)) = txs.next() {
+            // The account needs to be set up in the very first transaction. PREP supports bundling
+            // calls with it, while upgrading an existing EOA does not.
             if tx_num == 0 {
-                // This should only really returns calls with upgraded accounts.
-                first_tx_calls = self.account.handle_first_tx(&mut env, tx_num, &mut tx).await?;
-            } else {
-                // Prepend any extra calls from the first transaction.
-                tx.calls.splice(0..0, first_tx_calls.drain(..));
-
-                process_tx(tx_num, tx, &env).await?;
+                match self.account {
+                    AccountConfig::Prep => {
+                        // If a signer is not defined, takes the first authorized key from the tx
+                        // context.
+                        tx.key = Some(tx.key.as_ref().unwrap_or(&tx.authorization_keys[0]));
+                        prep_account(&mut env, &std::mem::take(&mut tx.authorization_keys)).await?;
+                    }
+                    AccountConfig::Upgraded => {
+                        // Since upgrade account cannot bundle a list of Call, it returns them so
+                        // they can be bundled for the following transaction.
+                        let mut calls = tx.upgrade_account(&env, tx_num).await?;
+                        if let Some((_, next_tx)) = txs.peek_mut() {
+                            next_tx.calls.splice(0..0, calls.drain(..));
+                        }
+                        continue;
+                    }
+                }
             }
+            tx.process(tx_num, &env).await?;
         }
 
         Ok(())
@@ -68,25 +74,6 @@ impl AccountConfig {
         match self {
             AccountConfig::Prep => Environment::setup_with_prep().await,
             AccountConfig::Upgraded => Environment::setup_with_upgraded().await,
-        }
-    }
-
-    /// Perform the first-transaction handling.
-    ///
-    /// If it's an upgraded account, returns the list of [`Call`] that should be prepended on the
-    /// next transaction, since it does not support bundling.
-    pub async fn handle_first_tx(
-        self,
-        env: &mut Environment,
-        tx_num: usize,
-        tx: &mut TxContext<'_>,
-    ) -> eyre::Result<Vec<Call>> {
-        match self {
-            AccountConfig::Prep => {
-                tx.prep_account(env, tx_num).await?;
-                Ok(vec![])
-            }
-            AccountConfig::Upgraded => tx.upgrade_account(env, tx_num).await,
         }
     }
 }

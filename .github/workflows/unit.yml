@@ -21,7 +21,7 @@ jobs:
     name: test – ${{ matrix.variant }}
     strategy:
       matrix:
-        variant: [local, odyssey_fork, pg]
+        variant: [local, base_sepolia, pg]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     services:
@@ -51,6 +51,7 @@ jobs:
           cd tests/account
           forge build
           forge build lib/solady/test/utils/mocks/MockERC20.sol
+          forge build lib/solady/test/utils/mocks/MockERC721.sol
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -58,15 +59,14 @@ jobs:
           cache-on-failure: true
       - uses: taiki-e/install-action@nextest
 
-      - name: Set odyssey environment
-        # when updating deployed address, also update TEST_FORK_BLOCK_NUMBER_PINNED
-        if: ${{ matrix.variant == 'odyssey_fork' }}
+      - name: Set fork environment
+        if: ${{ matrix.variant == 'base_sepolia' }}
         run: |
-          echo "TEST_CI_FORK=1" >> $GITHUB_ENV
-          echo "TEST_FORK_URL=https://odyssey-devnet.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_FORK_BLOCK_NUMBER_PINNED=591698" >> $GITHUB_ENV
-          echo "TEST_ENTRYPOINT=0x1692bc8d0c73a7540ecb572e85c0775e68c55d25" >> $GITHUB_ENV
-          echo "TEST_DELEGATION=0x623b5b44647871268d481d2930f60d5d7f37a1fe" >> $GITHUB_ENV
+          echo "TEST_FORK_URL=https://base-sepolia.ithaca.xyz" >> $GITHUB_ENV
+          echo "TEST_ENTRYPOINT=0x84a9c32db444bb831d1f425729ded15e65970511" >> $GITHUB_ENV
+          echo "TEST_DELEGATION=0x9dcb3249b6beb3146f87b0317e7a00ac83d76a91" >> $GITHUB_ENV
+          echo "TEST_ACCOUNT_REGISTRY=0x8694bcd337f2e14af6d2f5491d3d6f20c798fb96" >> $GITHUB_ENV
+          echo "TEST_SIMULATOR=0xf75154f56f51ca1a69b33216671b52c9f07c6e65" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}

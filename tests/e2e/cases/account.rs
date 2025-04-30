@@ -1,6 +1,5 @@
 use crate::e2e::{
     ExpectedOutcome, TxContext, cases::prep_account, config::AccountConfig, eoa::EoaKind,
-    process_tx,
 };
 use relay::{
     rpc::RelayApiClient,
@@ -17,14 +16,21 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let backup_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[], &admin_key, &[&admin_key, &backup_key], &[], 0).await?;
+
+    prep_account(&mut env, &[&admin_key, &backup_key]).await?;
+
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    let account_registry = env.relay_endpoint.health().await?.account_registry;
 
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();
 
         let (key_hash, addresses) = AccountRegistryCalls::id_infos(
             vec![admin_key.id()],
-            env.entrypoint,
+            account_registry,
             env.provider.clone(),
         )
         .await?
@@ -47,16 +53,13 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(response[0].keys.contains(&admin_key.to_authorized(None).await?.into_response()));
         assert!(response[0].keys.contains(&backup_key.to_authorized(None).await?.into_response()));
 
-        process_tx(
-            1,
-            TxContext {
-                revoke_keys: vec![&admin_key],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&admin_key),
-                ..Default::default()
-            },
-            &env,
-        )
+        TxContext {
+            revoke_keys: vec![&admin_key],
+            expected: ExpectedOutcome::Pass,
+            key: Some(&admin_key),
+            ..Default::default()
+        }
+        .process(1, &env)
         .await?;
 
         // Ensure the onchain account registry no longer has the revoked key entry.
@@ -71,7 +74,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(
             AccountRegistryCalls::id_infos(
                 vec![admin_key.id()],
-                env.entrypoint,
+                account_registry,
                 env.provider.clone()
             )
             .await?
@@ -84,7 +87,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         assert!(
             AccountRegistryCalls::id_infos(
                 vec![backup_key.id()],
-                env.entrypoint,
+                account_registry,
                 env.provider.clone()
             )
             .await?
@@ -113,16 +116,13 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         );
 
         // Bork EOA with no admin keys by revoking the remaining backup key
-        process_tx(
-            2,
-            TxContext {
-                revoke_keys: vec![&backup_key],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&backup_key),
-                ..Default::default()
-            },
-            &env,
-        )
+        TxContext {
+            revoke_keys: vec![&backup_key],
+            expected: ExpectedOutcome::Pass,
+            key: Some(&backup_key),
+            ..Default::default()
+        }
+        .process(2, &env)
         .await?;
 
         // None of the keys should return any account
@@ -153,6 +153,38 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
     } else {
         unreachable!();
     }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ensure_delegation_implementation() -> eyre::Result<()> {
+    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    let settings = env.relay_endpoint.health().await?;
+
+    // Account will be stored on storage
+    prep_account(&mut env, &[&admin_key]).await?;
+
+    // Ensure the delegation is the expected one (from storage)
+    let accounts = env
+        .relay_endpoint
+        .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+        .await?;
+    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
+
+    // Deploy on chain
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    // Ensure the delegation is the expected one (on chain)
+    let accounts = env
+        .relay_endpoint
+        .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
+        .await?;
+    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
 
     Ok(())
 }

@@ -5,6 +5,7 @@ use alloy::{
     primitives::{Address, B256, U256, wrap_fixed_bytes},
 };
 use chrono::{DateTime, Utc};
+use opentelemetry::Context;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -25,37 +26,39 @@ pub struct RelayTransaction {
     pub id: TxId,
     /// [`UserOp`] to send.
     pub quote: SignedQuote,
-    /// Destination entrypoint.
-    pub entrypoint: Address,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
+    /// Trace context for the transaction.
+    #[serde(with = "crate::serde::trace_context", default)]
+    pub trace_context: Context,
 }
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(
-        quote: SignedQuote,
-        entrypoint: Address,
-        authorization: Option<SignedAuthorization>,
-    ) -> Self {
-        Self { id: TxId(quote.ty().digest()), quote, entrypoint, authorization }
+    pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
+        Self {
+            id: TxId(quote.ty().digest()),
+            quote,
+            authorization,
+            trace_context: Context::current(),
+        }
     }
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
-    pub fn build(&self, nonce: u64) -> TypedTransaction {
+    pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
         let input = self.quote.ty().op.encode_execute();
 
         // TODO: move calculations here, only store and sign neccesary values in the quote
         let gas_limit = self.quote.ty().tx_gas;
-        let max_fee_per_gas = self.quote.ty().native_fee_estimate.max_fee_per_gas;
-        let max_priority_fee_per_gas = self.quote.ty().native_fee_estimate.max_priority_fee_per_gas;
+        let max_fee_per_gas = fees.max_fee_per_gas;
+        let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         if let Some(auth) = &self.authorization {
             TxEip7702 {
                 authorization_list: vec![auth.clone()],
                 chain_id: self.quote.ty().chain_id,
                 nonce,
-                to: self.entrypoint,
+                to: self.quote.ty().entrypoint,
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -68,7 +71,7 @@ impl RelayTransaction {
             TxEip1559 {
                 chain_id: self.quote.ty().chain_id,
                 nonce,
-                to: self.entrypoint.into(),
+                to: self.quote.ty().entrypoint.into(),
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -83,6 +86,16 @@ impl RelayTransaction {
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
         self.quote.ty().chain_id
+    }
+
+    /// Returns the maximum fee we can afford for a transaction.
+    pub fn max_fee_for_transaction(&self) -> u128 {
+        self.quote.ty().native_fee_estimate.max_fee_per_gas
+    }
+
+    /// Returns the EOA of the userop.
+    pub fn eoa(&self) -> &Address {
+        &self.quote.ty().op.eoa
     }
 }
 

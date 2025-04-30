@@ -11,8 +11,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum UserOpError {
     /// The userop could not be simulated.
+    #[error("user op creation requires a sender.")]
+    MissingSender,
+    /// The userop could not be simulated.
     #[error("the op could not be simulated")]
     SimulationError,
+    /// The preop can only contain key management calls.
+    #[error("the preop can only contain key management calls.")]
+    UnallowedPreOpCalls,
     /// The quote was signed for a different userop.
     #[error("invalid op digest, expected {expected}, got {got}")]
     InvalidOpDigest {
@@ -37,7 +43,9 @@ impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: UserOpError) -> Self {
         match err {
             UserOpError::SimulationError => internal_rpc(err.to_string()),
-            UserOpError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
+            UserOpError::MissingSender
+            | UserOpError::UnallowedPreOpCalls
+            | UserOpError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
             UserOpError::OpRevert(err) => err.into(),
         }
     }

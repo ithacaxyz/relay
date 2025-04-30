@@ -1,10 +1,16 @@
 //! # Relay CLI
 use crate::{
     config::RelayConfig,
-    constants::{TX_GAS_BUFFER, USER_OP_GAS_BUFFER},
+    constants::{
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS,
+        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+    },
     spawn::try_spawn_with_args,
 };
-use alloy::primitives::Address;
+use alloy::{
+    primitives::Address,
+    signers::local::coins_bip39::{English, Mnemonic},
+};
 use clap::Parser;
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -41,6 +47,15 @@ pub struct Args {
     /// The address of the entrypoint.
     #[arg(long = "entrypoint", value_name = "ENTRYPOINT")]
     pub entrypoint: Address,
+    /// The address of the delegation proxy.
+    #[arg(long = "delegation-proxy", value_name = "DELEGATION")]
+    pub delegation_proxy: Address,
+    /// The address of the account registry.
+    #[arg(long = "account-registry", value_name = "ACCOUNT_REGISTRY")]
+    pub account_registry: Address,
+    /// The address of the simulator
+    #[arg(long = "simulator", value_name = "SIMULATOR")]
+    pub simulator: Address,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -64,21 +79,25 @@ pub struct Args {
     /// Extra buffer added to transaction gas estimates.
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
-    /// The secret key to sign fee quotes with.
-    #[arg(long, value_name = "SECRET_KEY", env = "RELAY_FEE_SK")]
-    pub quote_secret_key: String,
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     pub fee_tokens: Vec<Address>,
-    /// The secret key to sign transactions with.
-    #[arg(long = "secret-key", value_name = "SECRET_KEY", num_args=1.., value_delimiter = ',', env = "RELAY_SK")]
-    pub secret_keys: Vec<String>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
     /// The maximum number of concurrent connections the relay can handle.
-    #[arg(long = "max-connections", value_name = "NUM", default_value_t = 1000)]
+    #[arg(long = "max-connections", value_name = "NUM", default_value_t = DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS)]
     pub max_connections: u32,
+    /// The maximum number of pending transactions that can be processed by transaction service
+    /// simultaneously.
+    #[arg(long = "max-pending-transactions", value_name = "NUM", default_value_t = DEFAULT_MAX_TRANSACTIONS)]
+    pub max_pending_transactions: usize,
+    /// The mnemonic to use for deriving transaction signers.
+    #[arg(long = "signers-mnemonic", value_name = "MNEMONIC", env = "RELAY_MNEMONIC")]
+    pub signers_mnemonic: Mnemonic<English>,
+    /// The number of signers to derive from mnemonic and use to send transactions.
+    #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
+    pub num_signers: usize,
 }
 
 impl Args {
@@ -94,8 +113,7 @@ impl Args {
     /// Merges [`Args`] values into an existing [`RelayConfig`] instance.
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
-            .with_quote_key(self.quote_secret_key)
-            .with_transaction_keys(&self.secret_keys)
+            .with_signers_mnemonic(self.signers_mnemonic)
             .with_endpoints(&self.endpoints)
             .with_fee_tokens(&self.fee_tokens)
             .with_fee_recipient(self.fee_recipient)
@@ -106,9 +124,14 @@ impl Args {
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
             .with_entrypoint(self.entrypoint)
+            .with_delegation_proxy(self.delegation_proxy)
+            .with_account_registry(self.account_registry)
+            .with_simulator(self.simulator)
             .with_user_op_gas_buffer(self.user_op_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
+            .with_max_pending_transactions(self.max_pending_transactions)
+            .with_num_signers(self.num_signers)
     }
 }
 
@@ -139,7 +162,7 @@ mod tests {
         let dir = temp_dir();
         let config = dir.join("relay.toml");
         let registry = dir.join("registry.toml");
-        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let mnemonic = "test test test test test test test test test test test junk";
 
         for _ in 0..=1 {
             let _ = try_spawn_with_args(
@@ -151,16 +174,20 @@ mod tests {
                     metrics_port: get_available_port().unwrap(),
                     max_connections: Default::default(),
                     entrypoint: Default::default(),
+                    delegation_proxy: Default::default(),
+                    account_registry: Default::default(),
+                    simulator: Default::default(),
                     endpoints: Default::default(),
                     fee_recipient: Default::default(),
                     quote_ttl: Default::default(),
                     rate_ttl: Default::default(),
-                    quote_secret_key: key.to_string(),
                     fee_tokens: Default::default(),
-                    secret_keys: vec![key.to_string()],
                     user_op_gas_buffer: Default::default(),
                     tx_gas_buffer: Default::default(),
                     database_url: Default::default(),
+                    max_pending_transactions: Default::default(),
+                    num_signers: Default::default(),
+                    signers_mnemonic: mnemonic.parse().unwrap(),
                 },
                 config.clone(),
                 registry.clone(),

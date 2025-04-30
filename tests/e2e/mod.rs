@@ -18,11 +18,7 @@ mod eoa;
 mod types;
 pub use types::*;
 
-use alloy::{
-    eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, B256, Bytes, U256},
-    providers::Provider,
-};
+use alloy::primitives::{Address, B256, Bytes};
 use eyre::{Context, Result};
 use futures_util::future::try_join_all;
 use itertools::iproduct;
@@ -30,12 +26,11 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Delegation, ENTRYPOINT_NO_ERROR,
-        EntryPoint::UserOpExecuted,
-        KeyWith712Signer, SignedQuote,
+        Delegation, KeyWith712Signer,
         rpc::{
-            BundleId, CallStatusCode, CallsStatus, KeySignature, Meta, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareCallsResponse, SendPreparedCallsParameters,
+            BundleId, CallsStatus, KeySignature, Meta, PrepareCallsCapabilities,
+            PrepareCallsContext, PrepareCallsParameters, PrepareCallsResponse,
+            SendPreparedCallsParameters,
         },
     },
 };
@@ -68,6 +63,18 @@ where
         .await
 }
 
+/// Runs only the prep account configuration in ERC20.
+pub async fn run_e2e_prep_erc20<'a, F>(build_txs: F) -> Result<()>
+where
+    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
+{
+    run_configs(
+        build_txs,
+        iproduct!(iter::once(AccountConfig::Prep), iter::once(PaymentConfig::ERC20)),
+    )
+    .await
+}
+
 /// Runs a set of test configurations.
 pub async fn run_configs<'a, F>(
     build_txs: F,
@@ -78,38 +85,12 @@ where
 {
     let test_cases = configs.into_iter().map(async |config| {
         let config: TestConfig = config.into();
-        config.run(build_txs).await.with_context(|| format!("Error in config {:?}", config))
+        config.run(build_txs).await.with_context(|| format!("Error in config {config:?}"))
     });
 
     try_join_all(test_cases).await?;
 
     Ok(())
-}
-
-/// Processes a single transaction, returning error on a unexpected failure.
-///
-/// The process follows these steps:
-/// 1. Obtains a signed quote and UserOp signature from [`prepare_calls`].
-/// 2. Submits and verifies execution with [`send_prepared_calls`].
-///    - Sends the prepared calls and signature to the relay
-///    - Handles expected send failures
-///    - Retrieves and checks transaction receipt
-///    - Verifies transaction status matches expectations
-///    - Confirms UserOp success by checking nonce invalidation
-async fn process_tx(tx_num: usize, tx: TxContext<'_>, env: &Environment) -> Result<()> {
-    let signer = tx.key.expect("should have key");
-
-    let Some((signature, quote)) = prepare_calls(tx_num, &tx, signer, env, false).await? else {
-        // We had an expected failure so we should exit.
-        return Ok(());
-    };
-
-    let op_nonce = quote.ty().op.nonce;
-
-    // Submit signed call
-    let bundle = send_prepared_calls(env, signer, signature, quote).await;
-
-    check_bundle(bundle, &tx, tx_num, None, op_nonce, env).await
 }
 
 /// Fetch the status of a bundle using `wallet_getCallsStatus`.
@@ -139,78 +120,6 @@ async fn await_calls_status(
     }
 }
 
-/// Checks that the submitted bundle has had the expected test outcome.
-async fn check_bundle(
-    bundle_id: eyre::Result<BundleId>,
-    tx: &TxContext<'_>,
-    tx_num: usize,
-    authorization: Option<SignedAuthorization>,
-    _op_nonce: U256,
-    env: &Environment,
-) -> Result<(), eyre::Error> {
-    match bundle_id {
-        Ok(bundle_id) => {
-            let calls_status =
-                await_calls_status(env, bundle_id).await.wrap_err("Failed to get receipt")?;
-            if tx.expected.failed_send() && calls_status.status != CallStatusCode::Failed {
-                return Err(
-                    eyre::eyre!("Send action {tx_num} passed when it should have failed.",),
-                );
-            } else if !tx.expected.failed_send() && calls_status.status == CallStatusCode::Failed {
-                return Err(
-                    eyre::eyre!("Send action {tx_num} failed when it should have passed.",),
-                );
-            } else if tx.expected.failed_send() && calls_status.status == CallStatusCode::Failed {
-                return Ok(());
-            }
-
-            let receipt = &calls_status.receipts[0];
-            if receipt.status.coerce_status() {
-                if tx.expected.reverted_tx() {
-                    return Err(eyre::eyre!(
-                        "Transaction {tx_num} passed when it should have reverted.",
-                    ));
-                }
-            } else if !tx.expected.reverted_tx() {
-                return Err(eyre::eyre!("Transaction {tx_num} failed: {receipt:#?}"));
-            }
-
-            if authorization.is_some()
-                && env.provider.get_code_at(env.eoa.address()).await?
-                    != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
-            {
-                return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
-            }
-
-            // UserOp has succeeded if the nonce has been invalidated.
-            let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
-                event.incremented && event.err == ENTRYPOINT_NO_ERROR
-            } else {
-                false
-            };
-            if success && tx.expected.failed_user_op() {
-                return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
-            } else if !success && !tx.expected.failed_user_op() {
-                return Err(eyre::eyre!(
-                    "Transaction succeeded but UserOp failed for transaction {tx_num}",
-                ));
-            }
-
-            // Make any additional custom checks
-            for post_tx_check in &tx.post_tx {
-                post_tx_check(env, tx).await?
-            }
-        }
-        Err(err) => {
-            if tx.expected.failed_send() {
-                return Ok(());
-            }
-            return Err(eyre::eyre!("Send error for transaction {tx_num}: {err}"));
-        }
-    };
-    Ok(())
-}
-
 /// Obtains a [`SignedQuote`] from the relay by calling `wallet_prepare_calls` and signs the
 /// `UserOp`
 pub async fn prepare_calls(
@@ -219,20 +128,25 @@ pub async fn prepare_calls(
     signer: &KeyWith712Signer,
     env: &Environment,
     pre_op: bool,
-) -> eyre::Result<Option<(Bytes, SignedQuote)>> {
+) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
+
+    // Deliberately omit the `from` address for the very first UserOp preops
+    // to test the path where prepops are signed before the PREPAddress is known. eg. during
+    // creation of the first passkey.
+    let from = (tx_num != 0 || !pre_op).then_some(env.eoa.address());
 
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            from: env.eoa.address(),
+            from,
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: tx.authorization_keys(Some(env.eoa.address())).await?,
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
-                    fee_token: env.fee_token,
+                    fee_token: tx.fee_token.unwrap_or(env.fee_token),
                     key_hash: signer.key_hash(),
                     nonce: tx.nonce,
                 },
@@ -263,12 +177,12 @@ pub async fn send_prepared_calls(
     env: &Environment,
     signer: &KeyWith712Signer,
     signature: Bytes,
-    quote: SignedQuote,
+    context: PrepareCallsContext,
 ) -> eyre::Result<BundleId> {
     let response = env
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
-            context: quote,
+            context,
             signature: KeySignature {
                 public_key: signer.publicKey.clone(),
                 key_type: signer.keyType,

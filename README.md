@@ -94,7 +94,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 
    ```bash
    $ cd tests/account
-   $ forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol
+   $ forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol && forge build lib/solady/test/utils/mocks/MockERC721.sol
    ```
 
 4. **Run the Tests**
@@ -113,6 +113,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
    - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
    - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
    - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
+   - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
 
 ## Deploying
 

@@ -2,23 +2,20 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiff, AssetDiffs, AssetWithInfo,
+        Asset, AssetDiffs, AssetWithInfo,
         IERC20::{self, IERC20Events},
+        IERC721::IERC721Events,
     },
 };
 use alloy::{
     network::TransactionBuilder,
-    primitives::{
-        Address, ChainId, U256,
-        aliases::I512,
-        map::{HashMap, HashSet},
-    },
+    primitives::{Address, ChainId, map::HashMap},
     providers::Provider,
     rpc::types::{
         Log, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
     },
-    sol_types::{SolCall, SolEvent, SolEventInterface},
+    sol_types::{SolCall, SolEventInterface},
 };
 use schnellru::{ByLength, LruMap};
 use std::{
@@ -110,89 +107,43 @@ impl AssetInfoServiceHandle {
 
     /// Calculates the net asset difference for each account and asset based on logs.
     ///
-    /// This function processes logs by filtering for [`IERC20::Transfer`] events and accumulating
-    /// transfers as tuples of (credits, debits) for each account per asset.
+    /// ERC20: We first accumulate for each EOA and asset a tuple of credits and debits, only
+    /// calculating its final result at the end.
     ///
-    /// After accumulating, each (credits, debits) tuple member is converted into a [I512] and
-    /// finally obtain the net flow of `credits - debits`.
+    /// ERC721: a positive [`AssetDiff`] value represents an inflow of the token ID. A negative
+    /// value represents an outflow.
     pub async fn calculate_asset_diff<P: Provider>(
         &self,
         logs: impl Iterator<Item = Log>,
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
-        let mut accounts: HashMap<Address, HashMap<Asset, (U256, U256)>> = HashMap::default();
-
-        let mut assets = HashSet::new();
+        let mut builder = AssetDiffs::builder();
         for log in logs {
-            if log.topic0() != Some(&IERC20::Transfer::SIGNATURE_HASH) {
-                continue;
-            }
-
-            let Some((asset, transfer)) =
+            // ERC-20
+            if let Some((asset, transfer)) =
                 IERC20Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
-                    IERC20Events::Transfer(transfer) => (Asset::from(log.inner.address), transfer),
+                    IERC20Events::Transfer(t) => (Asset::from(log.inner.address), t),
                 })
-            else {
-                continue;
-            };
-
-            // Need to collect all assets so we can fetch their metadata
-            assets.insert(asset);
-
-            // For the receiver, add transfer.amount to credits.
-            accounts
-                .entry(transfer.to)
-                .or_default()
-                .entry(asset)
-                .and_modify(|(credit, _)| *credit += transfer.amount)
-                .or_insert((transfer.amount, U256::ZERO));
-
-            // For the sender, add transfer.amount to debits.
-            accounts
-                .entry(transfer.from)
-                .or_default()
-                .entry(asset)
-                .and_modify(|(_, debit)| *debit += transfer.amount)
-                .or_insert((U256::ZERO, transfer.amount));
+            {
+                builder.record_erc20(asset, transfer);
+            }
+            // ERC-721
+            else if let Some((asset, transfer)) =
+                IERC721Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
+                    IERC721Events::Transfer(t) => (Asset::from(log.inner.address), t),
+                })
+            {
+                builder.record_erc721(asset, transfer);
+            }
         }
 
-        let assets_map = self.get_asset_info_list(&provider, assets.into_iter().collect()).await?;
+        // fetch assets metadata
+        let metadata =
+            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
 
-        // Converts each credit and debit (U256) into I512, and calculates the resulting difference.
-        Ok(AssetDiffs(
-            accounts
-                .into_iter()
-                .map(|(address, assets)| {
-                    (
-                        address,
-                        assets
-                            .into_iter()
-                            .map(|(asset, (credits, debits))| {
-                                let value = I512::try_from_le_slice(credits.as_le_slice())
-                                    .expect("should convert from u256")
-                                    - I512::try_from_le_slice(debits.as_le_slice())
-                                        .expect("should convert from u256");
-
-                                // `get_asset_info_list` ensures we have the asset
-                                let AssetWithInfo { name, symbol, decimals, .. } =
-                                    assets_map.get(&asset).cloned().expect("should have");
-
-                                AssetDiff {
-                                    address: (!asset.is_native()).then(|| asset.address()),
-                                    name,
-                                    symbol,
-                                    decimals,
-                                    value,
-                                }
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ))
+        Ok(builder.build(metadata))
     }
 }
-
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
 ///
 /// TODO: apart from onchain, there should be a more trusted source that can be passed when

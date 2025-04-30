@@ -48,7 +48,7 @@ impl AuthorizeKey {
     /// registry.
     pub fn into_calls(
         mut self,
-        registry: Address,
+        account_registry: Address,
         account: Option<Address>,
     ) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
@@ -75,7 +75,7 @@ impl AuthorizeKey {
                 };
 
                 calls.push(Call::register_account(
-                    registry,
+                    account_registry,
                     id_signature,
                     self.key.key_hash().into(),
                     account,
@@ -310,16 +310,16 @@ mod tests {
     #[test]
     fn test_revoke_key_into_calls() {
         let key_id = KeyID::random();
-        let entrypoint = Address::random();
+        let registry = Address::random();
         let hash = B256::random();
 
         let revoke = RevokeKey { hash, id: None };
-        assert_eq!(revoke.into_calls(entrypoint), vec![Call::revoke(hash)]);
+        assert_eq!(revoke.into_calls(registry), vec![Call::revoke(hash)]);
 
         let revoke = RevokeKey { hash, id: Some(key_id) };
         assert_eq!(
-            revoke.into_calls(entrypoint),
-            vec![Call::unregister_account(entrypoint, key_id), Call::revoke(hash)]
+            revoke.into_calls(registry),
+            vec![Call::unregister_account(registry, key_id), Call::revoke(hash)]
         );
     }
 }

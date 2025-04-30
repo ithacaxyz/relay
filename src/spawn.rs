@@ -4,6 +4,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
+    constants::DEFAULT_POLL_INTERVAL,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{Relay, RelayApiServer},
@@ -12,14 +13,17 @@ use crate::{
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
+    primitives::B256,
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::ClientBuilder,
+    signers::local::LocalSigner,
     transports::layers::RetryBackoffLayer,
 };
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
-    RpcServiceBuilder, Server, ServerHandle, middleware::http::ProxyGetRequestLayer,
+    Server, ServerConfig, ServerHandle,
+    middleware::{http::ProxyGetRequestLayer, rpc::RpcServiceBuilder},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
@@ -98,11 +102,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         RelayStorage::in_memory()
     };
 
-    // construct provider
-    let signers = futures_util::future::try_join_all(
-        config.secrets.transaction_keys.iter().map(|sk| DynSigner::load(sk, None)),
-    )
-    .await?;
+    // setup signers
+    let signers = DynSigner::derive_from_mnemonic(
+        config.secrets.signers_mnemonic,
+        config.transactions.num_signers,
+    )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
     // setup metrics exporter and periodic metric collectors
@@ -111,6 +115,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
         .await?;
 
+    // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
             ClientBuilder::default()
@@ -118,13 +123,14 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
                 .layer(RETRY_LAYER.clone())
                 .connect(url.as_str())
                 .await
-                .map(|client| ProviderBuilder::new().on_client(client).erased())
+                .map(|client| client.with_poll_interval(DEFAULT_POLL_INTERVAL))
+                .map(|client| ProviderBuilder::new().connect_client(client).erased())
         }),
     )
     .await?;
 
     // construct quote signer
-    let quote_signer = DynSigner::load(&config.secrets.quote_key, None).await?;
+    let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
     let quote_signer_addr = quote_signer.address();
 
     // construct rpc module
@@ -136,7 +142,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         price_oracle.spawn_fetcher(
             registry.clone(),
             PriceFetcher::CoinGecko,
-            &CoinPair::ethereum_pairs(&[CoinKind::USDT]),
+            &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
         );
     }
 
@@ -152,6 +158,10 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // todo: avoid all this darn cloning
     let rpc = Relay::new(
         config.entrypoint,
+        config.legacy_entrypoints,
+        config.delegation_proxy,
+        config.account_registry,
+        config.simulator,
         chains.clone(),
         quote_signer,
         config.quote,
@@ -171,12 +181,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     // start server
     let server = Server::builder()
-        .http_only()
-        .max_connections(config.server.max_connections)
+        .set_config(
+            ServerConfig::builder()
+                .http_only()
+                .max_connections(config.server.max_connections)
+                .build(),
+        )
         .set_http_middleware(
             ServiceBuilder::new()
                 .layer(cors)
-                .layer(ProxyGetRequestLayer::new("/health", "health")?),
+                .layer(ProxyGetRequestLayer::new([("/health", "health")])?),
         )
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))

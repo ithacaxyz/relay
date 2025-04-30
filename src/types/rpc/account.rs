@@ -1,13 +1,16 @@
 //! RPC account-related request and response types.
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, SendPreparedCallsResponse};
+use super::{
+    AuthorizeKey, AuthorizeKeyResponse, KeySignature, PrepareCallsContext,
+    SendPreparedCallsResponse,
+};
 use crate::{
     error::{AuthError, KeysError},
-    types::{Key, KeyHashWithID, KeyID, PREPAccount, SignedQuote, UserOp},
+    types::{Key, KeyHash, KeyHashWithID, KeyID, PREPAccount, PreOp},
 };
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::{Address, B256, ChainId, Signature},
+    primitives::{Address, B256, Bytes, ChainId, Signature},
 };
 use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
@@ -144,11 +147,9 @@ pub struct UpgradeAccountCapabilities {
     /// Defaults to the native token.
     #[serde(default)]
     pub fee_token: Address,
-    /// Optional preOps to execute before signature verification.
-    ///
-    /// See [`UserOp::encodedPreOps`].
+    /// Optional [`PreOp`] to execute before signature verification.
     #[serde(default)]
-    pub pre_ops: Vec<UserOp>,
+    pub pre_ops: Vec<PreOp>,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.
@@ -167,8 +168,8 @@ pub struct PrepareUpgradeAccountParameters {
 /// Request parameters for `wallet_upgradeAccount`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpgradeAccountParameters {
-    /// The [`SignedQuote`] of the prepared call bundle.
-    pub context: SignedQuote,
+    /// The [`PrepareCallsContext`] of the prepared call bundle.
+    pub context: PrepareCallsContext,
     /// Signature of the `wallet_prepareUpgradeAccount` digest.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signature: Signature,
@@ -197,8 +198,61 @@ pub struct GetAccountsParameters {
 pub struct AccountResponse {
     /// Address of the account.
     pub address: Address,
+    /// Delegation implementation address.
+    pub delegation: Address,
     /// Authorized keys belonging to the account.
     pub keys: Vec<AuthorizeKeyResponse>,
+}
+
+/// Request parameters for `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureParameters {
+    /// ID of the key to verify signature with.
+    pub key_id_or_address: Address,
+    /// Digest of the message to verify.
+    pub digest: B256,
+    /// The signature bytes
+    pub signature: Bytes,
+    /// Chain ID of the account with the given key configured.
+    pub chain_id: ChainId,
+}
+
+/// Response from `wallet_verifySignature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureResponse {
+    /// Whether the signature is valid.
+    pub valid: bool,
+    /// Proof that can be used to verify the signature.
+    pub proof: Option<ValidSignatureProof>,
+}
+
+/// Proof that can be used to verify output of `wallet_verifySignature`.
+///
+/// Signature is always verified against an account (either deployed or stored in relay storage).
+/// [`ValidSignatureProof::account`] contains the address of account signature was verified against.
+///
+/// To verify that provided account is related to the provided `keyId`, user can either
+/// 1. Query the `AccountRegistry` contract.
+/// 2. Verify the returned [`ValidSignatureProof::id_signature`]. It is only returned for accounts
+///    that are not yet delegated.
+///
+/// To verify that signature is valid for the returned account, user can call
+/// `unwrapAndValidateSignature` on the returned account. For non-delegated PREP accounts, this call
+/// will have to be preceeded by `initializePREP` with [`ValidSignatureProof::prep_init_data`] and a
+/// state override delegating the account to `Delegation` contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidSignatureProof {
+    /// Address of an account (either delegated or stored) that the signature was verified against.
+    pub account: Address,
+    /// The key hash that signed the digest.
+    pub key_hash: KeyHash,
+    /// PREP account initialization data. Provided, if account is a stored PREP account.
+    pub prep_init_data: Option<Bytes>,
+    /// Signature proving that account is associated with the requested `keyId`.
+    pub id_signature: Option<Signature>,
 }
 
 #[cfg(test)]
@@ -215,7 +269,7 @@ mod tests {
     fn upgrade_account_params_serde() {
         let signature = Signature::new(U256::ZERO, U256::ZERO, false);
         let acc = UpgradeAccountParameters {
-            context: Signed::new_unchecked(
+            context: PrepareCallsContext::with_quote(Signed::new_unchecked(
                 Quote {
                     chain_id: 0,
                     op: Default::default(),
@@ -226,11 +280,11 @@ mod tests {
                     },
                     ttl: UNIX_EPOCH + Duration::from_secs(0),
                     authorization_address: None,
-                    is_preop: false,
+                    entrypoint: Address::ZERO,
                 },
                 signature,
                 B256::ZERO,
-            ),
+            )),
             signature,
             authorization: Authorization {
                 chain_id: Default::default(),
@@ -243,7 +297,7 @@ mod tests {
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(&json).unwrap();
         assert_eq!(acc, from_json);
 
-        let s = r#"{"context":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","paymentRecipient":"0x0000000000000000000000000000000000000000","paymentAmount":"0x0","paymentMaxAmount":"0x0","paymentPerGas":"0x0","combinedGas":"0x0","signature":"0x","initData":"0x","encodedPreOps":[],"paymentSignature":"0x"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"isPreop":false,"r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"},"signature":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
+        let s = r#"{"context":{"quote":{"chainId":0,"op":{"eoa":"0x0000000000000000000000000000000000000000","executionData":"0x","nonce":"0x0","payer":"0x0000000000000000000000000000000000000000","paymentToken":"0x0000000000000000000000000000000000000000","prePaymentMaxAmount":"0x0","totalPaymentMaxAmount":"0x0","combinedGas":"0x0","encodedPreOps":[],"initData":"0x","prePaymentAmount":"0x0","totalPaymentAmount":"0x0","paymentRecipient":"0x0000000000000000000000000000000000000000","signature":"0x","paymentSignature":"0x","supportedDelegationImplementation":"0x0000000000000000000000000000000000000000"},"txGas":"0x0","nativeFeeEstimate":{"maxFeePerGas":"0x0","maxPriorityFeePerGas":"0x0"},"ttl":0,"authorizationAddress":null,"entrypoint":"0x0000000000000000000000000000000000000000","r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x0000000000000000000000000000000000000000000000000000000000000000"}},"signature":"0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b","authorization":{"chainId":"0x0","address":"0x0000000000000000000000000000000000000000","nonce":"0x0","yParity":"0x0","r":"0x0","s":"0x0"}}
 "#;
         let from_json = serde_json::from_str::<UpgradeAccountParameters>(s).unwrap();
         assert_eq!(acc, from_json);

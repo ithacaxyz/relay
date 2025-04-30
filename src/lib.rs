@@ -7,7 +7,6 @@ pub mod chains;
 pub mod cli;
 pub mod config;
 pub mod constants;
-pub mod eip712;
 pub mod error;
 pub mod metrics;
 pub mod nonce;

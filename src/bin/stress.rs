@@ -1,15 +1,28 @@
 //! Relay stress testing tool.
+//!
+//! # Example
+//!
+//! ```sh
+//! cargo r --bin stress -- --relay-url https://relay-staging.ithaca.xyz --private-key $PRIVATE_KEY --chain-id 28403 --fee-token 0x541a5505620A658932e326D0dC996C460f5AcBE1 --rpc-url https://odyssey-devnet.ithaca.xyz --accounts 500
+//! ```
+//! The test script will transfer the fee token out of the account specified in --private-key, so it
+//! must have enough balance to cover for the accounts. The amount sent to each account is
+//! configurable
+// it will first create all the accounts and fund them - might take a while.
 
 use std::time::Duration;
 
 use alloy::{
     network::EthereumWallet,
-    primitives::{Address, ChainId, U256, bytes},
+    primitives::{Address, B256, ChainId, U256, address, bytes, keccak256},
     providers::{
         Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
     },
+    rpc::types::TransactionRequest,
+    sol_types::SolValue,
 };
+use alloy_chains::Chain;
 use clap::Parser;
 use eyre::Context;
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -28,10 +41,21 @@ use relay::{
         },
     },
 };
-use tokio::{sync::Semaphore, time::Instant};
+use tokio::time::Instant;
 use tracing::{error, info, level_filters::LevelFilter, trace};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
+
+alloy::sol! {
+    /// <https://github.com/omniaprotocol/disperse.app/blob/main/Disperse.sol>
+    /// Bytecode from <https://basescan.org/tx/0x6183b11e486313c20c8f8421b858fba9b2af089963b0e52d2485bf0ca7471fb5>
+    #[sol(rpc, bytecode = "0x608060405234801561001057600080fd5b506106f4806100206000396000f300608060405260043610610057576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806351ba162c1461005c578063c73a2d60146100cf578063e63d38ed14610142575b600080fd5b34801561006857600080fd5b506100cd600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803590602001908201803590602001919091929391929390803590602001908201803590602001919091929391929390505050610188565b005b3480156100db57600080fd5b50610140600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190803590602001908201803590602001919091929391929390803590602001908201803590602001919091929391929390505050610309565b005b6101866004803603810190808035906020019082018035906020019190919293919293908035906020019082018035906020019190919293919293905050506105b0565b005b60008090505b84849050811015610301578573ffffffffffffffffffffffffffffffffffffffff166323b872dd3387878581811015156101c457fe5b9050602002013573ffffffffffffffffffffffffffffffffffffffff1686868681811015156101ef57fe5b905060200201356040518463ffffffff167c0100000000000000000000000000000000000000000000000000000000028152600401808473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018281526020019350505050602060405180830381600087803b1580156102ae57600080fd5b505af11580156102c2573d6000803e3d6000fd5b505050506040513d60208110156102d857600080fd5b810190808051906020019092919050505015156102f457600080fd5b808060010191505061018e565b505050505050565b60008060009150600090505b8585905081101561034657838382818110151561032e57fe5b90506020020135820191508080600101915050610315565b8673ffffffffffffffffffffffffffffffffffffffff166323b872dd3330856040518463ffffffff167c0100000000000000000000000000000000000000000000000000000000028152600401808473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018281526020019350505050602060405180830381600087803b15801561041d57600080fd5b505af1158015610431573d6000803e3d6000fd5b505050506040513d602081101561044757600080fd5b8101908080519060200190929190505050151561046357600080fd5b600090505b858590508110156105a7578673ffffffffffffffffffffffffffffffffffffffff1663a9059cbb878784818110151561049d57fe5b9050602002013573ffffffffffffffffffffffffffffffffffffffff1686868581811015156104c857fe5b905060200201356040518363ffffffff167c0100000000000000000000000000000000000000000000000000000000028152600401808373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200182815260200192505050602060405180830381600087803b15801561055457600080fd5b505af1158015610568573d6000803e3d6000fd5b505050506040513d602081101561057e57600080fd5b8101908080519060200190929190505050151561059a57600080fd5b8080600101915050610468565b50505050505050565b600080600091505b858590508210156106555785858381811015156105d157fe5b9050602002013573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff166108fc858585818110151561061557fe5b905060200201359081150290604051600060405180830381858888f19350505050158015610647573d6000803e3d6000fd5b5081806001019250506105b8565b3073ffffffffffffffffffffffffffffffffffffffff1631905060008111156106c0573373ffffffffffffffffffffffffffffffffffffffff166108fc829081150290604051600060405180830381858888f193505050501580156106be573d6000803e3d6000fd5b505b5050505050505600a165627a7a723058204f25a733917e0bf639cd1e101d55bd927f843fb395fb2a963a7909c09ae023ed0029")]
+    contract Disperse {
+        function disperseToken(address token, address[] recipients, uint256[] values) external;
+    }
+}
+
+const CREATE2_DEPLOYER: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 
 #[derive(Debug)]
 struct StressAccount {
@@ -58,7 +82,7 @@ impl StressAccount {
                 .prepare_calls(PrepareCallsParameters {
                     calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
                     chain_id,
-                    from: self.address,
+                    from: Some(self.address),
                     capabilities: PrepareCallsCapabilities {
                         authorize_keys: vec![],
                         meta: Meta { fee_token, key_hash: self.key.key_hash(), nonce: None },
@@ -129,76 +153,110 @@ struct StressTester {
 impl StressTester {
     async fn new(args: Args) -> eyre::Result<Self> {
         let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-        let signer = DynSigner::load(&args.private_key, None).await?;
+        let signer = DynSigner::from_signing_key(&args.private_key).await?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .filler(NonceFiller::new(CachedNonceManager::default()))
             .filler(GasFiller)
-            .filler(ChainIdFiller::new(Some(args.chain_id)))
-            .wallet(EthereumWallet::from(signer.0))
-            .on_http(args.rpc_url.clone())
+            .filler(ChainIdFiller::new(Some(args.chain_id.id())))
+            .wallet(EthereumWallet::from(signer.0.clone()))
+            .connect_http(args.rpc_url.clone())
             .erased();
 
-        info!(
-            "Connected to relay at {}, version {}",
-            &args.relay_url,
-            relay_client.health().await?.version
-        );
+        let health = relay_client.health().await?;
+        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         let supports_fee_token =
-            relay_client.fee_tokens().await?.contains(args.chain_id, &args.fee_token);
+            relay_client.fee_tokens().await?.contains(args.chain_id.id(), &args.fee_token);
         if !supports_fee_token {
             eyre::bail!("fee token {} is not supported on chain {}", args.fee_token, args.chain_id);
         }
 
         info!("Initializing {} accounts", args.accounts);
-        let sema = Semaphore::new(10);
-        let accounts = futures_util::future::try_join_all((0..args.accounts).map(|_| async {
-            let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
-                .expect("failed to create key for account");
-            let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } =
+        let accounts = futures_util::future::try_join_all((0..args.accounts).map(|acc_number| {
+            let relay_client = relay_client.clone();
+            let acc_target = args.accounts;
+            async move {
+                let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
+                    .expect("failed to create key for account");
+                let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } =
+                    relay_client
+                        .prepare_create_account(PrepareCreateAccountParameters {
+                            capabilities: PrepareCreateAccountCapabilities {
+                                authorize_keys: vec![key.to_authorized(None).await?],
+                                delegation: health.delegation_proxy,
+                            },
+                            chain_id: args.chain_id.id(),
+                        })
+                        .await
+                        .wrap_err("failed to prepare create account")?;
+
                 relay_client
-                    .prepare_create_account(PrepareCreateAccountParameters {
-                        capabilities: PrepareCreateAccountCapabilities {
-                            authorize_keys: vec![key.to_authorized(None).await?],
-                            delegation: args.delegation,
-                        },
-                        chain_id: args.chain_id,
+                    .create_account(CreateAccountParameters {
+                        context,
+                        signatures: vec![KeySignature {
+                            public_key: key.publicKey.clone(),
+                            key_type: key.keyType,
+                            value: key.id_sign(address).await?.as_bytes().into(),
+                            prehash: false,
+                        }],
                     })
                     .await
-                    .wrap_err("failed to prepare create account")?;
+                    .wrap_err("failed to create account")?;
+                info!(account = %address, "#{}/{} Account initialized", acc_number, acc_target);
 
-            relay_client
-                .create_account(CreateAccountParameters {
-                    context,
-                    signatures: vec![KeySignature {
-                        public_key: key.publicKey.clone(),
-                        key_type: key.keyType,
-                        value: key.id_sign(address).await?.as_bytes().into(),
-                        prehash: false,
-                    }],
-                })
-                .await
-                .wrap_err("failed to create account")?;
-            info!(account = %address, "Account initialized");
-
-            let permit = sema.acquire().await.wrap_err("semaphore closed")?;
-            info!(account = %address, "Funding account");
-            IERC20Instance::new(args.fee_token, &provider)
-                .transfer(address, args.fee_token_amount)
-                .send()
-                .await
-                .wrap_err("funding account failed")?
-                .get_receipt()
-                .await
-                .wrap_err("failed to get receipt for account funding")?;
-            info!(account = %address, "Account funded");
-            drop(permit);
-
-            Ok::<_, eyre::Error>(StressAccount::new(address, key))
+                Ok::<_, eyre::Error>(StressAccount::new(address, key))
+            }
         }))
         .await?;
         info!("Initialized {} accounts", args.accounts);
+
+        let disperse_address = CREATE2_DEPLOYER.create2(B256::ZERO, keccak256(&Disperse::BYTECODE));
+
+        if provider.get_code_at(disperse_address).await?.is_empty() {
+            info!("Deploying Disperse contract");
+            let receipt: alloy::rpc::types::TransactionReceipt = provider
+                .send_transaction(
+                    TransactionRequest::default()
+                        .to(CREATE2_DEPLOYER)
+                        .input((B256::ZERO, &Disperse::BYTECODE).abi_encode_packed().into()),
+                )
+                .await?
+                .get_receipt()
+                .await?;
+            assert!(receipt.status());
+            info!("Deployed Disperse contract");
+        }
+
+        let disperse = Disperse::new(disperse_address, &provider);
+
+        let fee_token = IERC20Instance::new(args.fee_token, &provider);
+        if fee_token.allowance(signer.address(), disperse_address).call().await?
+            < args.fee_token_amount * U256::from(accounts.len())
+        {
+            info!("Approving Disperse contract");
+            fee_token.approve(disperse_address, U256::MAX).send().await?.get_receipt().await?;
+            info!("Approved Disperse contract");
+        }
+
+        let mut funded = 0;
+        for batch in accounts.chunks(50) {
+            info!("Funding accounts #{}..{}/{} ", funded, funded + batch.len(), accounts.len());
+
+            disperse
+                .disperseToken(
+                    args.fee_token,
+                    batch.iter().map(|acc| acc.address).collect(),
+                    std::iter::repeat_n(args.fee_token_amount, batch.len()).collect(),
+                )
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+
+            info!("Funded accounts #{}..{}/{} ", funded, funded + batch.len(), accounts.len());
+            funded += batch.len();
+        }
 
         Ok(Self { relay_client, args, accounts })
     }
@@ -211,14 +269,11 @@ impl StressTester {
     async fn run(self) -> eyre::Result<()> {
         info!("Starting stress test");
 
-        // we use a semaphore to limit the number of concurrent funding transactions, since mempools
-        // have limits per account, and sending too many might cause txs to get
-        // dropped/rejected/stuck
         let mut tasks = FuturesUnordered::new();
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
             tasks.push(tokio::spawn(async move {
-                account.run(self.args.chain_id, self.args.fee_token, client).await
+                account.run(self.args.chain_id.id(), self.args.fee_token, client).await
             }));
         }
 
@@ -245,7 +300,7 @@ struct Args {
     rpc_url: Url,
     /// Chain ID of the chain to test on.
     #[arg(long = "chain-id", value_name = "CHAIN_ID", required = true)]
-    chain_id: ChainId,
+    chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
     /// This account should have sufficient fee tokens to cover the gas costs of the userops.
@@ -260,9 +315,6 @@ struct Args {
     /// Number of accounts to create and test with.
     #[arg(long = "accounts", value_name = "COUNT", default_value_t = 1000)]
     accounts: usize,
-    /// Address of the delegation contract to use for testing.
-    #[arg(long = "delegation", value_name = "ADDRESS", required = true)]
-    delegation: Address,
 }
 
 impl Args {

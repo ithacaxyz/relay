@@ -50,8 +50,12 @@ impl StorageApi for RelayStorage {
         self.inner.read_accounts_from_id(id).await
     }
 
-    async fn write_pending_transaction(&self, tx: &PendingTransaction) -> api::Result<()> {
-        self.inner.write_pending_transaction(tx).await
+    async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> api::Result<()> {
+        self.inner.replace_queued_tx_with_pending(tx).await
+    }
+
+    async fn remove_queued(&self, tx_id: TxId) -> api::Result<()> {
+        self.inner.remove_queued(tx_id).await
     }
 
     async fn add_pending_envelope(&self, tx_id: TxId, envelope: &TxEnvelope) -> api::Result<()> {
@@ -104,9 +108,5 @@ impl StorageApi for RelayStorage {
 
     async fn read_queued_transactions(&self, chain_id: u64) -> api::Result<Vec<RelayTransaction>> {
         self.inner.read_queued_transactions(chain_id).await
-    }
-
-    async fn remove_from_queue(&self, tx: &RelayTransaction) -> api::Result<()> {
-        self.inner.remove_from_queue(tx).await
     }
 }

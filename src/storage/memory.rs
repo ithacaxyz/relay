@@ -56,8 +56,19 @@ impl StorageApi for InMemoryStorage {
         Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()).unwrap_or_default())
     }
 
-    async fn write_pending_transaction(&self, tx: &PendingTransaction) -> Result<()> {
+    async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> Result<()> {
+        self.remove_queued(tx.id()).await?;
         self.pending_transactions.insert(tx.id(), tx.clone());
+        Ok(())
+    }
+
+    async fn remove_queued(&self, tx_id: TxId) -> Result<()> {
+        for mut queue in self.queued_transactions.iter_mut() {
+            if let Some(idx) = queue.iter().position(|t| t.id == tx_id) {
+                queue.remove(idx);
+            }
+        }
+
         Ok(())
     }
 
@@ -118,15 +129,5 @@ impl StorageApi for InMemoryStorage {
 
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>> {
         Ok(self.queued_transactions.get(&chain_id).as_deref().cloned().unwrap_or_default())
-    }
-
-    async fn remove_from_queue(&self, tx: &RelayTransaction) -> Result<()> {
-        if let Some(mut queue) = self.queued_transactions.get_mut(&tx.chain_id()) {
-            if let Some(idx) = queue.iter().position(|t| t.id == tx.id) {
-                queue.remove(idx);
-            }
-        }
-
-        Ok(())
     }
 }
