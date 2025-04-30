@@ -22,6 +22,8 @@ pub struct Chain {
     pub transactions: TransactionServiceHandle,
     /// Whether this is an OP network.
     pub is_optimism: bool,
+    /// The chain ID.
+    pub chain_id: ChainId,
 }
 
 /// A collection of providers for different chains.
@@ -52,7 +54,10 @@ impl Chains {
 
                 let chain_id = provider.get_chain_id().await?;
                 let is_optimism = provider.is_optimism().await?;
-                eyre::Ok((chain_id, Chain { provider, transactions: handle, is_optimism }))
+                eyre::Ok((
+                    chain_id,
+                    Chain { provider, transactions: handle, is_optimism, chain_id },
+                ))
             }))
             .await?,
         );

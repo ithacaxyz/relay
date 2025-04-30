@@ -201,6 +201,42 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
+    /// Estimates additional fees to be paid for a userop (e.g L1 DA fees).
+    ///
+    /// Returns fees in ETH.
+    #[instrument(skip_all)]
+    async fn estimate_extra_fee(&self, chain: &Chain, op: &UserOp) -> Result<U256, RelayError> {
+        // Include the L1 DA fees if we're on an OP rollup.
+        let fee = if chain.is_optimism {
+            // Create a dummy transactions with all fields set to max values to make sure that
+            // calldata is largest possible
+            let tx = TxEip1559 {
+                chain_id: chain.chain_id,
+                nonce: u64::MAX,
+                gas_limit: u64::MAX,
+                max_fee_per_gas: u128::MAX,
+                max_priority_fee_per_gas: u128::MAX,
+                to: (!Address::ZERO).into(),
+                input: op.encode_execute(),
+                ..Default::default()
+            };
+            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
+
+            let encoded = {
+                let tx = tx.into_signed(signature);
+                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
+                tx.eip2718_encode(&mut buf);
+                buf
+            };
+
+            chain.provider.estimate_l1_fee(encoded.into()).await?
+        } else {
+            U256::ZERO
+        };
+
+        Ok(fee)
+    }
+
     #[instrument(skip_all)]
     async fn estimate_fee(
         &self,
@@ -209,11 +245,12 @@ impl Relay {
         authorization_address: Option<Address>,
         account_key: Key,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
-        let Chain { provider, is_optimism, .. } = self
+        let chain = self
             .inner
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
+        let provider = chain.provider.clone();
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
         };
@@ -243,7 +280,7 @@ impl Relay {
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
 
         let (entrypoint, native_fee_estimate, eth_price) = try_join3(
-            // fetch entrypoint from the account and ensure it is supporte
+            // fetch entrypoint from the account and ensure it is supported
             async {
                 let entrypoint = account.get_entrypoint().await?;
                 if !self.is_supported_entrypoint(&entrypoint) {
@@ -327,37 +364,9 @@ impl Relay {
         .abi_encode_packed()
         .into();
 
-        // Include the L1 DA fees if we're on an OP rollup.
-        let extra_payment = if is_optimism {
-            // Firstly prepare a transaction similar to the one that will actually be sent.
-            let tx = TxEip1559 {
-                chain_id: request.chain_id,
-                nonce: 0,
-                gas_limit: 1_000_000,
-                max_fee_per_gas: native_fee_estimate.max_fee_per_gas,
-                max_priority_fee_per_gas: native_fee_estimate.max_priority_fee_per_gas,
-                to: (*entrypoint.address()).into(),
-                input: op.encode_execute(),
-                ..Default::default()
-            };
-            // Prepare a dummy signature.
-            // TODO: is there a better way to do this? likely need to investigate how fastlz acts
-            // with different signatures.
-            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
-
-            let encoded = {
-                let tx = tx.into_signed(signature);
-                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
-                tx.eip2718_encode(&mut buf);
-                buf
-            };
-
-            provider.estimate_l1_fee(encoded.into()).await?
-                * U256::from(10u128.pow(token.decimals as u32))
-                / eth_price
-        } else {
-            U256::ZERO
-        };
+        let extra_payment = self.estimate_extra_fee(&chain, &op).await?
+            * U256::from(10u128.pow(token.decimals as u32))
+            / eth_price;
 
         if !extra_payment.is_zero() {
             op.set_legacy_payment_amount(extra_payment);
