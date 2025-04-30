@@ -18,6 +18,30 @@ impl AssetDiffs {
     pub fn builder() -> AssetDiffBuilder {
         AssetDiffBuilder::default()
     }
+
+    /// By default, asset diffs include the user op payment. This ensures it gets removed.
+    pub fn subtract_payer_fee(&mut self, payer: Address, asset: Address, fee: U256) {
+        let fee = I512::try_from_le_slice(fee.as_le_slice()).expect("u256→i512");
+
+        // Asset diff expects a None asset address if dealing with the native token.
+        let asset = (!asset.is_zero()).then_some(asset);
+
+        self.0.retain_mut(|(eoa, diffs)| {
+            if eoa == &payer {
+                // only retain diffs with non zero values
+                diffs.retain_mut(|diff| {
+                    if diff.address != asset {
+                        return true;
+                    }
+                    diff.value -= fee;
+
+                    !diff.value.is_zero()
+                });
+            }
+            // only retain entries with asset diffs
+            !diffs.is_empty()
+        });
+    }
 }
 
 /// Asset with metadata and value diff.

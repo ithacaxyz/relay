@@ -321,7 +321,7 @@ impl Relay {
         .into();
 
         // we estimate gas and fees
-        let (asset_diff, sim_result) = entrypoint
+        let (mut asset_diff, sim_result) = entrypoint
             .simulate_execute(
                 self.inner.simulator,
                 &op,
@@ -345,6 +345,12 @@ impl Relay {
 
         // Calculate amount with updated paymentPerGas
         op.set_legacy_payment_amount(payment_per_gas * op.combinedGas);
+
+        // If the EOA is the one paying, subtract the fee from the asset diff as to not confuse the
+        // user.
+        if op.payer == op.eoa || op.payer.is_zero() {
+            asset_diff.subtract_payer_fee(op.eoa, op.paymentToken, op.totalPaymentAmount);
+        }
 
         let quote = Quote {
             chain_id: request.chain_id,
