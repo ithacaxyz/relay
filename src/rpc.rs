@@ -30,7 +30,7 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, U256, bytes},
+    primitives::{Address, Bytes, ChainId, U256, bytes, map::B256Map},
     providers::{DynProvider, Provider},
     rpc::types::{
         TransactionReceipt,
@@ -205,6 +205,7 @@ impl Relay {
         token: Address,
         authorization_address: Option<Address>,
         account_key: Key,
+        key_slot_override: bool,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
         let provider = self.provider(request.chain_id)?;
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
@@ -225,7 +226,11 @@ impl Relay {
                 request.op.eoa,
                 AccountOverride::default()
                     .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
-                    .with_state_diff(account_key.storage_slots())
+                    .with_state_diff(if key_slot_override {
+                        account_key.storage_slots()
+                    } else {
+                        B256Map::default()
+                    })
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -901,6 +906,7 @@ impl RelayApiServer for Relay {
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
                     key,
+                    false,
                 )
                 .await
                 .inspect_err(|err| {
@@ -975,6 +981,7 @@ impl RelayApiServer for Relay {
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
                 admin_key.key.clone(),
+                true,
             )
             .await
             .inspect_err(|err| {
