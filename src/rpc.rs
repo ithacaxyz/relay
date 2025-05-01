@@ -244,6 +244,7 @@ impl Relay {
         token: Address,
         authorization_address: Option<Address>,
         account_key: Key,
+        key_slot_override: bool,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
         let chain = self
             .inner
@@ -269,7 +270,11 @@ impl Relay {
                 request.op.eoa,
                 AccountOverride::default()
                     .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
-                    .with_state_diff(account_key.storage_slots())
+                    .with_state_diff(if key_slot_override {
+                        account_key.storage_slots()
+                    } else {
+                        Default::default()
+                    })
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -953,6 +958,7 @@ impl RelayApiServer for Relay {
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
                     key,
+                    false,
                 )
                 .await
                 .inspect_err(|err| {
@@ -1027,6 +1033,7 @@ impl RelayApiServer for Relay {
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
                 admin_key.key.clone(),
+                true,
             )
             .await
             .inspect_err(|err| {
