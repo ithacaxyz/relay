@@ -269,7 +269,7 @@ impl Environment {
                 .with_account_registry(account_registry)
                 .with_simulator(simulator)
                 .with_user_op_gas_buffer(45_000) // todo: temp
-                .with_tx_gas_buffer(75_000) // todo: temp
+                .with_tx_gas_buffer(30_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_database_url(database_url),
             registry,
