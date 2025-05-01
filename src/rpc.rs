@@ -30,7 +30,7 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{Address, Bytes, ChainId, U256, bytes, map::B256Map},
+    primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
     rpc::types::{
         TransactionReceipt,
