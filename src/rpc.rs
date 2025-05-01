@@ -229,7 +229,7 @@ impl Relay {
                     .with_state_diff(if key_slot_override {
                         account_key.storage_slots()
                     } else {
-                        B256Map::default()
+                        Default::default()
                     })
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
