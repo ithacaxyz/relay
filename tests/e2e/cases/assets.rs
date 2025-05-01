@@ -72,6 +72,7 @@ async fn asset_diff() -> eyre::Result<()> {
             revoke_keys: vec![],
             pre_ops: vec![],
             pre_op: false,
+            prehashed_signing: false,
         },
     };
 

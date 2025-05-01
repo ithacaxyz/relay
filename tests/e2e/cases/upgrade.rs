@@ -30,6 +30,7 @@ pub async fn upgrade_account(
                 fee_payer: None,
                 fee_token: env.fee_token,
                 pre_ops,
+                prehashed_signing: false,
             },
         })
         .await?;
@@ -93,6 +94,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
                 fee_payer: None,
                 fee_token: env.fee_token,
                 pre_ops: vec![],
+                prehashed_signing: false,
             },
         })
         .await?;

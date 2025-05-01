@@ -65,6 +65,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     },
                     pre_ops: Vec::new(),
                     pre_op: false,
+                    prehashed_signing: false,
                 },
             })
             .await?;

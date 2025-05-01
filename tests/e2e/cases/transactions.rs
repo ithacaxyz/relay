@@ -113,6 +113,7 @@ impl MockAccount {
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],
+                    prehashed_signing: false,
                 },
             })
             .await
@@ -150,6 +151,7 @@ impl MockAccount {
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],
+                    prehashed_signing: false,
                 },
             })
             .await

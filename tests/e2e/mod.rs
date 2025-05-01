@@ -153,6 +153,7 @@ pub async fn prepare_calls(
                 },
                 pre_ops,
                 pre_op,
+                prehashed_signing: false,
             },
         })
         .await;

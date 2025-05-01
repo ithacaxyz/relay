@@ -351,7 +351,7 @@ impl Relay {
         op.signature = Signature {
             innerSignature: signature,
             keyHash: account_key.key_hash(),
-            prehash: account_key.keyType.is_p256(), // WebCrypto P256 uses prehash
+            prehash: request.prehashed_signing,
         }
         .abi_encode_packed()
         .into();
@@ -948,6 +948,7 @@ impl RelayApiServer for Relay {
                             pre_ops: request.capabilities.pre_ops.clone(),
                         },
                         chain_id: request.chain_id,
+                        prehashed_signing: request.capabilities.prehashed_signing,
                     },
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
@@ -1024,6 +1025,7 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
+                    prehashed_signing: request.capabilities.prehashed_signing,
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),

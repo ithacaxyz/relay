@@ -152,6 +152,9 @@ pub struct UpgradeAccountCapabilities {
     /// Optional [`PreOp`] to execute before signature verification.
     #[serde(default)]
     pub pre_ops: Vec<PreOp>,
+    /// Whether the digest will be prehashed before signing.
+    #[serde(default)]
+    pub prehashed_signing: bool,
 }
 
 /// Request parameters for `wallet_prepareUpgradeAccount`.

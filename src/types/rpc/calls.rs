@@ -82,6 +82,9 @@ pub struct PrepareCallsCapabilities {
     /// Whether the call bundle is to be considered a preop.
     #[serde(default)]
     pub pre_op: bool,
+    /// Whether the digest will be prehashed before signing.
+    #[serde(default)]
+    pub prehashed_signing: bool,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
