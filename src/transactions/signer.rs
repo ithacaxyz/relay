@@ -415,8 +415,6 @@ impl Signer {
             let fees = self.get_fee_context().await?;
             let best_tx = tx.best_tx();
 
-            tracing::info!("{fees:?}, {:?}, {best_tx:?}", tx.tx.max_fee_for_transaction());
-
             if let Some(new_tx) =
                 fees.prepare_replacement(best_tx, tx.tx.max_fee_for_transaction())?
             {
@@ -645,6 +643,7 @@ impl Signer {
         if !self.is_paused() {
             if balance < min_balance {
                 warn!(
+                    address=?self.address(),
                     ?balance,
                     max_fee_per_gas = ?fees.max_fee_per_gas,
                     ?min_balance,

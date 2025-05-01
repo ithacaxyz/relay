@@ -11,6 +11,7 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     error::UserOpError,
+    provider::ProviderExt,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call,
@@ -26,6 +27,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
+    consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::{
         SignedAuthorization,
         constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
@@ -42,7 +44,7 @@ use alloy::{
 use futures_util::{
     TryFutureExt,
     future::{TryJoinAll, try_join_all, try_join3},
-    join, try_join,
+    join,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -50,6 +52,7 @@ use jsonrpsee::{
 };
 use opentelemetry::trace::SpanKind;
 use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
+use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
 use crate::{
@@ -198,6 +201,42 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
+    /// Estimates additional fees to be paid for a userop (e.g L1 DA fees).
+    ///
+    /// Returns fees in ETH.
+    #[instrument(skip_all)]
+    async fn estimate_extra_fee(&self, chain: &Chain, op: &UserOp) -> Result<U256, RelayError> {
+        // Include the L1 DA fees if we're on an OP rollup.
+        let fee = if chain.is_optimism {
+            // Create a dummy transactions with all fields set to max values to make sure that
+            // calldata is largest possible
+            let tx = TxEip1559 {
+                chain_id: chain.chain_id,
+                nonce: u64::MAX,
+                gas_limit: u64::MAX,
+                max_fee_per_gas: u128::MAX,
+                max_priority_fee_per_gas: u128::MAX,
+                to: (!Address::ZERO).into(),
+                input: op.encode_execute(),
+                ..Default::default()
+            };
+            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
+
+            let encoded = {
+                let tx = tx.into_signed(signature);
+                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
+                tx.eip2718_encode(&mut buf);
+                buf
+            };
+
+            chain.provider.estimate_l1_fee(encoded.into()).await?
+        } else {
+            U256::ZERO
+        };
+
+        Ok(fee)
+    }
+
     #[instrument(skip_all)]
     async fn estimate_fee(
         &self,
@@ -206,7 +245,12 @@ impl Relay {
         authorization_address: Option<Address>,
         account_key: Key,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
-        let provider = self.provider(request.chain_id)?;
+        let chain = self
+            .inner
+            .chains
+            .get(request.chain_id)
+            .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
+        let provider = chain.provider.clone();
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
         };
@@ -320,6 +364,14 @@ impl Relay {
         .abi_encode_packed()
         .into();
 
+        let extra_payment = self.estimate_extra_fee(&chain, &op).await?
+            * U256::from(10u128.pow(token.decimals as u32))
+            / eth_price;
+
+        if !extra_payment.is_zero() {
+            op.set_legacy_payment_amount(extra_payment);
+        }
+
         // we estimate gas and fees
         let (mut asset_diff, sim_result) = entrypoint
             .simulate_execute(
@@ -344,7 +396,7 @@ impl Relay {
         op.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.set_legacy_payment_amount(payment_per_gas * op.combinedGas);
+        op.set_legacy_payment_amount(extra_payment + payment_per_gas * op.combinedGas);
 
         // If the EOA is the one paying, subtract the fee from the asset diff as to not confuse the
         // user.
@@ -380,7 +432,7 @@ impl Relay {
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<BundleId> {
         let chain_id = quote.ty().chain_id;
-        let Chain { provider, transactions } =
+        let Chain { provider, transactions, .. } =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         // check that the authorization item matches what's in the quote

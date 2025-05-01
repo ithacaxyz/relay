@@ -1,6 +1,5 @@
+use super::{Call, EntryPoint, IDelegation::authorizeCall, Key, PREPInitData};
 use crate::types::Entry;
-
-use super::{Call, IDelegation::authorizeCall, Key, PREPInitData};
 use alloy::{
     dyn_abi::TypedData,
     primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
@@ -239,6 +238,11 @@ impl UserOp {
             all_keys.extend(pre_op.authorized_keys_from_execution_data()?);
         }
         Ok(all_keys)
+    }
+
+    /// Encodes this userop into calldata for [`EntryPoint::executeCall`].
+    pub fn encode_execute(&self) -> Bytes {
+        EntryPoint::executeCall { encodedUserOp: self.abi_encode().into() }.abi_encode().into()
     }
 }
 
