@@ -27,6 +27,7 @@ pub async fn upgrade_account(
             capabilities: UpgradeAccountCapabilities {
                 authorize_keys: authorize_keys.to_vec(),
                 delegation: env.delegation,
+                fee_payer: None,
                 fee_token: env.fee_token,
                 pre_ops,
             },
@@ -89,6 +90,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
             capabilities: UpgradeAccountCapabilities {
                 authorize_keys: vec![key.to_authorized(Some(env.eoa.address())).await?],
                 delegation: env.delegation,
+                fee_payer: None,
                 fee_token: env.fee_token,
                 pre_ops: vec![],
             },

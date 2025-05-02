@@ -146,6 +146,7 @@ pub async fn prepare_calls(
                 authorize_keys: tx.authorization_keys(Some(env.eoa.address())).await?,
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
+                    fee_payer: None,
                     fee_token: tx.fee_token.unwrap_or(env.fee_token),
                     key_hash: signer.key_hash(),
                     nonce: tx.nonce,

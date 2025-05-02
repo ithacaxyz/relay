@@ -335,6 +335,7 @@ impl Relay {
             eoa: request.op.eoa,
             executionData: request.op.execution_data.clone(),
             nonce,
+            payer: request.op.payer.unwrap_or_default(),
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
             combinedGas: combined_gas,
@@ -951,6 +952,7 @@ impl RelayApiServer for Relay {
                             execution_data: calls.abi_encode().into(),
                             nonce: request.capabilities.meta.nonce,
                             init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
+                            payer: request.capabilities.meta.fee_payer,
                             pre_ops: request.capabilities.pre_ops.clone(),
                         },
                         chain_id: request.chain_id,
@@ -1026,6 +1028,7 @@ impl RelayApiServer for Relay {
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
                         nonce: Some(U256::ZERO),
                         init_data: None,
+                        payer: request.capabilities.fee_payer,
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
