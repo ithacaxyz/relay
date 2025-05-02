@@ -25,6 +25,7 @@ sol! {
 
         function safeTransferFrom(address from, address to, uint256 id);
         function tokenURI(uint256 id) public view virtual returns (string);
+        function burn(uint256 id) public virtual;
     }
 }
 

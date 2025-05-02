@@ -190,28 +190,26 @@ impl<P: Provider> Entry<P> {
         let gas_validation_offset =
             if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
 
-        let simulate_call = SimulatorInstance::new(simulator, self.entrypoint.provider())
-            .simulateV1Logs(
-                *self.address(),
-                true,
-                payment_per_gas,
-                U256::from(11_000),
-                gas_validation_offset,
-                op.abi_encode().into(),
+        let simulate_block = SimBlock::default()
+            .call(
+                SimulatorInstance::new(simulator, self.entrypoint.provider())
+                    .simulateV1Logs(
+                        *self.address(),
+                        true,
+                        payment_per_gas,
+                        U256::from(11_000),
+                        gas_validation_offset,
+                        op.abi_encode().into(),
+                    )
+                    .into_transaction_request(),
             )
-            .into_transaction_request();
+            .with_state_overrides(self.overrides.clone());
 
         let result = self
             .entrypoint
             .provider()
             .simulate(
-                &SimulatePayload::default()
-                    .extend(
-                        SimBlock::default()
-                            .call(simulate_call)
-                            .with_state_overrides(self.overrides.clone()),
-                    )
-                    .with_trace_transfers(),
+                &SimulatePayload::default().extend(simulate_block.clone()).with_trace_transfers(),
             )
             .await?
             .pop()
@@ -232,7 +230,11 @@ impl<P: Provider> Entry<P> {
         };
 
         let asset_diffs = asset_info_handle
-            .calculate_asset_diff(result.logs.into_iter(), self.entrypoint.provider())
+            .calculate_asset_diff(
+                simulate_block,
+                result.logs.into_iter(),
+                self.entrypoint.provider(),
+            )
             .await?;
 
         Ok((asset_diffs, simulation_result))
