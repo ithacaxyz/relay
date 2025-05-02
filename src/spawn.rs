@@ -130,7 +130,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             if let Some(sequencer_url) = get_sequencer_url(chain_id) {
                 let sequencer =
                     BuiltInConnectionString::from_str(sequencer_url)?.connect_boxed().await?;
-                transport = SequencerService::new(sequencer, transport).boxed();
+                transport = SequencerService::new(transport, sequencer).boxed();
             }
 
             let client = ClientBuilder::default()
