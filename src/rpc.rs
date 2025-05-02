@@ -17,7 +17,7 @@ use crate::{
         AssetDiffs, Call,
         DelegationProxy::DelegationProxyInstance,
         ENTRYPOINT_NO_ERROR,
-        EntryPoint::UserOpExecuted,
+        EntryPoint::{self, UserOpExecuted},
         FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, Op, PreOp,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext, RelaySettings,
@@ -30,7 +30,7 @@ use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::{
         SignedAuthorization,
-        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_AUTH_BASE_COST, PER_EMPTY_ACCOUNT_COST},
+        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
     },
     primitives::{Address, Bytes, ChainId, U256, bytes},
     providers::{DynProvider, Provider},
@@ -317,19 +317,6 @@ impl Relay {
         let payment_per_gas =
             (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
 
-        // Add some leeway, since the actual simulation may no be enough. For example, signature
-        // validation varies significantly.
-        let mut combined_gas = U256::from(self.inner.quote_config.user_op_buffer());
-
-        // for 7702 designations there is an additional gas charge
-        //
-        // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-        // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-        // need to charge for the account being presumed empty.
-        if authorization_address.is_some() {
-            combined_gas += U256::from(PER_AUTH_BASE_COST) + U256::from(PER_EMPTY_ACCOUNT_COST);
-        }
-
         // fill userop
         let mut op = UserOp {
             eoa: request.op.eoa,
@@ -338,7 +325,6 @@ impl Relay {
             payer: request.op.payer.unwrap_or_default(),
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
-            combinedGas: combined_gas,
             initData: request.op.init_data.unwrap_or_default(),
             encodedPreOps: request
                 .op
@@ -377,6 +363,12 @@ impl Relay {
         if !extra_payment.is_zero() {
             op.set_legacy_payment_amount(extra_payment);
         }
+
+        op.combinedGas = U256::from(self.inner.quote_config.user_op_buffer())
+            + U256::from(approx_intrinsic_cost(
+                &EntryPoint::executeCall { encodedUserOp: op.abi_encode().into() }.abi_encode(),
+                authorization_address.is_some(),
+            ));
 
         // we estimate gas and fees
         let (mut asset_diff, sim_result) = entrypoint
@@ -1461,4 +1453,24 @@ struct RelayInner {
     storage: RelayStorage,
     /// AssetInfo
     asset_info: AssetInfoServiceHandle,
+}
+
+/// Approximates the intrinsic cost of a transaction.
+///
+/// This function assumes Prague rules.
+fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
+    let zero_data_len = input.iter().filter(|v| **v == 0).count() as u64;
+    let non_zero_data_len = input.len() as u64 - zero_data_len;
+    let non_zero_data_multiplier = 4; // as defined in istanbul
+    let standard_token_cost = 4;
+    let tokens = zero_data_len + non_zero_data_len * non_zero_data_multiplier;
+
+    // for 7702 designations there is an additional gas charge
+    //
+    // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
+    // point it is not possible to compute the gas refund, so it is an overestimate, as we also
+    // need to charge for the account being presumed empty.
+    let auth_cost = if has_auth { PER_EMPTY_ACCOUNT_COST } else { 0 };
+
+    21000 + auth_cost + tokens * standard_token_cost
 }
