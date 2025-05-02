@@ -12,6 +12,7 @@ use alloy::{
     signers::local::coins_bip39::{English, Mnemonic},
 };
 use clap::Parser;
+use eyre::OptionExt;
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
@@ -98,6 +99,9 @@ pub struct Args {
     /// The number of signers to derive from mnemonic and use to send transactions.
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
+    /// The RPC endpoints of the sequencers for OP rollups.
+    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", required = true, value_parser = parse_chain_id_url)]
+    pub sequencer_endpoints: Vec<(u64, Url)>,
 }
 
 impl Args {
@@ -115,6 +119,7 @@ impl Args {
         config
             .with_signers_mnemonic(self.signers_mnemonic)
             .with_endpoints(&self.endpoints)
+            .with_sequencer_endpoints(self.sequencer_endpoints.clone())
             .with_fee_tokens(&self.fee_tokens)
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
@@ -139,6 +144,13 @@ impl Args {
 fn parse_duration_secs(arg: &str) -> Result<std::time::Duration, std::num::ParseIntError> {
     let seconds = arg.parse()?;
     Ok(std::time::Duration::from_secs(seconds))
+}
+
+/// Parses a string representing a pair of chain id and a url in a format of "chain_id:url".
+fn parse_chain_id_url(arg: &str) -> eyre::Result<(u64, Url)> {
+    let (chain_id, url) = arg.split_once(':').ok_or_eyre("expected chain_id:url argument")?;
+
+    Ok((chain_id.parse()?, url.parse()?))
 }
 
 #[cfg(test)]
@@ -188,6 +200,7 @@ mod tests {
                     max_pending_transactions: Default::default(),
                     num_signers: Default::default(),
                     signers_mnemonic: mnemonic.parse().unwrap(),
+                    sequencer_endpoints: Default::default(),
                 },
                 config.clone(),
                 registry.clone(),

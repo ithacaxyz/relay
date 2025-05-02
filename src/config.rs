@@ -10,7 +10,7 @@ use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
@@ -63,6 +63,8 @@ pub struct ServerConfig {
 pub struct ChainConfig {
     /// The RPC endpoint of a chain to send transactions to.
     pub endpoints: Vec<Url>,
+    /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
+    pub sequencer_endpoints: HashMap<u64, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
     /// The fee recipient address.
@@ -176,6 +178,7 @@ impl Default for RelayConfig {
             },
             chain: ChainConfig {
                 endpoints: vec![],
+                sequencer_endpoints: HashMap::new(),
                 fee_tokens: vec![],
                 fee_recipient: Address::ZERO,
             },
@@ -261,6 +264,15 @@ impl RelayConfig {
     /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
     pub fn with_endpoints(mut self, endpoints: &[Url]) -> Self {
         self.chain.endpoints.extend_from_slice(endpoints);
+        self
+    }
+
+    /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
+    pub fn with_sequencer_endpoints(
+        mut self,
+        endpoints: impl IntoIterator<Item = (u64, Url)>,
+    ) -> Self {
+        self.chain.sequencer_endpoints.extend(endpoints);
         self
     }
 

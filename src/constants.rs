@@ -1,7 +1,6 @@
 //! Relay constants.
 
 use alloy::{primitives::U256, uint};
-use alloy_chains::{Chain, NamedChain};
 use std::time::Duration;
 
 /// Extra buffer added to UserOp gas estimates signed by P256 keys to cover execution overhead
@@ -60,12 +59,3 @@ pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;
 
 /// Default number of signers to derive from mnemonic and use for sending transactions.
 pub const DEFAULT_NUM_SIGNERS: usize = 16;
-
-/// Map chain ID to a sequencer URL.
-pub fn get_sequencer_url(chain_id: u64) -> Option<&'static str> {
-    match Chain::from_id(chain_id).named()? {
-        NamedChain::Base => Some(BASE_MAINNET_SEQUENCER_URL),
-        NamedChain::BaseSepolia => Some(BASE_SEPOLIA_SEQUENCER_URL),
-        _ => None,
-    }
-}
