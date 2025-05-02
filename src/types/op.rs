@@ -160,6 +160,8 @@ pub struct PartialUserOp {
     ///
     /// Excluded from signature.
     pub init_data: Option<Bytes>,
+    /// Optional payer of the gas.
+    pub payer: Option<Address>,
     /// Optional array of encoded PreOps that will be verified and executed before the
     /// verification of the overall UserOp.
     pub pre_ops: Vec<PreOp>,

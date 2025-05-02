@@ -142,6 +142,8 @@ pub struct UpgradeAccountCapabilities {
     pub authorize_keys: Vec<AuthorizeKey>,
     /// Contract address to delegate to.
     pub delegation: Address,
+    /// Payer of the gas.
+    pub fee_payer: Option<Address>,
     /// ERC20 token to pay for the gas of the calls.
     ///
     /// Defaults to the native token.

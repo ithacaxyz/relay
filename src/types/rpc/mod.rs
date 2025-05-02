@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
+    /// Payer of the gas
+    ///
+    /// Defaults to the EOA.
+    pub fee_payer: Option<Address>,
     /// ERC20 token to pay for the gas of the calls.
     ///
     /// Defaults to the native token.

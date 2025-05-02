@@ -62,7 +62,7 @@ async fn asset_diff() -> eyre::Result<()> {
         calls: vec![], // fill in per test
         chain_id: env.chain_id,
         capabilities: PrepareCallsCapabilities {
-            meta: Meta { fee_token: Address::ZERO, key_hash: admin_key.key_hash(), nonce: None },
+            meta: Meta { fee_payer: None, fee_token: Address::ZERO, key_hash: admin_key.key_hash(), nonce: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_ops: vec![],
