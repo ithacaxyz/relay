@@ -66,7 +66,7 @@ pub struct AssetDiff {
 
 /// Asset coming from `eth_simulateV1` transfer logs.
 ///
-/// Note: Token variant might not be a token contract.
+/// Note: Asset variant might not be a token contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Asset {
     /// Native asset.
@@ -242,7 +242,9 @@ impl AssetDiffBuilder {
             for (asset, id) in changes.non_fungible {
                 let info = &metadata[&asset];
                 let uri = (!asset.is_native())
-                    .then(|| (asset.address(), U256::from_le_slice(&id.to_le_bytes::<64>()[..32])))
+                    .then(|| {
+                        (asset.address(), U256::from_le_slice(&id.abs().to_le_bytes::<64>()[..32]))
+                    })
                     .and_then(|key| tokens_uris.get(&key).cloned())
                     .flatten();
 

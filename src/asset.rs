@@ -109,17 +109,16 @@ impl AssetInfoServiceHandle {
     }
 
     /// Gets all available `tokenURI` from a list of nfts.
-    /// 
+    ///
     /// `tokenURI` might be `None` if the token is not owned by anyone.
     ///
     /// # Note:
-    /// Ensures that the returned map contains all the requested assets.
+    /// Ensures that the returned map contains all the requested nfts.
     pub async fn get_erc721_uris<P: Provider>(
         &self,
         provider: &P,
         nfts: Vec<(Address, U256)>,
     ) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
-        // Get asset infos from cache
         let transactions = nfts.iter().map(|(asset, id)| {
             TransactionRequest::default()
                 .with_to(*asset)

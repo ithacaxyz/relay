@@ -165,7 +165,12 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
         }],
         chain_id: env.chain_id,
         capabilities: PrepareCallsCapabilities {
-            meta: Meta { fee_token: Address::ZERO, key_hash: admin_key.key_hash(), nonce: None },
+            meta: Meta {
+                fee_token: Address::ZERO,
+                key_hash: admin_key.key_hash(),
+                nonce: None,
+                fee_payer: None,
+            },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_ops: vec![],
