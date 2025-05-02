@@ -64,6 +64,7 @@ pub struct ChainConfig {
     /// The RPC endpoint of a chain to send transactions to.
     pub endpoints: Vec<Url>,
     /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
+    #[serde(with = "crate::serde::hash_map")]
     pub sequencer_endpoints: HashMap<u64, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
