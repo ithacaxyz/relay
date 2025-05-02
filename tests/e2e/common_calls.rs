@@ -19,15 +19,19 @@ pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
     }
 }
 
-/// ERC20 transfer call.
-pub fn transfer_721(erc20: Address, from: Address, to: Address, id: U256) -> Call {
+/// ERC721 transfer call.
+pub fn transfer_721(erc721: Address, from: Address, to: Address, id: U256) -> Call {
     Call {
-        to: erc20,
+        to: erc721,
         value: U256::ZERO,
         data: IERC721::safeTransferFromCall { from, to, id }.abi_encode().into(),
     }
 }
 
+/// ERC721 burn call.
+pub fn burn_721(erc721: Address, id: U256) -> Call {
+    Call { to: erc721, value: U256::ZERO, data: IERC721::burnCall { id }.abi_encode().into() }
+}
 /// ERC20 mint call.
 pub fn mint(erc20: Address, a: Address, val: U256) -> Call {
     Call { to: erc20, value: U256::ZERO, data: MockErc20::mintCall { a, val }.abi_encode().into() }

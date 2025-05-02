@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::e2e::{
     ExpectedOutcome,
     MockErc721::{self},
@@ -155,14 +157,49 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 
     mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
 
-    // create prepare_call request
+    // ensure we always have the expected amount of unique tokens with URIs in our asset diffs.
+    let ensure_tokens_with_uris = |resp: &PrepareCallsResponse, expected: usize| -> Vec<U256> {
+        let tokens = resp
+            .capabilities
+            .asset_diff
+            .0
+            .iter()
+            .flat_map(|(_, diffs)| diffs.iter())
+            .filter(move |asset| {
+                asset.address == Some(env.erc721)
+                    && asset.token_kind == Some(TokenKind::ERC721)
+                    && asset.value.is_positive()
+            })
+            .filter(|d| d.uri.is_some())
+            .map(|d| U256::from_le_slice(&d.value.to_le_bytes::<64>()[..32]))
+            .collect::<HashSet<U256>>();
+
+        assert!(tokens.len() == expected);
+        tokens.into_iter().collect()
+    };
+
+    // create prepare_call request with 2 mints.
     let mut params = PrepareCallsParameters {
         from: Some(env.eoa.address()),
-        calls: vec![if std::env::var("TEST_ERC721").is_ok() {
-            Call { to: env.erc721, value: U256::ZERO, data: MockErc721::mintCall::SELECTOR.into() }
+        calls: if std::env::var("TEST_ERC721").is_ok() {
+            vec![
+                Call {
+                    to: env.erc721,
+                    value: U256::ZERO,
+                    data: MockErc721::mintCall::SELECTOR.into(),
+                },
+                Call {
+                    to: env.erc721,
+                    value: U256::ZERO,
+                    data: MockErc721::mintCall::SELECTOR.into(),
+                },
+            ]
         } else {
-            common_calls::mint(env.erc721, env.eoa.address(), U256::from(1337u64))
-        }],
+            vec![
+                common_calls::mint(env.erc721, env.eoa.address(), U256::from(1337u64)),
+                common_calls::mint(env.erc721, env.eoa.address(), U256::from(1338u64)),
+            ]
+        },
         chain_id: env.chain_id,
         capabilities: PrepareCallsCapabilities {
             meta: Meta {
@@ -178,18 +215,9 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
         },
     };
 
-    // mint NFT
+    // mint 2 NFTs
     let resp = env.relay_endpoint.prepare_calls(params.clone()).await?;
-    let token_id = resp
-        .capabilities
-        .asset_diff
-        .0
-        .iter()
-        .filter(|(addr, _)| addr == &env.eoa.address())
-        .flat_map(|(_, diffs)| diffs.iter())
-        .find(|asset| asset.address == Some(env.erc721))
-        .map(|d| U256::from_le_slice(&d.value.to_le_bytes::<64>()[..32]))
-        .unwrap();
+    let token_ids = ensure_tokens_with_uris(&resp, 2);
 
     send_prepared_calls(
         &env,
@@ -199,26 +227,30 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     )
     .await?;
 
-    // transfer NFT
+    // transfer 1st NFT
     params.calls = vec![common_calls::transfer_721(
         env.erc721,
         env.eoa.address(),
         Address::random(),
-        token_id,
+        token_ids[0],
     )];
-    let resp = env.relay_endpoint.prepare_calls(params).await?;
-    let has_token_uri = resp
-        .capabilities
-        .asset_diff
-        .0
-        .iter()
-        .flat_map(|(_, diffs)| diffs.iter())
-        .filter(|asset| {
-            asset.address == Some(env.erc721) && asset.token_kind == Some(TokenKind::ERC721)
-        })
-        .any(|d| d.uri.is_some());
+    let resp = env.relay_endpoint.prepare_calls(params.clone()).await?;
+    assert_eq!(vec![token_ids[0]], ensure_tokens_with_uris(&resp, 1));
 
-    assert!(has_token_uri);
+    send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(resp.digest).await?,
+        resp.context,
+    )
+    .await?;
+
+    // burn 2nd NFT
+    params.calls = vec![common_calls::burn_721(env.erc721, token_ids[1])];
+    assert_eq!(
+        vec![token_ids[1]],
+        ensure_tokens_with_uris(&env.relay_endpoint.prepare_calls(params).await?, 1)
+    );
 
     Ok(())
 }

@@ -110,47 +110,72 @@ impl AssetInfoServiceHandle {
 
     /// Gets all available `tokenURI` from a list of nfts.
     ///
-    /// `tokenURI` might be `None` if the token is not owned by anyone.
+    /// Since tokenURI calls revert if the token is not owned, this requires a [`SimBlock`], so the
+    /// URI calls can be done before and after:
+    ///  * Before, so we can query the URIs from burned tokens.
+    ///  * After, so we can query the URIs from minted tokens.
     ///
     /// # Note:
     /// Ensures that the returned map contains all the requested nfts.
     pub async fn get_erc721_uris<P: Provider>(
         &self,
         provider: &P,
+        simulate_block: SimBlock,
         nfts: Vec<(Address, U256)>,
     ) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
-        let transactions = nfts.iter().map(|(asset, id)| {
+        let token_uri_calls = nfts.iter().map(|(asset, id)| {
             TransactionRequest::default()
                 .with_to(*asset)
                 .with_input(IERC721::tokenURICall { id: *id }.abi_encode())
         });
 
-        let Some(bundle) = provider
-            .simulate(
-                &SimulatePayload::default().extend(SimBlock::default().extend_calls(transactions)),
-            )
-            .await?
-            .pop()
-        else {
-            error!("Expected a bundle response, but found none.");
-            return Err(AssetError::InvalidAssetInfoResponse.into());
-        };
+        let simulate_payload = SimulatePayload::default()
+            .extend(SimBlock::default().extend_calls(token_uri_calls.clone()))
+            .extend(simulate_block)
+            .extend(SimBlock::default().extend_calls(token_uri_calls));
 
-        Ok(nfts
-            .into_iter()
-            .zip(bundle.calls)
+        let blocks = provider.simulate(&simulate_payload).await?;
+        if blocks.len() != 3 {
+            error!("Expected 3 blocks in the bundle response, but found {}.", blocks.len());
+            return Err(AssetError::InvalidAssetInfoResponse.into());
+        }
+
+        // fetch all available token uris before the simulated block (includes burned tokens but not
+        // minted ones).
+        let mut uris = nfts
+            .iter()
+            .zip(blocks.first().as_ref().expect("qed").calls.iter())
             .map(|((asset, id), result)| {
-                (
-                    (asset, id),
-                    result
-                        .status
-                        .then(|| {
-                            IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok()
-                        })
-                        .flatten(),
-                )
+                let uri = result
+                    .status
+                    .then(|| IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok())
+                    .flatten();
+                ((*asset, *id), uri)
             })
-            .collect())
+            .collect::<HashMap<_, _>>();
+
+        // fetch the remaning token uris after the simulated block (includes missing minted).
+        for ((asset, id), result) in
+            nfts.into_iter().zip(blocks.last().as_ref().expect("qed").calls.iter())
+        {
+            let uri = || {
+                result
+                    .status
+                    .then(|| IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok())
+                    .flatten()
+            };
+
+            uris.entry((asset, id))
+                .and_modify(|existing| {
+                    if existing.is_none() {
+                        *existing = uri();
+                    }
+                })
+                // it shouldn't, but if for some reason the key was missing entirely, insert it
+                .or_insert(uri());
+        }
+
+        Ok(uris)
     }
 
     /// Calculates the net asset difference for each account and asset based on logs.
@@ -162,6 +187,7 @@ impl AssetInfoServiceHandle {
     /// value represents an outflow.
     pub async fn calculate_asset_diff<P: Provider>(
         &self,
+        simulate_block: SimBlock,
         logs: impl Iterator<Item = Log>,
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
@@ -188,7 +214,7 @@ impl AssetInfoServiceHandle {
         // fetch assets metadata
         let (metadata, tokens_uris) = try_join!(
             self.get_asset_info_list(provider, builder.seen_assets().copied().collect()),
-            self.get_erc721_uris(provider, builder.seen_nfts().collect())
+            self.get_erc721_uris(provider, simulate_block, builder.seen_nfts().collect())
         )?;
 
         Ok(builder.build(metadata, tokens_uris))
