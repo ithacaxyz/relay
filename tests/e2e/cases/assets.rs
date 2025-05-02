@@ -6,6 +6,7 @@ use crate::e2e::{
     common_calls,
     config::AccountConfig,
     environment::mint_erc20s,
+    send_prepared_calls,
 };
 use alloy::{
     primitives::{Address, U256},
@@ -14,8 +15,9 @@ use alloy::{
 use relay::{
     asset::AssetInfoService,
     rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
     types::{
-        Asset, Call, KeyType, KeyWith712Signer,
+        Asset, Call, KeyType, KeyWith712Signer, TokenKind,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse},
     },
 };
@@ -136,6 +138,82 @@ async fn asset_diff() -> eyre::Result<()> {
 
     // ERC20 spend repeats
     assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_inflow).is_some());
+
+    Ok(())
+}
+
+/// Ensures that asset diffs coming from prepare_calls contain token URIs for ERC721 tokens.
+#[tokio::test(flavor = "multi_thread")]
+async fn asset_diff_has_uri() -> eyre::Result<()> {
+    // setup environment and prep account
+    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    prep_account(&mut env, &[&admin_key]).await?;
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+
+    // create prepare_call request
+    let mut params = PrepareCallsParameters {
+        from: Some(env.eoa.address()),
+        calls: vec![if std::env::var("TEST_ERC721").is_ok() {
+            Call { to: env.erc721, value: U256::ZERO, data: MockErc721::mintCall::SELECTOR.into() }
+        } else {
+            common_calls::mint(env.erc721, env.eoa.address(), U256::from(1337u64))
+        }],
+        chain_id: env.chain_id,
+        capabilities: PrepareCallsCapabilities {
+            meta: Meta { fee_token: Address::ZERO, key_hash: admin_key.key_hash(), nonce: None },
+            authorize_keys: vec![],
+            revoke_keys: vec![],
+            pre_ops: vec![],
+            pre_op: false,
+        },
+    };
+
+    // mint NFT
+    let resp = env.relay_endpoint.prepare_calls(params.clone()).await?;
+    let token_id = resp
+        .capabilities
+        .asset_diff
+        .0
+        .iter()
+        .filter(|(addr, _)| addr == &env.eoa.address())
+        .flat_map(|(_, diffs)| diffs.iter())
+        .find(|asset| asset.address == Some(env.erc721))
+        .map(|d| U256::from_le_slice(&d.value.to_le_bytes::<64>()[..32]))
+        .unwrap();
+
+    send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(resp.digest).await?,
+        resp.context,
+    )
+    .await?;
+
+    // transfer NFT
+    params.calls = vec![common_calls::transfer_721(
+        env.erc721,
+        env.eoa.address(),
+        Address::random(),
+        token_id,
+    )];
+    let resp = env.relay_endpoint.prepare_calls(params).await?;
+    let has_token_uri = resp
+        .capabilities
+        .asset_diff
+        .0
+        .iter()
+        .flat_map(|(_, diffs)| diffs.iter())
+        .filter(|asset| {
+            asset.address == Some(env.erc721) && asset.token_kind == Some(TokenKind::ERC721)
+        })
+        .any(|d| d.uri.is_some());
+
+    assert!(has_token_uri);
 
     Ok(())
 }

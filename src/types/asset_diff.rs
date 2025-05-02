@@ -1,6 +1,6 @@
 use super::{
     IERC20::{self},
-    IERC721,
+    IERC721, TokenKind,
 };
 use alloy::primitives::{
     Address, U256, address,
@@ -49,10 +49,15 @@ impl AssetDiffs {
 pub struct AssetDiff {
     /// Asset address. `None` represents the native token.
     pub address: Option<Address>,
+    /// Token kind. ERC20 or ERC721.
+    #[serde(rename = "type")]
+    pub token_kind: Option<TokenKind>,
     /// Asset name.
     pub name: Option<String>,
     /// Asset symbol.
     pub symbol: Option<String>,
+    /// TokenURI if it exists.
+    pub uri: Option<String>,
     /// Asset decimals.
     pub decimals: Option<u8>,
     /// Value diff.
@@ -61,7 +66,7 @@ pub struct AssetDiff {
 
 /// Asset coming from `eth_simulateV1` transfer logs.
 ///
-/// Note: Token variant might not be ERC20.
+/// Note: Token variant might not be a token contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Asset {
     /// Native asset.
@@ -135,6 +140,21 @@ impl AssetDiffBuilder {
         self.seen_assets.iter()
     }
 
+    /// Returns an iterator over seen nfts.
+    pub fn seen_nfts(&self) -> impl Iterator<Item = (Address, U256)> {
+        self.per_account.iter().flat_map(|(_, changes)| {
+            changes
+                .non_fungible
+                .iter()
+                .filter(|(asset, change)| change.is_positive() && !asset.is_native())
+                // Safe to cast, since IDs were originally U256.
+                // Safe to call .address() since we filter off native assets.
+                .map(|(asset, id)| {
+                    (asset.address(), U256::from_le_slice(&id.to_le_bytes::<64>()[..32]))
+                })
+        })
+    }
+
     /// Records a [`IERC20::Transfer`] event.
     pub fn record_erc20(&mut self, asset: Asset, transfer: IERC20::Transfer) {
         self.seen_assets.insert(asset);
@@ -186,7 +206,11 @@ impl AssetDiffBuilder {
     }
 
     /// Builds and returns [`AssetDiffs`].
-    pub fn build(self, metadata: HashMap<Asset, AssetWithInfo>) -> AssetDiffs {
+    pub fn build(
+        self,
+        metadata: HashMap<Asset, AssetWithInfo>,
+        tokens_uris: HashMap<(Address, U256), Option<String>>,
+    ) -> AssetDiffs {
         let mut entries = Vec::with_capacity(self.per_account.len());
 
         for (eoa, changes) in self.per_account {
@@ -204,10 +228,12 @@ impl AssetDiffBuilder {
 
                 let info = &metadata[&asset];
                 account_diffs.push(AssetDiff {
+                    token_kind: (!asset.is_native()).then_some(TokenKind::ERC20),
                     address: (!asset.is_native()).then(|| asset.address()),
                     name: info.name.clone(),
                     symbol: info.symbol.clone(),
                     decimals: info.decimals,
+                    uri: None,
                     value: net,
                 });
             }
@@ -215,10 +241,17 @@ impl AssetDiffBuilder {
             // non-fungible tokens
             for (asset, id) in changes.non_fungible {
                 let info = &metadata[&asset];
+                let uri = (!asset.is_native())
+                    .then(|| (asset.address(), U256::from_le_slice(&id.to_le_bytes::<64>()[..32])))
+                    .and_then(|key| tokens_uris.get(&key).cloned())
+                    .flatten();
+
                 account_diffs.push(AssetDiff {
-                    address: Some(asset.address()),
+                    token_kind: (!asset.is_native()).then_some(TokenKind::ERC721),
+                    address: (!asset.is_native()).then(|| asset.address()),
                     name: info.name.clone(),
                     symbol: info.symbol.clone(),
+                    uri,
                     decimals: info.decimals,
                     value: id,
                 });

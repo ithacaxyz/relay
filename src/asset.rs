@@ -4,12 +4,12 @@ use crate::{
     types::{
         Asset, AssetDiffs, AssetWithInfo,
         IERC20::{self, IERC20Events},
-        IERC721::IERC721Events,
+        IERC721::{self, IERC721Events},
     },
 };
 use alloy::{
     network::TransactionBuilder,
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{Address, ChainId, U256, map::HashMap},
     providers::Provider,
     rpc::types::{
         Log, TransactionRequest,
@@ -22,9 +22,12 @@ use std::{
     pin::Pin,
     task::{Context, Poll, ready},
 };
-use tokio::sync::{
-    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
-    oneshot,
+use tokio::{
+    sync::{
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+        oneshot,
+    },
+    try_join,
 };
 use tracing::{error, trace};
 
@@ -105,6 +108,52 @@ impl AssetInfoServiceHandle {
             .collect())
     }
 
+    /// Gets all available `tokenURI` from a list of nfts.
+    /// 
+    /// `tokenURI` might be `None` if the token is not owned by anyone.
+    ///
+    /// # Note:
+    /// Ensures that the returned map contains all the requested assets.
+    pub async fn get_erc721_uris<P: Provider>(
+        &self,
+        provider: &P,
+        nfts: Vec<(Address, U256)>,
+    ) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
+        // Get asset infos from cache
+        let transactions = nfts.iter().map(|(asset, id)| {
+            TransactionRequest::default()
+                .with_to(*asset)
+                .with_input(IERC721::tokenURICall { id: *id }.abi_encode())
+        });
+
+        let Some(bundle) = provider
+            .simulate(
+                &SimulatePayload::default().extend(SimBlock::default().extend_calls(transactions)),
+            )
+            .await?
+            .pop()
+        else {
+            error!("Expected a bundle response, but found none.");
+            return Err(AssetError::InvalidAssetInfoResponse.into());
+        };
+
+        Ok(nfts
+            .into_iter()
+            .zip(bundle.calls)
+            .map(|((asset, id), result)| {
+                (
+                    (asset, id),
+                    result
+                        .status
+                        .then(|| {
+                            IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok()
+                        })
+                        .flatten(),
+                )
+            })
+            .collect())
+    }
+
     /// Calculates the net asset difference for each account and asset based on logs.
     ///
     /// ERC20: We first accumulate for each EOA and asset a tuple of credits and debits, only
@@ -138,10 +187,12 @@ impl AssetInfoServiceHandle {
         }
 
         // fetch assets metadata
-        let metadata =
-            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
+        let (metadata, tokens_uris) = try_join!(
+            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()),
+            self.get_erc721_uris(provider, builder.seen_nfts().collect())
+        )?;
 
-        Ok(builder.build(metadata))
+        Ok(builder.build(metadata, tokens_uris))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
