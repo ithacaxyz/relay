@@ -21,6 +21,7 @@ use alloy::{
     signers::local::LocalSigner,
     transports::{Transport, TransportConnect, layers::RetryBackoffLayer},
 };
+use futures_util::try_join;
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
@@ -120,17 +121,23 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(|url| async move {
-            let chain_id =
-                RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
+            let provider = RootProvider::<Ethereum>::connect(url.as_str()).await?;
+            let (chain_id, client_version) =
+                try_join!(provider.get_chain_id(), provider.get_client_version())?;
+
+            let is_anvil = client_version.contains("anvil");
 
             let url = BuiltInConnectionString::from_str(url.as_str())?;
             let is_local = url.is_local();
             let mut transport = url.connect_boxed().await?;
 
-            if let Some(sequencer_url) = get_sequencer_url(chain_id) {
-                let sequencer =
-                    BuiltInConnectionString::from_str(sequencer_url)?.connect_boxed().await?;
-                transport = SequencerService::new(transport, sequencer).boxed();
+            // Only use send transactions to sequencer if we're not forking.
+            if !is_anvil {
+                if let Some(sequencer_url) = get_sequencer_url(chain_id) {
+                    let sequencer =
+                        BuiltInConnectionString::from_str(sequencer_url)?.connect_boxed().await?;
+                    transport = SequencerService::new(transport, sequencer).boxed();
+                }
             }
 
             let client = ClientBuilder::default()
