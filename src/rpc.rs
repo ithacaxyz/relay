@@ -307,7 +307,7 @@ impl Relay {
         let nonce = if let Some(nonce) = request.op.nonce {
             nonce
         } else {
-            entrypoint.get_nonce(request.op.eoa).map_err(RelayError::from).await?
+            account.get_nonce().map_err(RelayError::from).await?
         };
 
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);

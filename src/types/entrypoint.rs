@@ -10,7 +10,6 @@ use alloy::{
     sol,
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
-    uint,
 };
 use tracing::debug;
 
@@ -118,9 +117,6 @@ sol! {
             virtual
             nonReentrant
             returns (bytes4 err);
-
-        /// Return current nonce with sequence key.
-        function getNonce(address eoa, uint192 seqKey) public view virtual returns (uint256);
 
         /// Returns the EIP712 domain of the entrypoint.
         ///
@@ -276,19 +272,5 @@ impl<P: Provider> Entry<P> {
             Some(domain.verifyingContract),
             None,
         ))
-    }
-
-    /// Get the next nonce for the given EOA.
-    ///
-    /// # Note
-    ///
-    /// This gets the next nonce for sequence key `0`.
-    pub async fn get_nonce(&self, account: Address) -> TransportResult<U256> {
-        self.entrypoint
-            .getNonce(account, uint!(0_U192))
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)
     }
 }
