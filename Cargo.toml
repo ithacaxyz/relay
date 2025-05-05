@@ -94,7 +94,7 @@ alloy = { version = "0.15", features = [
     "eips",
     "provider-anvil-node",
 ], default-features = false }
-alloy-primitives = { version = "1.0.0", features = ["rand"] }
+alloy-primitives = { version = "1.1.0", features = ["rand"] }
 derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
