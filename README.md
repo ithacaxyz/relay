@@ -29,45 +29,29 @@ cargo run --bin relay -- \
     # --config $CONFIG_PATH
 ```
 
-If no `--config` flag is given, a default `relay.toml` is created in the working directory. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
+If no `--config` flag is given, a default `relay.yaml` is created in the working directory. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
 
-Similarly, if no `--registry` flag is given, a default registry configuration file `registry.toml` is created in the working directory.
+Similarly, if no `--registry` flag is given, a default registry configuration file `registry.yaml` is created in the working directory.
 
 Examples:
-```toml
-# relay.toml
+```yaml
+# relay.yaml
 
-[server]
-address = "127.0.0.1"
-port = 8323
+server:
+    address: "127.0.0.1"
+    port: 8323
 
-[chain]
-endpoints = ["http://localhost:8545/"]
-fee_tokens = ["0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c"]
-
-[quote]
-ttl = 5
-# constant_rate = 1.0 # should be used ONLY for testing
-
-[quote.gas]
-user_op_buffer = 25000
-tx_buffer = 1000000
+chain:
+    endpoints:
+        - "http://localhost:8545/"
+    fee_tokens:
+        - "0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c"
+quote:
+    ttl: 5
+    gas:
+        user_op_buffer: 25000
+        tx_buffer: 1000000
 ```
-
-```toml
-# registry.toml
-
-1 = [
-    "ETH",
-    ["0xdac17f958d2ee523a2206206994597c13d831ec7", "USDT"],
-    ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC"],
-]
-8453 = [
-    "ETH",
-    ["0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USDC"],
-]
-```
-
 
 ## Testing
 

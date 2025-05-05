@@ -64,7 +64,6 @@ serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
 thiserror = "2"
-toml = "*"
 tokio = { version = "1.21", features = ["sync", "rt", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
@@ -88,6 +87,7 @@ sqlx = { version = "0.8.5", features = [
     "runtime-tokio",
     "macros",
 ] }
+serde_yaml = "0.9.34"
 
 [dev-dependencies]
 alloy = { version = "0.15", features = [

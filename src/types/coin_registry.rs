@@ -27,16 +27,16 @@ impl CoinRegistry {
         self.0.iter()
     }
 
-    /// Load from a json file.
+    /// Load from a YAML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config = toml::from_str(&content)?;
+        let file = std::fs::File::open(path)?;
+        let config = serde_yaml::from_reader(&file)?;
         Ok(config)
     }
 
-    /// Save to a json file.
+    /// Save to a YAML file.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> eyre::Result<()> {
-        let content = toml::to_string_pretty(self)?;
+        let content = serde_yaml::to_string(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
