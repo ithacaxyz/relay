@@ -15,7 +15,7 @@ pub use permission::*;
 mod settings;
 pub use settings::*;
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 /// Represents extra request values.
@@ -31,8 +31,6 @@ pub struct Meta {
     /// Defaults to the native token.
     #[serde(default)]
     pub fee_token: Address,
-    /// Key (hash) that will be used to sign the request.
-    pub key_hash: B256,
     /// Nonce.
     pub nonce: Option<U256>,
 }

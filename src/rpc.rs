@@ -351,7 +351,7 @@ impl Relay {
         op.signature = Signature {
             innerSignature: signature,
             keyHash: account_key.key_hash(),
-            prehash: account_key.keyType.is_p256(), // WebCrypto P256 uses prehash
+            prehash: request.prehash,
         }
         .abi_encode_packed()
         .into();
@@ -921,18 +921,14 @@ impl RelayApiServer for Relay {
             (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
         } else {
             let Some(eoa) = request.from else { return Err(UserOpError::MissingSender.into()) };
+            let key_hash = request.key.key_hash();
 
             // Find the key that authorizes this userop
             let Some(key) = self
-                .try_find_key(
-                    eoa,
-                    request.capabilities.meta.key_hash,
-                    &request.capabilities.pre_ops,
-                    request.chain_id,
-                )
+                .try_find_key(eoa, key_hash, &request.capabilities.pre_ops, request.chain_id)
                 .await?
             else {
-                return Err(KeysError::UnknownKeyHash(request.capabilities.meta.key_hash).into());
+                return Err(KeysError::UnknownKeyHash(key_hash).into());
             };
 
             // Call estimateFee to give us a quote with a complete userOp that the user can sign
@@ -948,6 +944,7 @@ impl RelayApiServer for Relay {
                             pre_ops: request.capabilities.pre_ops.clone(),
                         },
                         chain_id: request.chain_id,
+                        prehash: request.key.prehash,
                     },
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
@@ -1024,6 +1021,8 @@ impl RelayApiServer for Relay {
                         pre_ops: request.capabilities.pre_ops,
                     },
                     chain_id: request.chain_id,
+                    // signed by the eoa root key
+                    prehash: false,
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),

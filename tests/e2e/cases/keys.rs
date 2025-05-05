@@ -1,12 +1,19 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, config::AccountConfig, run_e2e_prep,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::prep_account, config::AccountConfig,
+    run_e2e_prep,
 };
 use alloy::{primitives::U256, sol_types::SolCall};
-use relay::types::{
-    CallPermission,
-    Delegation::SpendPeriod,
-    KeyType, KeyWith712Signer,
-    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+use relay::{
+    rpc::RelayApiClient,
+    types::{
+        CallPermission,
+        Delegation::SpendPeriod,
+        KeyType, KeyWith712Signer,
+        rpc::{
+            AuthorizeKey, AuthorizeKeyResponse, Meta, Permission, PrepareCallsCapabilities,
+            PrepareCallsParameters, SpendPermission,
+        },
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -160,5 +167,44 @@ async fn revoke_backup_key() -> eyre::Result<()> {
         ]
     })
     .await?;
+    Ok(())
+}
+
+/// Ensures that the simulation is successful if we pass a `prehash: true`. Even if we don't
+/// actually prehash on `estimate_fee`,
+#[tokio::test(flavor = "multi_thread")]
+async fn ensure_prehash_simulation() -> eyre::Result<()> {
+    let mut env = AccountConfig::Prep.setup_environment().await?;
+
+    // Prepare account
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    prep_account(&mut env, &[&admin_key]).await?;
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    let mut call_key = admin_key.to_call_key();
+    call_key.prehash = true;
+
+    env.relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta {
+                    fee_payer: None,
+                    fee_token: env.fee_token,
+                    nonce: Some(U256::from(1)),
+                },
+                pre_ops: vec![],
+                pre_op: false,
+            },
+            key: call_key,
+        })
+        .await?;
+
     Ok(())
 }
