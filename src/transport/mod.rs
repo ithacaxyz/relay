@@ -3,7 +3,7 @@
 use crate::transport::error::TransportErrExt;
 use alloy::{
     rpc::json_rpc::{RequestPacket, ResponsePacket},
-    transports::{TransportError, TransportFut},
+    transports::{Transport, TransportError, TransportFut},
 };
 use std::task::{Context, Poll, ready};
 use tower::Service;
@@ -50,14 +50,8 @@ impl Default for SequencerService<(), ()> {
 
 impl<T, S> Service<RequestPacket> for SequencerService<T, S>
 where
-    T: Service<RequestPacket, Future = TransportFut<'static>, Error = TransportError>
-        + Send
-        + Sync
-        + 'static,
-    S: Service<RequestPacket, Future = TransportFut<'static>, Error = TransportError>
-        + Send
-        + Sync
-        + 'static,
+    T: Transport,
+    S: Transport,
 {
     type Response = ResponsePacket;
     type Error = TransportError;

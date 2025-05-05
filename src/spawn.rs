@@ -10,14 +10,16 @@ use crate::{
     rpc::{Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
+    transport::SequencerService,
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
 };
 use alloy::{
+    network::Ethereum,
     primitives::B256,
-    providers::{DynProvider, Provider, ProviderBuilder},
-    rpc::client::ClientBuilder,
+    providers::{DynProvider, Provider, ProviderBuilder, RootProvider},
+    rpc::client::{BuiltInConnectionString, ClientBuilder},
     signers::local::LocalSigner,
-    transports::layers::RetryBackoffLayer,
+    transports::{Transport, TransportConnect, layers::RetryBackoffLayer},
 };
 use http::header;
 use itertools::Itertools;
@@ -27,7 +29,7 @@ use jsonrpsee::server::{
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, str::FromStr, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
@@ -117,14 +119,31 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
-        config.chain.endpoints.iter().cloned().map(|url| async move {
-            ClientBuilder::default()
+        config.chain.endpoints.iter().cloned().map(async |url| {
+            let chain_id =
+                RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
+
+            let url = BuiltInConnectionString::from_str(url.as_str())?;
+            let is_local = url.is_local();
+            let mut transport = url.connect_boxed().await?;
+
+            // Only use send transactions to sequencer if we're not forking.
+            if let Some(sequencer_url) = config.chain.sequencer_endpoints.get(&chain_id) {
+                let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
+                    .connect_boxed()
+                    .await?;
+                transport = SequencerService::new(transport, sequencer).boxed();
+
+                info!("Configured sequencer forwarding for chain {chain_id}");
+            }
+
+            let client = ClientBuilder::default()
                 .layer(TraceLayer)
                 .layer(RETRY_LAYER.clone())
-                .connect(url.as_str())
-                .await
-                .map(|client| client.with_poll_interval(DEFAULT_POLL_INTERVAL))
-                .map(|client| ProviderBuilder::new().connect_client(client).erased())
+                .transport(transport, is_local)
+                .with_poll_interval(DEFAULT_POLL_INTERVAL);
+
+            eyre::Ok(ProviderBuilder::new().connect_client(client).erased())
         }),
     )
     .await?;
