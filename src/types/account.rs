@@ -20,6 +20,7 @@ use alloy::{
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
+    uint,
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -117,6 +118,9 @@ sol! {
 
         /// The function selector is not recognized.
         error FnSelectorNotRecognized();
+
+        /// Return current nonce with sequence key.
+        function getNonce(uint192 seqKey) public view virtual returns (uint256);
 
         /// Set a limited amount of `token` that `keyHash` can spend per `period`.
         function setSpendLimit(bytes32 keyHash, address token, SpendPeriod period, uint256 limit)
@@ -356,6 +360,20 @@ impl<P: Provider> Account<P> {
             .await?;
 
         Ok(isValid.then_some(keyHash))
+    }
+
+    /// Get the next nonce for the given EOA.
+    ///
+    /// # Note
+    ///
+    /// This gets the next nonce for sequence key `0`.
+    pub async fn get_nonce(&self) -> TransportResult<U256> {
+        self.delegation
+            .getNonce(uint!(0_U192))
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)
     }
 }
 
