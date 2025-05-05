@@ -26,14 +26,14 @@ pub struct Args {
     /// The configuration file.
     ///
     /// If missing, a default one will be used and stored in the working directory under
-    /// `relay.toml`.
-    #[arg(long, value_name = "CONFIG", env = "RELAY_CONFIG", default_value = "relay.toml")]
+    /// `relay.yaml`.
+    #[arg(long, value_name = "CONFIG", env = "RELAY_CONFIG", default_value = "relay.yaml")]
     pub config: PathBuf,
     /// The coin registry file. Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
     ///
     /// If missing, a default one will be used and stored in the working directory under
-    /// `registry.toml`.
-    #[arg(long, value_name = "REGISTRY", env = "REGISTRY", default_value = "registry.toml")]
+    /// `registry.yaml`.
+    #[arg(long, value_name = "REGISTRY", env = "REGISTRY", default_value = "registry.yaml")]
     pub registry: PathBuf,
     /// The address to serve the RPC on.
     #[arg(long = "http.addr", value_name = "ADDR", default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
@@ -160,8 +160,8 @@ mod tests {
     #[tokio::test]
     async fn respawn_cli() -> eyre::Result<()> {
         let dir = temp_dir();
-        let config = dir.join("relay.toml");
-        let registry = dir.join("registry.toml");
+        let config = dir.join("relay.yaml");
+        let registry = dir.join("registry.yaml");
         let mnemonic = "test test test test test test test test test test test junk";
 
         for _ in 0..=1 {

@@ -324,19 +324,19 @@ impl RelayConfig {
         self
     }
 
-    /// Load from a TOML file.
+    /// Load from a YAML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)
-            .wrap_err_with(|| format!("Failed to read config file: {}", path.display()))?;
-        let config = toml::from_str(&content)
-            .wrap_err_with(|| format!("Failed to parse config file: {}", path.display()))?;
+        let file = std::fs::File::open(path)
+            .wrap_err_with(|| format!("failed to read config file: {}", path.display()))?;
+        let config = serde_yaml::from_reader(&file)
+            .wrap_err_with(|| format!("failed to parse config file: {}", path.display()))?;
         Ok(config)
     }
 
-    /// Save to a TOML file.
+    /// Save to a YAML file.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> eyre::Result<()> {
-        let content = toml::to_string_pretty(self)?;
+        let content = serde_yaml::to_string(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
