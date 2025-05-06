@@ -100,7 +100,7 @@ pub struct Args {
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
     /// The RPC endpoints of the sequencers for OP rollups.
-    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", required = true, value_parser = parse_chain_id_url)]
+    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_id_url)]
     pub sequencer_endpoints: Vec<(u64, Url)>,
 }
 
