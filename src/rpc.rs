@@ -1070,12 +1070,15 @@ impl RelayApiServer for Relay {
         &self,
         request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
-        let SendPreparedCallsParameters { context, signature, key } = request;
+        let SendPreparedCallsParameters { capabilities, context, signature, key } = request;
         let Some(mut quote) = context.take_quote() else {
             return Err(QuoteError::QuoteNotFound.into());
         };
 
         let op = &mut quote.ty_mut().op;
+
+        // Fill UserOp with the fee payment signature (if exists).
+        op.paymentSignature = capabilities.fee_signature;
 
         // Fill UserOp with the user signature.
         let key_hash = key.key_hash();

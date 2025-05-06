@@ -182,6 +182,7 @@ pub async fn send_prepared_calls(
     let response = env
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
+            capabilities: Default::default(),
             context,
             key: signer.to_call_key(),
             signature,
