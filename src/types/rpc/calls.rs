@@ -186,11 +186,10 @@ impl PrepareCallsContext {
 }
 
 /// Capabilities for `wallet_sendPreparedCalls` request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsCapabilities {
     /// Fee payment signature.
-    #[serde(default)]
     pub fee_signature: Bytes,
 }
 
@@ -198,7 +197,8 @@ pub struct SendPreparedCallsCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsParameters {
     /// The [`SendPreparedCallsCapabilities`] of the prepared call bundle.
-    pub capabilities: Option<SendPreparedCallsCapabilities>,
+    #[serde(default)]
+    pub capabilities: SendPreparedCallsCapabilities,
     /// The [`PrepareCallsContext`] of the prepared call bundle.
     pub context: PrepareCallsContext,
     /// UserOp key signature.

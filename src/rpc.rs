@@ -1077,8 +1077,7 @@ impl RelayApiServer for Relay {
         let op = &mut quote.ty_mut().op;
 
         // Fill UserOp with the fee payment signature (if exists).
-        op.paymentSignature =
-            capabilities.map_or(bytes!(""), |capabilities| capabilities.fee_signature);
+        op.paymentSignature = capabilities.fee_signature;
 
         // Fill UserOp with the user signature.
         let key_hash = signature.key_hash();
