@@ -7,7 +7,7 @@ use crate::{
     constants::DEFAULT_POLL_INTERVAL,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
-    rpc::{Relay, RelayApiServer},
+    rpc::{Onramp, OnrampApiServer, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
     transport::SequencerService,
@@ -175,7 +175,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     tokio::spawn(asset_info);
 
     // todo: avoid all this darn cloning
-    let rpc = Relay::new(
+    let mut rpc = Relay::new(
         config.entrypoint,
         config.legacy_entrypoints,
         config.delegation_proxy,
@@ -191,6 +191,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         asset_info_handle,
     )
     .into_rpc();
+    let onramp = Onramp::new().into_rpc();
 
     // http layers
     let cors = CorsLayer::new()
@@ -219,5 +220,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
 
+    rpc.merge(onramp).expect("could not merge rpc modules");
     Ok(RelayHandle { local_addr: addr, server: server.start(rpc), chains, storage, metrics })
 }
