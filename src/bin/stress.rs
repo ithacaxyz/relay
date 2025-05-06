@@ -111,6 +111,7 @@ impl StressAccount {
             let send_start = Instant::now();
             let bundle_id = relay_client
                 .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
+                    capabilities: None,
                     context,
                     signature: KeySignature {
                         public_key: self.key.publicKey.clone(),

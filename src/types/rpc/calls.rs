@@ -8,7 +8,7 @@ use crate::{
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
-    primitives::{Address, B256, BlockHash, BlockNumber, ChainId, TxHash, wrap_fixed_bytes},
+    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, wrap_fixed_bytes},
     providers::DynProvider,
     rpc::types::Log,
     sol_types::SolEvent,
@@ -185,10 +185,20 @@ impl PrepareCallsContext {
     }
 }
 
-/// Request parameters for `wallet_sendPreparedCalls`.
+/// Capabilities for `wallet_sendPreparedCalls` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SendPreparedCallsCapabilities {
+    /// Fee payment signature.
+    #[serde(default)]
+    pub fee_signature: Bytes,
+}
+
+/// Request parameters for `wallet_sendPreparedCalls`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendPreparedCallsParameters {
+    /// The [`SendPreparedCallsCapabilities`] of the prepared call bundle.
+    pub capabilities: Option<SendPreparedCallsCapabilities>,
     /// The [`PrepareCallsContext`] of the prepared call bundle.
     pub context: PrepareCallsContext,
     /// UserOp key signature.
