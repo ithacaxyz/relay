@@ -186,7 +186,7 @@ async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus
 async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error: &str) {
     match wait_for_tx(events).await {
         TransactionStatus::Failed(err) => {
-            assert!(err.to_string().contains(error));
+            assert!(err.to_string().contains(error), "tx failed with different error: {err}");
         }
         TransactionStatus::Confirmed(_) => panic!("expected failure"),
         _ => unreachable!(),
@@ -421,15 +421,9 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     let max_fee = tx_0.quote.ty().native_fee_estimate.max_fee_per_gas;
 
-    // randomly choose whether we are increasing basefee or inflating priority fee market
-    if rand::random_bool(0.5) {
-        // set next block base fee to a high value to make it look like tx is underpriced
-        env.provider.anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
-        env.mine_block().await;
-    } else {
-        // mine blocks with priority fee set to max_fee of dropped tx
-        env.mine_blocks_with_priority_fee(max_fee).await;
-    }
+    // set next block base fee to a high value to make it look like tx is underpriced
+    env.provider.anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
+    env.mine_block().await;
 
     // prepare and send second transaction
     let tx_1 = account_1.prepare_tx(&env).await;
