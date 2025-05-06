@@ -1,3 +1,4 @@
+//! The `relay_` namespace.
 //! # Ithaca Relay RPC
 //!
 //! Implementations of a custom `relay_` namespace.
