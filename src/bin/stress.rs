@@ -108,12 +108,8 @@ impl StressAccount {
             let bundle_id = relay_client
                 .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
                     context,
-                    signature: KeySignature {
-                        public_key: self.key.publicKey.clone(),
-                        key_type: self.key.keyType,
-                        value: signature,
-                        prehash: false,
-                    },
+                    key: self.key.to_call_key(),
+                    signature,
                 })
                 .await
                 .expect("send prepared calls failed");

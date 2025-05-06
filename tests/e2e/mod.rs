@@ -28,9 +28,8 @@ use relay::{
     types::{
         Delegation, KeyWith712Signer,
         rpc::{
-            BundleId, CallsStatus, KeySignature, Meta, PrepareCallsCapabilities,
-            PrepareCallsContext, PrepareCallsParameters, PrepareCallsResponse,
-            SendPreparedCallsParameters,
+            BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsContext,
+            PrepareCallsParameters, PrepareCallsResponse, SendPreparedCallsParameters,
         },
     },
 };
@@ -184,12 +183,8 @@ pub async fn send_prepared_calls(
         .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
             context,
-            signature: KeySignature {
-                public_key: signer.publicKey.clone(),
-                key_type: signer.keyType,
-                value: signature,
-                prehash: false,
-            },
+            key: signer.to_call_key(),
+            signature,
         })
         .await
         .map(|bundle| bundle.id);

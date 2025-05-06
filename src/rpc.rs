@@ -982,6 +982,7 @@ impl RelayApiServer for Relay {
                 revoke_keys: request.capabilities.revoke_keys,
                 asset_diff,
             },
+            key: Some(request.key),
         };
 
         Ok(response)
@@ -1059,6 +1060,7 @@ impl RelayApiServer for Relay {
                 revoke_keys: Vec::new(),
                 asset_diff,
             },
+            key: None,
         };
 
         Ok(response)
@@ -1068,7 +1070,7 @@ impl RelayApiServer for Relay {
         &self,
         request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
-        let SendPreparedCallsParameters { context, signature } = request;
+        let SendPreparedCallsParameters { context, signature, key } = request;
         let Some(mut quote) = context.take_quote() else {
             return Err(QuoteError::QuoteNotFound.into());
         };
@@ -1076,14 +1078,11 @@ impl RelayApiServer for Relay {
         let op = &mut quote.ty_mut().op;
 
         // Fill UserOp with the user signature.
-        let key_hash = signature.key_hash();
-        op.signature = Signature {
-            innerSignature: signature.value,
-            keyHash: key_hash,
-            prehash: signature.prehash,
-        }
-        .abi_encode_packed()
-        .into();
+        let key_hash = key.key_hash();
+        op.signature =
+            Signature { innerSignature: signature, keyHash: key_hash, prehash: key.prehash }
+                .abi_encode_packed()
+                .into();
 
         // Set non-eip712 payment fields. Since they are not included into the signature so we need
         // to enforce it here.
