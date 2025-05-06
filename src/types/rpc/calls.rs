@@ -1,6 +1,6 @@
 //! RPC calls-related request and response types.
 
-use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
+use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
     types::{AssetDiffs, Call, Key, KeyType, Op, PreOp, SignedQuote},
@@ -135,6 +135,9 @@ pub struct PrepareCallsResponse {
     pub typed_data: TypedData,
     /// Capabilities response.
     pub capabilities: PrepareCallsResponseCapabilities,
+    /// Key that will be used to sign the call bundle.
+    #[serde(default)]
+    pub key: Option<CallKey>,
 }
 
 /// Response context from `wallet_prepareCalls`.
@@ -225,8 +228,10 @@ pub struct SendPreparedCallsParameters {
     pub capabilities: SendPreparedCallsCapabilities,
     /// The [`PrepareCallsContext`] of the prepared call bundle.
     pub context: PrepareCallsContext,
-    /// UserOp key signature.
-    pub signature: KeySignature,
+    /// Key that was used to sign the call bundle.
+    pub key: CallKey,
+    /// Signature value.
+    pub signature: Bytes,
 }
 
 /// Response for `wallet_sendPreparedCalls`.

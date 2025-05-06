@@ -109,12 +109,8 @@ impl StressAccount {
                 .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
                     capabilities: Default::default(),
                     context,
-                    signature: KeySignature {
-                        public_key: self.key.publicKey.clone(),
-                        key_type: self.key.keyType,
-                        value: signature,
-                        prehash: false,
-                    },
+                    key: self.key.to_call_key(),
+                    signature,
                 })
                 .await
                 .expect("send prepared calls failed");
