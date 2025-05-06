@@ -24,7 +24,6 @@ cargo run --bin relay -- \
     --endpoint $RPC_URL \ # You can pass this multiple times
     --fee-token $FEE_TOKEN_ADDR \ # You can pass this multiple times
     --secret-key $TX_SIGNING_PRIV_KEY \
-    --quote-secret-key $QUOTE_SIGNING_PRIV_KEY
     # --registry $REGISTRY_PATH  # Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
     # --config $CONFIG_PATH
 ```
