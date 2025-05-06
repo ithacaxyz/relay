@@ -186,7 +186,7 @@ async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus
 async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error: &str) {
     match wait_for_tx(events).await {
         TransactionStatus::Failed(err) => {
-            assert!(err.to_string().contains(error), "tx failed with different error: {}", err.to_string());
+            assert!(err.to_string().contains(error), "tx failed with different error: {}", err);
         }
         TransactionStatus::Confirmed(_) => panic!("expected failure"),
         _ => unreachable!(),
