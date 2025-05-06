@@ -66,17 +66,13 @@ async fn asset_diff() -> eyre::Result<()> {
         calls: vec![], // fill in per test
         chain_id: env.chain_id,
         capabilities: PrepareCallsCapabilities {
-            meta: Meta {
-                fee_payer: None,
-                fee_token: Address::ZERO,
-                key_hash: admin_key.key_hash(),
-                nonce: None,
-            },
+            meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_ops: vec![],
             pre_op: false,
         },
+        key: admin_key.to_call_key(),
     };
 
     let prepare_calls = |calls: Vec<Call>| {
@@ -202,17 +198,13 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
         },
         chain_id: env.chain_id,
         capabilities: PrepareCallsCapabilities {
-            meta: Meta {
-                fee_token: Address::ZERO,
-                key_hash: admin_key.key_hash(),
-                nonce: None,
-                fee_payer: None,
-            },
+            meta: Meta { fee_token: Address::ZERO, nonce: None, fee_payer: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_ops: vec![],
             pre_op: false,
         },
+        key: admin_key.to_call_key(),
     };
 
     // mint 2 NFTs

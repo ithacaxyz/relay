@@ -104,16 +104,12 @@ impl MockAccount {
                 from: Some(address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta {
-                        fee_payer: None,
-                        fee_token: Address::ZERO,
-                        key_hash: key.key_hash(),
-                        nonce: None,
-                    },
+                    meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],
                 },
+                key: key.to_call_key(),
             })
             .await
             .unwrap();
@@ -141,16 +137,12 @@ impl MockAccount {
                 from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta {
-                        fee_payer: None,
-                        fee_token: env.erc20,
-                        key_hash: self.key.key_hash(),
-                        nonce: None,
-                    },
+                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
                     pre_ops: vec![],
                     pre_op: false,
                     revoke_keys: vec![],
                 },
+                key: self.key.to_call_key(),
             })
             .await
             .unwrap();

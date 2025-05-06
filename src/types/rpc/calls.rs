@@ -3,12 +3,12 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, KeySignature, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
-    types::{AssetDiffs, Call, Op, PreOp, SignedQuote},
+    types::{AssetDiffs, Call, Key, KeyType, Op, PreOp, SignedQuote},
 };
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
-    primitives::{Address, B256, BlockHash, BlockNumber, ChainId, TxHash, wrap_fixed_bytes},
+    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, wrap_fixed_bytes},
     providers::DynProvider,
     rpc::types::Log,
     sol_types::SolEvent,
@@ -25,6 +25,28 @@ wrap_fixed_bytes! {
     pub struct BundleId<32>;
 }
 
+/// Key that will be used to sign the call bundle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallKey {
+    /// Type of key.
+    #[serde(rename = "type")]
+    pub key_type: KeyType,
+    /// Public key in encoded form.
+    pub public_key: Bytes,
+    /// Whether the digest will be prehashed by the key.
+    pub prehash: bool,
+}
+
+impl CallKey {
+    /// The key hash.
+    ///
+    /// The hash is computed as `keccak256(abi.encode(key.keyType, keccak256(key.publicKey)))`.
+    pub fn key_hash(&self) -> B256 {
+        Key::hash(self.key_type, &self.public_key)
+    }
+}
+
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +61,8 @@ pub struct PrepareCallsParameters {
     pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
+    /// Key that will be used to sign the call bundle.
+    pub key: CallKey,
 }
 
 impl PrepareCallsParameters {

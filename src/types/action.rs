@@ -15,4 +15,6 @@ pub struct PartialAction {
     pub op: PartialUserOp,
     /// The destination chain ID.
     pub chain_id: ChainId,
+    /// Whether the digest will be prehashed before signing.
+    pub prehash: bool,
 }

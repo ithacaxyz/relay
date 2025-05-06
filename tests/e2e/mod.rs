@@ -148,12 +148,12 @@ pub async fn prepare_calls(
                 meta: Meta {
                     fee_payer: None,
                     fee_token: tx.fee_token.unwrap_or(env.fee_token),
-                    key_hash: signer.key_hash(),
                     nonce: tx.nonce,
                 },
                 pre_ops,
                 pre_op,
             },
+            key: signer.to_call_key(),
         })
         .await;
 

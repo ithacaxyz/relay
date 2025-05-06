@@ -60,12 +60,12 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     meta: Meta {
                         fee_payer: None,
                         fee_token: env.fee_token,
-                        key_hash: signer.key_hash(),
                         nonce: Some(U256::from(tx_num + user_op_nonce)),
                     },
                     pre_ops: Vec::new(),
                     pre_op: false,
                 },
+                key: signer.to_call_key(),
             })
             .await?;
 

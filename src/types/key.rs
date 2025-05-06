@@ -1,7 +1,7 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
     Call, U40,
-    rpc::{AuthorizeKey, Permission, RevokeKey},
+    rpc::{AuthorizeKey, CallKey, Permission, RevokeKey},
 };
 use IDelegation::getKeysReturn;
 use alloy::{
@@ -359,6 +359,11 @@ impl KeyWith712Signer {
     /// Returns a reference to the inner [`Key`].
     pub fn key(&self) -> &Key {
         &self.key
+    }
+
+    /// Returns a [`CallKey`].
+    pub fn to_call_key(&self) -> CallKey {
+        CallKey { key_type: self.keyType, public_key: self.publicKey.clone(), prehash: false }
     }
 
     /// Returns a [`AuthorizeKey`] equivalent.
