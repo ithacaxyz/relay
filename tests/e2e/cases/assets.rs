@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::e2e::{
     ExpectedOutcome,
     MockErc721::{self},
-    TxContext,
+    TxContext, await_calls_status,
     cases::prep_account,
     common_calls,
     config::AccountConfig,
@@ -211,13 +211,17 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     let resp = env.relay_endpoint.prepare_calls(params.clone()).await?;
     let token_ids = ensure_tokens_with_uris(&resp, 2);
 
-    send_prepared_calls(
+    let bundle_id = send_prepared_calls(
         &env,
         &admin_key,
         admin_key.sign_payload_hash(resp.digest).await?,
         resp.context,
     )
     .await?;
+
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_final());
 
     // transfer 1st NFT
     params.calls = vec![common_calls::transfer_721(
@@ -229,13 +233,17 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     let resp = env.relay_endpoint.prepare_calls(params.clone()).await?;
     assert_eq!(vec![token_ids[0]], ensure_tokens_with_uris(&resp, 1));
 
-    send_prepared_calls(
+    let bundle_id = send_prepared_calls(
         &env,
         &admin_key,
         admin_key.sign_payload_hash(resp.digest).await?,
         resp.context,
     )
     .await?;
+
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_final());
 
     // burn 2nd NFT
     params.calls = vec![common_calls::burn_721(env.erc721, token_ids[1])];

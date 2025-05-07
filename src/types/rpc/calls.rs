@@ -3,15 +3,21 @@
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
-    types::{AssetDiffs, Call, Key, KeyType, Op, PreOp, SignedQuote},
+    types::{
+        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType, Op, PreOp,
+        SignedQuote,
+    },
 };
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
-    primitives::{Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, wrap_fixed_bytes},
+    primitives::{
+        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256, wrap_fixed_bytes,
+    },
     providers::DynProvider,
     rpc::types::Log,
     sol_types::SolEvent,
+    uint,
 };
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -83,6 +89,35 @@ impl PrepareCallsParameters {
         }
 
         Ok(())
+    }
+
+    /// Gets the nonce based on information from the request.
+    ///
+    /// If the request does not contain a nonce it will:
+    /// * attempt to find a nonce with `DEFAULT_SEQUENCE_KEY` in the preops and increment it.
+    /// * return 0 if there is a pending PREP account request.
+    /// * check next available nonce with `DEFAULT_SEQUENCE_KEY` from chain.
+    pub async fn get_nonce(
+        &self,
+        maybe_prep: Option<&CreatableAccount>,
+        provider: &DynProvider,
+    ) -> Result<U256, RelayError> {
+        if let Some(nonce) = self.capabilities.meta.nonce {
+            Ok(nonce)
+        } else if let Some(preop) = self
+            .capabilities
+            .pre_ops
+            .iter()
+            .filter(|preop| (preop.nonce >> 64) == U256::from(DEFAULT_SEQUENCE_KEY))
+            .max_by_key(|preop| preop.nonce)
+        {
+            Ok(preop.nonce + uint!(1_U256))
+        } else if maybe_prep.is_some() {
+            Ok(U256::ZERO)
+        } else {
+            let eoa = self.from.ok_or(UserOpError::MissingSender)?;
+            Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
+        }
     }
 }
 

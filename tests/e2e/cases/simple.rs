@@ -2,13 +2,13 @@
 
 use crate::{
     check,
-    e2e::{common_calls as calls, *},
+    e2e::{cases::prep_account, common_calls as calls, *},
 };
-use alloy::primitives::U256;
+use alloy::{primitives::U256, sol_types::SolValue, uint};
 use eyre::Result;
 use relay::{
     signers::DynSigner,
-    types::{IERC20, KeyType, KeyWith712Signer},
+    types::{IERC20, KeyType, KeyWith712Signer, Signature},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -272,4 +272,72 @@ async fn no_fee_tx() -> Result<()> {
         }]
     })
     .await
+}
+
+/// Ensures prepareCalls can handle two successive requests with an empty nonce.
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_request_nonce() -> eyre::Result<()> {
+    let mut env = Environment::setup_with_prep().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    prep_account(&mut env, &[&admin_key]).await?;
+
+    TxContext {
+        expected: ExpectedOutcome::Pass,
+        calls: vec![common_calls::transfer(env.erc20, env.erc20, U256::from(10))],
+        key: Some(&admin_key),
+        ..Default::default()
+    }
+    .process(0, &env)
+    .await?;
+
+    // preop
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![],
+                pre_op: true,
+            },
+            key: admin_key.to_call_key(),
+        })
+        .await?;
+
+    let mut preop = response.context.take_preop().unwrap();
+    preop.signature = Signature {
+        innerSignature: admin_key.sign_payload_hash(response.digest).await?,
+        keyHash: admin_key.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
+
+    assert!(preop.nonce == uint!(1_U256));
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![preop],
+                pre_op: false,
+            },
+            key: admin_key.to_call_key(),
+        })
+        .await?;
+
+    assert!(response.context.take_quote().unwrap().ty().op.nonce == uint!(2_U256));
+
+    Ok(())
 }

@@ -14,7 +14,9 @@ use alloy::{
         SignedAuthorization,
         constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     },
-    primitives::{Address, B256, Bytes, FixedBytes, Keccak256, U256, keccak256, map::HashMap},
+    primitives::{
+        Address, B256, Bytes, FixedBytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap,
+    },
     providers::{MulticallError, Provider},
     rpc::types::{Authorization, TransactionRequest, state::StateOverride},
     sol,
@@ -24,6 +26,9 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+
+/// Default sequence key used on prepareCalls.
+pub const DEFAULT_SEQUENCE_KEY: U192 = uint!(0_U192);
 
 sol! {
     #[sol(rpc)]
@@ -369,7 +374,7 @@ impl<P: Provider> Account<P> {
     /// This gets the next nonce for sequence key `0`.
     pub async fn get_nonce(&self) -> TransportResult<U256> {
         self.delegation
-            .getNonce(uint!(0_U192))
+            .getNonce(DEFAULT_SEQUENCE_KEY)
             .call()
             .overrides(self.overrides.clone())
             .await
