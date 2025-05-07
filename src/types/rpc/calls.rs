@@ -217,6 +217,7 @@ impl PrepareCallsContext {
 #[serde(rename_all = "camelCase")]
 pub struct SendPreparedCallsCapabilities {
     /// Fee payment signature.
+    #[serde(default)]
     pub fee_signature: Bytes,
 }
 
