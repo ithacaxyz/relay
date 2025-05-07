@@ -152,7 +152,7 @@ pub async fn prepare_calls(
                 pre_ops,
                 pre_op,
             },
-            key: signer.to_call_key(),
+            key: Some(signer.to_call_key()),
         })
         .await;
 

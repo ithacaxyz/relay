@@ -917,7 +917,10 @@ impl RelayApiServer for Relay {
             (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
         } else {
             let Some(eoa) = request.from else { return Err(UserOpError::MissingSender.into()) };
-            let key_hash = request.key.key_hash();
+            let Some(request_key) = &request.key else {
+                return Err(UserOpError::MissingKey.into());
+            };
+            let key_hash = request_key.key_hash();
 
             // Find the key that authorizes this userop
             let Some(key) = self
@@ -940,7 +943,7 @@ impl RelayApiServer for Relay {
                             pre_ops: request.capabilities.pre_ops.clone(),
                         },
                         chain_id: request.chain_id,
-                        prehash: request.key.prehash,
+                        prehash: request_key.prehash,
                     },
                     request.capabilities.meta.fee_token,
                     maybe_prep.as_ref().map(|acc| acc.prep.signed_authorization.address),
@@ -978,7 +981,7 @@ impl RelayApiServer for Relay {
                 revoke_keys: request.capabilities.revoke_keys,
                 asset_diff,
             },
-            key: Some(request.key),
+            key: request.key,
         };
 
         Ok(response)

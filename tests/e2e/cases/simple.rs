@@ -309,7 +309,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_ops: vec![],
                 pre_op: true,
             },
-            key: admin_key.to_call_key(),
+            key: Some(admin_key.to_call_key()),
         })
         .await?;
 
@@ -337,7 +337,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_ops: vec![preop],
                 pre_op: false,
             },
-            key: admin_key.to_call_key(),
+            key: Some(admin_key.to_call_key()),
         })
         .await?;
 
@@ -375,7 +375,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 pre_ops: vec![],
                 pre_op: true,
             },
-            key: admin_key.to_call_key(),
+            key: None,
         })
         .await?;
 
@@ -405,7 +405,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 pre_ops: vec![accountless_preop],
                 pre_op: false,
             },
-            key: session_key.to_call_key(),
+            key: Some(session_key.to_call_key()),
         })
         .await?;
 

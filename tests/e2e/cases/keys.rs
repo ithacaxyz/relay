@@ -202,7 +202,7 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
                 pre_ops: vec![],
                 pre_op: false,
             },
-            key: call_key,
+            key: Some(call_key),
         })
         .await?;
 

@@ -67,8 +67,10 @@ pub struct PrepareCallsParameters {
     pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
-    /// Key that will be used to sign the call bundle.
-    pub key: CallKey,
+    /// Key that will be used to sign the call bundle. It can only be None, if we are handling a
+    /// preop.
+    #[serde(default)]
+    pub key: Option<CallKey>,
 }
 
 impl PrepareCallsParameters {

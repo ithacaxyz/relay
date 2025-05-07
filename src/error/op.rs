@@ -10,9 +10,12 @@ use thiserror::Error;
 /// Errors related to user ops.
 #[derive(Debug, Error)]
 pub enum UserOpError {
-    /// The userop could not be simulated.
+    /// The userop could not be simulated without a sender.
     #[error("user op creation requires a sender.")]
     MissingSender,
+    /// The userop could not be simulated without a key.
+    #[error("user op creation requires a signing key.")]
+    MissingKey,
     /// The userop could not be simulated.
     #[error("the op could not be simulated")]
     SimulationError,
@@ -43,7 +46,8 @@ impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: UserOpError) -> Self {
         match err {
             UserOpError::SimulationError => internal_rpc(err.to_string()),
-            UserOpError::MissingSender
+            UserOpError::MissingKey
+            | UserOpError::MissingSender
             | UserOpError::UnallowedPreOpCalls
             | UserOpError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
             UserOpError::OpRevert(err) => err.into(),

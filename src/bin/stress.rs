@@ -90,7 +90,7 @@ impl StressAccount {
                         pre_ops: vec![],
                         pre_op: false,
                     },
-                    key: self.key.to_call_key(),
+                    key: Some(self.key.to_call_key()),
                 })
                 .await
                 .expect("prepare calls failed");
