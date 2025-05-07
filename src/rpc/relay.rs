@@ -304,13 +304,6 @@ impl Relay {
         )
         .await?;
 
-        // fetch nonce if not specified
-        let nonce = if let Some(nonce) = request.op.nonce {
-            nonce
-        } else {
-            account.get_nonce().map_err(RelayError::from).await?
-        };
-
         let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
@@ -322,7 +315,7 @@ impl Relay {
         let mut op = UserOp {
             eoa: request.op.eoa,
             executionData: request.op.execution_data.clone(),
-            nonce,
+            nonce: request.op.nonce,
             payer: request.op.payer.unwrap_or_default(),
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
@@ -909,13 +902,15 @@ impl RelayApiServer for Relay {
         // Generate all requested calls.
         let calls = self.generate_calls(maybe_prep.as_ref(), &request).await?;
 
+        // Get next available nonce for DEFAULT_SEQUENCE_KEY
+        let nonce = request.get_nonce(maybe_prep.as_ref(), &provider).await?;
+
         // If we're dealing with a PreOp do not estimate
         let (asset_diff, context) = if request.capabilities.pre_op {
             let preop = PreOp {
                 eoa: request.from.unwrap_or_default(),
                 executionData: calls.abi_encode().into(),
-                // An none nonce is represented by uint256.max
-                nonce: request.capabilities.meta.nonce.unwrap_or(U256::MAX),
+                nonce,
                 signature: Bytes::new(),
             };
 
@@ -939,7 +934,7 @@ impl RelayApiServer for Relay {
                         op: PartialUserOp {
                             eoa,
                             execution_data: calls.abi_encode().into(),
-                            nonce: request.capabilities.meta.nonce,
+                            nonce,
                             init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
                             payer: request.capabilities.meta.fee_payer,
                             pre_ops: request.capabilities.pre_ops.clone(),
@@ -1017,7 +1012,7 @@ impl RelayApiServer for Relay {
                         eoa: request.address,
                         execution_data: calls.abi_encode().into(),
                         // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
-                        nonce: Some(U256::ZERO),
+                        nonce: U256::ZERO,
                         init_data: None,
                         payer: request.capabilities.fee_payer,
                         pre_ops: request.capabilities.pre_ops,
