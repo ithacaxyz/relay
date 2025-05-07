@@ -8,7 +8,11 @@ use alloy::{primitives::U256, sol_types::SolValue, uint};
 use eyre::Result;
 use relay::{
     signers::DynSigner,
-    types::{IERC20, KeyType, KeyWith712Signer, Signature},
+    types::{
+        Delegation::SpendPeriod,
+        IERC20, KeyType, KeyWith712Signer, Signature,
+        rpc::{Permission, SpendPermission},
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -338,6 +342,84 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         .await?;
 
     assert!(response.context.take_quote().unwrap().ty().op.nonce == uint!(2_U256));
+
+    Ok(())
+}
+
+/// Ensures sign up only requires one passkey popup.
+#[tokio::test(flavor = "multi_thread")]
+async fn single_sign_up_popup() -> eyre::Result<()> {
+    let mut env = Environment::setup_with_prep().await?;
+
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let session_key =
+        KeyWith712Signer::random_session(KeyType::P256)?.unwrap().with_permissions(vec![
+            Permission::Spend(SpendPermission {
+                limit: U256::MAX,
+                period: SpendPeriod::Day,
+                token: env.fee_token,
+            }),
+        ]);
+
+    // Call prepare_calls without a from authorizing session key with admin key.
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: None,
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![session_key.to_authorized(None).await?],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![],
+                pre_op: true,
+            },
+            key: admin_key.to_call_key(),
+        })
+        .await?;
+
+    let mut accountless_preop = response.context.take_preop().unwrap();
+    accountless_preop.signature = Signature {
+        innerSignature: admin_key.sign_payload_hash(response.digest).await?,
+        keyHash: admin_key.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
+
+    // prepareCreateAccount && createAccount
+    prep_account(&mut env, &[&admin_key]).await?;
+
+    // initPrep + accountless preop
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![accountless_preop],
+                pre_op: false,
+            },
+            key: session_key.to_call_key(),
+        })
+        .await?;
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &session_key,
+        session_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_final());
 
     Ok(())
 }

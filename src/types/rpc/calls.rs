@@ -95,7 +95,8 @@ impl PrepareCallsParameters {
     ///
     /// If the request does not contain a nonce it will:
     /// * attempt to find a nonce with `DEFAULT_SEQUENCE_KEY` in the preops and increment it.
-    /// * return 0 if there is a pending PREP account request.
+    /// * return 0 if there is a pending PREP account request OR it's a preop request with no
+    ///   account (sign-up)
     /// * check next available nonce with `DEFAULT_SEQUENCE_KEY` from chain.
     pub async fn get_nonce(
         &self,
@@ -112,7 +113,7 @@ impl PrepareCallsParameters {
             .max_by_key(|preop| preop.nonce)
         {
             Ok(preop.nonce + uint!(1_U256))
-        } else if maybe_prep.is_some() {
+        } else if maybe_prep.is_some() || (self.from.is_none() && self.capabilities.pre_op) {
             Ok(U256::ZERO)
         } else {
             let eoa = self.from.ok_or(UserOpError::MissingSender)?;
