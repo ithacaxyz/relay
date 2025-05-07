@@ -109,7 +109,7 @@ impl MockAccount {
                     pre_op: false,
                     revoke_keys: vec![],
                 },
-                key: key.to_call_key(),
+                key: Some(key.to_call_key()),
             })
             .await
             .unwrap();
@@ -142,7 +142,7 @@ impl MockAccount {
                     pre_op: false,
                     revoke_keys: vec![],
                 },
-                key: self.key.to_call_key(),
+                key: Some(self.key.to_call_key()),
             })
             .await
             .unwrap();

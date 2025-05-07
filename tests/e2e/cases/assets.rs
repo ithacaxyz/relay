@@ -72,7 +72,7 @@ async fn asset_diff() -> eyre::Result<()> {
             pre_ops: vec![],
             pre_op: false,
         },
-        key: admin_key.to_call_key(),
+        key: Some(admin_key.to_call_key()),
     };
 
     let prepare_calls = |calls: Vec<Call>| {
@@ -204,7 +204,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
             pre_ops: vec![],
             pre_op: false,
         },
-        key: admin_key.to_call_key(),
+        key: Some(admin_key.to_call_key()),
     };
 
     // mint 2 NFTs
