@@ -4,6 +4,7 @@ mod account;
 mod assets;
 mod calls;
 mod keys;
+mod paymaster;
 mod porto;
 mod prep;
 pub use prep::prep_account;

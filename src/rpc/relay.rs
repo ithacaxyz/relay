@@ -267,6 +267,7 @@ impl Relay {
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.inner.simulator, AccountOverride::default().with_balance(U256::MAX))
+            .append(self.inner.entrypoint, AccountOverride::default().with_balance(U256::MAX))
             .append(
                 request.op.eoa,
                 AccountOverride::default()
