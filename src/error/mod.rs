@@ -62,6 +62,12 @@ pub enum RelayError {
     InternalError(#[from] eyre::Error),
 }
 
+impl From<reqwest::Error> for RelayError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::InternalError(err.into())
+    }
+}
+
 impl From<UserOpError> for RelayError {
     fn from(err: UserOpError) -> Self {
         Self::UserOp(Box::new(err))
