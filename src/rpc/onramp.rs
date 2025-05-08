@@ -6,7 +6,7 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{
     error::RelayError,
-    types::{OnrampQuote, OnrampQuoteParameters, banxa},
+    types::{OnrampQuote, OnrampQuoteParameters, Order, OrderId, banxa},
 };
 
 /// Ithaca `onramp_` RPC namespace.
@@ -15,6 +15,10 @@ pub trait OnrampApi {
     /// Get a quote from onramping providers.
     #[method(name = "getQuote")]
     async fn get_quote(&self, params: OnrampQuoteParameters) -> RpcResult<OnrampQuote>;
+
+    /// Get the status of an onramp order.
+    #[method(name = "getOrderStatus")]
+    async fn get_order_status(&self, order_id: OrderId) -> RpcResult<Order>;
 }
 
 /// Ithaca `onramp_` RPC module.
@@ -69,5 +73,19 @@ impl OnrampApiServer for Onramp {
             exchange_rate: quote.fiat_amount / quote.crypto_amount,
             fees: quote.network_fee + quote.processing_fee,
         })
+    }
+
+    async fn get_order_status(&self, order_id: OrderId) -> RpcResult<Order> {
+        let order: banxa::Order = self
+            .client
+            .get(format!("https://api.banxa-sandbox.com/porto/v2/orders/{order_id}"))
+            .send()
+            .await
+            .map_err(RelayError::from)?
+            .json()
+            .await
+            .map_err(RelayError::from)?;
+
+        Ok(Order { order_id, status: order.status.into(), tx_hash: order.transaction_hash })
     }
 }
