@@ -1,11 +1,9 @@
 use crate::e2e::{MockErc20, await_calls_status, environment::Environment, send_prepared_calls};
 use alloy::{
-    consensus::Transaction,
     primitives::{Address, B256, U256},
     providers::ext::AnvilApi,
     sol_types::{SolCall, SolValue},
 };
-use rand::Rng;
 use relay::{
     rpc::RelayApiClient,
     signers::{DynSigner, Eip712PayLoadSigner},
