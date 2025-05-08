@@ -27,7 +27,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
     let paymaster = MockAccount::new(&env).await?;
 
     // Mint ERC20 fee token
-    mint_erc20s(&[env.fee_token], &[eoa.address, paymaster.address], &env.provider).await?;
+    mint_erc20s(&[env.erc20], &[eoa.address, paymaster.address], &env.provider).await?;
 
     let balance = async |acc: Address, fee_token: Address| {
         if fee_token.is_zero() {
@@ -36,7 +36,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
         IERC20::IERC20Instance::new(fee_token, &env.provider).balanceOf(acc).call().await.unwrap()
     };
 
-    for fee_token in [Address::ZERO, env.fee_token] {
+    for fee_token in [Address::ZERO, env.erc20] {
         let pre_paymaster_balance = balance(paymaster.address, fee_token).await;
         let pre_eoa_balance = balance(eoa.address, fee_token).await;
 
