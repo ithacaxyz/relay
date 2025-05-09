@@ -124,3 +124,31 @@ pub struct Order {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<B256>,
 }
+
+/// Payment method details.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "type")]
+pub enum PaymentMethodDetails {
+    /// Apple pay specific payment fields.
+    ApplePay {
+        /// The billing address, country and name of the customer, as specified in Apple ID.
+        billing_contact: String,
+        /// The shipping address, country and name of the recipient, as specified in Apple ID.
+        shipping_contact: String,
+        /// The payment token that contains the Apple Pay data and signature.
+        token: String,
+    },
+}
+
+/// Parameters for `onramp_createOrder`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOrderParameters {
+    /// Payment details.
+    payment: PaymentMethodDetails,
+    /// The customers region or country.
+    country: OnrampCountry,
+    /// The customers wallet address.
+    address: Address,
+}
