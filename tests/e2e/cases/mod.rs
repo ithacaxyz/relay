@@ -3,6 +3,8 @@
 mod account;
 mod assets;
 mod calls;
+mod cli;
+mod delegation;
 mod keys;
 mod porto;
 mod prep;

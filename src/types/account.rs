@@ -5,7 +5,10 @@ use super::{
     Key, KeyHash, Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
-use crate::{error::RelayError, types::IDelegation};
+use crate::{
+    error::{AuthError, RelayError},
+    types::IDelegation,
+};
 use Delegation::{
     DelegationInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
@@ -166,6 +169,10 @@ sol! {
 
         /// The implementation address.
         address public implementation;
+
+        /// Upgrades the implementation.
+        function upgradeProxyDelegation(address newImplementation);
+
     }
 }
 
@@ -204,7 +211,7 @@ pub struct CallPermission {
 }
 
 /// A Porto account.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Account<P: Provider> {
     delegation: DelegationInstance<P>,
     overrides: StateOverride,
@@ -231,8 +238,19 @@ impl<P: Provider> Account<P> {
     }
 
     /// Returns this account delegation implementation if it exists.
+    ///
+    /// The `delegationImplementationOf` call to the entrypoint also verifies that the delegation
+    /// proxy is valid. If it's not, this will return an error.
     pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
-        if !self.is_delegated().await? {
+        // Only query eth_getCode, if there is no 7702 code override present for the account
+        if !self.overrides.iter().any(|(address, over)| {
+            *address == self.address()
+                && over
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.starts_with(&EIP7702_DELEGATION_DESIGNATOR))
+        }) && !self.is_delegated().await?
+        {
             return Ok(None);
         }
 
@@ -242,12 +260,18 @@ impl<P: Provider> Account<P> {
                 .call(TransactionRequest::default().to(self.get_entrypoint().await?).input(
                     delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
                 ))
+                .overrides(self.overrides.clone())
                 .await
                 .and_then(|ret| {
                     delegationImplementationOfCall::abi_decode_returns(&ret)
                         .map_err(TransportErrorKind::custom)
                 })
                 .map_err(RelayError::from)?;
+
+        // A zero address means an invalid delegation proxy.
+        if delegation.is_zero() {
+            return Err(RelayError::Auth(AuthError::InvalidDelegationProxy(delegation).boxed()));
+        }
 
         Ok(Some(delegation))
     }

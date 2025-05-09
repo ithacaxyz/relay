@@ -39,6 +39,12 @@ pub enum AuthError {
     /// The provided PREPAccount is not valid.
     #[error("invalid PREPAccount item: {0:?}")]
     InvalidPrep(PREPAccount),
+    /// The delegation is invalid.
+    #[error("invalid delegation {0}")]
+    InvalidDelegation(Address),
+    /// The delegation proxy is invalid.
+    #[error("invalid delegation proxy {0}")]
+    InvalidDelegationProxy(Address),
 }
 
 impl AuthError {
@@ -56,6 +62,8 @@ impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
             | AuthError::AuthItemInvalidNonce { .. }
             | AuthError::InvalidAuthItem { .. }
             | AuthError::InvalidPrep { .. }
+            | AuthError::InvalidDelegation { .. }
+            | AuthError::InvalidDelegationProxy { .. }
             | AuthError::EoaNotDelegated(..) => invalid_params(err.to_string()),
         }
     }
