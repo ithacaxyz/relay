@@ -2,17 +2,10 @@ use crate::e2e::environment::Environment;
 use relay::{cli::Args, spawn::try_spawn_with_args};
 use std::{
     env::temp_dir,
-    net::{IpAddr, Ipv4Addr, TcpListener},
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
 use url::Url;
-
-/// Finds an available port by binding to "127.0.0.1:0".
-fn get_available_port() -> std::io::Result<u16> {
-    // Binding to port 0 tells the OS to assign an available port.
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
-}
 
 #[tokio::test]
 async fn respawn_cli() -> eyre::Result<()> {
@@ -29,8 +22,8 @@ async fn respawn_cli() -> eyre::Result<()> {
                 config: config.clone(),
                 registry: registry.clone(),
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: get_available_port().unwrap(),
-                metrics_port: get_available_port().unwrap(),
+                port: 0,
+                metrics_port: 0,
                 max_connections: Default::default(),
                 entrypoint: Default::default(),
                 delegation_proxy: env.delegation,
