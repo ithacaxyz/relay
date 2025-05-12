@@ -189,6 +189,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let mut rpc = Relay::new(
         config.entrypoint,
         config.legacy_entrypoints,
+        config.legacy_delegations,
         config.delegation_proxy,
         delegation_implementation,
         config.account_registry,

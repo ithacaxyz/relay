@@ -169,6 +169,7 @@ impl Relay {
     pub fn new(
         entrypoint: Address,
         legacy_entrypoints: BTreeSet<Address>,
+        legacy_delegations: BTreeSet<Address>,
         delegation_proxy: Address,
         delegation_implementation: Address,
         account_registry: Address,
@@ -185,6 +186,7 @@ impl Relay {
         let inner = RelayInner {
             entrypoint,
             legacy_entrypoints,
+            legacy_delegations,
             delegation_proxy,
             delegation_implementation,
             account_registry,
@@ -727,10 +729,12 @@ impl Relay {
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
         let address = self.get_delegation_implementation(account).await?;
-        if self.inner.delegation_implementation != address {
-            return Err(AuthError::InvalidDelegation(address).into());
+        if self.inner.delegation_implementation == address
+            || self.inner.legacy_delegations.contains(&address)
+        {
+            return Ok(address);
         }
-        Ok(address)
+        Err(AuthError::InvalidDelegation(address).into())
     }
 }
 
@@ -1452,6 +1456,8 @@ struct RelayInner {
     entrypoint: Address,
     /// Previously deployed entrypoints.
     legacy_entrypoints: BTreeSet<Address>,
+    /// Previously deployed delegation implementations.
+    legacy_delegations: BTreeSet<Address>,
     /// The delegation proxy address.
     delegation_proxy: Address,
     /// The delegation implementation address.

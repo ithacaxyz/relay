@@ -32,6 +32,8 @@ pub struct RelayConfig {
     pub entrypoint: Address,
     /// Previously deployed entrypoints.
     pub legacy_entrypoints: BTreeSet<Address>,
+    /// Previously deployed delegation implementations.
+    pub legacy_delegations: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Account registry address.
@@ -191,6 +193,7 @@ impl Default for RelayConfig {
             },
             transactions: TransactionServiceConfig::default(),
             legacy_entrypoints: BTreeSet::new(),
+            legacy_delegations: BTreeSet::new(),
             entrypoint: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,
