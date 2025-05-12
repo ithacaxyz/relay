@@ -1008,6 +1008,14 @@ impl RelayApiServer for Relay {
             Some(request.address),
         )?;
 
+        // Override the account with the 7702 delegation. We need to do this, since this might be a
+        // returning account, and thus, nonce will not be zero.
+        let nonce = Account::new(request.address, &provider)
+            .with_delegation_override(&request.capabilities.delegation)
+            .get_nonce()
+            .await
+            .map_err(RelayError::from)?;
+
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let (asset_diff, quote) = self
             .estimate_fee(
@@ -1015,8 +1023,7 @@ impl RelayApiServer for Relay {
                     op: PartialUserOp {
                         eoa: request.address,
                         execution_data: calls.abi_encode().into(),
-                        // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
-                        nonce: U256::ZERO,
+                        nonce,
                         init_data: None,
                         payer: request.capabilities.fee_payer,
                         pre_ops: request.capabilities.pre_ops,
@@ -1382,24 +1389,12 @@ impl RelayApiServer for Relay {
                 .collect()
         };
 
-        // Override the PREP account bytecode as if it was already delegated.
-        let overrides = StateOverridesBuilder::with_capacity(1).append(
-            account.address(),
-            AccountOverride::default().with_code(Bytes::from(
-                [
-                    &EIP7702_DELEGATION_DESIGNATOR,
-                    account.prep.signed_authorization.address.as_slice(),
-                ]
-                .concat(),
-            )),
-        );
-
         // Prepare initData for initializePREP call.
         let init_data = account.prep.init_data();
 
         let results = try_join_all(signatures.into_iter().map(async |signature| {
             Account::new(account.address(), &provider)
-                .with_overrides(overrides.clone().into())
+                .with_delegation_override(&account.prep.signed_authorization.address)
                 .initialize_and_validate_signature(init_data.clone(), digest, signature)
                 .await
         }))

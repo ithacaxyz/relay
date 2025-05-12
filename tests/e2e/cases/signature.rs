@@ -1,10 +1,6 @@
 use crate::e2e::{TxContext, cases::prep::prep_account, config::AccountConfig};
-use alloy::{
-    dyn_abi::SolType,
-    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    rpc::types::state::{AccountOverride, StateOverridesBuilder},
-};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy::dyn_abi::SolType;
+use alloy_primitives::{Address, B256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -60,20 +56,12 @@ async fn verify_signature() -> eyre::Result<()> {
     let init_calls = PREPInitData::abi_decode_params(&init_data).unwrap().calls;
     assert_eq!(PREPAccount::initialize(env.delegation, init_calls).address, account);
 
-    // Override the PREP account bytecode as if it was already delegated.
-    let overrides = StateOverridesBuilder::with_capacity(1).append(
-        account,
-        AccountOverride::default().with_code(Bytes::from(
-            [&EIP7702_DELEGATION_DESIGNATOR, env.delegation.as_slice()].concat(),
-        )),
-    );
-
     // simulate an on-chain signature recovery
     let signature =
         Signature { innerSignature: signature.clone(), keyHash: proof.key_hash, prehash: false };
 
     let key_hash = Account::new(account, &env.provider)
-        .with_overrides(overrides.into())
+        .with_delegation_override(&env.delegation)
         .initialize_and_validate_signature(init_data.clone(), digest, signature.clone())
         .await?;
 
