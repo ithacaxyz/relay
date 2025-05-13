@@ -19,8 +19,8 @@ pub enum UserOpError {
     /// The userop could not be simulated.
     #[error("the op could not be simulated")]
     SimulationError,
-    /// The preop can only contain key management calls.
-    #[error("the preop can only contain key management calls.")]
+    /// The preop can only contain account management calls.
+    #[error("the preop can only contain account management calls.")]
     UnallowedPreOpCalls,
     /// The quote was signed for a different userop.
     #[error("invalid op digest, expected {expected}, got {got}")]

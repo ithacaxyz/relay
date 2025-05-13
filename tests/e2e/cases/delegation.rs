@@ -7,15 +7,16 @@ use alloy::{
     primitives::{B256, Bytes},
     providers::{Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
-    sol_types::SolCall,
+    sol_types::{SolCall, SolValue},
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
+        Call,
         Delegation::{self},
-        KeyType, KeyWith712Signer,
+        KeyType, KeyWith712Signer, Signature,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -188,4 +189,82 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
         )
         .gas_limit(100_000);
     let _tx_hash: B256 = env.provider.client().request("eth_sendTransaction", (tx,)).await.unwrap();
+}
+
+/// Ensures upgradeProxyDelegation can be called as a preop.
+#[tokio::test(flavor = "multi_thread")]
+async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
+    let mut env = Environment::setup_with_prep().await?;
+
+    let relay_settings = env.relay_endpoint.health().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    prep_account(&mut env, &[&admin_key]).await?;
+
+    // Create PreOp with the upgrade call
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call {
+                to: env.eoa.address(),
+                value: U256::ZERO,
+                data: Delegation::upgradeProxyDelegationCall {
+                    newImplementation: relay_settings.delegation_implementation,
+                }
+                .abi_encode()
+                .into(),
+            }],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![],
+                pre_op: true,
+            },
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    let mut preop = response.context.take_preop().unwrap();
+    preop.signature = Signature {
+        innerSignature: admin_key.sign_payload_hash(response.digest).await?,
+        keyHash: admin_key.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
+
+    // Create UserOp with the upgrade preop call
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_ops: vec![preop],
+                pre_op: false,
+            },
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_confirmed());
+
+    Ok(())
 }
