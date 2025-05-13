@@ -10,6 +10,7 @@ use crate::{
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
+    transport::error::TransportErrExt,
     types::{
         ENTRYPOINT_NO_ERROR,
         EntryPoint::{self, UserOpExecuted},
@@ -433,8 +434,14 @@ impl Signer {
                 .is_ok_and(|tx| tx.is_some())
             {
                 // The transaction was dropped, try to rebroadcast it.
-                let _ = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await?;
-                retries += 1;
+                if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
+                {
+                    if !err.is_already_known() {
+                        return Err(err.into());
+                    }
+                } else {
+                    retries += 1;
+                }
             }
         }
     }
