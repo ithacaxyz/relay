@@ -11,7 +11,9 @@ use crate::{
     signers::DynSigner,
     storage::RelayStorage,
     transport::SequencerService,
-    types::{CoinKind, CoinPair, CoinRegistry, FeeTokens},
+    types::{
+        CoinKind, CoinPair, CoinRegistry, DelegationProxy::DelegationProxyInstance, FeeTokens,
+    },
     version::RELAY_LONG_VERSION,
 };
 use ::metrics::counter;
@@ -176,11 +178,22 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 
+    // get the default implementation from the proxy
+    let delegation_implementation = DelegationProxyInstance::new(
+        config.delegation_proxy,
+        providers.first().expect("should have at least one"),
+    )
+    .implementation()
+    .call()
+    .await?;
+
     // todo: avoid all this darn cloning
     let mut rpc = Relay::new(
         config.entrypoint,
         config.legacy_entrypoints,
+        config.legacy_delegations,
         config.delegation_proxy,
+        delegation_implementation,
         config.account_registry,
         config.simulator,
         chains.clone(),

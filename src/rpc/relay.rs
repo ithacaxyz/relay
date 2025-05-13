@@ -44,7 +44,7 @@ use alloy::{
 };
 use futures_util::{
     TryFutureExt,
-    future::{TryJoinAll, try_join_all, try_join3},
+    future::{TryJoinAll, try_join_all, try_join4},
     join,
 };
 use jsonrpsee::{
@@ -172,7 +172,9 @@ impl Relay {
     pub fn new(
         entrypoint: Address,
         legacy_entrypoints: BTreeSet<Address>,
+        legacy_delegations: BTreeSet<Address>,
         delegation_proxy: Address,
+        delegation_implementation: Address,
         account_registry: Address,
         simulator: Address,
         chains: Chains,
@@ -187,7 +189,9 @@ impl Relay {
         let inner = RelayInner {
             entrypoint,
             legacy_entrypoints,
+            legacy_delegations,
             delegation_proxy,
+            delegation_implementation,
             account_registry,
             simulator,
             chains,
@@ -286,7 +290,7 @@ impl Relay {
 
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
 
-        let (entrypoint, native_fee_estimate, eth_price) = try_join3(
+        let (entrypoint, delegation, native_fee_estimate, eth_price) = try_join4(
             // fetch entrypoint from the account and ensure it is supported
             async {
                 let entrypoint = account.get_entrypoint().await?;
@@ -295,6 +299,8 @@ impl Relay {
                 }
                 Ok(Entry::new(entrypoint, &provider).with_overrides(overrides.clone()))
             },
+            // fetch delegation from the account and ensure it is supported
+            self.has_supported_delegation(&account).map_err(RelayError::from),
             // fetch chain fees
             provider.estimate_eip1559_fees().map_err(RelayError::from),
             // fetch price in eth
@@ -321,6 +327,7 @@ impl Relay {
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
             initData: request.op.init_data.unwrap_or_default(),
+            supportedDelegationImplementation: delegation,
             encodedPreOps: request
                 .op
                 .pre_ops
@@ -560,29 +567,45 @@ impl Relay {
     }
 
     /// Returns the delegation implementation address from the requested account.
+    ///
+    /// It will return error if the delegation proxy is invalid.
     #[instrument(skip_all)]
-    async fn get_delegation_implementation(
+    async fn get_delegation_implementation<P: Provider + Clone>(
         &self,
-        account: Address,
-        provider: DynProvider,
+        account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        if let Some(delegation) =
-            Account::new(account, provider.clone()).delegation_implementation().await?
-        {
+        if let Some(delegation) = account.delegation_implementation().await? {
             return Ok(delegation);
         }
 
         // Attempt to retrieve the delegation proxy from storage, since it might not be
         // deployed yet.
-        let Some(prep) = self.inner.storage.read_prep(&account).await? else {
-            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account).boxed()));
+        let Some(prep) = self.inner.storage.read_prep(&account.address()).await? else {
+            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account.address()).boxed()));
         };
 
-        Ok(DelegationProxyInstance::new(*prep.prep.signed_authorization.address(), provider)
-            .implementation()
-            .call()
-            .await
-            .map_err(TransportErrorKind::custom)?)
+        let address = account.address();
+        let account = account.clone().with_overrides(
+            StateOverridesBuilder::default()
+                .with_code(
+                    address,
+                    Bytes::from(
+                        [
+                            &EIP7702_DELEGATION_DESIGNATOR,
+                            prep.prep.signed_authorization.address().as_slice(),
+                        ]
+                        .concat(),
+                    ),
+                )
+                .build(),
+        );
+
+        account.delegation_implementation().await?.ok_or_else(|| {
+            RelayError::Auth(
+                AuthError::InvalidDelegationProxy(*prep.prep.signed_authorization.address())
+                    .boxed(),
+            )
+        })
     }
 
     /// Returns the chain [`DynProvider`].
@@ -702,6 +725,20 @@ impl Relay {
     /// Checks if the entrypoint is supported.
     fn is_supported_entrypoint(&self, entrypoint: &Address) -> bool {
         self.inner.entrypoint == *entrypoint || self.inner.legacy_entrypoints.contains(entrypoint)
+    }
+
+    /// Checks if the account has a supported delegation implementation. If so, returns it.
+    async fn has_supported_delegation<P: Provider + Clone>(
+        &self,
+        account: &Account<P>,
+    ) -> Result<Address, RelayError> {
+        let address = self.get_delegation_implementation(account).await?;
+        if self.inner.delegation_implementation == address
+            || self.inner.legacy_delegations.contains(&address)
+        {
+            return Ok(address);
+        }
+        Err(AuthError::InvalidDelegation(address).into())
     }
 }
 
@@ -863,8 +900,9 @@ impl RelayApiServer for Relay {
         };
 
         try_join_all(accounts.into_iter().map(async |address| {
+            let account = Account::new(address, provider.clone());
             let (delegation, keys) = try_join!(
-                self.get_delegation_implementation(address, provider.clone()),
+                self.get_delegation_implementation(&account),
                 self.get_keys(GetKeysParameters { address, chain_id: request.chain_id })
             )?;
 
@@ -1431,8 +1469,12 @@ struct RelayInner {
     entrypoint: Address,
     /// Previously deployed entrypoints.
     legacy_entrypoints: BTreeSet<Address>,
+    /// Previously deployed delegation implementations.
+    legacy_delegations: BTreeSet<Address>,
     /// The delegation proxy address.
     delegation_proxy: Address,
+    /// The delegation implementation address.
+    delegation_implementation: Address,
     /// The account registry address.
     account_registry: Address,
     /// The simulator address.

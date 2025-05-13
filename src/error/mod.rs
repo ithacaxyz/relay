@@ -74,6 +74,12 @@ impl From<UserOpError> for RelayError {
     }
 }
 
+impl From<AuthError> for RelayError {
+    fn from(err: AuthError) -> Self {
+        Self::Auth(err.boxed())
+    }
+}
+
 impl From<MulticallError> for RelayError {
     fn from(err: MulticallError) -> Self {
         match err {

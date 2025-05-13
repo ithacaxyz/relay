@@ -226,6 +226,7 @@ impl UserOp {
             hasher.finalize()
         };
         hasher.update(pre_ops_hash);
+        hasher.update(self.supportedDelegationImplementation);
         hasher.finalize()
     }
 

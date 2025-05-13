@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AccountRegistry,
-    Delegation::{SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall},
+    Delegation::{
+        SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
+        upgradeProxyDelegationCall,
+    },
     IDelegation::{authorizeCall, revokeCall},
     Key, KeyID,
 };
@@ -119,10 +122,11 @@ impl Call {
 }
 
 /// All selectors allowed in preops.
-const WHITELISTED_SELECTORS: [[u8; 4]; 5] = [
+const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
     authorizeCall::SELECTOR,
     revokeCall::SELECTOR,
     setCanExecuteCall::SELECTOR,
     setSpendLimitCall::SELECTOR,
     removeSpendLimitCall::SELECTOR,
+    upgradeProxyDelegationCall::SELECTOR,
 ];

@@ -311,6 +311,11 @@ impl CallStatusCode {
     pub fn is_confirmed(&self) -> bool {
         matches!(self, CallStatusCode::Confirmed)
     }
+
+    /// Whether the bundle failed offchain.
+    pub fn is_failed(&self) -> bool {
+        matches!(self, CallStatusCode::Failed)
+    }
 }
 
 /// A receipt for a call bundle.

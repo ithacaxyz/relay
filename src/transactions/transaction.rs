@@ -36,12 +36,7 @@ pub struct RelayTransaction {
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
     pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
-        Self {
-            id: TxId(quote.ty().digest()),
-            quote,
-            authorization,
-            trace_context: Context::current(),
-        }
+        Self { id: TxId(B256::random()), quote, authorization, trace_context: Context::current() }
     }
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
