@@ -47,6 +47,41 @@ async fn asset_info() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Ensures that asset diffs do not include the fee payment diff on the payer.
+#[tokio::test(flavor = "multi_thread")]
+async fn asset_diff_no_fee() -> eyre::Result<()> {
+    // setup environment and prep account
+    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    prep_account(&mut env, &[&admin_key]).await?;
+    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
+        .process(0, &env)
+        .await?;
+
+    // create prepare_call request
+    for fee_token in [env.fee_token, Address::ZERO] {
+        let params = PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![], // fill in per test
+            chain_id: env.chain_id,
+            capabilities: PrepareCallsCapabilities {
+                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                pre_ops: vec![],
+                pre_op: false,
+            },
+            key: Some(admin_key.to_call_key()),
+        };
+        let diffs = env.relay_endpoint.prepare_calls(params).await?.capabilities.asset_diff;
+
+        // There should be no diff found for the eoa.
+        assert!(!diffs.0.into_iter().any(|(eoa, _)| eoa == env.eoa.address()));
+    }
+
+    Ok(())
+}
+
 /// Ensures that asset diffs coming from prepare_calls are as expected for both ERC721 and ERC20.
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_diff() -> eyre::Result<()> {
