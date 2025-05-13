@@ -396,12 +396,12 @@ impl Relay {
         op.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.set_legacy_payment_amount(extra_payment + payment_per_gas * op.combinedGas);
+        op.set_legacy_payment_amount(op.prePaymentAmount + payment_per_gas * op.combinedGas);
 
-        // If the EOA is the one paying, subtract the fee from the asset diff as to not confuse the
-        // user.
+        // Remove the fee from the asset diff payer as to not confuse the user.
+        let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
         if op.payer == op.eoa || op.payer.is_zero() {
-            asset_diff.subtract_payer_fee(op.eoa, op.paymentToken, op.totalPaymentAmount);
+            asset_diff.remove_payer_fee(payer, op.paymentToken, op.totalPaymentAmount);
         }
 
         let quote = Quote {
