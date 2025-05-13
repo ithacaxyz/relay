@@ -15,7 +15,9 @@ use crate::{
     provider::ProviderExt,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
+        AssetDiffs, Call,
+        DelegationProxy::DelegationProxyInstance,
+        ENTRYPOINT_NO_ERROR,
         EntryPoint::{self, UserOpExecuted},
         FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, Op, PreOp,
         rpc::{
@@ -38,6 +40,7 @@ use alloy::{
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
+    transports::TransportErrorKind,
 };
 use futures_util::{
     TryFutureExt,

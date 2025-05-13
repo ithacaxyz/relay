@@ -25,7 +25,7 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn catch_invalid_delegation() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
-    let relay_settings = env.relay_endpoint.health().await?;
+    let caps = env.relay_endpoint.get_capabilities().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     // Set up PREP account correctly.
@@ -36,9 +36,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             .await?;
     }
 
-    let expected_proxy_code = env.provider.get_code_at(relay_settings.delegation_proxy).await?;
+    let expected_proxy_code = env.provider.get_code_at(caps.contracts.delegation_proxy).await?;
     let expected_impl_code =
-        env.provider.get_code_at(relay_settings.delegation_implementation).await?;
+        env.provider.get_code_at(caps.contracts.delegation_implementation).await?;
     let expected_eoa_code = env.provider.get_code_at(env.eoa.address()).await?;
 
     let another_impl = Address::random();
@@ -62,7 +62,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     assert!(
         good_quote.context.quote().unwrap().ty().op.supportedDelegationImplementation
-            == relay_settings.delegation_implementation
+            == caps.contracts.delegation_implementation
     );
 
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
@@ -102,7 +102,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     {
         let mut code = expected_proxy_code.to_vec();
         code[2] = code[2].wrapping_add(1);
-        env.provider.anvil_set_code(relay_settings.delegation_proxy, code.into()).await?;
+        env.provider.anvil_set_code(caps.contracts.delegation_proxy, code.into()).await?;
 
         assert!(
             env.relay_endpoint
@@ -127,7 +127,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             .is_failed()
         );
 
-        env.provider.anvil_set_code(relay_settings.delegation_proxy, expected_proxy_code).await?;
+        env.provider.anvil_set_code(caps.contracts.delegation_proxy, expected_proxy_code).await?;
     }
 
     // Upgrade implementation to another one and expect it to fail.
@@ -161,7 +161,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Upgrade implementation to original and expect it to succeed sending the userop.
     {
-        upgrade_delegation(&env, relay_settings.delegation_implementation).await;
+        upgrade_delegation(&env, caps.contracts.delegation_implementation).await;
 
         assert!(
             await_calls_status(
@@ -196,7 +196,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
 async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
 
-    let relay_settings = env.relay_endpoint.health().await?;
+    let caps = env.relay_endpoint.get_capabilities().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     prep_account(&mut env, &[&admin_key]).await?;
@@ -210,7 +210,7 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
                 to: env.eoa.address(),
                 value: U256::ZERO,
                 data: Delegation::upgradeProxyDelegationCall {
-                    newImplementation: relay_settings.delegation_implementation,
+                    newImplementation: caps.contracts.delegation_implementation,
                 }
                 .abi_encode()
                 .into(),
