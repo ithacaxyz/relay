@@ -71,7 +71,7 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
                 pre_ops: vec![],
                 pre_op: false,
             },
-            key: Some(admin_key.to_call_key()),
+            key: admin_key.to_call_key(),
         };
         let diffs = env.relay_endpoint.prepare_calls(params).await?.capabilities.asset_diff;
 
