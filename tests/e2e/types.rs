@@ -336,3 +336,13 @@ alloy::sol! {
         function mint() external;
     }
 }
+
+alloy::sol! {
+    #[sol(rpc)]
+    contract PauseAuthority {
+        uint256 public pauseFlag;
+
+        function pause(bool isPause) public;
+        function setPauseAuthority(address newPauseAuthority) public;
+    }
+}

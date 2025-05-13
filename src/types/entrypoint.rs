@@ -103,6 +103,9 @@ sol! {
         /// When invalidating a nonce sequence, the new sequence must be larger than the current.
         error NewSequenceMustBeLarger();
 
+        /// The entrypoint is paused.
+        error Paused();
+
         /// Not authorized to perform the call.
         error UnauthorizedCall(bytes32 keyHash, address target, bytes data);
 
