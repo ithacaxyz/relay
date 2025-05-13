@@ -21,7 +21,10 @@ use alloy::{
         Address, B256, Bytes, FixedBytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap,
     },
     providers::{MulticallError, Provider},
-    rpc::types::{Authorization, TransactionRequest, state::StateOverride},
+    rpc::types::{
+        Authorization, TransactionRequest,
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
+    },
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
@@ -229,6 +232,19 @@ impl<P: Provider> Account<P> {
     /// Returns the address of the account.
     pub fn address(&self) -> Address {
         *self.delegation.address()
+    }
+
+    /// Sets a 7702 delegation override on this account.
+    pub fn with_delegation_override(mut self, address: &Address) -> Self {
+        self.overrides = StateOverridesBuilder::with_capacity(1)
+            .append(
+                *self.delegation.address(),
+                AccountOverride::default().with_code(Bytes::from(
+                    [&EIP7702_DELEGATION_DESIGNATOR, address.as_slice()].concat(),
+                )),
+            )
+            .build();
+        self
     }
 
     /// Sets overrides for all calls on this account.

@@ -23,7 +23,7 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         .process(0, &env)
         .await?;
 
-    let account_registry = env.relay_endpoint.health().await?.account_registry;
+    let account_registry = env.relay_endpoint.get_capabilities().await?.contracts.account_registry;
 
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();
@@ -162,7 +162,7 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
     let mut env = AccountConfig::Prep.setup_environment().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
-    let settings = env.relay_endpoint.health().await?;
+    let caps = env.relay_endpoint.get_capabilities().await?;
 
     // Account will be stored on storage
     prep_account(&mut env, &[&admin_key]).await?;
@@ -172,7 +172,7 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
         .relay_endpoint
         .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
         .await?;
-    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
+    assert_eq!(accounts[0].delegation, caps.contracts.delegation_implementation);
 
     // Deploy on chain
     TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
@@ -184,7 +184,7 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
         .relay_endpoint
         .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
         .await?;
-    assert_eq!(accounts[0].delegation, settings.delegation_implementation);
+    assert_eq!(accounts[0].delegation, caps.contracts.delegation_implementation);
 
     Ok(())
 }
