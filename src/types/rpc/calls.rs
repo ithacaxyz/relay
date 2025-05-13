@@ -4,8 +4,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType, Op, PreOp,
-        SignedQuote,
+        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
+        MULTICHAIN_NONCE_PREFIX, Op, PreOp, SignedQuote,
     },
 };
 use alloy::{
@@ -97,8 +97,9 @@ impl PrepareCallsParameters {
     ///
     /// If the request does not contain a nonce it will:
     /// * attempt to find a nonce with `DEFAULT_SEQUENCE_KEY` in the preops and increment it.
-    /// * return 0 if there is a pending PREP account request OR it's a preop request with no
-    ///   account (sign-up)
+    /// * return 0 if there is a pending PREP account request
+    /// * return random (without multichain prefix) if it's a preop request with no account
+    ///   (sign-up/sign-in)
     /// * check next available nonce with `DEFAULT_SEQUENCE_KEY` from chain.
     pub async fn get_nonce(
         &self,
@@ -115,8 +116,15 @@ impl PrepareCallsParameters {
             .max_by_key(|preop| preop.nonce)
         {
             Ok(preop.nonce + uint!(1_U256))
-        } else if maybe_prep.is_some() || (self.from.is_none() && self.capabilities.pre_op) {
+        } else if maybe_prep.is_some() {
             Ok(U256::ZERO)
+        } else if self.from.is_none() && self.capabilities.pre_op {
+            loop {
+                let nonce = U256::from_be_bytes(B256::random().into());
+                if nonce >> 240 != MULTICHAIN_NONCE_PREFIX {
+                    return Ok(nonce);
+                }
+            }
         } else {
             let eoa = self.from.ok_or(UserOpError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
