@@ -1,7 +1,11 @@
 //! Account upgrade related end-to-end test cases
 
 use crate::e2e::{AuthKind, await_calls_status, environment::Environment};
-use alloy::{eips::eip7702::SignedAuthorization, primitives::Address, providers::Provider};
+use alloy::{
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, Bytes},
+    providers::{Provider, ext::AnvilApi},
+};
 use relay::{
     rpc::RelayApiClient,
     types::{
@@ -116,6 +120,36 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
         .await;
 
     assert!(response.is_err());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn returning_customer() -> eyre::Result<()> {
+    let env = Environment::setup_with_upgraded().await?;
+    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key2 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    // Upgrade first time.
+    upgrade_account(
+        &env,
+        &[key1.to_authorized(Some(env.eoa.address())).await?],
+        AuthKind::Auth,
+        vec![],
+    )
+    .await?;
+
+    // Clear 7702
+    env.provider.anvil_set_code(env.eoa.address(), Bytes::new()).await?;
+
+    // Upgrading again should succeed
+    upgrade_account(
+        &env,
+        &[key2.to_authorized(Some(env.eoa.address())).await?],
+        AuthKind::Auth,
+        vec![],
+    )
+    .await?;
 
     Ok(())
 }

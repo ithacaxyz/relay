@@ -161,11 +161,12 @@ impl StressTester {
             .connect_http(args.rpc_url.clone())
             .erased();
 
-        let health = relay_client.health().await?;
-        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
+        let version = relay_client.health().await?;
+        info!("Connected to relay at {}, version {}", &args.relay_url, version);
 
-        let supports_fee_token =
-            relay_client.fee_tokens().await?.contains(args.chain_id.id(), &args.fee_token);
+        let caps = relay_client.get_capabilities().await?;
+
+        let supports_fee_token = caps.fees.tokens.contains(args.chain_id.id(), &args.fee_token);
         if !supports_fee_token {
             eyre::bail!("fee token {} is not supported on chain {}", args.fee_token, args.chain_id);
         }
@@ -182,7 +183,7 @@ impl StressTester {
                         .prepare_create_account(PrepareCreateAccountParameters {
                             capabilities: PrepareCreateAccountCapabilities {
                                 authorize_keys: vec![key.to_authorized(None).await?],
-                                delegation: health.delegation_proxy,
+                                delegation: caps.contracts.delegation_proxy,
                             },
                             chain_id: args.chain_id.id(),
                         })

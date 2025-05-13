@@ -21,8 +21,8 @@ use crate::{
         EntryPoint::{self, UserOpExecuted},
         FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, Op, PreOp,
         rpc::{
-            CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext, RelaySettings,
-            ValidSignatureProof,
+            CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
+            RelayCapabilities, RelayContracts, RelayFees, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -84,11 +84,11 @@ use crate::{
 pub trait RelayApi {
     /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
-    async fn health(&self) -> RpcResult<RelaySettings>;
+    async fn health(&self) -> RpcResult<String>;
 
-    /// Get all supported fee tokens by chain.
-    #[method(name = "feeTokens", aliases = ["wallet_feeTokens"])]
-    async fn fee_tokens(&self) -> RpcResult<FeeTokens>;
+    /// Get capabilities of the relay, which are different sets of configuration values.
+    #[method(name = "getCapabilities", aliases = ["wallet_getCapabilities"])]
+    async fn get_capabilities(&self) -> RpcResult<RelayCapabilities>;
 
     /// Prepares an account for the user.
     #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
@@ -707,7 +707,11 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
-    async fn health(&self) -> RpcResult<RelaySettings> {
+    async fn health(&self) -> RpcResult<String> {
+        Ok(RELAY_SHORT_VERSION.to_string())
+    }
+
+    async fn get_capabilities(&self) -> RpcResult<RelayCapabilities> {
         let chain_id =
             self.inner.chains.chain_ids_iter().next().expect("should have at least one chain");
         let delegation_implementation =
@@ -718,19 +722,6 @@ impl RelayApiServer for Relay {
                 .map_err(TransportErrorKind::custom)
                 .map_err(RelayError::from)?;
 
-        Ok(RelaySettings {
-            version: RELAY_SHORT_VERSION.to_string(),
-            entrypoint: self.inner.entrypoint,
-            fee_recipient: self.inner.fee_recipient,
-            delegation_proxy: self.inner.delegation_proxy,
-            delegation_implementation,
-            simulator: self.inner.simulator,
-            account_registry: self.inner.account_registry,
-            quote_config: self.inner.quote_config.clone(),
-        })
-    }
-
-    async fn fee_tokens(&self) -> RpcResult<FeeTokens> {
         let chains = self.inner.fee_tokens.iter().map(|(chain, tokens)| async move {
             let rates_fut = tokens.iter().map(|token| async move {
                 // TODO: only handles eth as native fee token
@@ -746,7 +737,20 @@ impl RelayApiServer for Relay {
             Ok::<_, QuoteError>((*chain, try_join_all(rates_fut).await?))
         });
 
-        Ok(FeeTokens::from_iter(try_join_all(chains).await?))
+        Ok(RelayCapabilities {
+            contracts: RelayContracts {
+                entrypoint: self.inner.entrypoint,
+                delegation_proxy: self.inner.delegation_proxy,
+                delegation_implementation,
+                account_registry: self.inner.account_registry,
+                simulator: self.inner.simulator,
+            },
+            fees: RelayFees {
+                recipient: self.inner.fee_recipient,
+                quote_config: self.inner.quote_config.clone(),
+                tokens: FeeTokens::from_iter(try_join_all(chains).await?),
+            },
+        })
     }
 
     async fn prepare_create_account(
@@ -1008,6 +1012,14 @@ impl RelayApiServer for Relay {
             Some(request.address),
         )?;
 
+        // Override the account with the 7702 delegation. We need to do this, since this might be a
+        // returning account, and thus, nonce will not be zero.
+        let nonce = Account::new(request.address, &provider)
+            .with_delegation_override(&request.capabilities.delegation)
+            .get_nonce()
+            .await
+            .map_err(RelayError::from)?;
+
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let (asset_diff, quote) = self
             .estimate_fee(
@@ -1015,8 +1027,7 @@ impl RelayApiServer for Relay {
                     op: PartialUserOp {
                         eoa: request.address,
                         execution_data: calls.abi_encode().into(),
-                        // todo: should probably not be 0 https://github.com/ithacaxyz/relay/issues/193
-                        nonce: U256::ZERO,
+                        nonce,
                         init_data: None,
                         payer: request.capabilities.fee_payer,
                         pre_ops: request.capabilities.pre_ops,
@@ -1382,24 +1393,12 @@ impl RelayApiServer for Relay {
                 .collect()
         };
 
-        // Override the PREP account bytecode as if it was already delegated.
-        let overrides = StateOverridesBuilder::with_capacity(1).append(
-            account.address(),
-            AccountOverride::default().with_code(Bytes::from(
-                [
-                    &EIP7702_DELEGATION_DESIGNATOR,
-                    account.prep.signed_authorization.address.as_slice(),
-                ]
-                .concat(),
-            )),
-        );
-
         // Prepare initData for initializePREP call.
         let init_data = account.prep.init_data();
 
         let results = try_join_all(signatures.into_iter().map(async |signature| {
             Account::new(account.address(), &provider)
-                .with_overrides(overrides.clone().into())
+                .with_delegation_override(&account.prep.signed_authorization.address)
                 .initialize_and_validate_signature(init_data.clone(), digest, signature)
                 .await
         }))
