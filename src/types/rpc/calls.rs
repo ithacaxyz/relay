@@ -4,15 +4,17 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX, Op, PreOp, SignedQuote,
+        Account, AssetDiffs, Call, CreatableAccount, Key, KeyType, MULTICHAIN_NONCE_PREFIX_U192,
+        Op, PreOp, SignedQuote,
     },
 };
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
     primitives::{
-        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256, wrap_fixed_bytes,
+        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
+        aliases::{B192, U192},
+        wrap_fixed_bytes,
     },
     providers::DynProvider,
     rpc::types::Log,
@@ -96,10 +98,10 @@ impl PrepareCallsParameters {
     /// Gets the nonce based on information from the request.
     ///
     /// If the request does not contain a nonce it will:
-    /// * attempt to find a nonce with `DEFAULT_SEQUENCE_KEY` in the preops and increment it.
-    /// * return 0 if there is a pending PREP account request
-    /// * return random (without multichain prefix) if it's a preop request with no account
-    ///   (sign-up/sign-in)
+    /// * attempt to find the highest nonce in the preops and increment it.
+    /// * if there is a pending PREP account request: return 0
+    /// * if it's a preop request with no account (sign-up/sign-in): generate a random sequence key
+    ///   without a multichain prefix and return it.
     /// * check next available nonce with `DEFAULT_SEQUENCE_KEY` from chain.
     pub async fn get_nonce(
         &self,
@@ -108,21 +110,17 @@ impl PrepareCallsParameters {
     ) -> Result<U256, RelayError> {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
-        } else if let Some(preop) = self
-            .capabilities
-            .pre_ops
-            .iter()
-            .filter(|preop| (preop.nonce >> 64) == U256::from(DEFAULT_SEQUENCE_KEY))
-            .max_by_key(|preop| preop.nonce)
+        } else if let Some(preop) = self.capabilities.pre_ops.iter().max_by_key(|preop| preop.nonce)
         {
             Ok(preop.nonce + uint!(1_U256))
         } else if maybe_prep.is_some() {
             Ok(U256::ZERO)
         } else if self.from.is_none() && self.capabilities.pre_op {
             loop {
-                let nonce = U256::from_be_bytes(B256::random().into());
-                if nonce >> 240 != MULTICHAIN_NONCE_PREFIX {
-                    return Ok(nonce);
+                // Create a random sequence key.
+                let sequence_key = U192::from_be_bytes(B192::random().into());
+                if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
+                    return Ok(U256::from(sequence_key) << 64);
                 }
             }
         } else {
