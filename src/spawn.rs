@@ -14,7 +14,9 @@ use crate::{
     types::{
         CoinKind, CoinPair, CoinRegistry, DelegationProxy::DelegationProxyInstance, FeeTokens,
     },
+    version::RELAY_LONG_VERSION,
 };
+use ::metrics::counter;
 use alloy::{
     network::Ethereum,
     primitives::B256,
@@ -232,6 +234,17 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!(%addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
+
+    // version and other information as a metric
+    counter!(
+        "relay.info",
+        "version" => RELAY_LONG_VERSION,
+        "entrypoint" => config.entrypoint.to_string(),
+        "delegation_proxy" => config.delegation_proxy.to_string(),
+        "simulator" => config.simulator.to_string(),
+        "fee_recipient" => config.chain.fee_recipient.to_string()
+    )
+    .absolute(1);
 
     rpc.merge(onramp).expect("could not merge rpc modules");
     Ok(RelayHandle { local_addr: addr, server: server.start(rpc), chains, storage, metrics })
