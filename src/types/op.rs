@@ -2,7 +2,7 @@ use super::{Call, EntryPoint, IDelegation::authorizeCall, Key, PREPInitData};
 use crate::types::Entry;
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, Keccak256, U256, keccak256},
+    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256},
     providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 
 /// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
 pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
+
+/// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
+pub const MULTICHAIN_NONCE_PREFIX_U192: U192 = uint!(0xc1d0_U192);
 
 sol! {
     /// A struct to hold the user operation fields.
