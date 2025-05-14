@@ -322,8 +322,6 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     .abi_encode_packed()
     .into();
 
-    assert!(preop.nonce == uint!(1_U256));
-
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -341,7 +339,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         })
         .await?;
 
-    assert!(response.context.take_quote().unwrap().ty().op.nonce == uint!(2_U256));
+    assert!(response.context.take_quote().unwrap().ty().op.nonce == uint!(1_U256));
 
     Ok(())
 }

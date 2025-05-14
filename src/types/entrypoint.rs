@@ -216,7 +216,7 @@ impl<P: Provider> Entry<P> {
             .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
 
         if !result.status {
-            debug!(?result, "Unable to simulate user op.");
+            debug!(?result, ?simulate_block, "Unable to simulate user op.");
             return Err(UserOpError::op_revert(result.return_data).into());
         }
 

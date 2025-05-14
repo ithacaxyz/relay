@@ -4,8 +4,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{RelayError, UserOpError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, Key, KeyType, MULTICHAIN_NONCE_PREFIX_U192,
-        Op, PreOp, SignedQuote,
+        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
+        MULTICHAIN_NONCE_PREFIX_U192, Op, PreOp, SignedQuote,
     },
 };
 use alloy::{
@@ -95,14 +95,16 @@ impl PrepareCallsParameters {
         Ok(())
     }
 
-    /// Gets the nonce based on information from the request.
+    /// Retrieves the appropriate nonce for the request, following this order:
     ///
-    /// If the request does not contain a nonce it will:
-    /// * attempt to find the highest nonce in the preops and increment it.
-    /// * if there is a pending PREP account request: return 0
-    /// * if it's a preop request with no account (sign-up/sign-in): generate a random sequence key
-    ///   without a multichain prefix and return it.
-    /// * check next available nonce with `DEFAULT_SEQUENCE_KEY` from chain.
+    /// 1. If `capabilities.meta.nonce` is set, return it directly.
+    /// 2. If this is a preop, generate a random sequence key without the multichain prefix and
+    ///    return its 0th nonce.
+    /// 3. If this is a userop and there are any previous preop entries with the
+    ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
+    /// 4. If this is the first userop of a PREP account (`maybe_prep`), return 0.
+    /// 5. If none of the above match, query for the next account nonce onchain (for
+    ///    `DEFAULT_SEQUENCE_KEY`).
     pub async fn get_nonce(
         &self,
         maybe_prep: Option<&CreatableAccount>,
@@ -110,19 +112,24 @@ impl PrepareCallsParameters {
     ) -> Result<U256, RelayError> {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
-        } else if let Some(preop) = self.capabilities.pre_ops.iter().max_by_key(|preop| preop.nonce)
-        {
-            Ok(preop.nonce + uint!(1_U256))
-        } else if maybe_prep.is_some() {
-            Ok(U256::ZERO)
-        } else if self.from.is_none() && self.capabilities.pre_op {
+        } else if self.capabilities.pre_op {
+            // Create a random sequence key.
             loop {
-                // Create a random sequence key.
                 let sequence_key = U192::from_be_bytes(B192::random().into());
                 if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
                     return Ok(U256::from(sequence_key) << 64);
                 }
             }
+        } else if let Some(preop) = self
+            .capabilities
+            .pre_ops
+            .iter()
+            .filter(|preop| (preop.nonce >> 64) == U256::from(DEFAULT_SEQUENCE_KEY))
+            .max_by_key(|preop| preop.nonce)
+        {
+            Ok(preop.nonce + uint!(1_U256))
+        } else if maybe_prep.is_some() {
+            Ok(U256::ZERO)
         } else {
             let eoa = self.from.ok_or(UserOpError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
