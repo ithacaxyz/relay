@@ -310,8 +310,11 @@ impl Signer {
         tx: &mut RelayTransaction,
         fees: Eip1559Estimation,
     ) -> Result<(), SignerError> {
-        // Set payment recipient to us
-        tx.quote.ty_mut().op.paymentRecipient = self.address();
+        // Set payment recipient to us if it hasn't been set
+        let payment_recipient = &mut tx.quote.ty_mut().op.paymentRecipient;
+        if payment_recipient.is_zero() {
+            *payment_recipient = self.address();
+        }
 
         let mut request: TransactionRequest = tx.build(0, fees).into();
         // Unset nonce to avoid race condition.
