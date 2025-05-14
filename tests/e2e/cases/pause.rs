@@ -1,9 +1,5 @@
 use crate::e2e::{
-    PauseAuthority::{self, PauseAuthorityInstance},
-    await_calls_status,
-    environment::Environment,
-    eoa::MockAccount,
-    send_prepared_calls,
+    await_calls_status, environment::Environment, eoa::MockAccount, send_prepared_calls,
 };
 use alloy::{
     primitives::B256,
@@ -15,7 +11,10 @@ use alloy_primitives::{Address, U160, U256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
-    types::rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
+    types::{
+        EntryPoint::{self, EntryPointInstance},
+        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -41,7 +40,7 @@ async fn pause() -> eyre::Result<()> {
     let response = env.relay_endpoint.prepare_calls(prepare_params.clone()).await?;
 
     let pauser = Address::from(U160::random() << 40);
-    let pause_instance = PauseAuthorityInstance::new(env.entrypoint, &env.provider);
+    let pause_instance = EntryPointInstance::new(env.entrypoint, &env.provider);
     assert!(pause_instance.setPauseAuthority(pauser).send().await?.get_receipt().await?.status());
 
     // Pause all
@@ -55,7 +54,7 @@ async fn pause() -> eyre::Result<()> {
             (TransactionRequest::default()
                 .from(pauser)
                 .to(env.entrypoint)
-                .input(PauseAuthority::pauseCall { isPause: true }.abi_encode().into())
+                .input(EntryPoint::pauseCall { isPause: true }.abi_encode().into())
                 .gas_limit(100_000),),
         )
         .await
@@ -65,7 +64,12 @@ async fn pause() -> eyre::Result<()> {
     assert!(pause_instance.pauseFlag().call().await? == U256::from(1));
 
     // prepare calls should fail
-    assert!(env.relay_endpoint.prepare_calls(prepare_params.clone()).await.is_err());
+    assert!(
+        env.relay_endpoint
+            .prepare_calls(prepare_params.clone())
+            .await
+            .is_err_and(|err| err.to_string().contains("paused"))
+    );
 
     // sending prepared calls should fail
     let bundle_id = send_prepared_calls(
@@ -89,7 +93,7 @@ async fn pause() -> eyre::Result<()> {
             (TransactionRequest::default()
                 .from(pauser)
                 .to(env.entrypoint)
-                .input(PauseAuthority::pauseCall { isPause: false }.abi_encode().into())
+                .input(EntryPoint::pauseCall { isPause: false }.abi_encode().into())
                 .gas_limit(100_000),),
         )
         .await

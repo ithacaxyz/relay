@@ -144,6 +144,15 @@ sol! {
         ///
         /// This function is provided as a public helper for easier integration.
         function delegationImplementationOf(address eoa) public view virtual returns (address result);
+
+        /// The pause flag.
+        function pauseFlag() public returns (uint256);
+
+        /// Can be used to pause/unpause the contract, in case of emergencies.
+        function pause(bool isPause) public;
+
+        /// Sets the pause authority and the last pause timestamp.
+        function setPauseAuthority(address newPauseAuthority) public;
     }
 }
 
@@ -217,6 +226,11 @@ impl<P: Provider> Entry<P> {
 
         if !result.status {
             debug!(?result, ?simulate_block, "Unable to simulate user op.");
+
+            if self.is_paused().await? {
+                return Err(UserOpError::PausedEntrypoint.into());
+            }
+
             return Err(UserOpError::op_revert(result.return_data).into());
         }
 
@@ -275,5 +289,17 @@ impl<P: Provider> Entry<P> {
             Some(domain.verifyingContract),
             None,
         ))
+    }
+
+    /// Whether the entrypoint has been paused.
+    pub async fn is_paused(&self) -> TransportResult<bool> {
+        Ok(self
+            .entrypoint
+            .pauseFlag()
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?
+            == U256::ONE)
     }
 }
