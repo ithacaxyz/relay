@@ -72,10 +72,8 @@ where
                 let to_sequencer = self.sequencer.call(r.clone().into());
                 let to_inner = self.inner.call(req);
                 return Box::pin(async move {
-                    let (seq, inner) =
-                        futures_util::future::try_join(to_sequencer, to_inner).await?;
-
-                    let (ResponsePacket::Single(seq), ResponsePacket::Single(inner)) = (seq, inner)
+                    let (ResponsePacket::Single(seq), ResponsePacket::Single(inner)) =
+                        futures_util::future::try_join(to_sequencer, to_inner).await?
                     else {
                         return Err(TransportErrorKind::custom_str("unexpected response"));
                     };
