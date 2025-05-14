@@ -151,8 +151,8 @@ sol! {
         /// Can be used to pause/unpause the contract, in case of emergencies.
         function pause(bool isPause) public;
 
-        /// Sets the pause authority and the last pause timestamp.
-        function setPauseAuthority(address newPauseAuthority) public;
+        /// Returns the pause authority and the last pause timestamp.
+        function getPauseConfig() public view virtual returns (address, uint40);
     }
 }
 

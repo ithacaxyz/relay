@@ -7,7 +7,7 @@ use alloy::{
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
-use alloy_primitives::{Address, U160, U256};
+use alloy_primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -21,6 +21,7 @@ use relay::{
 async fn pause() -> eyre::Result<()> {
     let env: Environment = Environment::setup_with_prep().await?;
     let eoa = MockAccount::new(&env).await?;
+    let entrypoint = EntryPointInstance::new(env.entrypoint, &env.provider);
 
     let prepare_params = PrepareCallsParameters {
         from: Some(eoa.address),
@@ -39,11 +40,8 @@ async fn pause() -> eyre::Result<()> {
     // Can call prepareCalls
     let response = env.relay_endpoint.prepare_calls(prepare_params.clone()).await?;
 
-    let pauser = Address::from(U160::random() << 40);
-    let pause_instance = EntryPointInstance::new(env.entrypoint, &env.provider);
-    assert!(pause_instance.setPauseAuthority(pauser).send().await?.get_receipt().await?.status());
-
     // Pause all
+    let pauser = entrypoint.getPauseConfig().call().await?._0;
     env.provider.anvil_set_balance(pauser, U256::MAX).await.unwrap();
     env.provider.anvil_impersonate_account(pauser).await.unwrap();
     let _tx_hash: B256 = env
@@ -61,7 +59,7 @@ async fn pause() -> eyre::Result<()> {
         .unwrap();
 
     // should be paused
-    assert!(pause_instance.pauseFlag().call().await? == U256::from(1));
+    assert!(entrypoint.pauseFlag().call().await? == U256::from(1));
 
     // prepare calls should fail
     assert!(
