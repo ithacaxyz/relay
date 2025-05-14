@@ -1,8 +1,8 @@
 //! L2 Transport implementation with `eth_sendRawTransaction` forwarding.
 
 use alloy::{
-    rpc::json_rpc::{RequestPacket, Response, ResponsePacket},
-    transports::{Transport, TransportError, TransportErrorKind, TransportFut},
+    rpc::json_rpc::{RequestPacket, ResponsePacket},
+    transports::{Transport, TransportError, TransportFut},
 };
 use std::task::{Context, Poll, ready};
 use tower::Service;
@@ -63,8 +63,6 @@ where
     }
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        use alloy::rpc::json_rpc::ResponsePayload::*;
-
         // TODO: simplify after <https://github.com/alloy-rs/alloy/pull/2304>
         if let RequestPacket::Single(r) = &req {
             if r.method() == ETH_SEND_RAW_TRANSACTION {
@@ -72,39 +70,30 @@ where
                 let to_sequencer = self.sequencer.call(r.clone().into());
                 let to_inner = self.inner.call(req);
                 return Box::pin(async move {
-                    let (ResponsePacket::Single(seq), ResponsePacket::Single(inner)) =
-                        futures_util::future::try_join(to_sequencer, to_inner).await?
-                    else {
-                        return Err(TransportErrorKind::custom_str("unexpected response"));
-                    };
-
-                    if seq.payload.is_success() {
-                        return Ok(ResponsePacket::Single(seq));
-                    }
-
-                    let id = seq.id;
+                    let (seq, inner) =
+                        futures_util::future::try_join(to_sequencer, to_inner).await?;
 
                     // Handle potential errors. We are not treating "already known" as fatal if at
                     // least one of the endpoints accepted the transaction
-                    let payload = match (seq.payload, inner.payload) {
-                        (Success(seq), _) => Success(seq),
-                        (Failure(seq), Success(inner)) => {
-                            if seq.message == "already known" {
-                                Success(inner)
+                    let resp = match (seq.as_error(), inner.as_error()) {
+                        (None, _) => seq,
+                        (Some(err), None) => {
+                            if err.message == "already known" {
+                                inner
                             } else {
-                                Failure(seq)
+                                seq
                             }
                         }
-                        (Failure(seq), Failure(inner)) => {
-                            if seq.message == "already known" {
-                                Failure(inner)
+                        (Some(err), Some(_)) => {
+                            if err.message == "already known" {
+                                inner
                             } else {
-                                Failure(seq)
+                                seq
                             }
                         }
                     };
 
-                    Ok(ResponsePacket::Single(Response { payload, id }))
+                    Ok(resp)
                 });
             }
         }
