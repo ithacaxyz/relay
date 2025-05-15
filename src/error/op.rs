@@ -33,6 +33,9 @@ pub enum UserOpError {
     /// The userop reverted when trying transaction.
     #[error(transparent)]
     OpRevert(#[from] OpRevert),
+    /// The userop could not be simulated since the entrypoint is paused.
+    #[error("the entrypoint is paused")]
+    PausedEntrypoint,
 }
 
 impl UserOpError {
@@ -45,7 +48,9 @@ impl UserOpError {
 impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: UserOpError) -> Self {
         match err {
-            UserOpError::SimulationError => internal_rpc(err.to_string()),
+            UserOpError::PausedEntrypoint | UserOpError::SimulationError => {
+                internal_rpc(err.to_string())
+            }
             UserOpError::MissingKey
             | UserOpError::MissingSender
             | UserOpError::UnallowedPreOpCalls

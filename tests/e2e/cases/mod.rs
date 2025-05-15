@@ -6,6 +6,7 @@ mod calls;
 mod cli;
 mod delegation;
 mod keys;
+mod pause;
 mod paymaster;
 mod porto;
 mod prep;
