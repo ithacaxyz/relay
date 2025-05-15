@@ -428,7 +428,7 @@ impl Relay {
     #[instrument(skip_all)]
     async fn send_action(
         &self,
-        quote: SignedQuote,
+        mut quote: SignedQuote,
         authorization: Option<SignedAuthorization>,
     ) -> RpcResult<BundleId> {
         let chain_id = quote.ty().chain_id;
@@ -482,6 +482,9 @@ impl Relay {
         if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
             return Err(QuoteError::QuoteExpired.into());
         }
+
+        // set our payment recipient
+        quote.ty_mut().op.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote, authorization);
 
