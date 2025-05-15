@@ -7,6 +7,8 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::error::{AuthError, RelayError};
+
 use super::{
     AccountRegistry,
     Delegation::{
@@ -108,16 +110,42 @@ impl Call {
     }
 
     /// Whether this call is whitelisted for preops.
-    pub fn is_whitelisted_preop(&self, account: Address) -> bool {
+    pub fn is_whitelisted_preop(
+        &self,
+        account: Address,
+        latest_delegation: Address,
+    ) -> Result<bool, RelayError> {
         // Selector needs be 4 bytes.
         if self.data.len() < 4 {
-            return false;
+            return Ok(false);
         }
 
-        let selector: [u8; 4] = self.data[..4].try_into().expect("qed");
+        // Target needs to be the EOA.
+        if !(self.to == account || self.to == Address::ZERO) {
+            return Ok(false);
+        }
 
-        (self.to == account || self.to == Address::ZERO)
-            && WHITELISTED_SELECTORS.contains(&selector)
+        // Only accept upgrades to supported delegations
+        self.ensure_valid_upgrade(latest_delegation)?;
+
+        Ok(WHITELISTED_SELECTORS.iter().any(|sel| sel == &self.data[..4]))
+    }
+
+    /// If call is a [`upgradeProxyDelegationCall`], ensures it's upgrading to the latest delegation
+    /// address.
+    ///
+    /// Otherwise, returns error.
+    pub fn ensure_valid_upgrade(&self, latest_delegation: Address) -> Result<(), RelayError> {
+        if self.data.len() > 4 && self.data[..4] == upgradeProxyDelegationCall::SELECTOR {
+            let new_delegation =
+                upgradeProxyDelegationCall::abi_decode(&self.data)?.newImplementation;
+
+            if latest_delegation != new_delegation {
+                return Err(AuthError::InvalidDelegation(new_delegation).into());
+            }
+        }
+
+        Ok(())
     }
 }
 

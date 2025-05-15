@@ -15,8 +15,8 @@ use relay::{
     signers::Eip712PayLoadSigner,
     types::{
         Call,
-        Delegation::{self},
-        KeyType, KeyWith712Signer, Signature,
+        Delegation::{self, upgradeProxyDelegationCall},
+        KeyType, KeyWith712Signer, PreOp, Signature,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -66,6 +66,49 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     );
 
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
+
+    // Attempt to change delegation implementation to an invalid one and expect it to fail in 3
+    // different setups: standalone userop, preop and userop with preop.
+    {
+        let mut invalid_params = Vec::with_capacity(3);
+        let upgrade_call = vec![Call {
+            to: env.eoa.address(),
+            value: U256::ZERO,
+            data: upgradeProxyDelegationCall { newImplementation: Address::random() }
+                .abi_encode()
+                .into(),
+        }];
+
+        // As a standalone userop
+        let mut standalone = params.clone();
+        standalone.calls = upgrade_call.clone();
+        invalid_params.push(standalone);
+
+        // As a preop
+        let mut preop = params.clone();
+        preop.calls = upgrade_call.clone();
+        preop.capabilities.pre_op = true;
+        invalid_params.push(preop);
+
+        // As a userop with preop
+        let mut userop_with_preop = params.clone();
+        userop_with_preop.capabilities.pre_ops = vec![PreOp {
+            eoa: env.eoa.address(),
+            executionData: upgrade_call.abi_encode().into(),
+            nonce: U256::random(),
+            signature: Bytes::new(),
+        }];
+        invalid_params.push(userop_with_preop);
+
+        for p in invalid_params {
+            assert!(
+                env.relay_endpoint
+                    .prepare_calls(p)
+                    .await
+                    .is_err_and(|err| err.to_string().contains("invalid delegation 0x"))
+            )
+        }
+    }
 
     // Change the proxy before sending the quote and expect it to fail offchain.
     {

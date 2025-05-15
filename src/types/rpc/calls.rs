@@ -76,18 +76,33 @@ pub struct PrepareCallsParameters {
 }
 
 impl PrepareCallsParameters {
-    /// Ensures there are only whitelisted calls in preops.
-    pub fn check_preop_calls(&self) -> Result<(), RelayError> {
-        let has_unallowed = |calls: &[Call]| {
-            calls.iter().any(|call| !call.is_whitelisted_preop(self.from.unwrap_or_default()))
+    /// Ensures there are only whitelisted calls in preops and that any upgrade delegation request
+    /// contains the latest delegation address.
+    pub fn check_calls(&self, latest_delegation: Address) -> Result<(), RelayError> {
+        let has_unallowed = |calls: &[Call]| -> Result<bool, RelayError> {
+            for call in calls {
+                if !call.is_whitelisted_preop(self.from.unwrap_or_default(), latest_delegation)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
         };
 
-        if self.capabilities.pre_op && has_unallowed(&self.calls) {
-            return Err(UserOpError::UnallowedPreOpCalls.into());
+        if self.capabilities.pre_op {
+            // Ensure this preop request only has valid calls
+            if has_unallowed(&self.calls)? {
+                return Err(UserOpError::UnallowedPreOpCalls.into());
+            }
+        } else {
+            // Ensure that if the userop is upgrading its delegation, it's to the latest one.
+            for call in &self.calls {
+                call.ensure_valid_upgrade(latest_delegation)?;
+            }
         }
 
+        // Ensure preops only have valid calls
         for op in &self.capabilities.pre_ops {
-            if has_unallowed(&op.calls().map_err(RelayError::from)?) {
+            if has_unallowed(&op.calls().map_err(RelayError::from)?)? {
                 return Err(UserOpError::UnallowedPreOpCalls.into());
             }
         }
