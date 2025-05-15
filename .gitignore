@@ -37,5 +37,5 @@ crates/testing/resources/**/cache/*
 .env
 
 # Relay configuration
-relay.toml
-registry.toml
+relay.yaml
+registry.yaml

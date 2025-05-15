@@ -51,9 +51,9 @@ impl CoinKind {
         registry
             .iter()
             .find(|(entry_key, entry_coin)| {
-                entry_key.chain == chain && *entry_coin == self && entry_key.token_address.is_some()
+                entry_key.chain == chain && *entry_coin == self && entry_key.address.is_some()
             })
-            .map(|(key, _)| key.token_address.expect("qed"))
+            .map(|(key, _)| key.address.expect("qed"))
     }
 
     /// Whether this is ETH.
@@ -63,12 +63,12 @@ impl CoinKind {
 
     /// Get native [`CoinKind`] from [`Chain`].
     pub fn get_native(registry: &CoinRegistry, chain: ChainId) -> Option<Self> {
-        registry.get(&CoinRegistryKey { chain, token_address: None }).copied()
+        registry.get(&CoinRegistryKey { chain, address: None }).copied()
     }
 
     /// Get [`CoinKind`] from a [`Chain`] and [`Address`].
     pub fn get_token(registry: &CoinRegistry, chain: ChainId, address: Address) -> Option<Self> {
-        registry.get(&CoinRegistryKey { chain, token_address: Some(address) }).copied()
+        registry.get(&CoinRegistryKey { chain, address: Some(address) }).copied()
     }
 
     /// Returns the str identifier
