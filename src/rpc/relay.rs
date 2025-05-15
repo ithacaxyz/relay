@@ -743,6 +743,18 @@ impl Relay {
         }
         Err(AuthError::InvalidDelegation(address).into())
     }
+
+    /// Ensures the account has the latest delegation implementation. Otherwise, returns error.
+    async fn ensure_latest_delegation<P: Provider + Clone>(
+        &self,
+        account: &Account<P>,
+    ) -> Result<(), RelayError> {
+        let address = self.has_supported_delegation(account).await?;
+        if self.inner.delegation_implementation != address {
+            return Err(AuthError::InvalidDelegation(address).into());
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -850,6 +862,16 @@ impl RelayApiServer for Relay {
                 return Err(RelayError::Keys(KeysError::TakenKeyId(key.id)).into());
             }
         }
+
+        // Ensure it's using the lasted delegation implementation.
+        self.ensure_latest_delegation(
+            &Account::new(
+                request.context.account.address,
+                self.provider(request.context.chain_id)?,
+            )
+            .with_delegation_override(request.context.account.signed_authorization.address()),
+        )
+        .await?;
 
         // Write to storage to be used on prepareCalls
         self.inner
@@ -1054,12 +1076,14 @@ impl RelayApiServer for Relay {
         )?;
 
         // Override the account with the 7702 delegation. We need to do this, since this might be a
-        // returning account, and thus, nonce will not be zero.
-        let nonce = Account::new(request.address, &provider)
-            .with_delegation_override(&request.capabilities.delegation)
-            .get_nonce()
-            .await
-            .map_err(RelayError::from)?;
+        // returning account, and thus, nonce will not be zero
+        let account = Account::new(request.address, &provider)
+            .with_delegation_override(&request.capabilities.delegation);
+
+        let (nonce, _) = try_join!(
+            async { account.get_nonce().await.map_err(RelayError::from) },
+            self.ensure_latest_delegation(&account)
+        )?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let (asset_diff, quote) = self
