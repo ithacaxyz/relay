@@ -922,8 +922,8 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        // Ensures we only have whitelisted preop calls.
-        request.check_preop_calls()?;
+        // Checks calls and preop calls in the request
+        request.check_calls(self.inner.delegation_implementation)?;
 
         let provider = self.provider(request.chain_id)?;
 
