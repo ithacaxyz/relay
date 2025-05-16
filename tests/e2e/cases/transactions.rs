@@ -310,11 +310,11 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
             > tx_0.quote.ty().native_fee_estimate.max_fee_per_gas
     );
 
+    // enable block mining
+    env.enable_mining().await;
+
     // assert that first transaction fails
     assert_failed(events_0, "transaction underpriced").await;
-
-    // enable block mining and assert that second transaction succeeds
-    env.enable_mining().await;
     assert_confirmed(events_1).await;
 
     Ok(())

@@ -628,7 +628,7 @@ impl Signer {
             error!(%err, %nonce, "Failed to close nonce gap");
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await {
-                if latest_nonce >= nonce {
+                if latest_nonce > nonce {
                     warn!("nonce gap was closed by a different transaction");
                     break;
                 }
