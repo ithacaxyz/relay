@@ -46,21 +46,29 @@ pub struct Args {
     #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
     pub metrics_port: u16,
     /// The address of the entrypoint.
-    #[arg(long = "entrypoint", value_name = "ENTRYPOINT")]
+    #[arg(long = "entrypoint", required_unless_present("config-only"), value_name = "ENTRYPOINT")]
     pub entrypoint: Address,
     /// The address of the delegation proxy.
-    #[arg(long = "delegation-proxy", value_name = "DELEGATION")]
+    #[arg(
+        long = "delegation-proxy",
+        required_unless_present("config-only"),
+        value_name = "DELEGATION"
+    )]
     pub delegation_proxy: Address,
     /// The address of the account registry.
-    #[arg(long = "account-registry", value_name = "ACCOUNT_REGISTRY")]
+    #[arg(
+        long = "account-registry",
+        required_unless_present("config-only"),
+        value_name = "ACCOUNT_REGISTRY"
+    )]
     pub account_registry: Address,
     /// The address of the simulator
-    #[arg(long = "simulator", value_name = "SIMULATOR")]
+    #[arg(long = "simulator", required_unless_present("config-only"), value_name = "SIMULATOR")]
     pub simulator: Address,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
-    #[arg(long = "endpoint", value_name = "RPC_ENDPOINT", required = true)]
+    #[arg(long = "endpoint", required_unless_present("config-only"), value_name = "RPC_ENDPOINT")]
     pub endpoints: Vec<Url>,
     /// The fee recipient address.
     ///
@@ -81,7 +89,7 @@ pub struct Args {
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
     /// A fee token the relay accepts.
-    #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
+    #[arg(long = "fee-token", required_unless_present("config-only"), value_name = "ADDRESS")]
     pub fee_tokens: Vec<Address>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
@@ -102,6 +110,13 @@ pub struct Args {
     /// The RPC endpoints of the sequencers for OP rollups.
     #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_id_url)]
     pub sequencer_endpoints: Vec<(u64, Url)>,
+    /// Reads all values from the config file.
+    ///
+    /// This makes required CLI args not required, but it is important that any required CLI args
+    /// have been configured in the config and do not use default values, as this is likely not
+    /// what you want.
+    #[arg(long = "config-only", default_value_t = false)]
+    pub config_only: bool,
 }
 
 impl Args {

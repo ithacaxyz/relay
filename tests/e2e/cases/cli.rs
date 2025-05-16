@@ -41,6 +41,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
                 sequencer_endpoints: Default::default(),
+                config_only: Default::default(),
             },
             config.clone(),
             registry.clone(),
