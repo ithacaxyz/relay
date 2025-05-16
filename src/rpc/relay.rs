@@ -19,7 +19,7 @@ use crate::{
         DelegationProxy::DelegationProxyInstance,
         ENTRYPOINT_NO_ERROR,
         EntryPoint::{self, UserOpExecuted},
-        FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, Op, PreOp,
+        FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType, Op, PreOp,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
             RelayCapabilities, RelayContracts, RelayFees, ValidSignatureProof,
@@ -1063,11 +1063,9 @@ impl RelayApiServer for Relay {
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
-        let Some(admin_key) =
-            request.capabilities.authorize_keys.iter().find(|key| key.key.isSuperAdmin)
-        else {
+        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
             return Err(KeysError::MissingAdminKey)?;
-        };
+        }
 
         // Generate all calls that will authorize keys and set their permissions
         let calls = self.authorize_into_calls(
@@ -1084,6 +1082,13 @@ impl RelayApiServer for Relay {
             async { account.get_nonce().await.map_err(RelayError::from) },
             self.ensure_latest_delegation(&account)
         )?;
+
+        // Before simulation, we state override with a mock delegation key
+        // instead of the the real one to match the storage writes of
+        // the live transaction. Thus, avoiding under-estimating gas.
+        let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
+            .map_err(RelayError::from)
+            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
         // Call estimateFee to give us a quote with a complete userOp that the user can sign
         let (asset_diff, quote) = self
@@ -1103,7 +1108,7 @@ impl RelayApiServer for Relay {
                 },
                 request.capabilities.fee_token,
                 Some(request.capabilities.delegation),
-                admin_key.key.clone(),
+                mock_key.key().clone(),
                 true,
             )
             .await
