@@ -12,7 +12,7 @@ pub const P256_GAS_BUFFER: U256 = uint!(10_000_U256);
 
 /// Extra buffer added to UserOp gas estimates to cover execution overhead
 /// and ensure sufficient gas is provided.
-pub const USER_OP_GAS_BUFFER: u64 = 25_000;
+pub const USER_OP_GAS_BUFFER: u64 = 0;
 
 /// The default poll interval used by the relay clients.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(300);
