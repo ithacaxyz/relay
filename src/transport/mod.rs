@@ -4,6 +4,7 @@ use alloy::{
     rpc::json_rpc::{RequestPacket, ResponsePacket},
     transports::{Transport, TransportError, TransportFut},
 };
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::task::{Context, Poll, ready};
 use tower::Service;
 
@@ -67,33 +68,27 @@ where
         if let RequestPacket::Single(r) = &req {
             if r.method() == ETH_SEND_RAW_TRANSACTION {
                 // This is raw transaction submission that we want to also route to the sequencer
-                let to_sequencer = self.sequencer.call(r.clone().into());
-                let to_inner = self.inner.call(req);
+                let mut futures = FuturesUnordered::new();
+                futures.push(self.sequencer.call(r.clone().into()));
+                futures.push(self.inner.call(req));
                 return Box::pin(async move {
-                    let (seq, inner) =
-                        futures_util::future::try_join(to_sequencer, to_inner).await?;
-
-                    // Handle potential errors. We are not treating "already known" as fatal if at
-                    // least one of the endpoints accepted the transaction
-                    let resp = match (seq.as_error(), inner.as_error()) {
-                        (None, _) => seq,
-                        (Some(err), None) => {
-                            if err.message == "already known" {
-                                inner
+                    let mut first_error = None;
+                    while let Some(output) = futures.next().await {
+                        if output.as_ref().map(|resp| resp.as_error().is_some()).unwrap_or(true) {
+                            // If first request already failed, return the error we got from it
+                            // because it's likely more informative
+                            if let Some(resp) = first_error {
+                                return resp;
                             } else {
-                                seq
+                                // Otherwise, remember the error and await the next response
+                                first_error = Some(output);
                             }
+                        } else {
+                            return output;
                         }
-                        (Some(err), Some(_)) => {
-                            if err.message == "already known" {
-                                inner
-                            } else {
-                                seq
-                            }
-                        }
-                    };
+                    }
 
-                    Ok(resp)
+                    unreachable!()
                 });
             }
         }
