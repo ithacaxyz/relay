@@ -106,13 +106,14 @@ impl Serialize for CoinRegistry {
     where
         S: Serializer,
     {
-        let mut grouped: HashMap<ChainId, Vec<CoinType>> = HashMap::new();
+        let mut grouped: HashMap<String, Vec<CoinType>> = HashMap::new();
         for (CoinRegistryKey { chain, address }, &coin_kind) in self.iter() {
+            let chain = chain.to_string();
             let entry = match address {
                 None => CoinType::Native { kind: coin_kind },
                 Some(address) => CoinType::Token { address: *address, kind: coin_kind },
             };
-            grouped.entry(*chain).or_default().push(entry);
+            grouped.entry(chain).or_default().push(entry);
         }
         grouped.serialize(serializer)
     }
@@ -123,9 +124,10 @@ impl<'de> Deserialize<'de> for CoinRegistry {
     where
         D: Deserializer<'de>,
     {
-        let grouped: HashMap<ChainId, Vec<CoinType>> = HashMap::deserialize(deserializer)?;
+        let grouped: HashMap<String, Vec<CoinType>> = HashMap::deserialize(deserializer)?;
         let mut map = HashMap::new();
         for (chain, entries) in grouped {
+            let chain = chain.parse().map_err(serde::de::Error::custom)?;
             for entry in entries {
                 match entry {
                     CoinType::Native { kind } => {
