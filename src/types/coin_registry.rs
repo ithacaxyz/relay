@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, path::Path};
 
 /// Maps [`ChainId`] and token addresses ([`CoinRegistryKey`]) to [`CoinKind`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoinRegistry(HashMap<CoinRegistryKey, CoinKind>);
 
 impl CoinRegistry {
@@ -84,12 +84,12 @@ pub struct CoinRegistryKey {
     /// Chain.
     pub chain: ChainId,
     /// Address in case it's a deployed token.
-    pub token_address: Option<Address>,
+    pub address: Option<Address>,
 }
 
 impl From<(ChainId, Option<Address>)> for CoinRegistryKey {
     fn from(value: (ChainId, Option<Address>)) -> Self {
-        CoinRegistryKey { chain: value.0, token_address: value.1 }
+        CoinRegistryKey { chain: value.0, address: value.1 }
     }
 }
 
@@ -97,8 +97,8 @@ impl From<(ChainId, Option<Address>)> for CoinRegistryKey {
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum CoinType {
-    Native(CoinKind),
-    Token(Address, CoinKind),
+    Token { address: Address, kind: CoinKind },
+    Native { kind: CoinKind },
 }
 
 impl Serialize for CoinRegistry {
@@ -106,14 +106,13 @@ impl Serialize for CoinRegistry {
     where
         S: Serializer,
     {
-        let mut grouped: HashMap<String, Vec<CoinType>> = HashMap::new();
-        for (CoinRegistryKey { chain, token_address }, &coin_kind) in self.iter() {
-            let chain_key = chain.to_string();
-            let entry = match token_address {
-                None => CoinType::Native(coin_kind),
-                Some(address) => CoinType::Token(*address, coin_kind),
+        let mut grouped: HashMap<ChainId, Vec<CoinType>> = HashMap::new();
+        for (CoinRegistryKey { chain, address }, &coin_kind) in self.iter() {
+            let entry = match address {
+                None => CoinType::Native { kind: coin_kind },
+                Some(address) => CoinType::Token { address: *address, kind: coin_kind },
             };
-            grouped.entry(chain_key).or_default().push(entry);
+            grouped.entry(*chain).or_default().push(entry);
         }
         grouped.serialize(serializer)
     }
@@ -124,21 +123,35 @@ impl<'de> Deserialize<'de> for CoinRegistry {
     where
         D: Deserializer<'de>,
     {
-        let grouped: HashMap<String, Vec<CoinType>> = HashMap::deserialize(deserializer)?;
+        let grouped: HashMap<ChainId, Vec<CoinType>> = HashMap::deserialize(deserializer)?;
         let mut map = HashMap::new();
-        for (chain_str, entries) in grouped {
-            let chain = chain_str.parse().map_err(serde::de::Error::custom)?;
+        for (chain, entries) in grouped {
             for entry in entries {
                 match entry {
-                    CoinType::Native(coin_kind) => {
-                        map.insert((chain, None).into(), coin_kind);
+                    CoinType::Native { kind } => {
+                        map.insert((chain, None).into(), kind);
                     }
-                    CoinType::Token(address, coin_kind) => {
-                        map.insert((chain, Some(address)).into(), coin_kind);
+                    CoinType::Token { address, kind } => {
+                        map.insert((chain, Some(address)).into(), kind);
                     }
                 }
             }
         }
         Ok(CoinRegistry(map))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip() {
+        let default_registry = CoinRegistry::default();
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        default_registry.save_to_file(file.path()).unwrap();
+
+        assert_eq!(default_registry, CoinRegistry::load_from_file(file.path()).unwrap());
     }
 }

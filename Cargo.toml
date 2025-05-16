@@ -100,6 +100,7 @@ dotenvy = "0.15"
 itertools = "0.14"
 strum = "0.27"
 strum_macros = "0.27"
+tempfile = "3.20"
 
 [build-dependencies]
 vergen = { version = "9.0", features = ["build", "cargo", "emit_and_set"] }

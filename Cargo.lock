@@ -4543,6 +4543,7 @@ dependencies = [
  "sqlx",
  "strum",
  "strum_macros",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tower",
