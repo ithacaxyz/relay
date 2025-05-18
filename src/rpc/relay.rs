@@ -397,7 +397,7 @@ impl Relay {
 
         // Calculate amount with updated paymentPerGas
         op.set_legacy_payment_amount(
-            op.prePaymentAmount + U256::from(payment_per_gas * f64::from(op.combinedGas)),
+            op.prePaymentAmount + U256::from((payment_per_gas * f64::from(op.combinedGas)).ceil()),
         );
 
         // Remove the fee from the asset diff payer as to not confuse the user.
