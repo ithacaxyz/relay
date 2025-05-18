@@ -191,7 +191,7 @@ impl<P: Provider> Entry<P> {
         simulator: Address,
         op: &UserOp,
         key_type: KeyType,
-        payment_per_gas: U256,
+        payment_per_gas: f64,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
@@ -204,7 +204,8 @@ impl<P: Provider> Entry<P> {
                     .simulateV1Logs(
                         *self.address(),
                         true,
-                        payment_per_gas,
+                        // TODO: retain precision here
+                        U256::from(payment_per_gas),
                         U256::from(11_000),
                         gas_validation_offset,
                         op.abi_encode().into(),
