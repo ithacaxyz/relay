@@ -48,8 +48,12 @@ impl RelayTransaction {
         let quote = self.quote.ty();
         let mut op = quote.op.clone();
 
-        let eth_payment = quote.extra_payment + op.combinedGas * U256::from(fees.max_fee_per_gas);
-        let payment_amount = eth_payment.div_ceil(quote.eth_price).min(op.totalPaymentMaxAmount);
+        let payment_amount = quote.extra_payment
+            + (op.combinedGas
+                * U256::from(fees.max_fee_per_gas)
+                * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
+            .div_ceil(quote.eth_price)
+            .min(op.totalPaymentMaxAmount);
 
         op.prePaymentAmount = payment_amount;
         op.totalPaymentAmount = payment_amount;
