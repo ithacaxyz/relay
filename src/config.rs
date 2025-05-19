@@ -293,26 +293,34 @@ impl RelayConfig {
     }
 
     /// Sets the entrypoint address.
-    pub fn with_entrypoint(mut self, entrypoint: Address) -> Self {
-        self.entrypoint = entrypoint;
+    pub fn with_entrypoint(mut self, entrypoint: Option<Address>) -> Self {
+        if let Some(entrypoint) = entrypoint {
+            self.entrypoint = entrypoint;
+        }
         self
     }
 
     /// Sets the delegation address.
-    pub fn with_delegation_proxy(mut self, delegation_proxy: Address) -> Self {
-        self.delegation_proxy = delegation_proxy;
+    pub fn with_delegation_proxy(mut self, delegation_proxy: Option<Address>) -> Self {
+        if let Some(delegation_proxy) = delegation_proxy {
+            self.delegation_proxy = delegation_proxy;
+        }
         self
     }
 
     /// Sets the account registry address.
-    pub fn with_account_registry(mut self, account_registry: Address) -> Self {
-        self.account_registry = account_registry;
+    pub fn with_account_registry(mut self, account_registry: Option<Address>) -> Self {
+        if let Some(account_registry) = account_registry {
+            self.account_registry = account_registry;
+        }
         self
     }
 
     /// Sets the simulator address.
-    pub fn with_simulator(mut self, simulator: Address) -> Self {
-        self.simulator = simulator;
+    pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
+        if let Some(simulator) = simulator {
+            self.simulator = simulator;
+        }
         self
     }
 
