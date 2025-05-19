@@ -1,4 +1,7 @@
-use crate::{config::QuoteConfig, types::FeeTokens};
+use crate::{
+    config::QuoteConfig,
+    types::{FeeTokens, VersionedContracts},
+};
 use alloy::primitives::Address;
 use serde::{Deserialize, Serialize};
 
@@ -7,27 +10,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RelayCapabilities {
     /// The contracts of the relay.
-    pub contracts: RelayContracts,
+    pub contracts: VersionedContracts,
     /// The fee configuration of the relay.
     pub fees: RelayFees,
-}
-
-/// Relay contracts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RelayContracts {
-    /// The entrypoint address.
-    pub entrypoint: Address,
-    /// The delegation proxy address.
-    pub delegation_proxy: Address,
-    /// The delegation implementation address.
-    ///
-    /// This is directly fetched from the proxy.
-    pub delegation_implementation: Address,
-    /// The account registry address.
-    pub account_registry: Address,
-    /// The simulator address.
-    pub simulator: Address,
 }
 
 /// Relay fee settings.

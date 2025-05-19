@@ -11,9 +11,7 @@ use crate::{
     signers::DynSigner,
     storage::RelayStorage,
     transport::SequencerService,
-    types::{
-        CoinKind, CoinPair, CoinRegistry, DelegationProxy::DelegationProxyInstance, FeeTokens,
-    },
+    types::{CoinKind, CoinPair, CoinRegistry, FeeTokens, VersionedContracts},
     version::RELAY_LONG_VERSION,
 };
 use ::metrics::counter;
@@ -97,9 +95,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let registry = Arc::new(registry);
 
     // construct db
-    let storage = if let Some(db_url) = config.database_url {
+    let storage = if let Some(ref db_url) = config.database_url {
         info!("Using PostgreSQL as storage.");
-        let pool = PgPool::connect(&db_url).await?;
+        let pool = PgPool::connect(db_url).await?;
         sqlx::migrate!().run(&pool).await?;
 
         RelayStorage::pg(pool)
@@ -110,7 +108,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
     // setup signers
     let signers = DynSigner::derive_from_mnemonic(
-        config.secrets.signers_mnemonic,
+        config.secrets.signers_mnemonic.clone(),
         config.transactions.num_signers,
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
@@ -178,24 +176,14 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 
-    // get the default implementation from the proxy
-    let delegation_implementation = DelegationProxyInstance::new(
-        config.delegation_proxy,
-        providers.first().expect("should have at least one"),
-    )
-    .implementation()
-    .call()
-    .await?;
+    // get contract versions from chain.
+    let contracts =
+        VersionedContracts::new(&config, providers.first().expect("should have at least one"))
+            .await?;
 
     // todo: avoid all this darn cloning
     let mut rpc = Relay::new(
-        config.entrypoint,
-        config.legacy_entrypoints,
-        config.legacy_delegations,
-        config.delegation_proxy,
-        delegation_implementation,
-        config.account_registry,
-        config.simulator,
+        contracts,
         chains.clone(),
         quote_signer,
         config.quote,
