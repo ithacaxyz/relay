@@ -47,29 +47,29 @@ pub struct Args {
     pub metrics_port: u16,
     /// The address of the entrypoint.
     #[arg(long = "entrypoint", required_unless_present("config-only"), value_name = "ENTRYPOINT")]
-    pub entrypoint: Address,
+    pub entrypoint: Option<Address>,
     /// The address of the delegation proxy.
     #[arg(
         long = "delegation-proxy",
         required_unless_present("config-only"),
         value_name = "DELEGATION"
     )]
-    pub delegation_proxy: Address,
+    pub delegation_proxy: Option<Address>,
     /// The address of the account registry.
     #[arg(
         long = "account-registry",
         required_unless_present("config-only"),
         value_name = "ACCOUNT_REGISTRY"
     )]
-    pub account_registry: Address,
+    pub account_registry: Option<Address>,
     /// The address of the simulator
     #[arg(long = "simulator", required_unless_present("config-only"), value_name = "SIMULATOR")]
-    pub simulator: Address,
+    pub simulator: Option<Address>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
     #[arg(long = "endpoint", required_unless_present("config-only"), value_name = "RPC_ENDPOINT")]
-    pub endpoints: Vec<Url>,
+    pub endpoints: Option<Vec<Url>>,
     /// The fee recipient address.
     ///
     /// Defaults to the zero address, which means the fees will be accrued by the entrypoint
@@ -90,7 +90,7 @@ pub struct Args {
     pub tx_gas_buffer: u64,
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", required_unless_present("config-only"), value_name = "ADDRESS")]
-    pub fee_tokens: Vec<Address>,
+    pub fee_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
@@ -133,9 +133,9 @@ impl Args {
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
             .with_signers_mnemonic(self.signers_mnemonic)
-            .with_endpoints(&self.endpoints)
+            .with_endpoints(&self.endpoints.unwrap_or_default())
             .with_sequencer_endpoints(self.sequencer_endpoints.clone())
-            .with_fee_tokens(&self.fee_tokens)
+            .with_fee_tokens(&self.fee_tokens.unwrap_or_default())
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
             .with_port(self.port)

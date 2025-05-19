@@ -264,10 +264,10 @@ impl Environment {
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
-                .with_entrypoint(entrypoint)
-                .with_delegation_proxy(delegation)
-                .with_account_registry(account_registry)
-                .with_simulator(simulator)
+                .with_entrypoint(Some(entrypoint))
+                .with_delegation_proxy(Some(delegation))
+                .with_account_registry(Some(account_registry))
+                .with_simulator(Some(simulator))
                 .with_user_op_gas_buffer(0) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
