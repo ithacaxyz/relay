@@ -34,7 +34,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
     .into_iter()
     .collect::<(Vec<_>, Vec<_>)>();
 
-    upgrade_account(&env, &keys, AuthKind::Auth, vec![]).await?;
+    upgrade_account(&env, &keys, AuthKind::Auth).await?;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {

@@ -152,12 +152,10 @@ impl TxContext<'_> {
         env: &Environment,
         tx_num: usize,
     ) -> Result<Vec<Call>, eyre::Error> {
-        let pre_ops = build_pre_ops(env, &self.pre_ops, tx_num).await?;
         let (tx_hash, authorization) = upgrade_account(
             env,
             &self.authorization_keys(Some(env.eoa.address())).await?,
             self.auth.clone().expect("should have"),
-            pre_ops,
         )
         .await
         .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));

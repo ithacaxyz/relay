@@ -1096,7 +1096,7 @@ impl RelayApiServer for Relay {
                         nonce,
                         init_data: None,
                         payer: request.capabilities.fee_payer,
-                        pre_ops: request.capabilities.pre_ops,
+                        pre_ops: vec![],
                     },
                     chain_id: request.chain_id,
                     // signed by the eoa root key

@@ -9,7 +9,7 @@ use alloy::{
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer, PreOp,
+        KeyType, KeyWith712Signer,
         rpc::{
             AuthorizeKey, BundleId, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters,
@@ -21,7 +21,6 @@ pub async fn upgrade_account(
     env: &Environment,
     authorize_keys: &[AuthorizeKey],
     auth: AuthKind,
-    pre_ops: Vec<PreOp>,
 ) -> eyre::Result<(BundleId, SignedAuthorization)> {
     let response = env
         .relay_endpoint
@@ -33,7 +32,6 @@ pub async fn upgrade_account(
                 delegation: env.delegation,
                 fee_payer: None,
                 fee_token: env.fee_token,
-                pre_ops,
             },
         })
         .await?;
@@ -71,13 +69,8 @@ async fn basic_upgrade() -> eyre::Result<()> {
     let env = Environment::setup_with_upgraded().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
-    upgrade_account(
-        &env,
-        &[key.to_authorized(Some(env.eoa.address())).await?],
-        AuthKind::Auth,
-        vec![],
-    )
-    .await?;
+    upgrade_account(&env, &[key.to_authorized(Some(env.eoa.address())).await?], AuthKind::Auth)
+        .await?;
     Ok(())
 }
 
@@ -96,7 +89,6 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
                 delegation: env.delegation,
                 fee_payer: None,
                 fee_token: env.fee_token,
-                pre_ops: vec![],
             },
         })
         .await?;
@@ -131,25 +123,15 @@ async fn returning_customer() -> eyre::Result<()> {
     let key2 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
     // Upgrade first time.
-    upgrade_account(
-        &env,
-        &[key1.to_authorized(Some(env.eoa.address())).await?],
-        AuthKind::Auth,
-        vec![],
-    )
-    .await?;
+    upgrade_account(&env, &[key1.to_authorized(Some(env.eoa.address())).await?], AuthKind::Auth)
+        .await?;
 
     // Clear 7702
     env.provider.anvil_set_code(env.eoa.address(), Bytes::new()).await?;
 
     // Upgrading again should succeed
-    upgrade_account(
-        &env,
-        &[key2.to_authorized(Some(env.eoa.address())).await?],
-        AuthKind::Auth,
-        vec![],
-    )
-    .await?;
+    upgrade_account(&env, &[key2.to_authorized(Some(env.eoa.address())).await?], AuthKind::Auth)
+        .await?;
 
     Ok(())
 }
