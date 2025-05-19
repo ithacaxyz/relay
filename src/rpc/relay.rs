@@ -402,6 +402,7 @@ impl Relay {
 
         let quote = Quote {
             chain_id: request.chain_id,
+            payment_token_decimals: token.decimals,
             op,
             extra_payment,
             eth_price,

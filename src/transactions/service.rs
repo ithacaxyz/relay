@@ -527,6 +527,7 @@ mod tests {
         let quote = Quote {
             chain_id: Default::default(),
             extra_payment: Default::default(),
+            payment_token_decimals: Default::default(),
             eth_price: Default::default(),
             tx_gas: Default::default(),
             native_fee_estimate: Eip1559Estimation {

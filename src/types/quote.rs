@@ -21,8 +21,10 @@ pub struct Quote {
     pub op: UserOp,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
-    /// Price of the ETH in the [`UserOP::paymentToken`] in wei.
+    /// Price of the ETH in the [`UserOp::paymentToken`] in wei.
     pub eth_price: U256,
+    /// Decimals of the [`UserOp::paymentToken`].
+    pub payment_token_decimals: u8,
     /// The recommended gas limit for the transaction.
     #[serde(with = "alloy::serde::quantity")]
     pub tx_gas: u64,
