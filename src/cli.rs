@@ -46,29 +46,29 @@ pub struct Args {
     #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
     pub metrics_port: u16,
     /// The address of the entrypoint.
-    #[arg(long = "entrypoint", required_unless_present("config-only"), value_name = "ENTRYPOINT")]
+    #[arg(long = "entrypoint", required_unless_present("config_only"), value_name = "ENTRYPOINT")]
     pub entrypoint: Option<Address>,
     /// The address of the delegation proxy.
     #[arg(
         long = "delegation-proxy",
-        required_unless_present("config-only"),
+        required_unless_present("config_only"),
         value_name = "DELEGATION"
     )]
     pub delegation_proxy: Option<Address>,
     /// The address of the account registry.
     #[arg(
         long = "account-registry",
-        required_unless_present("config-only"),
+        required_unless_present("config_only"),
         value_name = "ACCOUNT_REGISTRY"
     )]
     pub account_registry: Option<Address>,
     /// The address of the simulator
-    #[arg(long = "simulator", required_unless_present("config-only"), value_name = "SIMULATOR")]
+    #[arg(long = "simulator", required_unless_present("config_only"), value_name = "SIMULATOR")]
     pub simulator: Option<Address>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
-    #[arg(long = "endpoint", required_unless_present("config-only"), value_name = "RPC_ENDPOINT")]
+    #[arg(long = "endpoint", required_unless_present("config_only"), value_name = "RPC_ENDPOINT")]
     pub endpoints: Option<Vec<Url>>,
     /// The fee recipient address.
     ///
@@ -89,7 +89,7 @@ pub struct Args {
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
     /// A fee token the relay accepts.
-    #[arg(long = "fee-token", required_unless_present("config-only"), value_name = "ADDRESS")]
+    #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
     pub fee_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
