@@ -311,12 +311,12 @@ impl Relay {
         )
         .await?;
 
-        let gas_price = U256::from(native_fee_estimate.max_fee_per_gas);
         let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
         };
-        let payment_per_gas =
-            (gas_price * U256::from(10u128.pow(token.decimals as u32))) / eth_price;
+        let payment_per_gas = (native_fee_estimate.max_fee_per_gas as f64
+            * 10u128.pow(token.decimals as u32) as f64)
+            / f64::from(eth_price);
 
         // fill userop
         let mut op = UserOp {
@@ -373,7 +373,7 @@ impl Relay {
             ));
 
         // we estimate gas and fees
-        let (mut asset_diff, sim_result) = entrypoint
+        let (asset_diff, sim_result) = entrypoint
             .simulate_execute(
                 self.inner.simulator,
                 &op,
@@ -396,13 +396,9 @@ impl Relay {
         op.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.set_legacy_payment_amount(op.prePaymentAmount + payment_per_gas * op.combinedGas);
-
-        // Remove the fee from the asset diff payer as to not confuse the user.
-        let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
-        if op.payer == op.eoa || op.payer.is_zero() {
-            asset_diff.remove_payer_fee(payer, op.paymentToken, op.totalPaymentAmount);
-        }
+        op.set_legacy_payment_amount(
+            op.prePaymentAmount + U256::from((payment_per_gas * f64::from(op.combinedGas)).ceil()),
+        );
 
         let quote = Quote {
             chain_id: request.chain_id,

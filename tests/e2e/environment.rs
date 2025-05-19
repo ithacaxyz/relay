@@ -258,7 +258,7 @@ impl Environment {
             RelayConfig::default()
                 .with_port(0)
                 .with_metrics_port(0)
-                .with_endpoints(&[endpoint.clone()])
+                .with_endpoints(std::slice::from_ref(&endpoint))
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())

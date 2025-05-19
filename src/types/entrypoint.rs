@@ -191,12 +191,15 @@ impl<P: Provider> Entry<P> {
         simulator: Address,
         op: &UserOp,
         key_type: KeyType,
-        payment_per_gas: U256,
+        payment_per_gas: f64,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
         let gas_validation_offset =
             if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
+
+        // TODO: retain precision here
+        let payment_per_gas = U256::from(payment_per_gas);
 
         let simulate_block = SimBlock::default()
             .call(
@@ -242,13 +245,20 @@ impl<P: Provider> Entry<P> {
             .into());
         };
 
-        let asset_diffs = asset_info_handle
+        let mut asset_diffs = asset_info_handle
             .calculate_asset_diff(
                 simulate_block,
                 result.logs.into_iter(),
                 self.entrypoint.provider(),
             )
             .await?;
+
+        // Remove the fee from the asset diff payer as to not confuse the user.
+        let simulated_payment = op.prePaymentAmount + payment_per_gas * simulation_result.gCombined;
+        let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
+        if op.payer == op.eoa || op.payer.is_zero() {
+            asset_diffs.remove_payer_fee(payer, op.paymentToken, simulated_payment);
+        }
 
         Ok((asset_diffs, simulation_result))
     }
