@@ -419,9 +419,10 @@ impl Signer {
             let fees = self.get_fee_context().await?;
             let best_tx = tx.best_tx();
 
-            if let Some(new_tx) =
+            if let Some(new_fees) =
                 fees.prepare_replacement(best_tx, tx.tx.max_fee_for_transaction())?
             {
+                let new_tx = tx.tx.build(tx.nonce(), new_fees);
                 let replacement = self.sign_transaction(new_tx).await?;
                 self.storage.add_pending_envelope(tx.id(), &replacement).await?;
                 self.send_transaction(&replacement).await?;
