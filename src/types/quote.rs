@@ -2,7 +2,7 @@
 
 use crate::types::{Signed, UserOp};
 use alloy::{
-    primitives::{Address, B256, ChainId, Keccak256, Signature},
+    primitives::{Address, B256, ChainId, Keccak256, Signature, U256},
     providers::utils::Eip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,10 @@ pub struct Quote {
     pub chain_id: ChainId,
     /// User op.
     pub op: UserOp,
+    /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
+    pub extra_payment: U256,
+    /// Price of the ETH in the [`UserOP::paymentToken`] in wei.
+    pub eth_price: U256,
     /// The recommended gas limit for the transaction.
     #[serde(with = "alloy::serde::quantity")]
     pub tx_gas: u64,

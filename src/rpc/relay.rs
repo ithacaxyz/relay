@@ -403,6 +403,8 @@ impl Relay {
         let quote = Quote {
             chain_id: request.chain_id,
             op,
+            extra_payment,
+            eth_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             ttl: SystemTime::now()

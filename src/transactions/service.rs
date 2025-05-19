@@ -526,6 +526,8 @@ mod tests {
     fn create_tx(sender: Address) -> RelayTransaction {
         let quote = Quote {
             chain_id: Default::default(),
+            extra_payment: Default::default(),
+            eth_price: Default::default(),
             tx_gas: Default::default(),
             native_fee_estimate: Eip1559Estimation {
                 max_fee_per_gas: Default::default(),

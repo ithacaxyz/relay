@@ -41,19 +41,27 @@ impl RelayTransaction {
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
-        let input = self.quote.ty().op.encode_execute();
-
-        // TODO: move calculations here, only store and sign neccesary values in the quote
         let gas_limit = self.quote.ty().tx_gas;
         let max_fee_per_gas = fees.max_fee_per_gas;
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
+        let quote = self.quote.ty();
+        let mut op = quote.op.clone();
+
+        let eth_payment = quote.extra_payment + op.combinedGas * U256::from(fees.max_fee_per_gas);
+        let payment_amount = eth_payment.div_ceil(quote.eth_price).min(op.totalPaymentMaxAmount);
+
+        op.prePaymentAmount = payment_amount;
+        op.totalPaymentAmount = payment_amount;
+
+        let input = op.encode_execute();
+
         if let Some(auth) = &self.authorization {
             TxEip7702 {
                 authorization_list: vec![auth.clone()],
-                chain_id: self.quote.ty().chain_id,
+                chain_id: quote.chain_id,
                 nonce,
-                to: self.quote.ty().entrypoint,
+                to: quote.entrypoint,
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -64,9 +72,9 @@ impl RelayTransaction {
             .into()
         } else {
             TxEip1559 {
-                chain_id: self.quote.ty().chain_id,
+                chain_id: quote.chain_id,
                 nonce,
-                to: self.quote.ty().entrypoint.into(),
+                to: quote.entrypoint.into(),
                 input,
                 gas_limit,
                 max_fee_per_gas,

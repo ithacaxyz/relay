@@ -1,5 +1,5 @@
 use alloy::{
-    consensus::{Transaction, TxEnvelope, TypedTransaction},
+    consensus::{Transaction, TxEnvelope},
     eips::eip1559::Eip1559Estimation,
 };
 use tracing::instrument;
@@ -84,7 +84,7 @@ impl FeeContext {
         &self,
         tx: &TxEnvelope,
         max_gas_price: u128,
-    ) -> Result<Option<TypedTransaction>, FeesError> {
+    ) -> Result<Option<Eip1559Estimation>, FeesError> {
         if !self.should_bump(tx) {
             return Ok(None);
         }
@@ -131,26 +131,9 @@ impl FeeContext {
         let new_max_fee = best_new_max_fee.max(min_new_max_fee).min(max_gas_price);
         let new_priority_fee = best_new_priority_fee.max(min_new_priority_fee).min(new_max_fee);
 
-        let mut new_tx = TypedTransaction::from(tx.clone());
-
-        match &mut new_tx {
-            TypedTransaction::Legacy(tx) => {
-                tx.gas_price = new_max_fee;
-            }
-            TypedTransaction::Eip2930(tx) => {
-                tx.gas_price = new_max_fee;
-            }
-            TypedTransaction::Eip1559(tx) => {
-                tx.max_fee_per_gas = new_max_fee;
-                tx.max_priority_fee_per_gas = new_priority_fee;
-            }
-            TypedTransaction::Eip7702(tx) => {
-                tx.max_fee_per_gas = new_max_fee;
-                tx.max_priority_fee_per_gas = new_priority_fee;
-            }
-            _ => {}
-        }
-
-        Ok(Some(new_tx))
+        Ok(Some(Eip1559Estimation {
+            max_fee_per_gas: new_max_fee,
+            max_priority_fee_per_gas: new_priority_fee,
+        }))
     }
 }
