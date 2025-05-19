@@ -373,7 +373,7 @@ impl Relay {
             ));
 
         // we estimate gas and fees
-        let (mut asset_diff, sim_result) = entrypoint
+        let (asset_diff, sim_result) = entrypoint
             .simulate_execute(
                 self.inner.simulator,
                 &op,
@@ -399,12 +399,6 @@ impl Relay {
         op.set_legacy_payment_amount(
             op.prePaymentAmount + U256::from((payment_per_gas * f64::from(op.combinedGas)).ceil()),
         );
-
-        // Remove the fee from the asset diff payer as to not confuse the user.
-        let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
-        if op.payer == op.eoa || op.payer.is_zero() {
-            asset_diff.remove_payer_fee(payer, op.paymentToken, op.totalPaymentAmount);
-        }
 
         let quote = Quote {
             chain_id: request.chain_id,
