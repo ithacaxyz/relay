@@ -380,7 +380,7 @@ impl Relay {
             self.inner.quote_config.tx_buffer(),
         );
 
-        debug!(eoa = %request.intent.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
+        debug!(eoa = %request.intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas and empty dummy signature
         intent.combinedGas = U256::from(gas_estimate.intent);
@@ -1257,7 +1257,7 @@ impl RelayApiServer for Relay {
         // address in the txs table.
         //
         // note that we also assume that failure to decode a log as `IntentExecuted` means the
-        // operation failed
+        // intent failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
             receipt
                 .decoded_log::<IntentExecuted>()
