@@ -14,10 +14,12 @@ sol! {
 
     #[sol(rpc)]
     #[derive(Debug)]
+    #[allow(clippy::too_many_arguments)]
     contract Simulator {
         function simulateV1Logs(
             address ep,
             bool isPrePayment,
+            uint8 paymentPerGasPrecision,
             uint256 paymentPerGas,
             uint256 combinedGasIncrement,
             uint256 combinedGasVerificationOffset,

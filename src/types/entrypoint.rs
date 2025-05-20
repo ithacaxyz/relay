@@ -197,6 +197,7 @@ impl<P: Provider> Entry<P> {
         op: &UserOp,
         key_type: KeyType,
         payment_per_gas: f64,
+        token_decimals: u8,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
@@ -212,6 +213,7 @@ impl<P: Provider> Entry<P> {
                     .simulateV1Logs(
                         *self.address(),
                         true,
+                        token_decimals,
                         payment_per_gas,
                         U256::from(11_000),
                         gas_validation_offset,
@@ -259,7 +261,9 @@ impl<P: Provider> Entry<P> {
             .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
-        let simulated_payment = op.prePaymentAmount + payment_per_gas * simulation_result.gCombined;
+        let simulated_payment = op.prePaymentAmount
+            + (payment_per_gas * simulation_result.gCombined)
+                / U256::from(10u128.pow(token_decimals as u32));
         let payment_token =
             if op.paymentToken.is_zero() { Asset::Native } else { Asset::Token(op.paymentToken) };
         let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
