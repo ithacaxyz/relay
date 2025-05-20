@@ -144,15 +144,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
                     info!("Configured sequencer forwarding for chain {chain_id}");
 
-                    builder
-                        .layer(SequencerLayer::new(sequencer))
-                        .transport(transport, is_local)
-                        .with_poll_interval(DEFAULT_POLL_INTERVAL)
+                    builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
                 } else {
-                    builder.transport(transport, is_local).with_poll_interval(DEFAULT_POLL_INTERVAL)
+                    builder.transport(transport, is_local)
                 };
 
-            eyre::Ok(ProviderBuilder::new().connect_client(client).erased())
+            eyre::Ok(
+                ProviderBuilder::new()
+                    .connect_client(client.with_poll_interval(DEFAULT_POLL_INTERVAL))
+                    .erased(),
+            )
         }),
     )
     .await?;
