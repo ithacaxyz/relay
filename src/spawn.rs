@@ -10,7 +10,7 @@ use crate::{
     rpc::{Onramp, OnrampApiServer, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
-    transport::SequencerService,
+    transport::SequencerLayer,
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens, VersionedContracts},
     version::RELAY_LONG_VERSION,
 };
@@ -21,7 +21,7 @@ use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder, RootProvider},
     rpc::client::{BuiltInConnectionString, ClientBuilder},
     signers::local::LocalSigner,
-    transports::{Transport, TransportConnect, layers::RetryBackoffLayer},
+    transports::{TransportConnect, layers::RetryBackoffLayer},
 };
 use http::header;
 use itertools::Itertools;
@@ -132,25 +132,28 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
             let url = BuiltInConnectionString::from_str(url.as_str())?;
             let is_local = url.is_local();
-            let mut transport = url.connect_boxed().await?;
+            let transport = url.connect_boxed().await?;
 
-            // Only use send transactions to sequencer if we're not forking.
-            if let Some(sequencer_url) = config.chain.sequencer_endpoints.get(&chain_id) {
-                let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
-                    .connect_boxed()
-                    .await?;
-                transport = SequencerService::new(transport, sequencer).boxed();
+            let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
 
-                info!("Configured sequencer forwarding for chain {chain_id}");
-            }
+            let client =
+                if let Some(sequencer_url) = config.chain.sequencer_endpoints.get(&chain_id) {
+                    let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
+                        .connect_boxed()
+                        .await?;
 
-            let client = ClientBuilder::default()
-                .layer(TraceLayer)
-                .layer(RETRY_LAYER.clone())
-                .transport(transport, is_local)
-                .with_poll_interval(DEFAULT_POLL_INTERVAL);
+                    info!("Configured sequencer forwarding for chain {chain_id}");
 
-            eyre::Ok(ProviderBuilder::new().connect_client(client).erased())
+                    builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
+                } else {
+                    builder.transport(transport, is_local)
+                };
+
+            eyre::Ok(
+                ProviderBuilder::new()
+                    .connect_client(client.with_poll_interval(DEFAULT_POLL_INTERVAL))
+                    .erased(),
+            )
         }),
     )
     .await?;
