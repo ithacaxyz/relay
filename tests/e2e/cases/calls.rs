@@ -62,8 +62,8 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                         fee_token: env.fee_token,
                         nonce: Some(U256::from(tx_num + intent_nonce)),
                     },
-                    pre_ops: Vec::new(),
-                    pre_op: false,
+                    pre_calls: Vec::new(),
+                    pre_call: false,
                 },
                 key: Some(signer.to_call_key()),
             })

@@ -61,14 +61,14 @@ sol! {
         /// No revert has been encountered.
         error NoRevertEncountered();
 
-        /// A sub Intent's EOA must be the same as its parent Intent's eoa.
-        error InvalidPreOpEOA();
+        /// A PreCall's EOA must be the same as its parent Intent's.
+        error InvalidPreCallEOA();
 
-        /// The sub Intent cannot be verified to be correct.
-        error PreOpVerificationError();
+        /// The PreCall cannot be verified to be correct.
+        error PreCallVerificationError();
 
         /// Error calling the sub Intent's `executionData`.
-        error PreOpCallError();
+        error PreCallError();
 
         /// The ID has already been registered.
         error IDOccupied();

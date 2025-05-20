@@ -21,9 +21,9 @@ pub enum IntentError {
     /// The intent could not be simulated.
     #[error("the op could not be simulated")]
     SimulationError,
-    /// The preop can only contain account management calls.
-    #[error("the preop can only contain account management calls.")]
-    UnallowedPreOpCalls,
+    /// The precall can only contain account management calls.
+    #[error("the precall can only contain account management calls.")]
+    UnallowedPreCall,
     /// The quote was signed for a different intent.
     #[error("invalid intent digest, expected {expected}, got {got}")]
     InvalidIntentDigest {
@@ -55,7 +55,7 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             }
             IntentError::MissingKey
             | IntentError::MissingSender
-            | IntentError::UnallowedPreOpCalls
+            | IntentError::UnallowedPreCall
             | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
             IntentError::OpRevert(err) => err.into(),
         }

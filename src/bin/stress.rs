@@ -87,8 +87,8 @@ impl StressAccount {
                         authorize_keys: vec![],
                         meta: Meta { fee_payer: None, fee_token, nonce: None },
                         revoke_keys: vec![],
-                        pre_ops: vec![],
-                        pre_op: false,
+                        pre_calls: vec![],
+                        pre_call: false,
                     },
                     key: Some(self.key.to_call_key()),
                 })

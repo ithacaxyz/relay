@@ -126,14 +126,14 @@ pub async fn prepare_calls(
     tx: &TxContext<'_>,
     signer: &KeyWith712Signer,
     env: &Environment,
-    pre_op: bool,
+    pre_call: bool,
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
-    let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
+    let pre_calls = build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
-    // Deliberately omit the `from` address for the very first Intent preops
-    // to test the path where prepops are signed before the PREPAddress is known. eg. during
+    // Deliberately omit the `from` address for the very first Intent precalls
+    // to test the path where precalls are signed before the PREPAddress is known. eg. during
     // creation of the first passkey.
-    let from = (tx_num != 0 || !pre_op).then_some(env.eoa.address());
+    let from = (tx_num != 0 || !pre_call).then_some(env.eoa.address());
 
     let response = env
         .relay_endpoint
@@ -149,8 +149,8 @@ pub async fn prepare_calls(
                     fee_token: tx.fee_token.unwrap_or(env.fee_token),
                     nonce: tx.nonce,
                 },
-                pre_ops,
-                pre_op,
+                pre_calls,
+                pre_call,
             },
             key: Some(signer.to_call_key()),
         })

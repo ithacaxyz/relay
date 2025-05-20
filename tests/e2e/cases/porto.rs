@@ -484,7 +484,7 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op() -> Result<()> {
+async fn session_key_pre_call() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
@@ -499,8 +499,8 @@ async fn session_key_pre_op() -> Result<()> {
             },
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                // Bundle session key authorization as a pre-op
-                pre_ops: vec![TxContext {
+                // Bundle session key authorization as a precall
+                pre_calls: vec![TxContext {
                     authorization_keys: vec![&session_key],
                     calls: vec![
                         calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
@@ -526,7 +526,7 @@ async fn session_key_pre_op() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op_prep_single_tx() -> Result<()> {
+async fn session_key_pre_call_prep_single_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
@@ -534,8 +534,8 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::Pass,
-            // Bundle session key authorization as a pre-op
-            pre_ops: vec![TxContext {
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
                     calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
@@ -560,15 +560,15 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
+async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,
-            // Bundle session key authorization as a pre-op
-            pre_ops: vec![TxContext {
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 key: Some(&key),
                 // use random nonce sequence

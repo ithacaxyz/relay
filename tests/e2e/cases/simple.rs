@@ -235,8 +235,8 @@ async fn spend_limits_bundle_failure() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,
-            // Bundle session key authorization as a pre-op
-            pre_ops: vec![TxContext {
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
                     calls::can_execute_all(env.erc20, session_key.key_hash()),
@@ -296,7 +296,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     .process(0, &env)
     .await?;
 
-    // preop
+    // precall
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -307,15 +307,15 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![],
-                pre_op: true,
+                pre_calls: vec![],
+                pre_call: true,
             },
             key: Some(admin_key.to_call_key()),
         })
         .await?;
 
-    let mut preop = response.context.take_preop().unwrap();
-    preop.signature = Signature {
+    let mut precall = response.context.take_precall().unwrap();
+    precall.signature = Signature {
         innerSignature: admin_key.sign_payload_hash(response.digest).await?,
         keyHash: admin_key.key_hash(),
         prehash: false,
@@ -333,8 +333,8 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![preop],
-                pre_op: false,
+                pre_calls: vec![precall],
+                pre_call: false,
             },
             key: Some(admin_key.to_call_key()),
         })
@@ -371,15 +371,15 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 authorize_keys: vec![session_key.to_authorized(None).await?],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![],
-                pre_op: true,
+                pre_calls: vec![],
+                pre_call: true,
             },
             key: None,
         })
         .await?;
 
-    let mut accountless_preop = response.context.take_preop().unwrap();
-    accountless_preop.signature = Signature {
+    let mut accountless_precall = response.context.take_precall().unwrap();
+    accountless_precall.signature = Signature {
         innerSignature: admin_key.sign_payload_hash(response.digest).await?,
         keyHash: admin_key.key_hash(),
         prehash: false,
@@ -390,7 +390,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
     // prepareCreateAccount && createAccount
     prep_account(&mut env, &[&admin_key]).await?;
 
-    // initPrep + accountless preop
+    // initPrep + accountless precall
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -401,8 +401,8 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![accountless_preop],
-                pre_op: false,
+                pre_calls: vec![accountless_precall],
+                pre_call: false,
             },
             key: Some(session_key.to_call_key()),
         })

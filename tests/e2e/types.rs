@@ -16,7 +16,7 @@ use relay::{
     types::{
         Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::IntentExecuted,
-        PreOp, Signature,
+        Signature, SignedCall,
         rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
     },
 };
@@ -133,8 +133,8 @@ pub struct TxContext<'a> {
     pub revoke_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
     pub fee_token: Option<Address>,
-    /// Optional array of pre-ops to be executed before the Intent.
-    pub pre_ops: Vec<TxContext<'a>>,
+    /// Optional array of precalls to be executed before the Intent.
+    pub pre_calls: Vec<TxContext<'a>>,
     /// Optional nonce to be used.
     pub nonce: Option<U256>,
     /// Optional checks after a successful transaction.
@@ -285,16 +285,16 @@ impl TxContext<'_> {
     }
 }
 
-pub async fn build_pre_ops<'a>(
+pub async fn build_pre_calls<'a>(
     env: &Environment,
-    pre_ops: &[TxContext<'a>],
+    pre_calls: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<Vec<PreOp>> {
-    let pre_ops = join_all(pre_ops.iter().map(|tx| async move {
+) -> eyre::Result<Vec<SignedCall>> {
+    let pre_calls = join_all(pre_calls.iter().map(|tx| async move {
         let signer = tx.key.expect("intent should have a key");
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = context.take_preop().unwrap();
+        let mut op = context.take_precall().unwrap();
         op.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()
@@ -303,7 +303,7 @@ pub async fn build_pre_ops<'a>(
     }))
     .await;
 
-    Ok(pre_ops)
+    Ok(pre_calls)
 }
 
 /// Helper macro for checking the outcome of a successful transaction.

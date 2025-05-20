@@ -16,7 +16,7 @@ use relay::{
     types::{
         Call, KeyType, KeyWith712Signer,
         PortoAccount::{self, upgradeProxyDelegationCall},
-        PreOp, Signature,
+        Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -53,8 +53,8 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             authorize_keys: vec![],
             revoke_keys: vec![],
             meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-            pre_ops: vec![],
-            pre_op: false,
+            pre_calls: vec![],
+            pre_call: false,
         },
         key: Some(admin_key.to_call_key()),
     };
@@ -69,7 +69,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
 
     // Attempt to change delegation implementation to an invalid one and expect it to fail in 3
-    // different setups: standalone intent, preop and intent with preop.
+    // different setups: standalone intent, precall and intent with precall.
     {
         let mut invalid_params = Vec::with_capacity(3);
         let upgrade_call = vec![Call {
@@ -85,21 +85,21 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         standalone.calls = upgrade_call.clone();
         invalid_params.push(standalone);
 
-        // As a preop
-        let mut preop = params.clone();
-        preop.calls = upgrade_call.clone();
-        preop.capabilities.pre_op = true;
-        invalid_params.push(preop);
+        // As a precall
+        let mut precall = params.clone();
+        precall.calls = upgrade_call.clone();
+        precall.capabilities.pre_call = true;
+        invalid_params.push(precall);
 
-        // As a intent with preop
-        let mut intent_with_preop = params.clone();
-        intent_with_preop.capabilities.pre_ops = vec![PreOp {
+        // As a intent with precall
+        let mut intent_with_precall = params.clone();
+        intent_with_precall.capabilities.pre_calls = vec![SignedCall {
             eoa: env.eoa.address(),
             executionData: upgrade_call.abi_encode().into(),
             nonce: U256::random(),
             signature: Bytes::new(),
         }];
-        invalid_params.push(intent_with_preop);
+        invalid_params.push(intent_with_precall);
 
         for p in invalid_params {
             assert!(
@@ -237,9 +237,9 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
     let _tx_hash: B256 = env.provider.client().request("eth_sendTransaction", (tx,)).await.unwrap();
 }
 
-/// Ensures upgradeProxyDelegation can be called as a preop.
+/// Ensures upgradeProxyDelegation can be called as a precall.
 #[tokio::test(flavor = "multi_thread")]
-async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
+async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
 
     let caps = env.relay_endpoint.get_capabilities().await?;
@@ -247,7 +247,7 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
 
     prep_account(&mut env, &[&admin_key]).await?;
 
-    // Create PreOp with the upgrade call
+    // Create PreCall with the upgrade call
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -266,15 +266,15 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![],
-                pre_op: true,
+                pre_calls: vec![],
+                pre_call: true,
             },
             key: Some(admin_key.to_call_key()),
         })
         .await?;
 
-    let mut preop = response.context.take_preop().unwrap();
-    preop.signature = Signature {
+    let mut precall = response.context.take_precall().unwrap();
+    precall.signature = Signature {
         innerSignature: admin_key.sign_payload_hash(response.digest).await?,
         keyHash: admin_key.key_hash(),
         prehash: false,
@@ -282,7 +282,7 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
     .abi_encode_packed()
     .into();
 
-    // Create Intent with the upgrade preop call
+    // Create Intent with the upgrade precall call
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -293,8 +293,8 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_ops: vec![preop],
-                pre_op: false,
+                pre_calls: vec![precall],
+                pre_call: false,
             },
             key: Some(admin_key.to_call_key()),
         })

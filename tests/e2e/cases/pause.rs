@@ -31,8 +31,8 @@ async fn pause() -> eyre::Result<()> {
             authorize_keys: vec![],
             revoke_keys: vec![],
             meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
-            pre_ops: vec![],
-            pre_op: false,
+            pre_calls: vec![],
+            pre_call: false,
         },
         key: Some(eoa.key.to_call_key()),
     };

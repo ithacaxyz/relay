@@ -77,16 +77,16 @@ sol! {
         uint256 combinedGas;
         /// Optional array of encoded Intents that will be verified and executed
         /// after PREP (if any) and before the validation of the overall Intent.
-        /// A PreOp will NOT have its gas limit or payment applied.
-        /// The overall Intent's gas limit and payment will be applied, encompassing all its PreOps.
-        /// The execution of a PreOp will check and increment the nonce in the PreOp.
-        /// If at any point, any PreOp cannot be verified to be correct, or fails in execution,
+        /// A PreCall will NOT have its gas limit or payment applied.
+        /// The overall Intent's gas limit and payment will be applied, encompassing all its PreCalls.
+        /// The execution of a PreCall will check and increment the nonce in the PreCall.
+        /// If at any point, any PreCall cannot be verified to be correct, or fails in execution,
         /// the overall Intent will revert before validation, and execute will return a non-zero error.
-        /// A PreOp can contain PreOps, forming a tree structure.
+        /// A PreCall can contain PreCalls, forming a tree structure.
         /// The `executionData` tree will be executed in post-order (i.e. left -> right -> current).
-        /// The `encodedPreOps` are included in the EIP712 signature, which enables execution order
+        /// The `encodedPreCalls` are included in the EIP712 signature, which enables execution order
         /// to be enforced on-the-fly even if the nonces are from different sequences.
-        bytes[] encodedPreOps;
+        bytes[] encodedPreCalls;
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
@@ -118,11 +118,11 @@ sol! {
     }
 
 
-    /// A struct to hold the fields for a PreOp.
+    /// A struct to hold the fields for a PreCall.
     /// Like a Intent with a subset of fields.
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct PreOp {
+    struct SignedCall {
         /// The user's address.
         ///
         /// This can be set to `address(0)`, which allows it to be
@@ -162,9 +162,9 @@ pub struct PartialIntent {
     pub init_data: Option<Bytes>,
     /// Optional payer of the gas.
     pub payer: Option<Address>,
-    /// Optional array of encoded PreOps that will be verified and executed before the
+    /// Optional array of encoded PreCalls that will be verified and executed before the
     /// verification of the overall Intent.
-    pub pre_ops: Vec<PreOp>,
+    pub pre_calls: Vec<SignedCall>,
 }
 
 mod eip712 {
@@ -183,11 +183,11 @@ mod eip712 {
             uint256 prePaymentMaxAmount;
             uint256 totalPaymentMaxAmount;
             uint256 combinedGas;
-            bytes[] encodedPreOps;
+            bytes[] encodedPreCalls;
         }
 
         #[derive(serde::Serialize)]
-        struct PreOp {
+        struct SignedCall {
             bool multichain;
             address eoa;
             Call[] calls;
@@ -221,24 +221,24 @@ impl Intent {
         hasher.update(self.prePaymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.totalPaymentMaxAmount.to_be_bytes::<32>());
         hasher.update(self.combinedGas.to_be_bytes::<32>());
-        let pre_ops_hash = {
+        let pre_calls_hash = {
             let mut hasher = Keccak256::new();
-            for pre_op in self.encodedPreOps.iter() {
-                hasher.update(keccak256(pre_op));
+            for pre_call in self.encodedPreCalls.iter() {
+                hasher.update(keccak256(pre_call));
             }
             hasher.finalize()
         };
-        hasher.update(pre_ops_hash);
+        hasher.update(pre_calls_hash);
         hasher.update(self.supportedDelegationImplementation);
         hasher.finalize()
     }
 
-    /// Returns all keys authorized in `pre_ops`.
+    /// Returns all keys authorized in `pre_calls`.
     pub fn pre_authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        let mut all_keys = Vec::with_capacity(self.encodedPreOps.len());
-        for encoded_op in &self.encodedPreOps {
-            let pre_op = PreOp::abi_decode(encoded_op)?;
-            all_keys.extend(pre_op.authorized_keys_from_execution_data()?);
+        let mut all_keys = Vec::with_capacity(self.encodedPreCalls.len());
+        for encoded_precall in &self.encodedPreCalls {
+            let pre_call = SignedCall::abi_decode(encoded_precall)?;
+            all_keys.extend(pre_call.authorized_keys_from_execution_data()?);
         }
         Ok(all_keys)
     }
@@ -251,8 +251,8 @@ impl Intent {
     }
 }
 
-/// Shared behaviour between [`Intent`] and [`PreOp`].
-pub trait Op {
+/// Shared behaviour between [`Intent`] and [`PreCall`].
+pub trait SignedCalls {
     /// Returns `executionData`.
     fn execution_data(&self) -> &[u8];
 
@@ -319,7 +319,7 @@ pub trait Op {
     }
 }
 
-impl Op for PreOp {
+impl SignedCalls for SignedCall {
     fn execution_data(&self) -> &[u8] {
         &self.executionData
     }
@@ -329,7 +329,7 @@ impl Op for PreOp {
     }
 
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        Ok(eip712::PreOp {
+        Ok(eip712::SignedCall {
             multichain: self.is_multichain(),
             eoa: self.eoa,
             calls: self.calls()?,
@@ -338,7 +338,7 @@ impl Op for PreOp {
     }
 }
 
-impl Op for Intent {
+impl SignedCalls for Intent {
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
         Ok(eip712::Intent {
             multichain: self.is_multichain(),
@@ -350,7 +350,7 @@ impl Op for Intent {
             prePaymentMaxAmount: self.prePaymentMaxAmount,
             totalPaymentMaxAmount: self.totalPaymentMaxAmount,
             combinedGas: self.combinedGas,
-            encodedPreOps: self.encodedPreOps.clone(),
+            encodedPreCalls: self.encodedPreCalls.clone(),
         })
     }
 
@@ -362,7 +362,7 @@ impl Op for Intent {
         self.nonce
     }
 
-    /// Returns all keys authorized in the current [`Intent`] including `pre_ops`, `executionData`
+    /// Returns all keys authorized in the current [`Intent`] including `pre_calls`, `executionData`
     /// and `initData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         let keys = self.authorized_keys_from_execution_data()?;
@@ -427,7 +427,7 @@ mod tests {
             totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
             initData: bytes!(""),
-            encodedPreOps: vec![],
+            encodedPreCalls: vec![],
             prePaymentAmount: U256::from(3822601006u64),
             totalPaymentAmount: U256::from(3822601006u64),
             paymentRecipient: Address::ZERO,
@@ -477,7 +477,7 @@ mod tests {
             totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
             initData: bytes!(""),
-            encodedPreOps: vec![],
+            encodedPreCalls: vec![],
             prePaymentAmount: U256::from(1021265804),
             totalPaymentAmount: U256::from(1021265804),
             paymentRecipient: Address::ZERO,

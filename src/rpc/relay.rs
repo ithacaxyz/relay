@@ -16,9 +16,9 @@ use crate::{
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType,
-        ORCHESTRATOR_NO_ERROR, Op,
+        ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
-        PreOp, VersionedContracts,
+        SignedCall, SignedCalls, VersionedContracts,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
             RelayCapabilities, RelayFees, ValidSignatureProof,
@@ -314,11 +314,11 @@ impl Relay {
             paymentRecipient: self.inner.fee_recipient,
             initData: request.intent.init_data.unwrap_or_default(),
             supportedDelegationImplementation: delegation,
-            encodedPreOps: request
+            encodedPreCalls: request
                 .intent
-                .pre_ops
+                .pre_calls
                 .into_iter()
-                .map(|pre_op| pre_op.abi_encode().into())
+                .map(|pre_call| pre_call.abi_encode().into())
                 .collect(),
             ..Default::default()
         };
@@ -624,19 +624,19 @@ impl Relay {
         Ok(calls)
     }
 
-    /// Given a key hash and a list of [`PreOp`], it tries to find a key from a requested EOA.
+    /// Given a key hash and a list of [`PreCall`], it tries to find a key from a requested EOA.
     ///
     /// If it cannot find it, it will attempt to fetch it from storage or on-chain.
     async fn try_find_key(
         &self,
         from: Address,
         key_hash: KeyHash,
-        ops: &[PreOp],
+        pre_calls: &[SignedCall],
         chain_id: ChainId,
     ) -> Result<Option<Key>, RelayError> {
-        for pre_op in ops {
+        for pre_call in pre_calls {
             if let Some(key) =
-                pre_op.authorized_keys()?.iter().find(|key| key.key_hash() == key_hash)
+                pre_call.authorized_keys()?.iter().find(|key| key.key_hash() == key_hash)
             {
                 return Ok(Some(key.clone()));
             }
@@ -673,7 +673,7 @@ impl Relay {
         // If we are planning to use a session key as the first intent signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
         //
-        // This is done by adding an extra call to the preop to give it permission to do so.
+        // This is done by adding an extra call to the precall to give it permission to do so.
         //
         // We assume that this is the first intent if ANY of the following options is true:
         // * `maybe_prep_init` is `Some` as described in `generate_calls`
@@ -684,7 +684,7 @@ impl Relay {
             .authorize_keys
             .iter()
             .filter(|auth| {
-                request.capabilities.pre_op
+                request.capabilities.pre_call
                     && !auth.key.isSuperAdmin
                     && (maybe_prep_init.is_some() || request.from.is_none())
             })
@@ -700,7 +700,7 @@ impl Relay {
         // If this is the first user intent of this PREPAccount, we need to register the admin
         // accounts into the AccountRegistry contract.
         let account_registry_calls =
-            maybe_prep_init.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
+            maybe_prep_init.iter().filter(|_| !request.capabilities.pre_call).flat_map(|acc| {
                 acc.id_signatures
                     .iter()
                     .map(|id| id.to_call(self.account_registry(), acc.prep.address))
@@ -917,7 +917,7 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        // Checks calls and preop calls in the request
+        // Checks calls and precall calls in the request
         request.check_calls(self.delegation_implementation())?;
 
         let provider = self.provider(request.chain_id)?;
@@ -946,16 +946,16 @@ impl RelayApiServer for Relay {
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request.get_nonce(maybe_prep.as_ref(), &provider).await?;
 
-        // If we're dealing with a PreOp do not estimate
-        let (asset_diff, context) = if request.capabilities.pre_op {
-            let preop = PreOp {
+        // If we're dealing with a PreCall do not estimate
+        let (asset_diff, context) = if request.capabilities.pre_call {
+            let precall = SignedCall {
                 eoa: request.from.unwrap_or_default(),
                 executionData: calls.abi_encode().into(),
                 nonce,
                 signature: Bytes::new(),
             };
 
-            (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
+            (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
         } else {
             let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
             let Some(request_key) = &request.key else {
@@ -965,7 +965,7 @@ impl RelayApiServer for Relay {
 
             // Find the key that authorizes this intent
             let Some(key) = self
-                .try_find_key(eoa, key_hash, &request.capabilities.pre_ops, request.chain_id)
+                .try_find_key(eoa, key_hash, &request.capabilities.pre_calls, request.chain_id)
                 .await?
             else {
                 return Err(KeysError::UnknownKeyHash(key_hash).into());
@@ -981,7 +981,7 @@ impl RelayApiServer for Relay {
                             nonce,
                             init_data: maybe_prep.as_ref().map(|acc| acc.prep.init_data()),
                             payer: request.capabilities.meta.fee_payer,
-                            pre_ops: request.capabilities.pre_ops.clone(),
+                            pre_calls: request.capabilities.pre_calls.clone(),
                         },
                         chain_id: request.chain_id,
                         prehash: request_key.prehash,
@@ -1073,7 +1073,7 @@ impl RelayApiServer for Relay {
                         nonce,
                         init_data: None,
                         payer: request.capabilities.fee_payer,
-                        pre_ops: vec![],
+                        pre_calls: vec![],
                     },
                     chain_id: request.chain_id,
                     // signed by the eoa root key

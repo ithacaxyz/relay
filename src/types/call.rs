@@ -109,8 +109,8 @@ impl Call {
         }
     }
 
-    /// Whether this call is whitelisted for preops.
-    pub fn is_whitelisted_preop(
+    /// Whether this call is whitelisted for precalls.
+    pub fn is_whitelisted_precall(
         &self,
         account: Address,
         latest_delegation: Address,
@@ -149,7 +149,7 @@ impl Call {
     }
 }
 
-/// All selectors allowed in preops.
+/// All selectors allowed in precalls.
 const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
     authorizeCall::SELECTOR,
     revokeCall::SELECTOR,

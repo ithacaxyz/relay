@@ -198,8 +198,8 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
                     fee_token: env.fee_token,
                     nonce: Some(U256::from(1)),
                 },
-                pre_ops: vec![],
-                pre_op: false,
+                pre_calls: vec![],
+                pre_call: false,
             },
             key: Some(call_key),
         })
