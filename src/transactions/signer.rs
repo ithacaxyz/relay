@@ -1,4 +1,5 @@
 use super::{
+    TxMonitoringHandle,
     fees::{FeeContext, FeesError, MIN_GAS_PRICE_BUMP},
     metrics::{SignerMetrics, TransactionServiceMetrics},
     transaction::{
@@ -22,7 +23,7 @@ use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, B256, Bytes, U256, uint},
     providers::{
-        DynProvider, PendingTransactionConfig, PendingTransactionError, Provider,
+        DynProvider, PendingTransactionError, Provider, ProviderBuilder,
         utils::{
             EIP1559_FEE_ESTIMATION_PAST_BLOCKS, EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
             Eip1559Estimator,
@@ -145,6 +146,8 @@ pub struct SignerInner {
     paused: AtomicBool,
     /// Configuration for the service.
     config: TransactionServiceConfig,
+    /// Handle for monitoring pending transactions.
+    monitor: TxMonitoringHandle,
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -189,6 +192,15 @@ impl Signer {
             )
         };
 
+        let external_provider = if let Some(endpoint) = config.public_node_endpoints.get(&chain_id)
+        {
+            Some(ProviderBuilder::new().connect(endpoint.as_str()).await?.erased())
+        } else {
+            None
+        };
+
+        let monitor = TxMonitoringHandle::new(provider.clone(), external_provider.clone()).await?;
+
         let inner = SignerInner {
             id,
             provider,
@@ -201,6 +213,7 @@ impl Signer {
             metrics: SignerMetrics::new(tx_metrics, address, chain_id),
             paused: AtomicBool::new(false),
             config,
+            monitor,
         };
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -392,23 +405,12 @@ impl Signer {
 
             let mut handles = FuturesUnordered::new();
             for sent in &tx.sent {
-                handles.push(
-                    self.provider
-                        .watch_pending_transaction(
-                            PendingTransactionConfig::new(*sent.tx_hash())
-                                .with_timeout(Some(self.block_time * 2)),
-                        )
-                        .await?,
-                );
+                handles.push(self.monitor.watch_transaction(*sent.tx_hash(), self.block_time * 2));
             }
 
-            loop {
-                match handles.next().await {
-                    Some(Ok(tx_hash)) => {
-                        return Ok(tx_hash);
-                    }
-                    Some(_) => continue,
-                    None => break,
+            while let Some(tx_hash) = handles.next().await {
+                if let Some(tx_hash) = tx_hash {
+                    return Ok(tx_hash);
                 }
             }
 
@@ -610,13 +612,9 @@ impl Signer {
             let tx = self.sign_transaction(tx).await?;
             self.send_transaction(&tx).await?;
             // Give transaction 10 blocks to be mined.
-            self.provider
-                .watch_pending_transaction(
-                    PendingTransactionConfig::new(*tx.tx_hash())
-                        .with_timeout(Some(self.block_time * 10)),
-                )
-                .await?
-                .await?;
+            if self.monitor.watch_transaction(*tx.tx_hash(), self.block_time * 10).await.is_none() {
+                return Err(SignerError::TxTimeout);
+            }
 
             Ok::<_, SignerError>(())
         };

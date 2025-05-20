@@ -8,3 +8,5 @@ mod transaction;
 pub use transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TxId};
 mod fees;
 mod metrics;
+mod monitor;
+pub use monitor::TxMonitoringHandle;
