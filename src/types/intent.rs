@@ -275,20 +275,20 @@ pub trait SignedCalls {
         }))
     }
 
-    /// Returns all keys authorized in the current op.
+    /// Returns all keys authorized in the current intent.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         Ok(self.authorized_keys_from_execution_data()?.collect())
     }
 
-    /// Whether this op is multichain.
+    /// Whether this intent is multichain.
     ///
-    /// If the op is multichain, the EIP712 domain used for the signing hash of the op should not
-    /// include a chain ID.
+    /// If the intent is multichain, the EIP712 domain used for the signing hash of the intent
+    /// should not include a chain ID.
     fn is_multichain(&self) -> bool {
         self.nonce() >> 240 == MULTICHAIN_NONCE_PREFIX
     }
 
-    /// Get the EIP712 encoding of the op.
+    /// Get the EIP712 encoding of the intent.
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
 
     /// Computes the EIP-712 digest that the user must sign.

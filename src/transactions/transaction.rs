@@ -46,19 +46,19 @@ impl RelayTransaction {
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let quote = self.quote.ty();
-        let mut op = quote.intent.clone();
+        let mut intent = quote.intent.clone();
 
         let payment_amount = (quote.extra_payment
-            + (op.combinedGas
+            + (intent.combinedGas
                 * U256::from(fees.max_fee_per_gas)
                 * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
             .div_ceil(quote.eth_price))
-        .min(op.totalPaymentMaxAmount);
+        .min(intent.totalPaymentMaxAmount);
 
-        op.prePaymentAmount = payment_amount;
-        op.totalPaymentAmount = payment_amount;
+        intent.prePaymentAmount = payment_amount;
+        intent.totalPaymentAmount = payment_amount;
 
-        let input = op.encode_execute();
+        let input = intent.encode_execute();
 
         if let Some(auth) = &self.authorization {
             TxEip7702 {

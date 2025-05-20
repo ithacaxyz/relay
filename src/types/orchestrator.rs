@@ -246,7 +246,7 @@ impl<P: Provider> Orchestrator<P> {
 
         let Ok(simulation_result) = SimulationResult::abi_decode(&result.return_data) else {
             return Err(TransportErrorKind::custom_str(&format!(
-                "could not decode op simulation return data: {}",
+                "could not decode intent simulation return data: {}",
                 result.return_data
             ))
             .into());

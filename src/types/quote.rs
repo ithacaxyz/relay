@@ -37,7 +37,7 @@ pub struct Quote {
     pub ttl: SystemTime,
     /// An optional unsigned authorization item.
     ///
-    /// The account in `op.eoa` will be delegated to this address.
+    /// The account in `intent.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,

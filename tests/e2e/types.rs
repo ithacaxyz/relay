@@ -294,12 +294,12 @@ pub async fn build_pre_calls<'a>(
         let signer = tx.key.expect("intent should have a key");
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = context.take_precall().unwrap();
-        op.signature =
+        let mut intent = context.take_precall().unwrap();
+        intent.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()
                 .into();
-        op
+        intent
     }))
     .await;
 

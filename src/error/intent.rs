@@ -19,7 +19,7 @@ pub enum IntentError {
     #[error("intent creation requires a signing key.")]
     MissingKey,
     /// The intent could not be simulated.
-    #[error("the op could not be simulated")]
+    #[error("the intent could not be simulated")]
     SimulationError,
     /// The precall can only contain account management calls.
     #[error("the precall can only contain account management calls.")]
