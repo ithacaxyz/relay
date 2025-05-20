@@ -1,10 +1,11 @@
+use std::ops::Not;
+
 use super::{
     IERC20::{self},
     IERC721, TokenKind,
 };
 use alloy::primitives::{
     Address, U256, address,
-    aliases::I512,
     map::{HashMap, HashSet},
 };
 use serde::{Deserialize, Serialize};
@@ -20,11 +21,9 @@ impl AssetDiffs {
     }
 
     /// By default, asset diffs include the user op payment. This ensures it gets removed.
-    pub fn remove_payer_fee(&mut self, payer: Address, asset: Address, fee: U256) {
-        let fee = I512::try_from_le_slice(fee.as_le_slice()).expect("u256→i512");
-
+    pub fn remove_payer_fee(&mut self, payer: Address, asset: Asset, fee: U256) {
         // Asset diff expects a None asset address if dealing with the native token.
-        let asset = (!asset.is_zero()).then_some(asset);
+        let asset = asset.is_native().not().then(|| asset.address());
 
         self.0.retain_mut(|(eoa, diffs)| {
             if eoa == &payer {
@@ -34,7 +33,20 @@ impl AssetDiffs {
                         return true;
                     }
 
-                    diff.value += fee;
+                    if diff.direction.is_outgoing() {
+                        // net was outgoing: remove fee
+                        if diff.value > fee {
+                            // still outgoing
+                            diff.value -= fee;
+                        } else {
+                            // flip to incoming with leftover
+                            diff.direction = DiffDirection::Incoming;
+                            diff.value = fee - diff.value;
+                        }
+                    } else {
+                        // net was incoming: just add the fee
+                        diff.value += fee;
+                    }
 
                     !diff.value.is_zero()
                 });
@@ -61,8 +73,10 @@ pub struct AssetDiff {
     pub uri: Option<String>,
     /// Asset decimals.
     pub decimals: Option<u8>,
-    /// Value diff.
-    pub value: I512,
+    /// Value or id.
+    pub value: U256,
+    /// Incoming or outgoing direction.
+    pub direction: DiffDirection,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
@@ -131,8 +145,8 @@ pub struct AssetDiffBuilder {
 struct AccountChanges {
     /// Account debits and credits per asset.
     fungible: HashMap<Asset, (U256, U256)>,
-    /// Account nft sends (negative id value) and receives (positive id value).
-    non_fungible: HashSet<(Asset, I512)>,
+    /// Account nft sends and receives.
+    non_fungible: HashSet<(Asset, DiffDirection, U256)>,
 }
 
 impl AssetDiffBuilder {
@@ -147,12 +161,9 @@ impl AssetDiffBuilder {
             changes
                 .non_fungible
                 .iter()
-                .filter(|(asset, change)| change.is_positive() && !asset.is_native())
-                // Safe to cast, since IDs were originally U256.
+                .filter(|(asset, change, _)| change.is_incoming() && asset.is_native().not())
                 // Safe to call .address() since we filter off native assets.
-                .map(|(asset, id)| {
-                    (asset.address(), U256::from_le_slice(&id.to_le_bytes::<64>()[..32]))
-                })
+                .map(|(asset, _, id)| (asset.address(), *id))
         })
     }
 
@@ -183,25 +194,23 @@ impl AssetDiffBuilder {
     pub fn record_erc721(&mut self, asset: Asset, transfer: IERC721::Transfer) {
         self.seen_assets.insert(asset);
 
-        let id = I512::try_from_le_slice(transfer.id.as_le_slice()).expect("u256→i512");
-
         for &(eoa, diff) in &[
-            (transfer.from, -id), // sent
-            (transfer.to, id),    // received
+            (transfer.from, DiffDirection::Outgoing), // sent
+            (transfer.to, DiffDirection::Incoming),   // received
         ] {
             // we are only interested in collapsed/net diffs. When a eoa sends and
             // receives the same NFT, it should not have an entry.
             //
             // * if there is no other diff: insert it
-            // * if the eoa is sending (negative number), but there is a diff with a receiving event
-            //   (positive number): just remove existing
-            // * if the eoa is receiving (positive number), but there is a diff with a sending event
-            //   (negative number): just remove existing
+            // * if the eoa is sending, but there is a diff with a receiving event: just remove
+            //   existing
+            // * if the eoa is receiving, but there is a diff with a sending event: just remove
+            //   existing
 
             let nft_set = &mut self.per_account.entry(eoa).or_default().non_fungible;
 
-            if !nft_set.remove(&(asset, -diff)) {
-                nft_set.insert((asset, diff));
+            if !nft_set.remove(&(asset, diff.opposite(), transfer.id)) {
+                nft_set.insert((asset, diff, transfer.id));
             }
         }
     }
@@ -220,43 +229,49 @@ impl AssetDiffBuilder {
 
             // fungible tokens
             for (asset, (credit, debit)) in changes.fungible {
-                let net = I512::try_from_le_slice(credit.as_le_slice()).expect("u256→i512")
-                    - I512::try_from_le_slice(debit.as_le_slice()).expect("u256→i512");
-
-                if net.is_zero() {
+                // skip zero‐net
+                if credit == debit {
                     continue;
                 }
 
+                let (direction, value) = if credit > debit {
+                    (DiffDirection::Incoming, credit - debit)
+                } else {
+                    (DiffDirection::Outgoing, debit - credit)
+                };
+
                 let info = &metadata[&asset];
                 account_diffs.push(AssetDiff {
-                    token_kind: (!asset.is_native()).then_some(TokenKind::ERC20),
-                    address: (!asset.is_native()).then(|| asset.address()),
+                    token_kind: asset.is_native().not().then_some(TokenKind::ERC20),
+                    address: asset.is_native().not().then(|| asset.address()),
                     name: info.name.clone(),
                     symbol: info.symbol.clone(),
                     decimals: info.decimals,
                     uri: None,
-                    value: net,
+                    value,
+                    direction,
                 });
             }
 
             // non-fungible tokens
-            for (asset, id) in changes.non_fungible {
+            for (asset, direction, id) in changes.non_fungible {
                 let info = &metadata[&asset];
-                let uri = (!asset.is_native())
-                    .then(|| {
-                        (asset.address(), U256::from_le_slice(&id.abs().to_le_bytes::<64>()[..32]))
-                    })
+                let uri = asset
+                    .is_native()
+                    .not()
+                    .then(|| (asset.address(), id))
                     .and_then(|key| tokens_uris.get(&key).cloned())
                     .flatten();
 
                 account_diffs.push(AssetDiff {
-                    token_kind: (!asset.is_native()).then_some(TokenKind::ERC721),
-                    address: (!asset.is_native()).then(|| asset.address()),
+                    token_kind: asset.is_native().not().then_some(TokenKind::ERC721),
+                    address: asset.is_native().not().then(|| asset.address()),
                     name: info.name.clone(),
                     symbol: info.symbol.clone(),
                     uri,
                     decimals: info.decimals,
                     value: id,
+                    direction,
                 });
             }
 
@@ -267,5 +282,35 @@ impl AssetDiffBuilder {
         }
 
         AssetDiffs(entries)
+    }
+}
+
+/// Direction of an asset diff from a EOA perspective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffDirection {
+    /// Incoming asset.
+    Incoming,
+    /// Outgoing asset.
+    Outgoing,
+}
+
+impl DiffDirection {
+    /// Return the opposite direction.
+    pub fn opposite(&self) -> Self {
+        match self {
+            DiffDirection::Incoming => DiffDirection::Outgoing,
+            DiffDirection::Outgoing => DiffDirection::Incoming,
+        }
+    }
+
+    /// Whether it's incoming.
+    pub fn is_incoming(&self) -> bool {
+        matches!(self, Self::Incoming)
+    }
+
+    /// Whether it's outgoing.
+    pub fn is_outgoing(&self) -> bool {
+        matches!(self, Self::Outgoing)
     }
 }
