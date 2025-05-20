@@ -16,6 +16,7 @@ name = "stress"
 alloy = { version = "1.0.1", features = [
     "std",
     "essentials",
+    "provider-ws",
     "getrandom",
     "dyn-abi",
     "eip712",
