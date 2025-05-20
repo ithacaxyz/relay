@@ -25,10 +25,10 @@ impl<S> SequencerLayer<S> {
     }
 }
 
-impl<T, S: Clone> Layer<T> for SequencerLayer<T, S> {
-    type Service = SequencerService<S>;
+impl<T, S: Clone> Layer<T> for SequencerLayer<S> {
+    type Service = SequencerService<T, S>;
 
-    fn layer(&self, inner: S) -> Self::Service {
+    fn layer(&self, inner: T) -> Self::Service {
         SequencerService { inner, sequencer: self.sequencer.clone() }
     }
 }
