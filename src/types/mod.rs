@@ -17,6 +17,9 @@ pub use coin::*;
 mod coin_registry;
 pub use coin_registry::*;
 
+mod contracts;
+pub use contracts::*;
+
 mod entrypoint;
 pub use entrypoint::*;
 

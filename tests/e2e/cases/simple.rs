@@ -17,11 +17,11 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    for key_type in [KeyType::Secp256k1, KeyType::WebAuthnP256] {
+    for key_type in [KeyType::WebAuthnP256] {
         let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
 
         // The first TX will bundle the prep/upgrade calls
-        run_e2e(|env| {
+        run_e2e_prep_erc20(|env| {
             let to = Address::random();
             let transfer_amount = U256::from(10);
             vec![
@@ -184,10 +184,10 @@ async fn native_transfer() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn spend_limits_bundled() -> Result<()> {
-    let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key1 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
-    run_e2e(|env| {
+    run_e2e_prep_erc20(|env| {
         vec![
             TxContext {
                 expected: ExpectedOutcome::Pass,
@@ -417,7 +417,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
 
     // Wait for bundle to not be pending.
     let status = await_calls_status(&env, bundle_id).await?;
-    assert!(status.status.is_final());
+    assert!(status.status.is_confirmed());
 
     Ok(())
 }

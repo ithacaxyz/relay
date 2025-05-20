@@ -13,7 +13,7 @@ use alloy::{
 };
 use tracing::debug;
 
-use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
+use super::{Asset, KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::P256_GAS_BUFFER,
@@ -177,6 +177,11 @@ impl<P: Provider> Entry<P> {
         self.entrypoint.address()
     }
 
+    /// Get the version of the entrypoint.
+    pub async fn version(&self) -> TransportResult<String> {
+        Ok(self.eip712_domain(false).await?.version.unwrap_or_default().to_string())
+    }
+
     /// Sets overrides for all calls on this entrypoint.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
@@ -255,9 +260,11 @@ impl<P: Provider> Entry<P> {
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let simulated_payment = op.prePaymentAmount + payment_per_gas * simulation_result.gCombined;
+        let payment_token =
+            if op.paymentToken.is_zero() { Asset::Native } else { Asset::Token(op.paymentToken) };
         let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
         if op.payer == op.eoa || op.payer.is_zero() {
-            asset_diffs.remove_payer_fee(payer, op.paymentToken, simulated_payment);
+            asset_diffs.remove_payer_fee(payer, payment_token, simulated_payment);
         }
 
         Ok((asset_diffs, simulation_result))

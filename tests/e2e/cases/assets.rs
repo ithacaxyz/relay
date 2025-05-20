@@ -116,24 +116,25 @@ async fn asset_diff() -> eyre::Result<()> {
         async { env.relay_endpoint.prepare_calls(p).await }
     };
 
-    let find_diff = |resp: &PrepareCallsResponse, eoa: Address, token: Address, is_inflow: bool| {
-        resp.capabilities
-            .asset_diff
-            .0
-            .iter()
-            .filter(|(addr, _)| addr == &eoa)
-            .flat_map(|(_, diffs)| diffs.iter())
-            .find(|d| d.address == Some(token) && d.value.is_negative() != is_inflow)
-            .map(|d| d.value)
-    };
+    let find_diff =
+        |resp: &PrepareCallsResponse, eoa: Address, token: Address, is_incoming: bool| {
+            resp.capabilities
+                .asset_diff
+                .0
+                .iter()
+                .filter(|(addr, _)| addr == &eoa)
+                .flat_map(|(_, diffs)| diffs.iter())
+                .find(|d| d.address == Some(token) && d.direction.is_incoming() == is_incoming)
+                .map(|d| d.value)
+        };
 
     let mint_erc721 = if std::env::var("TEST_ERC721").is_ok() {
         Call { to: env.erc721, value: U256::ZERO, data: MockErc721::mintCall::SELECTOR.into() }
     } else {
-        common_calls::mint(env.erc721, env.eoa.address(), U256::from(1337u64))
+        common_calls::mint(env.erc721, env.eoa.address(), U256::ZERO)
     };
 
-    let is_inflow = true;
+    let is_incoming = true;
 
     // test1: eoa should receive exactly one new ERC721, and spend the ERC20
     let resp1 = prepare_calls(vec![
@@ -142,9 +143,9 @@ async fn asset_diff() -> eyre::Result<()> {
         mint_erc721.clone(),
     ])
     .await?;
-    let erc721_id = find_diff(&resp1, env.eoa.address(), env.erc721, is_inflow)
+    let erc721_id = find_diff(&resp1, env.eoa.address(), env.erc721, is_incoming)
         .expect("must have received ERC721");
-    assert!(find_diff(&resp1, env.eoa.address(), env.erc20s[5], !is_inflow).is_some());
+    assert!(find_diff(&resp1, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
 
     // test2: eoa mints and transfers the NFT out. So, only the receiving address should have have
     // an inflow.
@@ -154,12 +155,7 @@ async fn asset_diff() -> eyre::Result<()> {
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
         common_calls::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
         mint_erc721,
-        common_calls::transfer_721(
-            env.erc721,
-            env.eoa.address(),
-            random_eoa,
-            U256::from_le_slice(&erc721_id.to_le_bytes::<64>()[..32]),
-        ),
+        common_calls::transfer_721(env.erc721, env.eoa.address(), random_eoa, erc721_id),
     ])
     .await?;
 
@@ -167,10 +163,10 @@ async fn asset_diff() -> eyre::Result<()> {
     assert!(find_diff(&resp2, env.eoa.address(), env.erc721, false).is_none());
 
     // random eoa should hold the nft token
-    assert_eq!(find_diff(&resp2, random_eoa, env.erc721, is_inflow), Some(erc721_id));
+    assert_eq!(find_diff(&resp2, random_eoa, env.erc721, is_incoming), Some(erc721_id));
 
     // ERC20 spend repeats
-    assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_inflow).is_some());
+    assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
 
     Ok(())
 }
@@ -199,10 +195,10 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
             .filter(move |asset| {
                 asset.address == Some(env.erc721)
                     && asset.token_kind == Some(TokenKind::ERC721)
-                    && asset.value.is_positive()
+                    && asset.direction.is_incoming()
             })
             .filter(|d| d.uri.is_some())
-            .map(|d| U256::from_le_slice(&d.value.to_le_bytes::<64>()[..32]))
+            .map(|d| d.value)
             .collect::<HashSet<U256>>();
 
         assert!(tokens.len() == expected);

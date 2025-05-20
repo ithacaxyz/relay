@@ -185,6 +185,7 @@ pub struct UpgradeAccountResponse {
 
 /// Request parameters for `wallet_getAccounts`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetAccountsParameters {
     /// Key identifier.
     pub id: KeyID,

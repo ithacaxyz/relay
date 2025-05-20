@@ -176,6 +176,23 @@ sol! {
         /// Upgrades the implementation.
         function upgradeProxyDelegation(address newImplementation);
 
+        /// Returns the EIP712 domain of the delegation.
+        ///
+        /// See: https://eips.ethereum.org/EIPS/eip-5267
+        function eip712Domain()
+            public
+            view
+            virtual
+            returns (
+                bytes1 fields,
+                string memory name,
+                string memory version,
+                uint256 chainId,
+                address verifyingContract,
+                bytes32 salt,
+                uint256[] memory extensions
+            );
+
     }
 }
 
@@ -227,6 +244,18 @@ impl<P: Provider> Account<P> {
             delegation: DelegationInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
+    }
+
+    /// Get the version of the account.
+    pub async fn version(&self) -> TransportResult<String> {
+        Ok(self
+            .delegation
+            .eip712Domain()
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?
+            .version)
     }
 
     /// Returns the address of the account.
