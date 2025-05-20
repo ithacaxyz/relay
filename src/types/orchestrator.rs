@@ -143,7 +143,7 @@ sol! {
         /// If the EOA's delegation's is not valid EIP7702Proxy (via bytecode check), returns `address(0)`.
         ///
         /// This function is provided as a public helper for easier integration.
-        function delegationImplementationOf(address eoa) public view virtual returns (address result);
+        function accountImplementationOf(address eoa) public view virtual returns (address result);
 
         /// The pause flag.
         function pauseFlag() public returns (uint256);

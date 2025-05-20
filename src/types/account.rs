@@ -2,7 +2,7 @@ use super::{
     Call,
     IDelegation::authorizeCall,
     Key, KeyHash,
-    OrchestratorContract::delegationImplementationOfCall,
+    OrchestratorContract::accountImplementationOfCall,
     Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
@@ -285,7 +285,7 @@ impl<P: Provider> Account<P> {
 
     /// Returns this account delegation implementation if it exists.
     ///
-    /// The `delegationImplementationOf` call to the orchestrator also verifies that the delegation
+    /// The `accountImplementationOf` call to the orchestrator also verifies that the delegation
     /// proxy is valid. If it's not, this will return an error.
     pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
         // Only query eth_getCode, if there is no 7702 code override present for the account
@@ -300,19 +300,21 @@ impl<P: Provider> Account<P> {
             return Ok(None);
         }
 
-        let delegation =
-            self.delegation
-                .provider()
-                .call(TransactionRequest::default().to(self.get_orchestrator().await?).input(
-                    delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
-                ))
-                .overrides(self.overrides.clone())
-                .await
-                .and_then(|ret| {
-                    delegationImplementationOfCall::abi_decode_returns(&ret)
-                        .map_err(TransportErrorKind::custom)
-                })
-                .map_err(RelayError::from)?;
+        let delegation = self
+            .delegation
+            .provider()
+            .call(
+                TransactionRequest::default()
+                    .to(self.get_orchestrator().await?)
+                    .input(accountImplementationOfCall { eoa: self.address() }.abi_encode().into()),
+            )
+            .overrides(self.overrides.clone())
+            .await
+            .and_then(|ret| {
+                accountImplementationOfCall::abi_decode_returns(&ret)
+                    .map_err(TransportErrorKind::custom)
+            })
+            .map_err(RelayError::from)?;
 
         // A zero address means an invalid delegation proxy.
         if delegation.is_zero() {
