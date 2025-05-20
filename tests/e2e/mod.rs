@@ -120,7 +120,7 @@ async fn await_calls_status(
 }
 
 /// Obtains a [`SignedQuote`] from the relay by calling `wallet_prepare_calls` and signs the
-/// `UserOp`
+/// `Intent`
 pub async fn prepare_calls(
     tx_num: usize,
     tx: &TxContext<'_>,
@@ -130,7 +130,7 @@ pub async fn prepare_calls(
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_ops = build_pre_ops(env, &tx.pre_ops, tx_num).await?;
 
-    // Deliberately omit the `from` address for the very first UserOp preops
+    // Deliberately omit the `from` address for the very first Intent preops
     // to test the path where prepops are signed before the PREPAddress is known. eg. during
     // creation of the first passkey.
     let from = (tx_num != 0 || !pre_op).then_some(env.eoa.address());
@@ -172,7 +172,7 @@ pub async fn prepare_calls(
     Ok(Some((signature, context)))
 }
 
-/// Sends quote and UserOp signature to be broadcasted.
+/// Sends quote and Intent signature to be broadcasted.
 pub async fn send_prepared_calls(
     env: &Environment,
     signer: &KeyWith712Signer,

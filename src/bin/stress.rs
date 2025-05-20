@@ -302,7 +302,7 @@ struct Args {
     chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
-    /// This account should have sufficient fee tokens to cover the gas costs of the userops.
+    /// This account should have sufficient fee tokens to cover the gas costs of the intents.
     #[arg(long = "private-key", value_name = "PRIVATE_KEY", required = true, env = "PK")]
     private_key: String,
     /// Address of the fee token to use for testing.

@@ -17,13 +17,13 @@ pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
 pub const MULTICHAIN_NONCE_PREFIX_U192: U192 = uint!(0xc1d0_U192);
 
 sol! {
-    /// A struct to hold the user operation fields.
+    /// A struct to hold the intenteration fields.
     ///
     /// Since L2s already include calldata compression with savings forwarded to users,
     /// we don't need to be too concerned about calldata overhead.
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct UserOp {
+    struct Intent {
         /// The user's address.
         address eoa;
         /// An encoded array of calls, using ERC7579 batch execution encoding.
@@ -52,14 +52,14 @@ sol! {
         ///      `-------------------------------------'
         ///
         /// If the upper 16 bits of the sequence key is `0xc1d0`, then the EIP-712 has
-        /// of the UserOp will exlude the chain ID.
+        /// of the Intent will exlude the chain ID.
         ///
         /// # Ordering
         ///
         /// Ordering matters within a sequence key, but not between sequence keys.
         ///
-        /// This means that users who do not care about the order of specific userops
-        /// can sign their userops using a random sequence key. On the other hand, if
+        /// This means that users who do not care about the order of specific intents
+        /// can sign their intents using a random sequence key. On the other hand, if
         /// they do care about ordering, they would use the same sequence key.
         uint256 nonce;
         /// The account paying the payment token.
@@ -75,13 +75,13 @@ sol! {
         uint256 totalPaymentMaxAmount;
         /// The combined gas limit for payment, verification, and calling the EOA.
         uint256 combinedGas;
-        /// Optional array of encoded UserOps that will be verified and executed
-        /// after PREP (if any) and before the validation of the overall UserOp.
+        /// Optional array of encoded Intents that will be verified and executed
+        /// after PREP (if any) and before the validation of the overall Intent.
         /// A PreOp will NOT have its gas limit or payment applied.
-        /// The overall UserOp's gas limit and payment will be applied, encompassing all its PreOps.
+        /// The overall Intent's gas limit and payment will be applied, encompassing all its PreOps.
         /// The execution of a PreOp will check and increment the nonce in the PreOp.
         /// If at any point, any PreOp cannot be verified to be correct, or fails in execution,
-        /// the overall UserOp will revert before validation, and execute will return a non-zero error.
+        /// the overall Intent will revert before validation, and execute will return a non-zero error.
         /// A PreOp can contain PreOps, forming a tree structure.
         /// The `executionData` tree will be executed in post-order (i.e. left -> right -> current).
         /// The `encodedPreOps` are included in the EIP712 signature, which enables execution order
@@ -119,21 +119,21 @@ sol! {
 
 
     /// A struct to hold the fields for a PreOp.
-    /// Like a UserOp with a subset of fields.
+    /// Like a Intent with a subset of fields.
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct PreOp {
         /// The user's address.
         ///
         /// This can be set to `address(0)`, which allows it to be
-        /// coalesced to the parent UserOp's EOA.
+        /// coalesced to the parent Intent's EOA.
         address eoa;
         /// An encoded array of calls, using ERC7579 batch execution encoding.
         ///
         /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
         /// This allows for more efficient safe forwarding to the EOA.
         bytes executionData;
-        /// Per delegated EOA. Same logic as the `nonce` in UserOp.
+        /// Per delegated EOA. Same logic as the `nonce` in Intent.
         uint256 nonce;
         /// The wrapped signature.
         ///
@@ -142,10 +142,10 @@ sol! {
     }
 }
 
-/// A partial [`UserOp`] used for fee estimation.
+/// A partial [`Intent`] used for fee estimation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PartialUserOp {
+pub struct PartialIntent {
     /// The user's address.
     pub eoa: Address,
     /// An encoded array of calls, using ERC7579 batch execution encoding.
@@ -163,7 +163,7 @@ pub struct PartialUserOp {
     /// Optional payer of the gas.
     pub payer: Option<Address>,
     /// Optional array of encoded PreOps that will be verified and executed before the
-    /// verification of the overall UserOp.
+    /// verification of the overall Intent.
     pub pre_ops: Vec<PreOp>,
 }
 
@@ -173,7 +173,7 @@ mod eip712 {
 
     sol! {
         #[derive(serde::Serialize)]
-        struct UserOp {
+        struct Intent {
             bool multichain;
             address eoa;
             Call[] calls;
@@ -196,8 +196,8 @@ mod eip712 {
     }
 }
 
-impl UserOp {
-    /// Sets the payment amount fields so it has the same behaviour as legacy UserOp.
+impl Intent {
+    /// Sets the payment amount fields so it has the same behaviour as legacy Intent.
     pub fn set_legacy_payment_amount(&mut self, amount: U256) {
         self.prePaymentAmount = amount;
         self.prePaymentMaxAmount = amount;
@@ -205,7 +205,7 @@ impl UserOp {
         self.totalPaymentMaxAmount = amount;
     }
 
-    /// Calculate a digest of the [`UserOp`], used for checksumming.
+    /// Calculate a digest of the [`Intent`], used for checksumming.
     ///
     /// # Note
     ///
@@ -243,15 +243,15 @@ impl UserOp {
         Ok(all_keys)
     }
 
-    /// Encodes this userop into calldata for [`OrchestratorContract::executeCall`].
+    /// Encodes this intent into calldata for [`OrchestratorContract::executeCall`].
     pub fn encode_execute(&self) -> Bytes {
-        OrchestratorContract::executeCall { encodedUserOp: self.abi_encode().into() }
+        OrchestratorContract::executeCall { encodedIntent: self.abi_encode().into() }
             .abi_encode()
             .into()
     }
 }
 
-/// Shared behaviour between [`UserOp`] and [`PreOp`].
+/// Shared behaviour between [`Intent`] and [`PreOp`].
 pub trait Op {
     /// Returns `executionData`.
     fn execution_data(&self) -> &[u8];
@@ -338,9 +338,9 @@ impl Op for PreOp {
     }
 }
 
-impl Op for UserOp {
+impl Op for Intent {
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        Ok(eip712::UserOp {
+        Ok(eip712::Intent {
             multichain: self.is_multichain(),
             eoa: self.eoa,
             calls: self.calls()?,
@@ -362,7 +362,7 @@ impl Op for UserOp {
         self.nonce
     }
 
-    /// Returns all keys authorized in the current [`UserOp`] including `pre_ops`, `executionData`
+    /// Returns all keys authorized in the current [`Intent`] including `pre_ops`, `executionData`
     /// and `initData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         let keys = self.authorized_keys_from_execution_data()?;
@@ -399,13 +399,13 @@ mod tests {
 
     #[test]
     fn is_multichain() {
-        assert!(!UserOp::default().is_multichain());
+        assert!(!Intent::default().is_multichain());
         assert!(
-            UserOp { nonce: U256::from(MULTICHAIN_NONCE_PREFIX << 240), ..Default::default() }
+            Intent { nonce: U256::from(MULTICHAIN_NONCE_PREFIX << 240), ..Default::default() }
                 .is_multichain()
         );
         assert!(
-            UserOp {
+            Intent {
                 nonce: (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338),
                 ..Default::default()
             }
@@ -414,8 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn user_op_eip712_digest() {
-        let mut user_op = UserOp {
+    fn intent_eip712_digest() {
+        let mut intent = Intent {
             eoa: address!("0x7b9fc63d6d9e8f94e90d1b0abfc3f611de2638d0"),
             executionData: bytes!(
                 "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e149600000000000000000000000000000000000000000000000000000000628c3be0000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000e32c67f61a578060c3776c5384f017e2f74184e2aeb81b3679c6d44b6db88522eeffffffff000000000000000000000000000000000000000000000000000000000000002c3d3d3d3d363d3d37363d73f62849f9a0b5bf2913b396098f7c7019b51a820a5af43d3d93803e602a57fd5bf300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -437,9 +437,9 @@ mod tests {
         };
 
         // Single chain op
-        user_op.nonce = U256::from(31338);
+        intent.nonce = U256::from(31338);
         assert_eq!(
-            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
+            intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 Some(U256::from(31337)),
@@ -450,9 +450,9 @@ mod tests {
         );
 
         // Multichain op
-        user_op.nonce = (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338);
+        intent.nonce = (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338);
         assert_eq!(
-            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
+            intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 None,
@@ -464,8 +464,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_op_with_signature() {
-        let mut user_op = UserOp {
+    async fn intent_with_signature() {
+        let mut intent = Intent {
             eoa: address!("0xE017A867c7204Fd596aE3141a5B194596849A196"),
             executionData: bytes!(
                 "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -489,7 +489,7 @@ mod tests {
         let expected_digest =
             b256!("0x14e830a607161a7905565356517352a18f8c105f10b940a74bd65c11a22f25c0");
         assert_eq!(
-            user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
+            intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 None,
@@ -504,17 +504,17 @@ mod tests {
         )
         .await
         .unwrap();
-        user_op.signature = signer.sign_hash(&expected_digest).await.unwrap().as_bytes().into();
+        intent.signature = signer.sign_hash(&expected_digest).await.unwrap().as_bytes().into();
 
         assert_eq!(
-            user_op.signature,
+            intent.signature,
             bytes!(
                 "0xc48dd8e13f7a09954ff888dc115a9e358c6d8ccc5de8823b7b22242f251ab7333d91ea4e4263e07c60e744dd9f569f4f4b3de4b0ef3949867226a865098769421b"
             )
         );
 
         assert_eq!(
-            Bytes::from(user_op.abi_encode()),
+            Bytes::from(intent.abi_encode()),
             bytes!(
                 "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003600000000000000000000000000000000000000000000000000000000000000380000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a00000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041c48dd8e13f7a09954ff888dc115a9e358c6d8ccc5de8823b7b22242f251ab7333d91ea4e4263e07c60e744dd9f569f4f4b3de4b0ef3949867226a865098769421b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )

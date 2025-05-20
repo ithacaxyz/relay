@@ -1,6 +1,6 @@
 //! Relay configuration.
 use crate::constants::{
-    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER,
 };
 use alloy::{
     primitives::Address,
@@ -97,16 +97,16 @@ pub struct QuoteConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GasConfig {
-    /// Extra buffer added to UserOp gas estimates.
-    pub user_op_buffer: u64,
+    /// Extra buffer added to Intent gas estimates.
+    pub intent_buffer: u64,
     /// Extra buffer added to transaction gas estimates.
     pub tx_buffer: u64,
 }
 
 impl QuoteConfig {
-    /// Returns the configured extra buffer added to userOp gas estimates.
-    pub fn user_op_buffer(&self) -> u64 {
-        self.gas.user_op_buffer
+    /// Returns the configured extra buffer added to intent gas estimates.
+    pub fn intent_buffer(&self) -> u64 {
+        self.gas.intent_buffer
     }
 
     /// Returns the configured extra buffer added to transaction gas estimates.
@@ -187,7 +187,7 @@ impl Default for RelayConfig {
             },
             quote: QuoteConfig {
                 constant_rate: None,
-                gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
+                gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
                 ttl: Duration::from_secs(5),
                 rate_ttl: Duration::from_secs(300),
             },
@@ -247,9 +247,9 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the buffer added to UserOp gas estimates.
-    pub fn with_user_op_gas_buffer(mut self, buffer: u64) -> Self {
-        self.quote.gas.user_op_buffer = buffer;
+    /// Sets the buffer added to Intent gas estimates.
+    pub fn with_intent_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.intent_buffer = buffer;
         self
     }
 

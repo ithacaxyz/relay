@@ -72,7 +72,7 @@ sol! {
         bool isSuperAdmin;
     }
 
-    /// The signature of a [`UserOp`].
+    /// The signature of a [`Intent`].
     struct Signature {
         bytes innerSignature;
         bytes32 keyHash;

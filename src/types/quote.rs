@@ -1,6 +1,6 @@
 //! Quote types.
 
-use crate::types::{Signed, UserOp};
+use crate::types::{Intent, Signed};
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Signature, U256},
     providers::utils::Eip1559Estimation,
@@ -11,19 +11,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// A relay-signed [`Quote`].
 pub type SignedQuote = Signed<Quote>;
 
-/// A quote from a relay for a given [`UserOp`].
+/// A quote from a relay for a given [`Intent`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
     /// Chain id.
     pub chain_id: ChainId,
-    /// User op.
-    pub op: UserOp,
+    /// Intent.
+    pub intent: Intent,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
-    /// Price of the ETH in the [`UserOp::paymentToken`] in wei.
+    /// Price of the ETH in the [`Intent::paymentToken`] in wei.
     pub eth_price: U256,
-    /// Decimals of the [`UserOp::paymentToken`].
+    /// Decimals of the [`Intent::paymentToken`].
     pub payment_token_decimals: u8,
     /// The recommended gas limit for the transaction.
     #[serde(with = "alloy::serde::quantity")]
@@ -57,7 +57,7 @@ impl Quote {
         if let Some(address) = self.authorization_address {
             hasher.update(address);
         }
-        hasher.update(self.op.digest());
+        hasher.update(self.intent.digest());
         hasher.update(
             self.ttl
                 .duration_since(UNIX_EPOCH)

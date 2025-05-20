@@ -3,16 +3,16 @@
 use alloy::primitives::ChainId;
 use serde::{Deserialize, Serialize};
 
-use super::PartialUserOp;
+use super::PartialIntent;
 
-/// A partial action which differs from [`Action`] in that it contains a [`PartialUserOp`].
+/// A partial action which differs from [`Action`] in that it contains a [`PartialIntent`].
 ///
 /// Used for estimations and simulations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PartialAction {
-    /// The user op.
-    pub op: PartialUserOp,
+    /// The intent.
+    pub intent: PartialIntent,
     /// The destination chain ID.
     pub chain_id: ChainId,
     /// Whether the digest will be prehashed before signing.

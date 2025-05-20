@@ -40,7 +40,7 @@ impl AuthorizeKey {
     /// Transform this key authorization into a series of calls.
     ///
     /// The first call is to add the key to the account. It should only be part of the final
-    /// [`UserOp`] if the key does not already exist.
+    /// [`Intent`] if the key does not already exist.
     ///
     /// The second set of calls is to add call permissions and spending limits to the key.
     ///

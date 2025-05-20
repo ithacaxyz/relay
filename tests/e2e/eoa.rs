@@ -72,7 +72,7 @@ impl EoaKind {
     }
 }
 
-/// An account that can be used to send userops.
+/// An account that can be used to send intents.
 pub struct MockAccount {
     pub address: Address,
     pub key: KeyWith712Signer,
@@ -175,7 +175,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().op.signature = Signature {
+        context.quote_mut().unwrap().ty_mut().intent.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,

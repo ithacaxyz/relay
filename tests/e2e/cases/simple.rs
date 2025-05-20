@@ -249,7 +249,7 @@ async fn spend_limits_bundle_failure() -> Result<()> {
             }],
             // Bundled overspend should fail
             calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(20))],
-            // The userop is signed by the session key itself
+            // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
         }]
@@ -339,7 +339,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         })
         .await?;
 
-    assert!(response.context.take_quote().unwrap().ty().op.nonce == uint!(1_U256));
+    assert!(response.context.take_quote().unwrap().ty().intent.nonce == uint!(1_U256));
 
     Ok(())
 }

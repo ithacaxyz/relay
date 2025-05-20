@@ -78,7 +78,7 @@ impl AccountConfig {
     }
 }
 
-/// Payment method be used on a user op.
+/// Payment method be used on a intent.
 #[derive(Debug, Clone, Copy, EnumIter)]
 pub enum PaymentConfig {
     Native,

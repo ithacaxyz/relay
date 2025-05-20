@@ -272,7 +272,7 @@ mod tests {
             context: PrepareCallsContext::with_quote(Signed::new_unchecked(
                 Quote {
                     chain_id: 0,
-                    op: Default::default(),
+                    intent: Default::default(),
                     extra_payment: Default::default(),
                     payment_token_decimals: Default::default(),
                     eth_price: Default::default(),

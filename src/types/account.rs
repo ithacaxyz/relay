@@ -471,7 +471,7 @@ pub struct PREPAccount {
 impl PREPAccount {
     /// Initializes a new account with the given delegation and digest.
     ///
-    /// The digest is a hash of the [`UserOp`] used to initialize the account.
+    /// The digest is a hash of the [`Intent`] used to initialize the account.
     ///
     /// This generates a new EOA address and a signed authorization for the account using the
     /// Provably Rootless EIP-7702 Proxy method, which is an application of Nick's Method to

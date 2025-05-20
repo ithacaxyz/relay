@@ -516,7 +516,7 @@ enum QueueError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Quote, SignedQuote, UserOp};
+    use crate::types::{Intent, Quote, SignedQuote};
     use alloy::{
         eips::eip1559::Eip1559Estimation,
         primitives::{Signature, U256},
@@ -537,7 +537,7 @@ mod tests {
             ttl: SystemTime::now(),
             authorization_address: Default::default(),
             orchestrator: Default::default(),
-            op: UserOp { eoa: sender, nonce: U256::random(), ..Default::default() },
+            intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
         };
         let sig = Signature::new(Default::default(), Default::default(), Default::default());
         let quote = SignedQuote::new_unchecked(quote, sig, Default::default());

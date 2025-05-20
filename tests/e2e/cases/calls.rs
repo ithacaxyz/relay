@@ -45,8 +45,8 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .into(),
     };
 
-    // upgrade account UserOp had nonce 0;
-    let user_op_nonce = 1;
+    // upgrade account Intent had nonce 0;
+    let intent_nonce = 1;
     for (tx_num, signer) in signers.iter().enumerate() {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
@@ -60,7 +60,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     meta: Meta {
                         fee_payer: None,
                         fee_token: env.fee_token,
-                        nonce: Some(U256::from(tx_num + user_op_nonce)),
+                        nonce: Some(U256::from(tx_num + intent_nonce)),
                     },
                     pre_ops: Vec::new(),
                     pre_op: false,
@@ -69,7 +69,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             })
             .await?;
 
-        // Sign UserOp digest
+        // Sign Intent digest
         let signature = signer.sign_payload_hash(digest).await?;
 
         // Submit signed call

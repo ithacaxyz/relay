@@ -3,16 +3,16 @@
 use alloy::{primitives::U256, uint};
 use std::time::Duration;
 
-/// Extra buffer added to UserOp gas estimates signed by P256 keys to cover execution overhead
+/// Extra buffer added to Intent gas estimates signed by P256 keys to cover execution overhead
 /// and ensure sufficient gas is provided.
 ///
 /// P256 signature verification has high gas usage variance and the 10_000 value seems to be a safe
 /// bet.
 pub const P256_GAS_BUFFER: U256 = uint!(10_000_U256);
 
-/// Extra buffer added to UserOp gas estimates to cover execution overhead
+/// Extra buffer added to Intent gas estimates to cover execution overhead
 /// and ensure sufficient gas is provided.
-pub const USER_OP_GAS_BUFFER: u64 = 0;
+pub const INTENT_GAS_BUFFER: u64 = 0;
 
 /// The default poll interval used by the relay clients.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(300);

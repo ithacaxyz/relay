@@ -8,8 +8,8 @@ pub use auth::AuthError;
 mod keys;
 pub use keys::KeysError;
 
-mod op;
-pub use op::UserOpError;
+mod intent;
+pub use intent::IntentError;
 
 mod quote;
 pub use quote::QuoteError;
@@ -36,9 +36,9 @@ pub enum RelayError {
     /// Errors related to quotes.
     #[error(transparent)]
     Quote(#[from] QuoteError),
-    /// Errors related to user ops.
+    /// Errors related to intents.
     #[error(transparent)]
-    UserOp(Box<UserOpError>),
+    Intent(Box<IntentError>),
     /// Errors related to authorization keys.
     #[error(transparent)]
     Keys(#[from] KeysError),
@@ -68,9 +68,9 @@ impl From<reqwest::Error> for RelayError {
     }
 }
 
-impl From<UserOpError> for RelayError {
-    fn from(err: UserOpError) -> Self {
-        Self::UserOp(Box::new(err))
+impl From<IntentError> for RelayError {
+    fn from(err: IntentError) -> Self {
+        Self::Intent(Box::new(err))
     }
 }
 
@@ -96,7 +96,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::Asset(inner) => inner.into(),
             RelayError::Auth(inner) => (*inner).into(),
             RelayError::Quote(inner) => inner.into(),
-            RelayError::UserOp(inner) => (*inner).into(),
+            RelayError::Intent(inner) => (*inner).into(),
             RelayError::Keys(inner) => inner.into(),
             RelayError::Storage(inner) => inner.into(),
             RelayError::UnsupportedChain(_)

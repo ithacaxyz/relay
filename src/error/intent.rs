@@ -9,72 +9,72 @@ use alloy::{
 };
 use thiserror::Error;
 
-/// Errors related to user ops.
+/// Errors related to intents.
 #[derive(Debug, Error)]
-pub enum UserOpError {
-    /// The userop could not be simulated without a sender.
-    #[error("user op creation requires a sender.")]
+pub enum IntentError {
+    /// The intent could not be simulated without a sender.
+    #[error("intent creation requires a sender.")]
     MissingSender,
-    /// The userop could not be simulated without a key.
-    #[error("user op creation requires a signing key.")]
+    /// The intent could not be simulated without a key.
+    #[error("intent creation requires a signing key.")]
     MissingKey,
-    /// The userop could not be simulated.
+    /// The intent could not be simulated.
     #[error("the op could not be simulated")]
     SimulationError,
     /// The preop can only contain account management calls.
     #[error("the preop can only contain account management calls.")]
     UnallowedPreOpCalls,
-    /// The quote was signed for a different userop.
+    /// The quote was signed for a different intent.
     #[error("invalid op digest, expected {expected}, got {got}")]
     InvalidOpDigest {
         /// The digest expected.
         expected: B256,
-        /// The digest of the [`UserOp`].
+        /// The digest of the [`Intent`].
         got: B256,
     },
-    /// The userop reverted when trying transaction.
+    /// The intent reverted when trying transaction.
     #[error(transparent)]
-    OpRevert(#[from] OpRevert),
-    /// The userop could not be simulated since the orchestrator is paused.
+    OpRevert(#[from] IntentRevert),
+    /// The intent could not be simulated since the orchestrator is paused.
     #[error("the orchestrator is paused")]
     PausedOrchestrator,
 }
 
-impl UserOpError {
-    /// Creates a new [`UserOpError::OpRevert`] error.
-    pub fn op_revert(revert_reason: Bytes) -> Self {
-        Self::OpRevert(OpRevert::new(revert_reason))
+impl IntentError {
+    /// Creates a new [`IntentError::OpRevert`] error.
+    pub fn intent_revert(revert_reason: Bytes) -> Self {
+        Self::OpRevert(IntentRevert::new(revert_reason))
     }
 }
 
-impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(err: UserOpError) -> Self {
+impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(err: IntentError) -> Self {
         match err {
-            UserOpError::PausedOrchestrator | UserOpError::SimulationError => {
+            IntentError::PausedOrchestrator | IntentError::SimulationError => {
                 internal_rpc(err.to_string())
             }
-            UserOpError::MissingKey
-            | UserOpError::MissingSender
-            | UserOpError::UnallowedPreOpCalls
-            | UserOpError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
-            UserOpError::OpRevert(err) => err.into(),
+            IntentError::MissingKey
+            | IntentError::MissingSender
+            | IntentError::UnallowedPreOpCalls
+            | IntentError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
+            IntentError::OpRevert(err) => err.into(),
         }
     }
 }
 
-/// An on-chain revert of a userop.
+/// An on-chain revert of a intent.
 #[derive(Debug, Error)]
-pub struct OpRevert {
+pub struct IntentRevert {
     /// The returned revert reason bytes.
     revert_reason: Bytes,
     /// Decoded revert reason.
     decoded_error: Option<String>,
 }
 
-impl std::fmt::Display for OpRevert {
+impl std::fmt::Display for IntentRevert {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { revert_reason, decoded_error } = self;
-        write!(f, "op reverted:")?;
+        write!(f, "intent reverted:")?;
         if let Some(err) = decoded_error {
             write!(f, " {err}")
         } else {
@@ -83,7 +83,7 @@ impl std::fmt::Display for OpRevert {
     }
 }
 
-impl OpRevert {
+impl IntentRevert {
     /// Creates a new instance of [`OpRevert`]. Attempts to decode [`OrchestratorContractErrors`]
     /// and[`DelegationErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
@@ -99,9 +99,9 @@ impl OpRevert {
     }
 }
 
-impl From<OpRevert> for jsonrpsee::types::error::ErrorObject<'static> {
-    fn from(value: OpRevert) -> Self {
-        let OpRevert { revert_reason, decoded_error } = value;
+impl From<IntentRevert> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(value: IntentRevert) -> Self {
+        let IntentRevert { revert_reason, decoded_error } = value;
         rpc_err(
             EthRpcErrorCode::ExecutionError.code(),
             decoded_error.unwrap_or_else(|| revert_reason.to_string()),

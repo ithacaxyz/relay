@@ -62,14 +62,14 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     let good_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
 
     assert!(
-        good_quote.context.quote().unwrap().ty().op.supportedDelegationImplementation
+        good_quote.context.quote().unwrap().ty().intent.supportedDelegationImplementation
             == caps.contracts.delegation_implementation.address
     );
 
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
 
     // Attempt to change delegation implementation to an invalid one and expect it to fail in 3
-    // different setups: standalone userop, preop and userop with preop.
+    // different setups: standalone intent, preop and intent with preop.
     {
         let mut invalid_params = Vec::with_capacity(3);
         let upgrade_call = vec![Call {
@@ -80,7 +80,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
                 .into(),
         }];
 
-        // As a standalone userop
+        // As a standalone intent
         let mut standalone = params.clone();
         standalone.calls = upgrade_call.clone();
         invalid_params.push(standalone);
@@ -91,15 +91,15 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         preop.capabilities.pre_op = true;
         invalid_params.push(preop);
 
-        // As a userop with preop
-        let mut userop_with_preop = params.clone();
-        userop_with_preop.capabilities.pre_ops = vec![PreOp {
+        // As a intent with preop
+        let mut intent_with_preop = params.clone();
+        intent_with_preop.capabilities.pre_ops = vec![PreOp {
             eoa: env.eoa.address(),
             executionData: upgrade_call.abi_encode().into(),
             nonce: U256::random(),
             signature: Bytes::new(),
         }];
-        invalid_params.push(userop_with_preop);
+        invalid_params.push(intent_with_preop);
 
         for p in invalid_params {
             assert!(
@@ -205,7 +205,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         );
     }
 
-    // Upgrade implementation to original and expect it to succeed sending the userop.
+    // Upgrade implementation to original and expect it to succeed sending the intent.
     {
         upgrade_delegation(&env, caps.contracts.delegation_implementation.address).await;
 
@@ -282,7 +282,7 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
     .abi_encode_packed()
     .into();
 
-    // Create UserOp with the upgrade preop call
+    // Create Intent with the upgrade preop call
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {

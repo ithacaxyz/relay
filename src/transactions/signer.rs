@@ -13,7 +13,7 @@ use crate::{
     transport::error::TransportErrExt,
     types::{
         ORCHESTRATOR_NO_ERROR,
-        OrchestratorContract::{self, UserOpExecuted},
+        OrchestratorContract::{self, IntentExecuted},
     },
 };
 use alloy::{
@@ -57,8 +57,8 @@ const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
 pub enum SignerError {
-    /// The userop reverted when trying transaction.
-    #[error("op reverted: {revert_reason}")]
+    /// The intent reverted when trying transaction.
+    #[error("intent reverted: {revert_reason}")]
     OpRevert {
         /// The error code returned by the orchestrator.
         revert_reason: Bytes,
@@ -311,7 +311,7 @@ impl Signer {
         fees: Eip1559Estimation,
     ) -> Result<(), SignerError> {
         // Set payment recipient to us if it hasn't been set
-        let payment_recipient = &mut tx.quote.ty_mut().op.paymentRecipient;
+        let payment_recipient = &mut tx.quote.ty_mut().intent.paymentRecipient;
         if payment_recipient.is_zero() {
             *payment_recipient = self.address();
         }
@@ -688,25 +688,25 @@ impl Signer {
 
         if !receipt.status() {
             warn!(%tx_hash, "transaction reverted");
-            self.metrics.failed_user_ops.increment(1);
+            self.metrics.failed_intents.increment(1);
             return;
         }
 
         let Some(event) =
-            receipt.logs().iter().rev().find_map(|log| UserOpExecuted::decode_log(&log.inner).ok())
+            receipt.logs().iter().rev().find_map(|log| IntentExecuted::decode_log(&log.inner).ok())
         else {
-            warn!(%tx_hash, "failed to find UserOpExecuted event in receipt");
-            self.metrics.failed_user_ops.increment(1);
+            warn!(%tx_hash, "failed to find IntentExecuted event in receipt");
+            self.metrics.failed_intents.increment(1);
             return;
         };
 
         if event.err != ORCHESTRATOR_NO_ERROR {
-            warn!(%tx_hash, err = %event.err, "user op failed on-chain");
-            self.metrics.failed_user_ops.increment(1);
+            warn!(%tx_hash, err = %event.err, "intent failed on-chain");
+            self.metrics.failed_intents.increment(1);
             return;
         }
 
-        self.metrics.successful_user_ops.increment(1);
+        self.metrics.successful_intents.increment(1);
     }
 
     /// Spawns a new [`Signer`] instance. Returns [`SignerTask`] and the pending transactions that

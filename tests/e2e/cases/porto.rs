@@ -513,9 +513,9 @@ async fn session_key_pre_op() -> Result<()> {
                     nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                     ..Default::default()
                 }],
-                // Execute the transfer via session key in the same userop
+                // Execute the transfer via session key in the same intent
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-                // The userop is signed by the session key itself
+                // The intent is signed by the session key itself
                 key: Some(&session_key),
                 ..Default::default()
             },
@@ -548,9 +548,9 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
                 nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                 ..Default::default()
             }],
-            // Execute the transfer via session key in the same userop
+            // Execute the transfer via session key in the same intent
             calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-            // The userop is signed by the session key itself
+            // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
         }]
@@ -575,9 +575,9 @@ async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
                 nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                 ..Default::default()
             }],
-            // Execute the transfer via session key in the same userop
+            // Execute the transfer via session key in the same intent
             calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-            // The userop is signed by the session key itself
+            // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
         }]

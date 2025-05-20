@@ -24,7 +24,7 @@ wrap_fixed_bytes! {
 pub struct RelayTransaction {
     /// Id of the transaction.
     pub id: TxId,
-    /// [`UserOp`] to send.
+    /// [`Intent`] to send.
     pub quote: SignedQuote,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
@@ -46,7 +46,7 @@ impl RelayTransaction {
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let quote = self.quote.ty();
-        let mut op = quote.op.clone();
+        let mut op = quote.intent.clone();
 
         let payment_amount = (quote.extra_payment
             + (op.combinedGas
@@ -100,9 +100,9 @@ impl RelayTransaction {
         self.quote.ty().native_fee_estimate.max_fee_per_gas
     }
 
-    /// Returns the EOA of the userop.
+    /// Returns the EOA of the intent.
     pub fn eoa(&self) -> &Address {
-        &self.quote.ty().op.eoa
+        &self.quote.ty().intent.eoa
     }
 }
 

@@ -17,8 +17,8 @@ use super::{Asset, KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::P256_GAS_BUFFER,
-    error::{RelayError, UserOpError},
-    types::{AssetDiffs, UserOp},
+    error::{IntentError, RelayError},
+    types::{AssetDiffs, Intent},
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -28,19 +28,19 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     contract OrchestratorContract {
-        /// Emitted when a UserOp is executed.
+        /// Emitted when a Intent is executed.
         ///
         /// This event is emitted in the `execute` function.
         /// - `incremented` denotes that `nonce`'s sequence has been incremented to invalidate `nonce`,
         /// - `err` denotes the resultant error selector.
         /// If `incremented` is true and `err` is non-zero,
         /// `err` will be stored for retrieval with `nonceStatus`.
-        event UserOpExecuted(address indexed eoa, uint256 indexed nonce, bool incremented, bytes4 err);
+        event IntentExecuted(address indexed eoa, uint256 indexed nonce, bool incremented, bytes4 err);
 
         /// @dev Unable to perform the payment.
         error PaymentError();
 
-        /// @dev Unable to verify the user op. The user op may be invalid.
+        /// @dev Unable to verify the intent. The intent may be invalid.
         error VerificationError();
 
         /// Unable to perform the call.
@@ -61,13 +61,13 @@ sol! {
         /// No revert has been encountered.
         error NoRevertEncountered();
 
-        /// A sub UserOp's EOA must be the same as its parent UserOp's eoa.
+        /// A sub Intent's EOA must be the same as its parent Intent's eoa.
         error InvalidPreOpEOA();
 
-        /// The sub UserOp cannot be verified to be correct.
+        /// The sub Intent cannot be verified to be correct.
         error PreOpVerificationError();
 
-        /// Error calling the sub UserOp's `executionData`.
+        /// Error calling the sub Intent's `executionData`.
         error PreOpCallError();
 
         /// The ID has already been registered.
@@ -109,12 +109,12 @@ sol! {
         /// Not authorized to perform the call.
         error UnauthorizedCall(bytes32 keyHash, address target, bytes data);
 
-        /// Executes a single encoded user operation.
+        /// Executes a single encoded intenteration.
         ///
-        /// `encodedUserOp` is given by `abi.encode(userOp)`, where `userOp` is a struct of type `UserOp`.
+        /// `encodedIntent` is given by `abi.encode(intent)`, where `intent` is a struct of type `Intent`.
         /// If sufficient gas is provided, returns an error selector that is non-zero
         /// if there is an error during the payment, verification, and call execution.
-        function execute(bytes calldata encodedUserOp)
+        function execute(bytes calldata encodedIntent)
             public
             payable
             virtual
@@ -188,13 +188,13 @@ impl<P: Provider> Orchestrator<P> {
         self
     }
 
-    /// Call `Simulator.simulateV1Logs` with the provided [`UserOp`].
+    /// Call `Simulator.simulateV1Logs` with the provided [`Intent`].
     ///
     /// `simulator` contract address should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
         simulator: Address,
-        op: &UserOp,
+        intent: &Intent,
         key_type: KeyType,
         payment_per_gas: f64,
         token_decimals: u8,
@@ -217,7 +217,7 @@ impl<P: Provider> Orchestrator<P> {
                         payment_per_gas,
                         U256::from(11_000),
                         gas_validation_offset,
-                        op.abi_encode().into(),
+                        intent.abi_encode().into(),
                     )
                     .into_transaction_request(),
             )
@@ -235,13 +235,13 @@ impl<P: Provider> Orchestrator<P> {
             .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
 
         if !result.status {
-            debug!(?result, ?simulate_block, "Unable to simulate user op.");
+            debug!(?result, ?simulate_block, "Unable to simulate intent.");
 
             if self.is_paused().await? {
-                return Err(UserOpError::PausedOrchestrator.into());
+                return Err(IntentError::PausedOrchestrator.into());
             }
 
-            return Err(UserOpError::op_revert(result.return_data).into());
+            return Err(IntentError::intent_revert(result.return_data).into());
         }
 
         let Ok(simulation_result) = SimulationResult::abi_decode(&result.return_data) else {
@@ -261,31 +261,34 @@ impl<P: Provider> Orchestrator<P> {
             .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
-        let simulated_payment = op.prePaymentAmount
+        let simulated_payment = intent.prePaymentAmount
             + (payment_per_gas * simulation_result.gCombined)
                 / U256::from(10u128.pow(token_decimals as u32));
-        let payment_token =
-            if op.paymentToken.is_zero() { Asset::Native } else { Asset::Token(op.paymentToken) };
-        let payer = if op.payer.is_zero() { op.eoa } else { op.payer };
-        if op.payer == op.eoa || op.payer.is_zero() {
+        let payment_token = if intent.paymentToken.is_zero() {
+            Asset::Native
+        } else {
+            Asset::Token(intent.paymentToken)
+        };
+        let payer = if intent.payer.is_zero() { intent.eoa } else { intent.payer };
+        if intent.payer == intent.eoa || intent.payer.is_zero() {
             asset_diffs.remove_payer_fee(payer, payment_token, simulated_payment);
         }
 
         Ok((asset_diffs, simulation_result))
     }
 
-    /// Call `Orchestrator.execute` with the provided [`UserOp`].
-    pub async fn execute(&self, op: &UserOp) -> Result<(), RelayError> {
+    /// Call `Orchestrator.execute` with the provided [`Intent`].
+    pub async fn execute(&self, intent: &Intent) -> Result<(), RelayError> {
         let ret = self
             .orchestrator
-            .execute(op.abi_encode().into())
+            .execute(intent.abi_encode().into())
             .call()
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
         if ret != ORCHESTRATOR_NO_ERROR {
-            Err(UserOpError::op_revert(ret.into()).into())
+            Err(IntentError::intent_revert(ret.into()).into())
         } else {
             Ok(())
         }

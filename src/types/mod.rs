@@ -30,8 +30,8 @@ mod key;
 use alloy::primitives::Uint;
 pub use key::*;
 
-mod op;
-pub use op::*;
+mod intent;
+pub use intent::*;
 
 mod onramp;
 pub use onramp::*;

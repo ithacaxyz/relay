@@ -3,21 +3,21 @@
 //!
 //! Implementations of a custom `relay_` namespace.
 //!
-//! - `relay_estimateFee` for estimating [`UserOp`] fees.
+//! - `relay_estimateFee` for estimating [`Intent`] fees.
 //! - `relay_sendAction` that can perform service-sponsored [EIP-7702][eip-7702] delegations and
-//!   send other service-sponsored UserOp's on behalf of EOAs with delegated code.
+//!   send other service-sponsored Intent's on behalf of EOAs with delegated code.
 //!
 //! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::UserOpError,
+    error::IntentError,
     provider::ProviderExt,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
         AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType,
         ORCHESTRATOR_NO_ERROR, Op,
-        OrchestratorContract::{self, UserOpExecuted},
+        OrchestratorContract::{self, IntentExecuted},
         PreOp, VersionedContracts,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
@@ -63,8 +63,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, KeyWith712Signer, Orchestrator, PREPAccount, PartialAction,
-        PartialUserOp, Quote, Signature, SignedQuote, UserOp,
+        Account, CreatableAccount, Intent, KeyWith712Signer, Orchestrator, PREPAccount,
+        PartialAction, PartialIntent, Quote, Signature, SignedQuote,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
             CreateAccountParameters, GetAccountsParameters, GetKeysParameters,
@@ -192,11 +192,11 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
-    /// Estimates additional fees to be paid for a userop (e.g L1 DA fees).
+    /// Estimates additional fees to be paid for a intent (e.g L1 DA fees).
     ///
     /// Returns fees in ETH.
     #[instrument(skip_all)]
-    async fn estimate_extra_fee(&self, chain: &Chain, op: &UserOp) -> Result<U256, RelayError> {
+    async fn estimate_extra_fee(&self, chain: &Chain, intent: &Intent) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
             // Create a dummy transactions with all fields set to max values to make sure that
@@ -208,7 +208,7 @@ impl Relay {
                 max_fee_per_gas: u128::MAX,
                 max_priority_fee_per_gas: u128::MAX,
                 to: (!Address::ZERO).into(),
-                input: op.encode_execute(),
+                input: intent.encode_execute(),
                 ..Default::default()
             };
             let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
@@ -259,7 +259,7 @@ impl Relay {
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
             .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
             .append(
-                request.op.eoa,
+                request.intent.eoa,
                 AccountOverride::default()
                     .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
                     .with_state_diff(if key_slot_override {
@@ -274,7 +274,7 @@ impl Relay {
             )
             .build();
 
-        let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
+        let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
 
         let (orchestrator, delegation, native_fee_estimate, eth_price) = try_join4(
             // fetch orchestrator from the account and ensure it is supported
@@ -304,18 +304,18 @@ impl Relay {
             * 10u128.pow(token.decimals as u32) as f64)
             / f64::from(eth_price);
 
-        // fill userop
-        let mut op = UserOp {
-            eoa: request.op.eoa,
-            executionData: request.op.execution_data.clone(),
-            nonce: request.op.nonce,
-            payer: request.op.payer.unwrap_or_default(),
+        // fill intent
+        let mut intent = Intent {
+            eoa: request.intent.eoa,
+            executionData: request.intent.execution_data.clone(),
+            nonce: request.intent.nonce,
+            payer: request.intent.payer.unwrap_or_default(),
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
-            initData: request.op.init_data.unwrap_or_default(),
+            initData: request.intent.init_data.unwrap_or_default(),
             supportedDelegationImplementation: delegation,
             encodedPreOps: request
-                .op
+                .intent
                 .pre_ops
                 .into_iter()
                 .map(|pre_op| pre_op.abi_encode().into())
@@ -325,18 +325,21 @@ impl Relay {
 
         // this will force the simulation to go through payment code paths, and get a better
         // estimation.
-        op.set_legacy_payment_amount(U256::from(1));
+        intent.set_legacy_payment_amount(U256::from(1));
 
-        // sign userop
+        // sign intent
         let signature = mock_key
             .sign_typed_data(
-                &op.as_eip712().map_err(RelayError::from)?,
-                &orchestrator.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
+                &intent.as_eip712().map_err(RelayError::from)?,
+                &orchestrator
+                    .eip712_domain(intent.is_multichain())
+                    .await
+                    .map_err(RelayError::from)?,
             )
             .await
             .map_err(RelayError::from)?;
 
-        op.signature = Signature {
+        intent.signature = Signature {
             innerSignature: signature,
             keyHash: account_key.key_hash(),
             prehash: request.prehash,
@@ -344,17 +347,17 @@ impl Relay {
         .abi_encode_packed()
         .into();
 
-        let extra_payment = self.estimate_extra_fee(&chain, &op).await?
+        let extra_payment = self.estimate_extra_fee(&chain, &intent).await?
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
 
         if !extra_payment.is_zero() {
-            op.set_legacy_payment_amount(extra_payment);
+            intent.set_legacy_payment_amount(extra_payment);
         }
 
-        op.combinedGas = U256::from(self.inner.quote_config.user_op_buffer())
+        intent.combinedGas = U256::from(self.inner.quote_config.intent_buffer())
             + U256::from(approx_intrinsic_cost(
-                &OrchestratorContract::executeCall { encodedUserOp: op.abi_encode().into() }
+                &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
                     .abi_encode(),
                 authorization_address.is_some(),
             ));
@@ -363,7 +366,7 @@ impl Relay {
         let (asset_diff, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
-                &op,
+                &intent,
                 account_key.keyType,
                 payment_per_gas,
                 token.decimals,
@@ -377,21 +380,22 @@ impl Relay {
             self.inner.quote_config.tx_buffer(),
         );
 
-        debug!(eoa = %request.op.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
+        debug!(eoa = %request.intent.eoa, gas_estimate = ?gas_estimate, "Estimated operation");
 
         // Fill combinedGas and empty dummy signature
-        op.combinedGas = U256::from(gas_estimate.op);
-        op.signature = bytes!("");
+        intent.combinedGas = U256::from(gas_estimate.intent);
+        intent.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        op.set_legacy_payment_amount(
-            op.prePaymentAmount + U256::from((payment_per_gas * f64::from(op.combinedGas)).ceil()),
+        intent.set_legacy_payment_amount(
+            intent.prePaymentAmount
+                + U256::from((payment_per_gas * f64::from(intent.combinedGas)).ceil()),
         );
 
         let quote = Quote {
             chain_id: request.chain_id,
             payment_token_decimals: token.decimals,
-            op,
+            intent,
             extra_payment,
             eth_price,
             tx_gas: gas_estimate.tx,
@@ -437,7 +441,7 @@ impl Relay {
             }
 
             let expected_nonce = provider
-                .get_transaction_count(quote.ty().op.eoa)
+                .get_transaction_count(quote.ty().intent.eoa)
                 .await
                 .map_err(RelayError::from)?;
 
@@ -449,13 +453,13 @@ impl Relay {
                 .into());
             }
         } else {
-            let account = Account::new(quote.ty().op.eoa, provider);
+            let account = Account::new(quote.ty().intent.eoa, provider);
             if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.ty().op.eoa).into());
+                return Err(AuthError::EoaNotDelegated(quote.ty().intent.eoa).into());
             }
         }
 
-        // this can be done by just verifying the signature & userop hash against the rfq
+        // this can be done by just verifying the signature & intent hash against the rfq
         // ticket from `relay_estimateFee`'
         if !quote
             .recover_address()
@@ -471,7 +475,7 @@ impl Relay {
         }
 
         // set our payment recipient
-        quote.ty_mut().op.paymentRecipient = self.inner.fee_recipient;
+        quote.ty_mut().intent.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote, authorization);
 
@@ -648,7 +652,7 @@ impl Relay {
 
     /// Generates all calls from a [`PrepareCallsParameters`].
     ///
-    /// `maybe_prep_init` should only be `Some`, if we're dealing with the first userop of a
+    /// `maybe_prep_init` should only be `Some`, if we're dealing with the first intent of a
     /// PREPAccount.
     async fn generate_calls(
         &self,
@@ -666,12 +670,12 @@ impl Relay {
             .iter()
             .flat_map(|key| key.clone().into_calls(self.account_registry()));
 
-        // If we are planning to use a session key as the first userop signing key, we need to
+        // If we are planning to use a session key as the first intent signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
         //
         // This is done by adding an extra call to the preop to give it permission to do so.
         //
-        // We assume that this is the first userop if ANY of the following options is true:
+        // We assume that this is the first intent if ANY of the following options is true:
         // * `maybe_prep_init` is `Some` as described in `generate_calls`
         // * `request.from` is `None`. This is the case when the user is signing up and needs to
         //   authorize a session key before even going through PREPAccount generation flow.
@@ -693,7 +697,7 @@ impl Relay {
                 )
             });
 
-        // If this is the first user UserOP of this PREPAccount, we need to register the admin
+        // If this is the first user intent of this PREPAccount, we need to register the admin
         // accounts into the AccountRegistry contract.
         let account_registry_calls =
             maybe_prep_init.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
@@ -953,13 +957,13 @@ impl RelayApiServer for Relay {
 
             (AssetDiffs(vec![]), PrepareCallsContext::with_preop(preop))
         } else {
-            let Some(eoa) = request.from else { return Err(UserOpError::MissingSender.into()) };
+            let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
             let Some(request_key) = &request.key else {
-                return Err(UserOpError::MissingKey.into());
+                return Err(IntentError::MissingKey.into());
             };
             let key_hash = request_key.key_hash();
 
-            // Find the key that authorizes this userop
+            // Find the key that authorizes this intent
             let Some(key) = self
                 .try_find_key(eoa, key_hash, &request.capabilities.pre_ops, request.chain_id)
                 .await?
@@ -967,11 +971,11 @@ impl RelayApiServer for Relay {
                 return Err(KeysError::UnknownKeyHash(key_hash).into());
             };
 
-            // Call estimateFee to give us a quote with a complete userOp that the user can sign
+            // Call estimateFee to give us a quote with a complete intent that the user can sign
             let (asset_diff, quote) = self
                 .estimate_fee(
                     PartialAction {
-                        op: PartialUserOp {
+                        intent: PartialIntent {
                             eoa,
                             execution_data: calls.abi_encode().into(),
                             nonce,
@@ -1059,11 +1063,11 @@ impl RelayApiServer for Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
-        // Call estimateFee to give us a quote with a complete userOp that the user can sign
+        // Call estimateFee to give us a quote with a complete intent that the user can sign
         let (asset_diff, quote) = self
             .estimate_fee(
                 PartialAction {
-                    op: PartialUserOp {
+                    intent: PartialIntent {
                         eoa: request.address,
                         execution_data: calls.abi_encode().into(),
                         nonce,
@@ -1091,7 +1095,7 @@ impl RelayApiServer for Relay {
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) = quote
             .ty()
-            .op
+            .intent
             .compute_eip712_data(self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
@@ -1125,34 +1129,34 @@ impl RelayApiServer for Relay {
             return Err(QuoteError::QuoteNotFound.into());
         };
 
-        let op = &mut quote.ty_mut().op;
+        let intent = &mut quote.ty_mut().intent;
 
-        // Fill UserOp with the fee payment signature (if exists).
-        op.paymentSignature = capabilities.fee_signature;
+        // Fill Intent with the fee payment signature (if exists).
+        intent.paymentSignature = capabilities.fee_signature;
 
-        // Fill UserOp with the user signature.
+        // Fill Intent with the user signature.
         let key_hash = key.key_hash();
-        op.signature =
+        intent.signature =
             Signature { innerSignature: signature, keyHash: key_hash, prehash: key.prehash }
                 .abi_encode_packed()
                 .into();
 
         // Set non-eip712 payment fields. Since they are not included into the signature so we need
         // to enforce it here.
-        op.set_legacy_payment_amount(op.prePaymentMaxAmount);
+        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
 
         // If there's initData we need to fetch the signed authorization from storage.
-        let authorization = if op.initData.is_empty() {
+        let authorization = if intent.initData.is_empty() {
             None
         } else {
             self.inner
                 .storage
-                .read_prep(&op.eoa)
+                .read_prep(&intent.eoa)
                 .await
                 .map(|opt| opt.map(|acc| acc.prep.signed_authorization))?
         };
 
-        // Broadcast transaction with UserOp
+        // Broadcast transaction with Intent
         let id = self.send_action(quote, authorization).await.inspect_err(|err| {
             error!(
                 %err,
@@ -1184,12 +1188,12 @@ impl RelayApiServer for Relay {
             .into());
         }
 
-        let op = &mut quote.ty_mut().op;
+        let intent = &mut quote.ty_mut().intent;
 
-        // Fill UserOp with the user signature.
-        op.signature = signature.as_bytes().into();
+        // Fill Intent with the user signature.
+        intent.signature = signature.as_bytes().into();
 
-        // Broadcast transaction with UserOp
+        // Broadcast transaction with Intent
         let id = self.send_action(quote, Some(authorization)).await.inspect_err(|err| {
             error!(
                 %err,
@@ -1246,22 +1250,22 @@ impl RelayApiServer for Relay {
             .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
             .collect();
 
-        // note(onbjerg): this currently rests on the assumption that there is only one userop per
+        // note(onbjerg): this currently rests on the assumption that there is only one intent per
         // transaction, and that each transaction in a bundle originates from a single user
         //
         // in the future, this may not be the case, and we need to store the originating users
         // address in the txs table.
         //
-        // note that we also assume that failure to decode a log as `UserOpExecuted` means the
+        // note that we also assume that failure to decode a log as `IntentExecuted` means the
         // operation failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
             receipt
-                .decoded_log::<UserOpExecuted>()
+                .decoded_log::<IntentExecuted>()
                 .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
         });
         let all_reverted = receipts.iter().all(|(_, receipt)| {
             receipt
-                .decoded_log::<UserOpExecuted>()
+                .decoded_log::<IntentExecuted>()
                 .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
         });
 

@@ -2,7 +2,7 @@
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
-    error::{RelayError, UserOpError},
+    error::{IntentError, RelayError},
     types::{
         Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
         MULTICHAIN_NONCE_PREFIX_U192, Op, PreOp, SignedQuote,
@@ -91,10 +91,10 @@ impl PrepareCallsParameters {
         if self.capabilities.pre_op {
             // Ensure this preop request only has valid calls
             if has_unallowed(&self.calls)? {
-                return Err(UserOpError::UnallowedPreOpCalls.into());
+                return Err(IntentError::UnallowedPreOpCalls.into());
             }
         } else {
-            // Ensure that if the userop is upgrading its delegation, it's to the latest one.
+            // Ensure that if the intent is upgrading its delegation, it's to the latest one.
             for call in &self.calls {
                 call.ensure_valid_upgrade(latest_delegation)?;
             }
@@ -103,7 +103,7 @@ impl PrepareCallsParameters {
         // Ensure preops only have valid calls
         for op in &self.capabilities.pre_ops {
             if has_unallowed(&op.calls().map_err(RelayError::from)?)? {
-                return Err(UserOpError::UnallowedPreOpCalls.into());
+                return Err(IntentError::UnallowedPreOpCalls.into());
             }
         }
 
@@ -115,9 +115,9 @@ impl PrepareCallsParameters {
     /// 1. If `capabilities.meta.nonce` is set, return it directly.
     /// 2. If this is a preop, generate a random sequence key without the multichain prefix and
     ///    return its 0th nonce.
-    /// 3. If this is a userop and there are any previous preop entries with the
+    /// 3. If this is a intent and there are any previous preop entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
-    /// 4. If this is the first userop of a PREP account (`maybe_prep`), return 0.
+    /// 4. If this is the first intent of a PREP account (`maybe_prep`), return 0.
     /// 5. If none of the above match, query for the next account nonce onchain (for
     ///    `DEFAULT_SEQUENCE_KEY`).
     pub async fn get_nonce(
@@ -146,7 +146,7 @@ impl PrepareCallsParameters {
         } else if maybe_prep.is_some() {
             Ok(U256::ZERO)
         } else {
-            let eoa = self.from.ok_or(UserOpError::MissingSender)?;
+            let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
     }
@@ -166,7 +166,7 @@ pub struct PrepareCallsCapabilities {
     pub revoke_keys: Vec<RevokeKey>,
     /// Optional preOps to execute before signature verification.
     ///
-    /// See [`UserOp::encodedPreOps`].
+    /// See [`Intent::encodedPreOps`].
     #[serde(default)]
     pub pre_ops: Vec<PreOp>,
     /// Whether the call bundle is to be considered a preop.
@@ -269,7 +269,7 @@ impl PrepareCallsContext {
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
             PrepareCallsContext::Quote(quote) => {
-                quote.ty().op.compute_eip712_data(orchestrator_address, provider).await
+                quote.ty().intent.compute_eip712_data(orchestrator_address, provider).await
             }
             PrepareCallsContext::PreOp(pre_op) => {
                 pre_op.compute_eip712_data(orchestrator_address, provider).await

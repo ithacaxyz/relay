@@ -36,7 +36,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 quote_ttl: Default::default(),
                 rate_ttl: Default::default(),
                 fee_tokens: Default::default(),
-                user_op_gas_buffer: Default::default(),
+                intent_gas_buffer: Default::default(),
                 tx_gas_buffer: Default::default(),
                 database_url: Default::default(),
                 max_pending_transactions: Default::default(),

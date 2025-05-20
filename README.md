@@ -48,7 +48,7 @@ chain:
 quote:
     ttl: 5
     gas:
-        user_op_buffer: 25000
+        intent_buffer: 25000
         tx_buffer: 1000000
 ```
 

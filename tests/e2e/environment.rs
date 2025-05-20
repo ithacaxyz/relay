@@ -268,7 +268,7 @@ impl Environment {
                 .with_delegation_proxy(Some(delegation))
                 .with_account_registry(Some(account_registry))
                 .with_simulator(Some(simulator))
-                .with_user_op_gas_buffer(0) // todo: temp
+                .with_intent_gas_buffer(0) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_database_url(database_url),

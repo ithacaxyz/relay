@@ -58,8 +58,8 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
             .await
             .unwrap();
 
-        // Ensure the payer on UserOp is as expected
-        assert_eq!(context.quote_mut().unwrap().ty().op.payer, paymaster.address);
+        // Ensure the payer on Intent is as expected
+        assert_eq!(context.quote_mut().unwrap().ty().intent.payer, paymaster.address);
 
         let bundle_id = env
             .relay_endpoint

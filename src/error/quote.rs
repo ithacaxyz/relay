@@ -23,12 +23,12 @@ pub enum QuoteError {
     /// The chain price feed is not available.
     #[error("price feed is currently not available on chain: {0}")]
     UnavailablePriceFeed(ChainId),
-    /// The payment amount in the userop did not match the amount in the quote.
+    /// The payment amount in the intent did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
     InvalidFeeAmount {
         /// The amount expected.
         expected: U256,
-        /// The amount in the [`UserOp`].
+        /// The amount in the [`Intent`].
         got: U256,
     },
 }
