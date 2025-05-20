@@ -25,7 +25,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 port: 0,
                 metrics_port: 0,
                 max_connections: Default::default(),
-                entrypoint: Default::default(),
+                entrypoint: Some(env.entrypoint),
                 delegation_proxy: Some(env.delegation),
                 account_registry: Default::default(),
                 simulator: Default::default(),

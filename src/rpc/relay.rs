@@ -15,14 +15,13 @@ use crate::{
     provider::ProviderExt,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call,
-        DelegationProxy::DelegationProxyInstance,
-        ENTRYPOINT_NO_ERROR,
+        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
         EntryPoint::{self, UserOpExecuted},
         FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType, Op, PreOp,
+        VersionedContracts,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
-            RelayCapabilities, RelayContracts, RelayFees, ValidSignatureProof,
+            RelayCapabilities, RelayFees, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -40,7 +39,6 @@ use alloy::{
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
-    transports::TransportErrorKind,
 };
 use futures_util::{
     TryFutureExt,
@@ -52,7 +50,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
@@ -170,13 +168,7 @@ impl Relay {
     /// Create a new Ithaca relay module.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        entrypoint: Address,
-        legacy_entrypoints: BTreeSet<Address>,
-        legacy_delegations: BTreeSet<Address>,
-        delegation_proxy: Address,
-        delegation_implementation: Address,
-        account_registry: Address,
-        simulator: Address,
+        contracts: VersionedContracts,
         chains: Chains,
         quote_signer: DynSigner,
         quote_config: QuoteConfig,
@@ -187,13 +179,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
     ) -> Self {
         let inner = RelayInner {
-            entrypoint,
-            legacy_entrypoints,
-            legacy_delegations,
-            delegation_proxy,
-            delegation_implementation,
-            account_registry,
-            simulator,
+            contracts,
             chains,
             fee_tokens,
             fee_recipient,
@@ -270,8 +256,8 @@ impl Relay {
         let overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
-            .append(self.inner.simulator, AccountOverride::default().with_balance(U256::MAX))
-            .append(self.inner.entrypoint, AccountOverride::default().with_balance(U256::MAX))
+            .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
+            .append(self.entrypoint(), AccountOverride::default().with_balance(U256::MAX))
             .append(
                 request.op.eoa,
                 AccountOverride::default()
@@ -375,7 +361,7 @@ impl Relay {
         // we estimate gas and fees
         let (asset_diff, sim_result) = entrypoint
             .simulate_execute(
-                self.inner.simulator,
+                self.simulator(),
                 &op,
                 account_key.keyType,
                 payment_per_gas,
@@ -625,7 +611,7 @@ impl Relay {
         for key in keys {
             // additional_calls: permission & account registry
             let (authorize_call, additional_calls) =
-                key.into_calls(self.inner.account_registry, account)?;
+                key.into_calls(self.account_registry(), account)?;
             calls.push(authorize_call);
             calls.extend(additional_calls);
         }
@@ -676,7 +662,7 @@ impl Relay {
             .capabilities
             .revoke_keys
             .iter()
-            .flat_map(|key| key.clone().into_calls(self.inner.account_registry));
+            .flat_map(|key| key.clone().into_calls(self.account_registry()));
 
         // If we are planning to use a session key as the first userop signing key, we need to
         // enable it to register the admin accounts in the AccountRegistry contract.
@@ -699,7 +685,7 @@ impl Relay {
             .map(|auth| {
                 Call::set_can_execute(
                     auth.key.key_hash(),
-                    self.inner.account_registry,
+                    self.account_registry(),
                     AccountRegistry::registerCall::SELECTOR.into(),
                     true,
                 )
@@ -711,7 +697,7 @@ impl Relay {
             maybe_prep_init.iter().filter(|_| !request.capabilities.pre_op).flat_map(|acc| {
                 acc.id_signatures
                     .iter()
-                    .map(|id| id.to_call(self.inner.account_registry, acc.prep.address))
+                    .map(|id| id.to_call(self.account_registry(), acc.prep.address))
             });
 
         // Merges all previously generated calls.
@@ -726,7 +712,7 @@ impl Relay {
 
     /// Checks if the entrypoint is supported.
     fn is_supported_entrypoint(&self, entrypoint: &Address) -> bool {
-        self.inner.entrypoint == *entrypoint || self.inner.legacy_entrypoints.contains(entrypoint)
+        self.entrypoint() == *entrypoint || self.legacy_entrypoints().any(|c| c == *entrypoint)
     }
 
     /// Checks if the account has a supported delegation implementation. If so, returns it.
@@ -735,8 +721,8 @@ impl Relay {
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
         let address = self.get_delegation_implementation(account).await?;
-        if self.inner.delegation_implementation == address
-            || self.inner.legacy_delegations.contains(&address)
+        if self.delegation_implementation() == address
+            || self.legacy_delegations().any(|c| c == address)
         {
             return Ok(address);
         }
@@ -749,7 +735,7 @@ impl Relay {
         account: &Account<P>,
     ) -> Result<(), RelayError> {
         let address = self.has_supported_delegation(account).await?;
-        if self.inner.delegation_implementation != address {
+        if self.delegation_implementation() != address {
             return Err(AuthError::InvalidDelegation(address).into());
         }
         Ok(())
@@ -763,16 +749,6 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_capabilities(&self) -> RpcResult<RelayCapabilities> {
-        let chain_id =
-            self.inner.chains.chain_ids_iter().next().expect("should have at least one chain");
-        let delegation_implementation =
-            DelegationProxyInstance::new(self.inner.delegation_proxy, self.provider(*chain_id)?)
-                .implementation()
-                .call()
-                .await
-                .map_err(TransportErrorKind::custom)
-                .map_err(RelayError::from)?;
-
         let chains = self.inner.fee_tokens.iter().map(|(chain, tokens)| async move {
             let rates_fut = tokens.iter().map(|token| async move {
                 // TODO: only handles eth as native fee token
@@ -789,13 +765,7 @@ impl RelayApiServer for Relay {
         });
 
         Ok(RelayCapabilities {
-            contracts: RelayContracts {
-                entrypoint: self.inner.entrypoint,
-                delegation_proxy: self.inner.delegation_proxy,
-                delegation_implementation,
-                account_registry: self.inner.account_registry,
-                simulator: self.inner.simulator,
-            },
+            contracts: self.inner.contracts.clone(),
             fees: RelayFees {
                 recipient: self.inner.fee_recipient,
                 quote_config: self.inner.quote_config.clone(),
@@ -851,7 +821,7 @@ impl RelayApiServer for Relay {
         // IDs need to either be new in the registry OR have zero accounts associated.
         let accounts = AccountRegistryCalls::id_infos(
             keys.iter().map(|key| key.id).collect(),
-            self.inner.account_registry,
+            self.account_registry(),
             self.provider(request.context.chain_id)?,
         )
         .await?;
@@ -887,12 +857,9 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<Vec<AccountResponse>> {
         let provider = self.provider(request.chain_id)?;
 
-        let mut accounts = AccountRegistryCalls::accounts(
-            request.id,
-            self.inner.account_registry,
-            provider.clone(),
-        )
-        .await?;
+        let mut accounts =
+            AccountRegistryCalls::accounts(request.id, self.account_registry(), provider.clone())
+                .await?;
 
         if accounts.is_none() {
             // Only read from storage if the onchain mapping does not exist. It's possible that the
@@ -944,7 +911,7 @@ impl RelayApiServer for Relay {
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
         // Checks calls and preop calls in the request
-        request.check_calls(self.inner.delegation_implementation)?;
+        request.check_calls(self.delegation_implementation())?;
 
         let provider = self.provider(request.chain_id)?;
 
@@ -1030,7 +997,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_eip712_data(self.inner.entrypoint, &provider)
+            .compute_eip712_data(self.entrypoint(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1122,7 +1089,7 @@ impl RelayApiServer for Relay {
         let (digest, typed_data) = quote
             .ty()
             .op
-            .compute_eip712_data(self.inner.entrypoint, &provider)
+            .compute_eip712_data(self.entrypoint(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1333,7 +1300,7 @@ impl RelayApiServer for Relay {
         let (mut id_infos, is_delegated) = try_join!(
             AccountRegistryCalls::id_infos(
                 vec![key_id_or_address],
-                self.inner.account_registry,
+                self.account_registry(),
                 provider.clone(),
             ),
             async { Account::new(key_id_or_address, &provider).is_delegated().await }
@@ -1496,20 +1463,8 @@ impl RelayApiServer for Relay {
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
 struct RelayInner {
-    /// The entrypoint address.
-    entrypoint: Address,
-    /// Previously deployed entrypoints.
-    legacy_entrypoints: BTreeSet<Address>,
-    /// Previously deployed delegation implementations.
-    legacy_delegations: BTreeSet<Address>,
-    /// The delegation proxy address.
-    delegation_proxy: Address,
-    /// The delegation implementation address.
-    delegation_implementation: Address,
-    /// The account registry address.
-    account_registry: Address,
-    /// The simulator address.
-    simulator: Address,
+    /// The contract addresses.
+    contracts: VersionedContracts,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.
@@ -1526,6 +1481,43 @@ struct RelayInner {
     storage: RelayStorage,
     /// AssetInfo
     asset_info: AssetInfoServiceHandle,
+}
+
+impl Relay {
+    /// The entrypoint address.
+    pub fn entrypoint(&self) -> Address {
+        self.inner.contracts.entrypoint.address
+    }
+
+    /// Previously deployed entrypoints.
+    pub fn legacy_entrypoints(&self) -> impl Iterator<Item = Address> {
+        self.inner.contracts.legacy_entrypoints.iter().map(|c| c.address)
+    }
+
+    /// Previously deployed delegation implementations.
+    pub fn legacy_delegations(&self) -> impl Iterator<Item = Address> {
+        self.inner.contracts.legacy_delegations.iter().map(|c| c.address)
+    }
+
+    /// The delegation proxy address.
+    pub fn delegation_proxy(&self) -> Address {
+        self.inner.contracts.delegation_proxy.address
+    }
+
+    /// The delegation implementation address.
+    pub fn delegation_implementation(&self) -> Address {
+        self.inner.contracts.delegation_implementation.address
+    }
+
+    /// The account registry address.
+    pub fn account_registry(&self) -> Address {
+        self.inner.contracts.account_registry.address
+    }
+
+    /// The simulator address.
+    pub fn simulator(&self) -> Address {
+        self.inner.contracts.simulator.address
+    }
 }
 
 /// Approximates the intrinsic cost of a transaction.

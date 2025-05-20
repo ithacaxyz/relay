@@ -183,7 +183,7 @@ impl StressTester {
                         .prepare_create_account(PrepareCreateAccountParameters {
                             capabilities: PrepareCreateAccountCapabilities {
                                 authorize_keys: vec![key.to_authorized(None).await?],
-                                delegation: caps.contracts.delegation_proxy,
+                                delegation: caps.contracts.delegation_proxy.address,
                             },
                             chain_id: args.chain_id.id(),
                         })

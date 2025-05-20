@@ -177,6 +177,11 @@ impl<P: Provider> Entry<P> {
         self.entrypoint.address()
     }
 
+    /// Get the version of the entrypoint.
+    pub async fn version(&self) -> TransportResult<String> {
+        Ok(self.eip712_domain(false).await?.version.unwrap_or_default().to_string())
+    }
+
     /// Sets overrides for all calls on this entrypoint.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
