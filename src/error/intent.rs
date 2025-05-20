@@ -25,8 +25,8 @@ pub enum IntentError {
     #[error("the preop can only contain account management calls.")]
     UnallowedPreOpCalls,
     /// The quote was signed for a different intent.
-    #[error("invalid op digest, expected {expected}, got {got}")]
-    InvalidOpDigest {
+    #[error("invalid intent digest, expected {expected}, got {got}")]
+    InvalidIntentDigest {
         /// The digest expected.
         expected: B256,
         /// The digest of the [`Intent`].
@@ -56,7 +56,7 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             IntentError::MissingKey
             | IntentError::MissingSender
             | IntentError::UnallowedPreOpCalls
-            | IntentError::InvalidOpDigest { .. } => invalid_params(err.to_string()),
+            | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
             IntentError::OpRevert(err) => err.into(),
         }
     }
