@@ -6,11 +6,32 @@ use alloy::{
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::task::{Context, Poll, ready};
-use tower::Service;
+use tower::{Layer, Service};
 
 pub mod error;
 
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
+
+/// A [`tower::Layer`] responsible for forwarding transactions to sequencer.
+#[derive(Debug, Clone)]
+pub struct SequencerLayer<S> {
+    sequencer: S,
+}
+
+impl<S> SequencerLayer<S> {
+    /// Create a new [`SequencerLayer`].
+    pub fn new(sequencer: S) -> Self {
+        Self { sequencer }
+    }
+}
+
+impl<T, S: Clone> Layer<T> for SequencerLayer<T, S> {
+    type Service = SequencerService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        SequencerService { inner, sequencer: self.sequencer.clone() }
+    }
+}
 
 /// A [`alloy::transports::Transport`] that combines two transports.
 /// And also forwards requests for `eth_sendRawTransaction` to the sequencer service.
