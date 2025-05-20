@@ -80,7 +80,10 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
         // File exists: load and override with CLI values.
         args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
     } else {
-        RelayConfig::load_from_file(&config_path)?
+        let mut config = RelayConfig::load_from_file(&config_path)?;
+        config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
+        config.database_url = Some(std::env::var("RELAY_DB_URL")?);
+        config
     };
 
     let registry = if !registry_path.as_ref().exists() {
