@@ -14,9 +14,9 @@ use futures_util::future::{BoxFuture, join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
-        Call, ENTRYPOINT_NO_ERROR,
-        EntryPoint::UserOpExecuted,
-        KeyWith712Signer, PreOp, Signature,
+        Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
+        OrchestratorContract::UserOpExecuted,
+        PreOp, Signature,
         rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
     },
 };
@@ -257,7 +257,7 @@ impl TxContext<'_> {
 
                 // UserOp has succeeded if the nonce has been invalidated.
                 let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
-                    event.incremented && event.err == ENTRYPOINT_NO_ERROR
+                    event.incremented && event.err == ORCHESTRATOR_NO_ERROR
                 } else {
                     false
                 };

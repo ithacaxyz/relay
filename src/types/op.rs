@@ -1,5 +1,5 @@
-use super::{Call, EntryPoint, IDelegation::authorizeCall, Key, PREPInitData};
-use crate::types::Entry;
+use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract, PREPInitData};
+use crate::types::Orchestrator;
 use alloy::{
     dyn_abi::TypedData,
     primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256},
@@ -243,9 +243,11 @@ impl UserOp {
         Ok(all_keys)
     }
 
-    /// Encodes this userop into calldata for [`EntryPoint::executeCall`].
+    /// Encodes this userop into calldata for [`OrchestratorContract::executeCall`].
     pub fn encode_execute(&self) -> Bytes {
-        EntryPoint::executeCall { encodedUserOp: self.abi_encode().into() }.abi_encode().into()
+        OrchestratorContract::executeCall { encodedUserOp: self.abi_encode().into() }
+            .abi_encode()
+            .into()
     }
 }
 
@@ -292,19 +294,19 @@ pub trait Op {
     /// Computes the EIP-712 digest that the user must sign.
     fn compute_eip712_data(
         &self,
-        entrypoint_address: Address,
+        orchestrator_address: Address,
         provider: &DynProvider,
     ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
     where
         Self: Sync,
     {
         async move {
-            // Create the entrypoint instance with the same overrides.
-            let entrypoint = Entry::new(entrypoint_address, provider);
+            // Create the orchestrator instance with the same overrides.
+            let orchestrator = Orchestrator::new(orchestrator_address, provider);
 
             // Prepare the EIP-712 payload and domain
             let payload = self.as_eip712()?;
-            let domain = entrypoint.eip712_domain(self.is_multichain()).await?;
+            let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
 
             // Return the computed signing hash (digest).
             let digest = payload.eip712_signing_hash(&domain);
@@ -438,7 +440,7 @@ mod tests {
         user_op.nonce = U256::from(31338);
         assert_eq!(
             user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
-                Some("EntryPoint".into()),
+                Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 Some(U256::from(31337)),
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
@@ -451,7 +453,7 @@ mod tests {
         user_op.nonce = (MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338);
         assert_eq!(
             user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
-                Some("EntryPoint".into()),
+                Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 None,
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
@@ -488,7 +490,7 @@ mod tests {
             b256!("0x14e830a607161a7905565356517352a18f8c105f10b940a74bd65c11a22f25c0");
         assert_eq!(
             user_op.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
-                Some("EntryPoint".into()),
+                Some("Orchestrator".into()),
                 Some("0.0.1".into()),
                 None,
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),

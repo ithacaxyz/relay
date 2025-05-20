@@ -28,10 +28,10 @@ pub struct RelayConfig {
     pub quote: QuoteConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
-    /// Entrypoint address.
-    pub entrypoint: Address,
-    /// Previously deployed entrypoints.
-    pub legacy_entrypoints: BTreeSet<Address>,
+    /// Orchestrator address.
+    pub orchestrator: Address,
+    /// Previously deployed orchestrators.
+    pub legacy_orchestrators: BTreeSet<Address>,
     /// Previously deployed delegation implementations.
     pub legacy_delegations: BTreeSet<Address>,
     /// Delegation proxy address.
@@ -72,7 +72,7 @@ pub struct ChainConfig {
     pub fee_tokens: Vec<Address>,
     /// The fee recipient address.
     ///
-    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the entrypoint
+    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
     /// contract.
     pub fee_recipient: Address,
 }
@@ -192,9 +192,9 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             transactions: TransactionServiceConfig::default(),
-            legacy_entrypoints: BTreeSet::new(),
+            legacy_orchestrators: BTreeSet::new(),
             legacy_delegations: BTreeSet::new(),
-            entrypoint: Address::ZERO,
+            orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,
             simulator: Address::ZERO,
@@ -292,10 +292,10 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the entrypoint address.
-    pub fn with_entrypoint(mut self, entrypoint: Option<Address>) -> Self {
-        if let Some(entrypoint) = entrypoint {
-            self.entrypoint = entrypoint;
+    /// Sets the orchestrator address.
+    pub fn with_orchestrator(mut self, orchestrator: Option<Address>) -> Self {
+        if let Some(orchestrator) = orchestrator {
+            self.orchestrator = orchestrator;
         }
         self
     }

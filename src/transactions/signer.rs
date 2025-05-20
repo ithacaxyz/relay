@@ -12,8 +12,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transport::error::TransportErrExt,
     types::{
-        ENTRYPOINT_NO_ERROR,
-        EntryPoint::{self, UserOpExecuted},
+        ORCHESTRATOR_NO_ERROR,
+        OrchestratorContract::{self, UserOpExecuted},
     },
 };
 use alloy::{
@@ -60,7 +60,7 @@ pub enum SignerError {
     /// The userop reverted when trying transaction.
     #[error("op reverted: {revert_reason}")]
     OpRevert {
-        /// The error code returned by the entrypoint.
+        /// The error code returned by the orchestrator.
         revert_reason: Bytes,
     },
 
@@ -326,12 +326,12 @@ impl Signer {
             .call(request)
             .await
             .and_then(|res| {
-                EntryPoint::executeCall::abi_decode_returns(&res)
+                OrchestratorContract::executeCall::abi_decode_returns(&res)
                     .map_err(TransportErrorKind::custom)
             })
             .map_err(SignerError::from)
             .and_then(|result| {
-                if result != ENTRYPOINT_NO_ERROR {
+                if result != ORCHESTRATOR_NO_ERROR {
                     return Err(SignerError::OpRevert { revert_reason: result.into() });
                 }
                 Ok(())
@@ -700,7 +700,7 @@ impl Signer {
             return;
         };
 
-        if event.err != ENTRYPOINT_NO_ERROR {
+        if event.err != ORCHESTRATOR_NO_ERROR {
             warn!(%tx_hash, err = %event.err, "user op failed on-chain");
             self.metrics.failed_user_ops.increment(1);
             return;

@@ -264,15 +264,15 @@ impl PrepareCallsContext {
     /// Calculate the eip712 digest that the user will need to sign.
     pub async fn compute_eip712_data(
         &self,
-        entrypoint_address: Address,
+        orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
             PrepareCallsContext::Quote(quote) => {
-                quote.ty().op.compute_eip712_data(entrypoint_address, provider).await
+                quote.ty().op.compute_eip712_data(orchestrator_address, provider).await
             }
             PrepareCallsContext::PreOp(pre_op) => {
-                pre_op.compute_eip712_data(entrypoint_address, provider).await
+                pre_op.compute_eip712_data(orchestrator_address, provider).await
             }
         }
     }

@@ -20,8 +20,8 @@ pub use coin_registry::*;
 mod contracts;
 pub use contracts::*;
 
-mod entrypoint;
-pub use entrypoint::*;
+mod orchestrator;
+pub use orchestrator::*;
 
 mod tokens;
 pub use tokens::*;

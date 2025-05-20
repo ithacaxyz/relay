@@ -1,8 +1,9 @@
 use super::{
     Call,
-    EntryPoint::delegationImplementationOfCall,
     IDelegation::authorizeCall,
-    Key, KeyHash, Signature,
+    Key, KeyHash,
+    OrchestratorContract::delegationImplementationOfCall,
+    Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
 use crate::{
@@ -157,7 +158,7 @@ sol! {
         /// - `fnSel` is in the lower 4 bytes.
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
 
-        /// The entrypoint address.
+        /// The orchestrator address.
         address public ENTRY_POINT;
 
         /// Returns whether the given signature is valid and a keyHash that signed the digest.
@@ -284,7 +285,7 @@ impl<P: Provider> Account<P> {
 
     /// Returns this account delegation implementation if it exists.
     ///
-    /// The `delegationImplementationOf` call to the entrypoint also verifies that the delegation
+    /// The `delegationImplementationOf` call to the orchestrator also verifies that the delegation
     /// proxy is valid. If it's not, this will return an error.
     pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
         // Only query eth_getCode, if there is no 7702 code override present for the account
@@ -302,7 +303,7 @@ impl<P: Provider> Account<P> {
         let delegation =
             self.delegation
                 .provider()
-                .call(TransactionRequest::default().to(self.get_entrypoint().await?).input(
+                .call(TransactionRequest::default().to(self.get_orchestrator().await?).input(
                     delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
                 ))
                 .overrides(self.overrides.clone())
@@ -386,8 +387,8 @@ impl<P: Provider> Account<P> {
         Ok(key_hashes.zip(permissions).collect())
     }
 
-    /// Fetch the entrypoint address from the delegation contract.
-    pub async fn get_entrypoint(&self) -> TransportResult<Address> {
+    /// Fetch the orchestrator address from the delegation contract.
+    pub async fn get_orchestrator(&self) -> TransportResult<Address> {
         self.delegation
             .ENTRY_POINT()
             .call()

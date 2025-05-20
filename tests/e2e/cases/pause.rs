@@ -12,7 +12,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        EntryPoint::{self, EntryPointInstance},
+        OrchestratorContract::{self, OrchestratorContractInstance},
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -21,7 +21,7 @@ use relay::{
 async fn pause() -> eyre::Result<()> {
     let env: Environment = Environment::setup_with_prep().await?;
     let eoa = MockAccount::new(&env).await?;
-    let entrypoint = EntryPointInstance::new(env.entrypoint, &env.provider);
+    let orchestrator = OrchestratorContractInstance::new(env.orchestrator, &env.provider);
 
     let prepare_params = PrepareCallsParameters {
         from: Some(eoa.address),
@@ -41,7 +41,7 @@ async fn pause() -> eyre::Result<()> {
     let response = env.relay_endpoint.prepare_calls(prepare_params.clone()).await?;
 
     // Pause all
-    let pauser = entrypoint.getPauseConfig().call().await?._0;
+    let pauser = orchestrator.getPauseConfig().call().await?._0;
     env.provider.anvil_set_balance(pauser, U256::MAX).await.unwrap();
     env.provider.anvil_impersonate_account(pauser).await.unwrap();
     let _tx_hash: B256 = env
@@ -51,15 +51,15 @@ async fn pause() -> eyre::Result<()> {
             "eth_sendTransaction",
             (TransactionRequest::default()
                 .from(pauser)
-                .to(env.entrypoint)
-                .input(EntryPoint::pauseCall { isPause: true }.abi_encode().into())
+                .to(env.orchestrator)
+                .input(OrchestratorContract::pauseCall { isPause: true }.abi_encode().into())
                 .gas_limit(100_000),),
         )
         .await
         .unwrap();
 
     // should be paused
-    assert!(entrypoint.pauseFlag().call().await? == U256::from(1));
+    assert!(orchestrator.pauseFlag().call().await? == U256::from(1));
 
     // prepare calls should fail
     assert!(
@@ -90,8 +90,8 @@ async fn pause() -> eyre::Result<()> {
             "eth_sendTransaction",
             (TransactionRequest::default()
                 .from(pauser)
-                .to(env.entrypoint)
-                .input(EntryPoint::pauseCall { isPause: false }.abi_encode().into())
+                .to(env.orchestrator)
+                .input(OrchestratorContract::pauseCall { isPause: false }.abi_encode().into())
                 .gas_limit(100_000),),
         )
         .await

@@ -39,8 +39,8 @@ pub struct Quote {
     ///
     /// The account in `op.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
-    /// Entrypoint to use for the transaction.
-    pub entrypoint: Address,
+    /// Orchestrator to use for the transaction.
+    pub orchestrator: Address,
 }
 
 impl Quote {
@@ -65,7 +65,7 @@ impl Quote {
                 .as_secs()
                 .to_be_bytes(),
         );
-        hasher.update(self.entrypoint);
+        hasher.update(self.orchestrator);
         hasher.finalize()
     }
 }

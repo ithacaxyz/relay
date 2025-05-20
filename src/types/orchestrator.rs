@@ -1,4 +1,4 @@
-use EntryPoint::EntryPointInstance;
+use OrchestratorContract::OrchestratorContractInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, FixedBytes, U256, fixed_bytes},
@@ -21,13 +21,13 @@ use crate::{
     types::{AssetDiffs, UserOp},
 };
 
-/// The 4-byte selector returned by the entrypoint if there is no error during execution.
-pub const ENTRYPOINT_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
+/// The 4-byte selector returned by the orchestrator if there is no error during execution.
+pub const ORCHESTRATOR_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
 
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract EntryPoint {
+    contract OrchestratorContract {
         /// Emitted when a UserOp is executed.
         ///
         /// This event is emitted in the `execute` function.
@@ -103,7 +103,7 @@ sol! {
         /// When invalidating a nonce sequence, the new sequence must be larger than the current.
         error NewSequenceMustBeLarger();
 
-        /// The entrypoint is paused.
+        /// The orchestrator is paused.
         error Paused();
 
         /// Not authorized to perform the call.
@@ -121,7 +121,7 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
-        /// Returns the EIP712 domain of the entrypoint.
+        /// Returns the EIP712 domain of the orchestrator.
         ///
         /// See: https://eips.ethereum.org/EIPS/eip-5267
         function eip712Domain()
@@ -156,33 +156,33 @@ sol! {
     }
 }
 
-/// A Porto entrypoint.
+/// A Porto orchestrator.
 #[derive(Debug)]
-pub struct Entry<P: Provider> {
-    entrypoint: EntryPointInstance<P>,
+pub struct Orchestrator<P: Provider> {
+    orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
 }
 
-impl<P: Provider> Entry<P> {
+impl<P: Provider> Orchestrator<P> {
     /// Create a new instance of [`Entry`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
-            entrypoint: EntryPointInstance::new(address, provider),
+            orchestrator: OrchestratorContractInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
     }
 
-    /// Get the address of the entrypoint.
+    /// Get the address of the orchestrator.
     pub fn address(&self) -> &Address {
-        self.entrypoint.address()
+        self.orchestrator.address()
     }
 
-    /// Get the version of the entrypoint.
+    /// Get the version of the orchestrator.
     pub async fn version(&self) -> TransportResult<String> {
         Ok(self.eip712_domain(false).await?.version.unwrap_or_default().to_string())
     }
 
-    /// Sets overrides for all calls on this entrypoint.
+    /// Sets overrides for all calls on this orchestrator.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
         self
@@ -209,7 +209,7 @@ impl<P: Provider> Entry<P> {
 
         let simulate_block = SimBlock::default()
             .call(
-                SimulatorInstance::new(simulator, self.entrypoint.provider())
+                SimulatorInstance::new(simulator, self.orchestrator.provider())
                     .simulateV1Logs(
                         *self.address(),
                         true,
@@ -224,7 +224,7 @@ impl<P: Provider> Entry<P> {
             .with_state_overrides(self.overrides.clone());
 
         let result = self
-            .entrypoint
+            .orchestrator
             .provider()
             .simulate(
                 &SimulatePayload::default().extend(simulate_block.clone()).with_trace_transfers(),
@@ -238,7 +238,7 @@ impl<P: Provider> Entry<P> {
             debug!(?result, ?simulate_block, "Unable to simulate user op.");
 
             if self.is_paused().await? {
-                return Err(UserOpError::PausedEntrypoint.into());
+                return Err(UserOpError::PausedOrchestrator.into());
             }
 
             return Err(UserOpError::op_revert(result.return_data).into());
@@ -256,7 +256,7 @@ impl<P: Provider> Entry<P> {
             .calculate_asset_diff(
                 simulate_block,
                 result.logs.into_iter(),
-                self.entrypoint.provider(),
+                self.orchestrator.provider(),
             )
             .await?;
 
@@ -274,29 +274,29 @@ impl<P: Provider> Entry<P> {
         Ok((asset_diffs, simulation_result))
     }
 
-    /// Call `EntryPoint.execute` with the provided [`UserOp`].
+    /// Call `Orchestrator.execute` with the provided [`UserOp`].
     pub async fn execute(&self, op: &UserOp) -> Result<(), RelayError> {
         let ret = self
-            .entrypoint
+            .orchestrator
             .execute(op.abi_encode().into())
             .call()
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
-        if ret != ENTRYPOINT_NO_ERROR {
+        if ret != ORCHESTRATOR_NO_ERROR {
             Err(UserOpError::op_revert(ret.into()).into())
         } else {
             Ok(())
         }
     }
 
-    /// Get the [`Eip712Domain`] for this entrypoint.
+    /// Get the [`Eip712Domain`] for this orchestrator.
     ///
     /// If `multichain` is `true`, then the chain ID is omitted from the domain.
     pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
         let domain = self
-            .entrypoint
+            .orchestrator
             .eip712Domain()
             .call()
             .overrides(self.overrides.clone())
@@ -312,10 +312,10 @@ impl<P: Provider> Entry<P> {
         ))
     }
 
-    /// Whether the entrypoint has been paused.
+    /// Whether the orchestrator has been paused.
     pub async fn is_paused(&self) -> TransportResult<bool> {
         Ok(self
-            .entrypoint
+            .orchestrator
             .pauseFlag()
             .call()
             .overrides(self.overrides.clone())

@@ -15,10 +15,10 @@ use crate::{
     provider::ProviderExt,
     types::{
         AccountRegistry::{self, AccountRegistryCalls},
-        AssetDiffs, Call, ENTRYPOINT_NO_ERROR,
-        EntryPoint::{self, UserOpExecuted},
-        FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType, Op, PreOp,
-        VersionedContracts,
+        AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, KeyHashWithID, KeyType,
+        ORCHESTRATOR_NO_ERROR, Op,
+        OrchestratorContract::{self, UserOpExecuted},
+        PreOp, VersionedContracts,
         rpc::{
             CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
             RelayCapabilities, RelayFees, ValidSignatureProof,
@@ -63,7 +63,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, Entry, KeyWith712Signer, PREPAccount, PartialAction,
+        Account, CreatableAccount, KeyWith712Signer, Orchestrator, PREPAccount, PartialAction,
         PartialUserOp, Quote, Signature, SignedQuote, UserOp,
         rpc::{
             AccountResponse, AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus,
@@ -257,7 +257,7 @@ impl Relay {
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
-            .append(self.entrypoint(), AccountOverride::default().with_balance(U256::MAX))
+            .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
             .append(
                 request.op.eoa,
                 AccountOverride::default()
@@ -276,14 +276,14 @@ impl Relay {
 
         let account = Account::new(request.op.eoa, &provider).with_overrides(overrides.clone());
 
-        let (entrypoint, delegation, native_fee_estimate, eth_price) = try_join4(
-            // fetch entrypoint from the account and ensure it is supported
+        let (orchestrator, delegation, native_fee_estimate, eth_price) = try_join4(
+            // fetch orchestrator from the account and ensure it is supported
             async {
-                let entrypoint = account.get_entrypoint().await?;
-                if !self.is_supported_entrypoint(&entrypoint) {
-                    return Err(RelayError::UnsupportedEntrypoint(entrypoint));
+                let orchestrator = account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
                 }
-                Ok(Entry::new(entrypoint, &provider).with_overrides(overrides.clone()))
+                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
             },
             // fetch delegation from the account and ensure it is supported
             self.has_supported_delegation(&account).map_err(RelayError::from),
@@ -331,7 +331,7 @@ impl Relay {
         let signature = mock_key
             .sign_typed_data(
                 &op.as_eip712().map_err(RelayError::from)?,
-                &entrypoint.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
+                &orchestrator.eip712_domain(op.is_multichain()).await.map_err(RelayError::from)?,
             )
             .await
             .map_err(RelayError::from)?;
@@ -354,12 +354,13 @@ impl Relay {
 
         op.combinedGas = U256::from(self.inner.quote_config.user_op_buffer())
             + U256::from(approx_intrinsic_cost(
-                &EntryPoint::executeCall { encodedUserOp: op.abi_encode().into() }.abi_encode(),
+                &OrchestratorContract::executeCall { encodedUserOp: op.abi_encode().into() }
+                    .abi_encode(),
                 authorization_address.is_some(),
             ));
 
         // we estimate gas and fees
-        let (asset_diff, sim_result) = entrypoint
+        let (asset_diff, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
                 &op,
@@ -399,7 +400,7 @@ impl Relay {
                 .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
             authorization_address,
-            entrypoint: *entrypoint.address(),
+            orchestrator: *orchestrator.address(),
         };
         let sig = self
             .inner
@@ -711,9 +712,10 @@ impl Relay {
             .collect())
     }
 
-    /// Checks if the entrypoint is supported.
-    fn is_supported_entrypoint(&self, entrypoint: &Address) -> bool {
-        self.entrypoint() == *entrypoint || self.legacy_entrypoints().any(|c| c == *entrypoint)
+    /// Checks if the orchestrator is supported.
+    fn is_supported_orchestrator(&self, orchestrator: &Address) -> bool {
+        self.orchestrator() == *orchestrator
+            || self.legacy_orchestrators().any(|c| c == *orchestrator)
     }
 
     /// Checks if the account has a supported delegation implementation. If so, returns it.
@@ -998,7 +1000,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_eip712_data(self.entrypoint(), &provider)
+            .compute_eip712_data(self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1090,7 +1092,7 @@ impl RelayApiServer for Relay {
         let (digest, typed_data) = quote
             .ty()
             .op
-            .compute_eip712_data(self.entrypoint(), &provider)
+            .compute_eip712_data(self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1253,10 +1255,14 @@ impl RelayApiServer for Relay {
         // note that we also assume that failure to decode a log as `UserOpExecuted` means the
         // operation failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
-            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+            receipt
+                .decoded_log::<UserOpExecuted>()
+                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
         });
         let all_reverted = receipts.iter().all(|(_, receipt)| {
-            receipt.decoded_log::<UserOpExecuted>().is_none_or(|evt| evt.err != ENTRYPOINT_NO_ERROR)
+            receipt
+                .decoded_log::<UserOpExecuted>()
+                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
         });
 
         let status = if any_failed {
@@ -1485,14 +1491,14 @@ struct RelayInner {
 }
 
 impl Relay {
-    /// The entrypoint address.
-    pub fn entrypoint(&self) -> Address {
-        self.inner.contracts.entrypoint.address
+    /// The orchestrator address.
+    pub fn orchestrator(&self) -> Address {
+        self.inner.contracts.orchestrator.address
     }
 
-    /// Previously deployed entrypoints.
-    pub fn legacy_entrypoints(&self) -> impl Iterator<Item = Address> {
-        self.inner.contracts.legacy_entrypoints.iter().map(|c| c.address)
+    /// Previously deployed orchestrators.
+    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = Address> {
+        self.inner.contracts.legacy_orchestrators.iter().map(|c| c.address)
     }
 
     /// Previously deployed delegation implementations.

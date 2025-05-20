@@ -13,7 +13,7 @@ A transparent cross-chain transaction router for EIP-7702 accounts, specifically
 
 To run the relay, you can either use Docker or run the binary directly.
 
-1. Deploy the [delegation and entrypoint contracts](https://github.com/ithacaxyz/account) on the destination chain.
+1. Deploy the [delegation and orchestrator contracts](https://github.com/ithacaxyz/account) on the destination chain.
 1. Deploy or identify at least one token to accept as fee token(s).
 1. Generate two private keys, one for transaction signing, and one for quote signing. You can do this with `cast wallet new`.
 
@@ -93,7 +93,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
    - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
    - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
    - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
-   - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
+   - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
    - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
    - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
    - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.

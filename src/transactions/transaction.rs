@@ -65,7 +65,7 @@ impl RelayTransaction {
                 authorization_list: vec![auth.clone()],
                 chain_id: quote.chain_id,
                 nonce,
-                to: quote.entrypoint,
+                to: quote.orchestrator,
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -78,7 +78,7 @@ impl RelayTransaction {
             TxEip1559 {
                 chain_id: quote.chain_id,
                 nonce,
-                to: quote.entrypoint.into(),
+                to: quote.orchestrator.into(),
                 input,
                 gas_limit,
                 max_fee_per_gas,

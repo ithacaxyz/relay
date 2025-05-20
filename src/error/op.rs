@@ -1,5 +1,7 @@
 use super::{internal_rpc, invalid_params, rpc_err};
-use crate::types::{Delegation::DelegationErrors, EntryPoint::EntryPointErrors};
+use crate::types::{
+    Delegation::DelegationErrors, OrchestratorContract::OrchestratorContractErrors,
+};
 use alloy::{
     primitives::{B256, Bytes},
     rpc::types::error::EthRpcErrorCode,
@@ -33,9 +35,9 @@ pub enum UserOpError {
     /// The userop reverted when trying transaction.
     #[error(transparent)]
     OpRevert(#[from] OpRevert),
-    /// The userop could not be simulated since the entrypoint is paused.
-    #[error("the entrypoint is paused")]
-    PausedEntrypoint,
+    /// The userop could not be simulated since the orchestrator is paused.
+    #[error("the orchestrator is paused")]
+    PausedOrchestrator,
 }
 
 impl UserOpError {
@@ -48,7 +50,7 @@ impl UserOpError {
 impl From<UserOpError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: UserOpError) -> Self {
         match err {
-            UserOpError::PausedEntrypoint | UserOpError::SimulationError => {
+            UserOpError::PausedOrchestrator | UserOpError::SimulationError => {
                 internal_rpc(err.to_string())
             }
             UserOpError::MissingKey
@@ -82,11 +84,11 @@ impl std::fmt::Display for OpRevert {
 }
 
 impl OpRevert {
-    /// Creates a new instance of [`OpRevert`]. Attempts to decode [`EntryPointErrors`]
+    /// Creates a new instance of [`OpRevert`]. Attempts to decode [`OrchestratorContractErrors`]
     /// and[`DelegationErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
         Self {
-            decoded_error: EntryPointErrors::abi_decode(&revert_reason)
+            decoded_error: OrchestratorContractErrors::abi_decode(&revert_reason)
                 .ok()
                 .map(|err| format!("{err:?}"))
                 .or_else(|| {

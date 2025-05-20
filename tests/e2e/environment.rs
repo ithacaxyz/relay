@@ -75,7 +75,7 @@ pub struct Environment {
     pub _anvil: Option<AnvilInstance>,
     pub provider: DynProvider,
     pub eoa: EoaKind,
-    pub entrypoint: Address,
+    pub orchestrator: Address,
     pub delegation: Address,
     /// Minted to the eoa.
     pub fee_token: Address,
@@ -95,7 +95,7 @@ impl std::fmt::Debug for Environment {
         f.debug_struct("Environment")
             .field("is_prep", &self.eoa.address())
             .field("eoa", &self.eoa.address())
-            .field("entrypoint", &self.entrypoint)
+            .field("orchestrator", &self.orchestrator)
             .field("delegation", &self.delegation)
             .field("erc20", &self.erc20)
             .field("chain_id", &self.chain_id)
@@ -126,7 +126,7 @@ impl Environment {
     /// - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for inprocess spawned Anvil.
     /// - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
-    /// - `TEST_ENTRYPOINT`: Address for EntryPoint contract; deploys a mock if unset.
+    /// - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
     /// - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
     /// - `TEST_ACCOUNT_REGISTRY`: Address for AccountRegistry contract; deploys a mock if unset.
     /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
@@ -139,7 +139,7 @@ impl Environment {
     /// TEST_FORK_BLOCK_NUMBER=11577300
     /// TEST_EOA_PRIVATE_KEY=0xabc123...
     /// TEST_CONTRACTS="./tests/account/out"
-    /// TEST_ENTRYPOINT="0xEntryPointAddress"
+    /// TEST_ORCHESTRATOR="0xOrchestratorAddress"
     /// TEST_DELEGATION="0xDelegationAddress"
     /// TEST_ACCOUNT_REGISTRY="0xAccountRegistryAddress"
     /// TEST_ERC20="0xYourErc20Address"
@@ -204,7 +204,7 @@ impl Environment {
         }
 
         // Get or deploy mock contracts.
-        let (simulator, delegation, entrypoint, account_registry, erc20s, erc721) =
+        let (simulator, delegation, orchestrator, account_registry, erc20s, erc721) =
             get_or_deploy_contracts(&provider).await?;
 
         let eoa = if config.is_prep {
@@ -264,7 +264,7 @@ impl Environment {
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
-                .with_entrypoint(Some(entrypoint))
+                .with_orchestrator(Some(orchestrator))
                 .with_delegation_proxy(Some(delegation))
                 .with_account_registry(Some(account_registry))
                 .with_simulator(Some(simulator))
@@ -286,7 +286,7 @@ impl Environment {
             _anvil: anvil,
             provider: provider.erased(),
             eoa,
-            entrypoint,
+            orchestrator,
             delegation,
             fee_token: erc20s[1],
             erc20: erc20s[0],
@@ -435,9 +435,9 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
 
-    let mut entrypoint = deploy_contract(
+    let mut orchestrator = deploy_contract(
         &provider,
-        &contracts_path.join("EntryPoint.sol/EntryPoint.json"),
+        &contracts_path.join("Orchestrator.sol/Orchestrator.json"),
         Some(provider.default_signer_address().abi_encode().into()),
     )
     .await?;
@@ -445,7 +445,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     let delegation = deploy_contract(
         &provider,
         &contracts_path.join("Delegation.sol/Delegation.json"),
-        Some(entrypoint.abi_encode().into()),
+        Some(orchestrator.abi_encode().into()),
     )
     .await?;
 
@@ -467,9 +467,10 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         deploy_contract(&provider, &contracts_path.join("Simulator.sol/Simulator.json"), None)
             .await?;
 
-    // Entrypoint
-    if let Ok(address) = std::env::var("TEST_ENTRYPOINT") {
-        entrypoint = Address::from_str(&address).wrap_err("Entrypoint address parse failed.")?;
+    // Orchestrator
+    if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
+        orchestrator =
+            Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?;
     }
 
     // Delegation
@@ -491,8 +492,8 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     // Have at least 2 erc20 deployed
     let mut erc20s = Vec::with_capacity(2);
-    if let Ok(entrypoint) = std::env::var("TEST_ERC20") {
-        erc20s.push(Address::from_str(&entrypoint).wrap_err("ERC20 address parse failed.")?)
+    if let Ok(orchestrator) = std::env::var("TEST_ERC20") {
+        erc20s.push(Address::from_str(&orchestrator).wrap_err("ERC20 address parse failed.")?)
     };
 
     while erc20s.len() != 10 {
@@ -525,7 +526,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((simulator, delegation_proxy, entrypoint, account_registry, erc20s, erc721))
+    Ok((simulator, delegation_proxy, orchestrator, account_registry, erc20s, erc721))
 }
 
 async fn deploy_contract<P: Provider>(
