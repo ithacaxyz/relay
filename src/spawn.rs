@@ -76,9 +76,11 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
         let config = args.merge_relay_config(RelayConfig::default());
         config.save_to_file(&config_path)?;
         config
-    } else {
+    } else if !args.config_only {
         // File exists: load and override with CLI values.
         args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
+    } else {
+        RelayConfig::load_from_file(&config_path)?
     };
 
     let registry = if !registry_path.as_ref().exists() {
