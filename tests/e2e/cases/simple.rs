@@ -9,8 +9,9 @@ use eyre::Result;
 use relay::{
     signers::DynSigner,
     types::{
-        Delegation::SpendPeriod,
-        IERC20, KeyType, KeyWith712Signer, Signature,
+        IERC20, KeyType, KeyWith712Signer,
+        PortoAccount::SpendPeriod,
+        Signature,
         rpc::{Permission, SpendPermission},
     },
 };

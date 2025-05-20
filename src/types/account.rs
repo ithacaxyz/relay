@@ -10,8 +10,8 @@ use crate::{
     error::{AuthError, RelayError},
     types::IDelegation,
 };
-use Delegation::{
-    DelegationInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+use PortoAccount::{
+    PortoAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
 use alloy::{
     eips::eip7702::{
@@ -49,7 +49,7 @@ sol! {
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract Delegation {
+    contract PortoAccount {
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -234,7 +234,7 @@ pub struct CallPermission {
 /// A Porto account.
 #[derive(Debug, Clone)]
 pub struct Account<P: Provider> {
-    delegation: DelegationInstance<P>,
+    delegation: PortoAccountInstance<P>,
     overrides: StateOverride,
 }
 
@@ -242,7 +242,7 @@ impl<P: Provider> Account<P> {
     /// Create a new instance of [`Account`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
-            delegation: DelegationInstance::new(address, provider),
+            delegation: PortoAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
     }

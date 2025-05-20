@@ -11,12 +11,12 @@ use crate::error::{AuthError, RelayError};
 
 use super::{
     AccountRegistry,
-    Delegation::{
+    IDelegation::{authorizeCall, revokeCall},
+    Key, KeyID,
+    PortoAccount::{
         SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
         upgradeProxyDelegationCall,
     },
-    IDelegation::{authorizeCall, revokeCall},
-    Key, KeyID,
 };
 
 sol! {

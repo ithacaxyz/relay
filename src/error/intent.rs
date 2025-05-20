@@ -1,6 +1,6 @@
 use super::{internal_rpc, invalid_params, rpc_err};
 use crate::types::{
-    Delegation::DelegationErrors, OrchestratorContract::OrchestratorContractErrors,
+    OrchestratorContract::OrchestratorContractErrors, PortoAccount::PortoAccountErrors,
 };
 use alloy::{
     primitives::{B256, Bytes},
@@ -85,14 +85,16 @@ impl std::fmt::Display for IntentRevert {
 
 impl IntentRevert {
     /// Creates a new instance of [`OpRevert`]. Attempts to decode [`OrchestratorContractErrors`]
-    /// and[`DelegationErrors`] .
+    /// and[`PortoAccountErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
         Self {
             decoded_error: OrchestratorContractErrors::abi_decode(&revert_reason)
                 .ok()
                 .map(|err| format!("{err:?}"))
                 .or_else(|| {
-                    DelegationErrors::abi_decode(&revert_reason).ok().map(|err| format!("{err:?}"))
+                    PortoAccountErrors::abi_decode(&revert_reason)
+                        .ok()
+                        .map(|err| format!("{err:?}"))
                 }),
             revert_reason,
         }

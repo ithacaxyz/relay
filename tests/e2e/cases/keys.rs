@@ -6,9 +6,8 @@ use alloy::{primitives::U256, sol_types::SolCall};
 use relay::{
     rpc::RelayApiClient,
     types::{
-        CallPermission,
-        Delegation::SpendPeriod,
-        KeyType, KeyWith712Signer,
+        CallPermission, KeyType, KeyWith712Signer,
+        PortoAccount::SpendPeriod,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, Meta, Permission, PrepareCallsCapabilities,
             PrepareCallsParameters, SpendPermission,

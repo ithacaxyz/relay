@@ -14,9 +14,9 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call,
-        Delegation::{self, upgradeProxyDelegationCall},
-        KeyType, KeyWith712Signer, PreOp, Signature,
+        Call, KeyType, KeyWith712Signer,
+        PortoAccount::{self, upgradeProxyDelegationCall},
+        PreOp, Signature,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -229,7 +229,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
         .from(env.eoa.address())
         .to(env.eoa.address())
         .input(
-            Delegation::upgradeProxyDelegationCall { newImplementation: address }
+            PortoAccount::upgradeProxyDelegationCall { newImplementation: address }
                 .abi_encode()
                 .into(),
         )
@@ -255,7 +255,7 @@ async fn upgrade_delegation_with_preop() -> eyre::Result<()> {
             calls: vec![Call {
                 to: env.eoa.address(),
                 value: U256::ZERO,
-                data: Delegation::upgradeProxyDelegationCall {
+                data: PortoAccount::upgradeProxyDelegationCall {
                     newImplementation: caps.contracts.delegation_implementation.address,
                 }
                 .abi_encode()
