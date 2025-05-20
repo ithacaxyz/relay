@@ -190,7 +190,8 @@ impl Environment {
         .wrap_err("Relay signer load failed")?;
 
         // Build provider
-        let client = ClientBuilder::default().layer(RETRY_LAYER.clone()).http(endpoint.clone());
+        let client =
+            ClientBuilder::default().layer(RETRY_LAYER.clone()).connect(endpoint.as_str()).await?;
         let provider = ProviderBuilder::new()
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .connect_client(client);

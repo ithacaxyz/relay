@@ -7,7 +7,6 @@ use job::PeriodicJob;
 use alloy::{
     primitives::Address,
     providers::{Provider, ProviderBuilder},
-    rpc::client::RpcClient,
 };
 use std::{fmt::Debug, future::Future, time::Duration};
 use url::Url;
@@ -34,7 +33,7 @@ pub async fn spawn_periodic_collectors(
     let mut providers_with_chain = Vec::with_capacity(rpc_urls.len());
 
     for rpc in rpc_urls {
-        let provider = ProviderBuilder::new().connect_client(RpcClient::new_http(rpc.clone()));
+        let provider = ProviderBuilder::new().connect(rpc.as_str()).await?;
 
         providers_with_chain.push((provider.get_chain_id().await?, provider.clone()));
         providers_with_url.push((rpc, provider));
