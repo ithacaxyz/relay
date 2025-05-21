@@ -76,6 +76,7 @@ impl StressAccount {
         fee_token: Address,
         relay_client: HttpClient,
     ) -> eyre::Result<()> {
+        let mut previous_nonce = None;
         loop {
             let prepare_start = Instant::now();
             let PrepareCallsResponse { context, digest, .. } = relay_client
@@ -94,6 +95,18 @@ impl StressAccount {
                 })
                 .await
                 .expect("prepare calls failed");
+
+            // It might happen that we've received a preconfirmation for previous transaction but
+            // Relay is not yet at the latest state. For this case we need to make sure that our new
+            // userop does not have the same nonce and otherwise retry a bit later.
+            let nonce = context.quote().unwrap().ty().op.nonce;
+            if previous_nonce == Some(nonce) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            } else {
+                previous_nonce = Some(nonce);
+            }
+
             let signature =
                 self.key.sign_payload_hash(digest).await.expect("failed to sign bundle digest");
 
