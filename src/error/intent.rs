@@ -34,16 +34,16 @@ pub enum IntentError {
     },
     /// The intent reverted when trying transaction.
     #[error(transparent)]
-    OpRevert(#[from] IntentRevert),
+    IntentRevert(#[from] IntentRevert),
     /// The intent could not be simulated since the orchestrator is paused.
     #[error("the orchestrator is paused")]
     PausedOrchestrator,
 }
 
 impl IntentError {
-    /// Creates a new [`IntentError::OpRevert`] error.
+    /// Creates a new [`IntentError::IntentRevert`] error.
     pub fn intent_revert(revert_reason: Bytes) -> Self {
-        Self::OpRevert(IntentRevert::new(revert_reason))
+        Self::IntentRevert(IntentRevert::new(revert_reason))
     }
 }
 
@@ -57,7 +57,7 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             | IntentError::MissingSender
             | IntentError::UnallowedPreCall
             | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
-            IntentError::OpRevert(err) => err.into(),
+            IntentError::IntentRevert(err) => err.into(),
         }
     }
 }
@@ -84,8 +84,8 @@ impl std::fmt::Display for IntentRevert {
 }
 
 impl IntentRevert {
-    /// Creates a new instance of [`OpRevert`]. Attempts to decode [`OrchestratorContractErrors`]
-    /// and[`PortoAccountErrors`] .
+    /// Creates a new instance of [`IntentRevert`]. Attempts to decode
+    /// [`OrchestratorContractErrors`] and[`PortoAccountErrors`] .
     pub fn new(revert_reason: Bytes) -> Self {
         Self {
             decoded_error: OrchestratorContractErrors::abi_decode(&revert_reason)

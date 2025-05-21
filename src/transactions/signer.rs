@@ -59,7 +59,7 @@ const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
 pub enum SignerError {
     /// The intent reverted when trying transaction.
     #[error("intent reverted: {revert_reason}")]
-    OpRevert {
+    IntentRevert {
         /// The error code returned by the orchestrator.
         revert_reason: Bytes,
     },
@@ -332,7 +332,7 @@ impl Signer {
             .map_err(SignerError::from)
             .and_then(|result| {
                 if result != ORCHESTRATOR_NO_ERROR {
-                    return Err(SignerError::OpRevert { revert_reason: result.into() });
+                    return Err(SignerError::IntentRevert { revert_reason: result.into() });
                 }
                 Ok(())
             })?;
