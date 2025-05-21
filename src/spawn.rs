@@ -23,6 +23,7 @@ use alloy::{
     signers::local::LocalSigner,
     transports::{TransportConnect, layers::RetryBackoffLayer},
 };
+use alloy_chains::Chain;
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
@@ -136,18 +137,19 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
 
             let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
 
-            let client =
-                if let Some(sequencer_url) = config.chain.sequencer_endpoints.get(&chain_id) {
-                    let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
-                        .connect_boxed()
-                        .await?;
+            let client = if let Some(sequencer_url) =
+                config.chain.sequencer_endpoints.get(&Chain::from_id(chain_id))
+            {
+                let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
+                    .connect_boxed()
+                    .await?;
 
-                    info!("Configured sequencer forwarding for chain {chain_id}");
+                info!("Configured sequencer forwarding for chain {chain_id}");
 
-                    builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
-                } else {
-                    builder.transport(transport, is_local)
-                };
+                builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
+            } else {
+                builder.transport(transport, is_local)
+            };
 
             eyre::Ok(
                 ProviderBuilder::new()

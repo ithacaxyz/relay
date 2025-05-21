@@ -11,6 +11,7 @@ use alloy::{
     primitives::Address,
     signers::local::coins_bip39::{English, Mnemonic},
 };
+use alloy_chains::Chain;
 use clap::Parser;
 use eyre::OptionExt;
 use std::{
@@ -108,8 +109,11 @@ pub struct Args {
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
     /// The RPC endpoints of the sequencers for OP rollups.
-    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_id_url)]
-    pub sequencer_endpoints: Vec<(u64, Url)>,
+    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
+    pub sequencer_endpoints: Vec<(Chain, Url)>,
+    /// The RPC endpoints of the public nodes for OP rollups.
+    #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
+    pub public_node_endpoints: Vec<(Chain, Url)>,
     /// Reads all values from the config file.
     ///
     /// This makes required CLI args not required, but it is important that any required CLI args
@@ -135,6 +139,7 @@ impl Args {
             .with_signers_mnemonic(self.signers_mnemonic)
             .with_endpoints(&self.endpoints.unwrap_or_default())
             .with_sequencer_endpoints(self.sequencer_endpoints.clone())
+            .with_public_node_endpoints(self.public_node_endpoints.clone())
             .with_fee_tokens(&self.fee_tokens.unwrap_or_default())
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
@@ -162,7 +167,7 @@ fn parse_duration_secs(arg: &str) -> Result<std::time::Duration, std::num::Parse
 }
 
 /// Parses a string representing a pair of chain id and a url in a format of "chain_id:url".
-fn parse_chain_id_url(arg: &str) -> eyre::Result<(u64, Url)> {
+fn parse_chain_url(arg: &str) -> eyre::Result<(Chain, Url)> {
     let (chain_id, url) = arg.split_once(':').ok_or_eyre("expected chain_id:url argument")?;
 
     Ok((chain_id.parse()?, url.parse()?))
