@@ -20,8 +20,8 @@ pub use coin_registry::*;
 mod contracts;
 pub use contracts::*;
 
-mod entrypoint;
-pub use entrypoint::*;
+mod orchestrator;
+pub use orchestrator::*;
 
 mod tokens;
 pub use tokens::*;
@@ -30,8 +30,8 @@ mod key;
 use alloy::primitives::Uint;
 pub use key::*;
 
-mod op;
-pub use op::*;
+mod intent;
+pub use intent::*;
 
 mod onramp;
 pub use onramp::*;

@@ -1,16 +1,17 @@
 use super::{
     Call,
-    EntryPoint::delegationImplementationOfCall,
     IDelegation::authorizeCall,
-    Key, KeyHash, Signature,
+    Key, KeyHash,
+    OrchestratorContract::accountImplementationOfCall,
+    Signature,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
 };
 use crate::{
     error::{AuthError, RelayError},
     types::IDelegation,
 };
-use Delegation::{
-    DelegationInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+use PortoAccount::{
+    PortoAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
 use alloy::{
     eips::eip7702::{
@@ -48,7 +49,7 @@ sol! {
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract Delegation {
+    contract PortoAccount {
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -157,8 +158,8 @@ sol! {
         /// - `fnSel` is in the lower 4 bytes.
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
 
-        /// The entrypoint address.
-        address public ENTRY_POINT;
+        /// The orchestrator address.
+        address public ORCHESTRATOR;
 
         /// Returns whether the given signature is valid and a keyHash that signed the digest.
         function unwrapAndValidateSignature(bytes32 digest, bytes calldata signature)
@@ -174,7 +175,7 @@ sol! {
         address public implementation;
 
         /// Upgrades the implementation.
-        function upgradeProxyDelegation(address newImplementation);
+        function upgradeProxyAccount(address newImplementation);
 
         /// Returns the EIP712 domain of the delegation.
         ///
@@ -233,7 +234,7 @@ pub struct CallPermission {
 /// A Porto account.
 #[derive(Debug, Clone)]
 pub struct Account<P: Provider> {
-    delegation: DelegationInstance<P>,
+    delegation: PortoAccountInstance<P>,
     overrides: StateOverride,
 }
 
@@ -241,7 +242,7 @@ impl<P: Provider> Account<P> {
     /// Create a new instance of [`Account`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
-            delegation: DelegationInstance::new(address, provider),
+            delegation: PortoAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
     }
@@ -284,7 +285,7 @@ impl<P: Provider> Account<P> {
 
     /// Returns this account delegation implementation if it exists.
     ///
-    /// The `delegationImplementationOf` call to the entrypoint also verifies that the delegation
+    /// The `accountImplementationOf` call to the orchestrator also verifies that the delegation
     /// proxy is valid. If it's not, this will return an error.
     pub async fn delegation_implementation(&self) -> Result<Option<Address>, RelayError> {
         // Only query eth_getCode, if there is no 7702 code override present for the account
@@ -299,19 +300,21 @@ impl<P: Provider> Account<P> {
             return Ok(None);
         }
 
-        let delegation =
-            self.delegation
-                .provider()
-                .call(TransactionRequest::default().to(self.get_entrypoint().await?).input(
-                    delegationImplementationOfCall { eoa: self.address() }.abi_encode().into(),
-                ))
-                .overrides(self.overrides.clone())
-                .await
-                .and_then(|ret| {
-                    delegationImplementationOfCall::abi_decode_returns(&ret)
-                        .map_err(TransportErrorKind::custom)
-                })
-                .map_err(RelayError::from)?;
+        let delegation = self
+            .delegation
+            .provider()
+            .call(
+                TransactionRequest::default()
+                    .to(self.get_orchestrator().await?)
+                    .input(accountImplementationOfCall { eoa: self.address() }.abi_encode().into()),
+            )
+            .overrides(self.overrides.clone())
+            .await
+            .and_then(|ret| {
+                accountImplementationOfCall::abi_decode_returns(&ret)
+                    .map_err(TransportErrorKind::custom)
+            })
+            .map_err(RelayError::from)?;
 
         // A zero address means an invalid delegation proxy.
         if delegation.is_zero() {
@@ -386,10 +389,10 @@ impl<P: Provider> Account<P> {
         Ok(key_hashes.zip(permissions).collect())
     }
 
-    /// Fetch the entrypoint address from the delegation contract.
-    pub async fn get_entrypoint(&self) -> TransportResult<Address> {
+    /// Fetch the orchestrator address from the delegation contract.
+    pub async fn get_orchestrator(&self) -> TransportResult<Address> {
         self.delegation
-            .ENTRY_POINT()
+            .ORCHESTRATOR()
             .call()
             .overrides(self.overrides.clone())
             .await
@@ -470,7 +473,7 @@ pub struct PREPAccount {
 impl PREPAccount {
     /// Initializes a new account with the given delegation and digest.
     ///
-    /// The digest is a hash of the [`UserOp`] used to initialize the account.
+    /// The digest is a hash of the [`Intent`] used to initialize the account.
     ///
     /// This generates a new EOA address and a signed authorization for the account using the
     /// Provably Rootless EIP-7702 Proxy method, which is an application of Nick's Method to

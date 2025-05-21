@@ -72,7 +72,7 @@ impl EoaKind {
     }
 }
 
-/// An account that can be used to send userops.
+/// An account that can be used to send intents.
 pub struct MockAccount {
     pub address: Address,
     pub key: KeyWith712Signer,
@@ -133,8 +133,8 @@ impl MockAccount {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
-                    pre_ops: vec![],
-                    pre_op: false,
+                    pre_calls: vec![],
+                    pre_call: false,
                     revoke_keys: vec![],
                 },
                 key: Some(key.to_call_key()),
@@ -166,8 +166,8 @@ impl MockAccount {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
-                    pre_ops: vec![],
-                    pre_op: false,
+                    pre_calls: vec![],
+                    pre_call: false,
                     revoke_keys: vec![],
                 },
                 key: Some(self.key.to_call_key()),
@@ -175,7 +175,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().op.signature = Signature {
+        context.quote_mut().unwrap().ty_mut().intent.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,

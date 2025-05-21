@@ -2,10 +2,10 @@
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
-    error::{RelayError, UserOpError},
+    error::{IntentError, RelayError},
     types::{
         Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, Op, PreOp, SignedQuote,
+        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
     },
 };
 use alloy::{
@@ -65,45 +65,45 @@ pub struct PrepareCallsParameters {
     #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// Address of the account to prepare the call bundle for. It can only be None, if we are
-    /// handling a preop
+    /// handling a precall
     pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
     /// Key that will be used to sign the call bundle. It can only be None, if we are handling a
-    /// preop.
+    /// precall.
     #[serde(default)]
     pub key: Option<CallKey>,
 }
 
 impl PrepareCallsParameters {
-    /// Ensures there are only whitelisted calls in preops and that any upgrade delegation request
+    /// Ensures there are only whitelisted calls in precalls and that any upgrade delegation request
     /// contains the latest delegation address.
     pub fn check_calls(&self, latest_delegation: Address) -> Result<(), RelayError> {
         let has_unallowed = |calls: &[Call]| -> Result<bool, RelayError> {
             for call in calls {
-                if !call.is_whitelisted_preop(self.from.unwrap_or_default(), latest_delegation)? {
+                if !call.is_whitelisted_precall(self.from.unwrap_or_default(), latest_delegation)? {
                     return Ok(true);
                 }
             }
             Ok(false)
         };
 
-        if self.capabilities.pre_op {
-            // Ensure this preop request only has valid calls
+        if self.capabilities.pre_call {
+            // Ensure this precall request only has valid calls
             if has_unallowed(&self.calls)? {
-                return Err(UserOpError::UnallowedPreOpCalls.into());
+                return Err(IntentError::UnallowedPreCall.into());
             }
         } else {
-            // Ensure that if the userop is upgrading its delegation, it's to the latest one.
+            // Ensure that if the intent is upgrading its delegation, it's to the latest one.
             for call in &self.calls {
                 call.ensure_valid_upgrade(latest_delegation)?;
             }
         }
 
-        // Ensure preops only have valid calls
-        for op in &self.capabilities.pre_ops {
-            if has_unallowed(&op.calls().map_err(RelayError::from)?)? {
-                return Err(UserOpError::UnallowedPreOpCalls.into());
+        // Ensure precalls only have valid calls
+        for precall in &self.capabilities.pre_calls {
+            if has_unallowed(&precall.calls().map_err(RelayError::from)?)? {
+                return Err(IntentError::UnallowedPreCall.into());
             }
         }
 
@@ -113,11 +113,11 @@ impl PrepareCallsParameters {
     /// Retrieves the appropriate nonce for the request, following this order:
     ///
     /// 1. If `capabilities.meta.nonce` is set, return it directly.
-    /// 2. If this is a preop, generate a random sequence key without the multichain prefix and
+    /// 2. If this is a precall, generate a random sequence key without the multichain prefix and
     ///    return its 0th nonce.
-    /// 3. If this is a userop and there are any previous preop entries with the
+    /// 3. If this is a intent and there are any previous precall entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
-    /// 4. If this is the first userop of a PREP account (`maybe_prep`), return 0.
+    /// 4. If this is the first intent of a PREP account (`maybe_prep`), return 0.
     /// 5. If none of the above match, query for the next account nonce onchain (for
     ///    `DEFAULT_SEQUENCE_KEY`).
     pub async fn get_nonce(
@@ -127,7 +127,7 @@ impl PrepareCallsParameters {
     ) -> Result<U256, RelayError> {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
-        } else if self.capabilities.pre_op {
+        } else if self.capabilities.pre_call {
             // Create a random sequence key.
             loop {
                 let sequence_key = U192::from_be_bytes(B192::random().into());
@@ -135,18 +135,18 @@ impl PrepareCallsParameters {
                     return Ok(U256::from(sequence_key) << 64);
                 }
             }
-        } else if let Some(preop) = self
+        } else if let Some(precall) = self
             .capabilities
-            .pre_ops
+            .pre_calls
             .iter()
-            .filter(|preop| (preop.nonce >> 64) == U256::from(DEFAULT_SEQUENCE_KEY))
-            .max_by_key(|preop| preop.nonce)
+            .filter(|precall| (precall.nonce >> 64) == U256::from(DEFAULT_SEQUENCE_KEY))
+            .max_by_key(|precall| precall.nonce)
         {
-            Ok(preop.nonce + uint!(1_U256))
+            Ok(precall.nonce + uint!(1_U256))
         } else if maybe_prep.is_some() {
             Ok(U256::ZERO)
         } else {
-            let eoa = self.from.ok_or(UserOpError::MissingSender)?;
+            let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
     }
@@ -164,14 +164,14 @@ pub struct PrepareCallsCapabilities {
     /// Keys to revoke from the account.
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
-    /// Optional preOps to execute before signature verification.
+    /// Optional preCalls to execute before signature verification.
     ///
-    /// See [`UserOp::encodedPreOps`].
+    /// See [`Intent::encodedPreCalls`].
     #[serde(default)]
-    pub pre_ops: Vec<PreOp>,
-    /// Whether the call bundle is to be considered a preop.
+    pub pre_calls: Vec<SignedCall>,
+    /// Whether the call bundle is to be considered a precall.
     #[serde(default)]
-    pub pre_op: bool,
+    pub pre_call: bool,
 }
 
 /// Capabilities for `wallet_prepareCalls` response.
@@ -213,9 +213,9 @@ pub enum PrepareCallsContext {
     /// The [`SignedQuote`] of the prepared call bundle.
     #[serde(rename = "quote")]
     Quote(Box<SignedQuote>),
-    /// The [`PreOp`] of the prepared call bundle.
-    #[serde(rename = "preOp")]
-    PreOp(PreOp),
+    /// The [`PreCall`] of the prepared call bundle.
+    #[serde(rename = "preCall")]
+    PreCall(SignedCall),
 }
 
 impl PrepareCallsContext {
@@ -224,16 +224,16 @@ impl PrepareCallsContext {
         Self::Quote(Box::new(quote))
     }
 
-    /// Initializes [`PrepareCallsContext`] with a [`PreOp`].
-    pub fn with_preop(preop: PreOp) -> Self {
-        Self::PreOp(preop)
+    /// Initializes [`PrepareCallsContext`] with a [`PreCall`].
+    pub fn with_precall(precall: SignedCall) -> Self {
+        Self::PreCall(precall)
     }
 
     /// Returns quote mutable reference if it exists.
     pub fn quote(&self) -> Option<&SignedQuote> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
-            PrepareCallsContext::PreOp(_) => None,
+            PrepareCallsContext::PreCall(_) => None,
         }
     }
 
@@ -241,7 +241,7 @@ impl PrepareCallsContext {
     pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
-            PrepareCallsContext::PreOp(_) => None,
+            PrepareCallsContext::PreCall(_) => None,
         }
     }
 
@@ -249,30 +249,30 @@ impl PrepareCallsContext {
     pub fn take_quote(self) -> Option<SignedQuote> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(*signed),
-            PrepareCallsContext::PreOp(_) => None,
+            PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Consumes self and returns preop if it exists.
-    pub fn take_preop(self) -> Option<PreOp> {
+    /// Consumes self and returns precall if it exists.
+    pub fn take_precall(self) -> Option<SignedCall> {
         match self {
             PrepareCallsContext::Quote(_) => None,
-            PrepareCallsContext::PreOp(preop) => Some(preop),
+            PrepareCallsContext::PreCall(precall) => Some(precall),
         }
     }
 
     /// Calculate the eip712 digest that the user will need to sign.
     pub async fn compute_eip712_data(
         &self,
-        entrypoint_address: Address,
+        orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
             PrepareCallsContext::Quote(quote) => {
-                quote.ty().op.compute_eip712_data(entrypoint_address, provider).await
+                quote.ty().intent.compute_eip712_data(orchestrator_address, provider).await
             }
-            PrepareCallsContext::PreOp(pre_op) => {
-                pre_op.compute_eip712_data(entrypoint_address, provider).await
+            PrepareCallsContext::PreCall(pre_call) => {
+                pre_call.compute_eip712_data(orchestrator_address, provider).await
             }
         }
     }

@@ -53,7 +53,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
+                        data: PortoAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -113,7 +113,7 @@ async fn execution_guard_target_scope() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
+                        data: PortoAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
                             target: env.erc20,
@@ -171,7 +171,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
+                        data: PortoAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: MockErc20::transferCall::SELECTOR.into(),
@@ -258,7 +258,7 @@ async fn execution_guard_default() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
+                        data: PortoAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -422,7 +422,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: Delegation::setCanExecuteCall {
+                        data: PortoAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -484,7 +484,7 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op() -> Result<()> {
+async fn session_key_pre_call() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e(|env| {
@@ -499,8 +499,8 @@ async fn session_key_pre_op() -> Result<()> {
             },
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                // Bundle session key authorization as a pre-op
-                pre_ops: vec![TxContext {
+                // Bundle session key authorization as a precall
+                pre_calls: vec![TxContext {
                     authorization_keys: vec![&session_key],
                     calls: vec![
                         calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
@@ -513,9 +513,9 @@ async fn session_key_pre_op() -> Result<()> {
                     nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                     ..Default::default()
                 }],
-                // Execute the transfer via session key in the same userop
+                // Execute the transfer via session key in the same intent
                 calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-                // The userop is signed by the session key itself
+                // The intent is signed by the session key itself
                 key: Some(&session_key),
                 ..Default::default()
             },
@@ -526,7 +526,7 @@ async fn session_key_pre_op() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op_prep_single_tx() -> Result<()> {
+async fn session_key_pre_call_prep_single_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
@@ -534,8 +534,8 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::Pass,
-            // Bundle session key authorization as a pre-op
-            pre_ops: vec![TxContext {
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 calls: vec![
                     calls::daily_limit(env.fee_token, U256::from(1e18), session_key.key()),
@@ -548,9 +548,9 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
                 nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                 ..Default::default()
             }],
-            // Execute the transfer via session key in the same userop
+            // Execute the transfer via session key in the same intent
             calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-            // The userop is signed by the session key itself
+            // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
         }]
@@ -560,24 +560,24 @@ async fn session_key_pre_op_prep_single_tx() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_key_pre_op_prep_single_tx_failure() -> Result<()> {
+async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
     run_e2e_prep(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,
-            // Bundle session key authorization as a pre-op
-            pre_ops: vec![TxContext {
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
                 authorization_keys: vec![&session_key],
                 key: Some(&key),
                 // use random nonce sequence
                 nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
                 ..Default::default()
             }],
-            // Execute the transfer via session key in the same userop
+            // Execute the transfer via session key in the same intent
             calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-            // The userop is signed by the session key itself
+            // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
         }]

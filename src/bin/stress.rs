@@ -87,8 +87,8 @@ impl StressAccount {
                         authorize_keys: vec![],
                         meta: Meta { fee_payer: None, fee_token, nonce: None },
                         revoke_keys: vec![],
-                        pre_ops: vec![],
-                        pre_op: false,
+                        pre_calls: vec![],
+                        pre_call: false,
                     },
                     key: Some(self.key.to_call_key()),
                 })
@@ -303,7 +303,7 @@ struct Args {
     chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
-    /// This account should have sufficient fee tokens to cover the gas costs of the userops.
+    /// This account should have sufficient fee tokens to cover the gas costs of the intents.
     #[arg(long = "private-key", value_name = "PRIVATE_KEY", required = true, env = "PK")]
     private_key: String,
     /// Address of the fee token to use for testing.

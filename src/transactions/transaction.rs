@@ -24,7 +24,7 @@ wrap_fixed_bytes! {
 pub struct RelayTransaction {
     /// Id of the transaction.
     pub id: TxId,
-    /// [`UserOp`] to send.
+    /// [`Intent`] to send.
     pub quote: SignedQuote,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
@@ -46,26 +46,26 @@ impl RelayTransaction {
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let quote = self.quote.ty();
-        let mut op = quote.op.clone();
+        let mut intent = quote.intent.clone();
 
         let payment_amount = (quote.extra_payment
-            + (op.combinedGas
+            + (intent.combinedGas
                 * U256::from(fees.max_fee_per_gas)
                 * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
             .div_ceil(quote.eth_price))
-        .min(op.totalPaymentMaxAmount);
+        .min(intent.totalPaymentMaxAmount);
 
-        op.prePaymentAmount = payment_amount;
-        op.totalPaymentAmount = payment_amount;
+        intent.prePaymentAmount = payment_amount;
+        intent.totalPaymentAmount = payment_amount;
 
-        let input = op.encode_execute();
+        let input = intent.encode_execute();
 
         if let Some(auth) = &self.authorization {
             TxEip7702 {
                 authorization_list: vec![auth.clone()],
                 chain_id: quote.chain_id,
                 nonce,
-                to: quote.entrypoint,
+                to: quote.orchestrator,
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -78,7 +78,7 @@ impl RelayTransaction {
             TxEip1559 {
                 chain_id: quote.chain_id,
                 nonce,
-                to: quote.entrypoint.into(),
+                to: quote.orchestrator.into(),
                 input,
                 gas_limit,
                 max_fee_per_gas,
@@ -100,9 +100,9 @@ impl RelayTransaction {
         self.quote.ty().native_fee_estimate.max_fee_per_gas
     }
 
-    /// Returns the EOA of the userop.
+    /// Returns the EOA of the intent.
     pub fn eoa(&self) -> &Address {
-        &self.quote.ty().op.eoa
+        &self.quote.ty().intent.eoa
     }
 }
 

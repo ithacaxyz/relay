@@ -72,7 +72,7 @@ sol! {
         bool isSuperAdmin;
     }
 
-    /// The signature of a [`UserOp`].
+    /// The signature of a [`Intent`].
     struct Signature {
         bytes innerSignature;
         bytes32 keyHash;
@@ -188,10 +188,9 @@ impl Key {
     /// The derivation is a bit involved:
     ///
     /// 1. Compute the offset for the contract storage, which is given by
-    ///    `uint72(bytes9(keccak256("PORTO_DELEGATION_STORAGE")))`
-    ///    ([`PORTO_DELEGATION_STORAGE_SLOT`]).
+    ///    `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))` ([`PORTO_ACCOUNT_STORAGE_SLOT`]).
     /// 1. Compute the storage slot for `keyStorage` in the contract, which is at
-    ///    `PORTO_DELEGATION_STORAGE_SLOT + 4` (`key_storage_slot`).
+    ///    `PORTO_ACCOUNT_STORAGE_SLOT + 4` (`key_storage_slot`).
     /// 1. Find the seed slot of `LibBytes.BytesStorage`, which is given by
     ///
     ///    ```ignore
@@ -224,7 +223,7 @@ impl Key {
     /// ```
     pub fn storage_slots(&self) -> B256Map<B256> {
         let key_storage_slot = B256::left_padding_from(
-            &(PORTO_DELEGATION_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
+            &(PORTO_ACCOUNT_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
         );
         let bytes_seed_slot = self.seed_slot_for_key(key_storage_slot);
         let mut encoded = &PackedKey::from(self.clone()).abi_encode_packed()[..];
@@ -447,8 +446,8 @@ impl KeyHashWithID {
 
 /// The offset for storage slots in the Porto delegation contract.
 ///
-/// Equivalent to `uint72(bytes9(keccak256("PORTO_DELEGATION_STORAGE")))`
-pub const PORTO_DELEGATION_STORAGE_SLOT: u128 = 2015112712752093870099;
+/// Equivalent to `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))`
+pub const PORTO_ACCOUNT_STORAGE_SLOT: u128 = 1293779133171170665679;
 
 /// The offset for the `keyStorage` variable in the `DelegationStorage` struct in the delegation
 /// contract.
@@ -460,7 +459,7 @@ mod tests {
     use crate::types::U40;
     use alloy::{
         hex,
-        primitives::{B256, b256, map::HashMap},
+        primitives::{b256, map::HashMap},
     };
 
     #[test]
@@ -496,7 +495,7 @@ mod tests {
         assert_eq!(
             key.storage_slots(),
             HashMap::from_iter([(
-                b256!("0x1e260793a6006dc7ff4e003f7855f86b42eafb769191a50456b8eef0a9fbec8d"),
+                b256!("0x22e9b02827ae1b9352e2477471a8eba480f98ced116c8ef37c042c3a95d13a24"),
                 b256!("0xdeadbeef0000000000020100000000000000000000000000000000000000000b")
             ),])
         );
@@ -518,11 +517,11 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("0x66660046373aa54db720a1e783350b8b72164124dec4ac0f440c8280fa5cab06"),
+                    b256!("0x7e8bef5aab303a0f409ba1799a7b87091449f8d19d9d67b94db017e2e516dddc"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
                 ),
                 (
-                    b256!("0xf8ae8897de7599677a07b826c5e75519342a40c2478792c35966af4e7ac921eb"),
+                    b256!("0x87722af65ab80f4e75613cd2f3adde1844853f8a17c3fc8bde542c0f34ab61f2"),
                     b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
             ])
@@ -552,43 +551,43 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a18"),
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419e"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x68a02f4387b8eb2b560b17dd43f66a22b7800a81babf3c2b943967ae533a7cdd"),
-                    B256::left_padding_from(&67583u64.to_be_bytes())
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419b"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1d"),
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419d"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419a"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419f"),
                     b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a19"),
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419c"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1a"),
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994197"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1c"),
+                    b256!("0x001d224e9921f1f32ba73624ac02453ab8f2fa6f2bbac3e1a15846a89eaaa410"),
+                    b256!("0x00000000000000000000000000000000000000000000000000000000000107ff")
+                ),
+                (
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994198"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a17"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a1b"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a16"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x1610841431194ef3ae25b820417d532867656a25f8a6b7d60f407be1302a0a15"),
+                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994199"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 )
             ])

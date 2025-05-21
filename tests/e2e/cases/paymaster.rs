@@ -49,8 +49,8 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: Some(paymaster.address), fee_token, nonce: None },
-                    pre_ops: vec![],
-                    pre_op: false,
+                    pre_calls: vec![],
+                    pre_call: false,
                     revoke_keys: vec![],
                 },
                 key: Some(eoa.key.to_call_key()),
@@ -58,8 +58,8 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
             .await
             .unwrap();
 
-        // Ensure the payer on UserOp is as expected
-        assert_eq!(context.quote_mut().unwrap().ty().op.payer, paymaster.address);
+        // Ensure the payer on Intent is as expected
+        assert_eq!(context.quote_mut().unwrap().ty().intent.payer, paymaster.address);
 
         let bundle_id = env
             .relay_endpoint

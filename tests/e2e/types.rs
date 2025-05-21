@@ -14,9 +14,9 @@ use futures_util::future::{BoxFuture, join_all, try_join_all};
 use relay::{
     signers::DynSigner,
     types::{
-        Call, ENTRYPOINT_NO_ERROR,
-        EntryPoint::UserOpExecuted,
-        KeyWith712Signer, PreOp, Signature,
+        Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
+        OrchestratorContract::IntentExecuted,
+        Signature, SignedCall,
         rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
     },
 };
@@ -39,8 +39,8 @@ pub enum ExpectedOutcome {
     FailSend,
     /// Transaction should revert on-chain
     TxRevert,
-    /// UserOp should fail but transaction succeeds
-    FailUserOp,
+    /// Intent should fail but transaction succeeds
+    FailIntent,
 }
 
 impl ExpectedOutcome {
@@ -57,8 +57,8 @@ impl ExpectedOutcome {
     pub fn reverted_tx(&self) -> bool {
         matches!(self, ExpectedOutcome::TxRevert)
     }
-    pub fn failed_user_op(&self) -> bool {
-        matches!(self, ExpectedOutcome::FailUserOp)
+    pub fn failed_intent(&self) -> bool {
+        matches!(self, ExpectedOutcome::FailIntent)
     }
 }
 
@@ -125,16 +125,16 @@ pub struct TxContext<'a> {
     pub expected: ExpectedOutcome,
     /// Optional authorization. Used only for upgrading existing EOAs.
     pub auth: Option<AuthKind>,
-    /// Optional Key that will sign the UserOp
+    /// Optional Key that will sign the Intent
     pub key: Option<&'a KeyWith712Signer>,
-    /// List of keys to authorize that will be converted to calls on top of the UserOp.
+    /// List of keys to authorize that will be converted to calls on top of the Intent.
     pub authorization_keys: Vec<&'a KeyWith712Signer>,
-    /// List of keys to revoke that will be converted to calls on bottom of the UserOp.
+    /// List of keys to revoke that will be converted to calls on bottom of the Intent.
     pub revoke_keys: Vec<&'a KeyWith712Signer>,
     /// Fee token to be used
     pub fee_token: Option<Address>,
-    /// Optional array of pre-ops to be executed before the UserOp.
-    pub pre_ops: Vec<TxContext<'a>>,
+    /// Optional array of precalls to be executed before the Intent.
+    pub pre_calls: Vec<TxContext<'a>>,
     /// Optional nonce to be used.
     pub nonce: Option<U256>,
     /// Optional checks after a successful transaction.
@@ -161,8 +161,8 @@ impl TxContext<'_> {
         .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
 
         // Check test expectations
-        let op_nonce = U256::ZERO; // first transaction
-        self.check_bundle(tx_hash, tx_num, authorization, op_nonce, env).await?;
+        let intent_nonce = U256::ZERO; // first transaction
+        self.check_bundle(tx_hash, tx_num, authorization, intent_nonce, env).await?;
 
         Ok(self.calls.clone())
     }
@@ -184,13 +184,13 @@ impl TxContext<'_> {
     /// Processes a single transaction, returning error on a unexpected failure.
     ///
     /// The process follows these steps:
-    /// 1. Obtains a signed quote and UserOp signature from [`prepare_calls`].
+    /// 1. Obtains a signed quote and Intent signature from [`prepare_calls`].
     /// 2. Submits and verifies execution with [`send_prepared_calls`].
     ///    - Sends the prepared calls and signature to the relay
     ///    - Handles expected send failures
     ///    - Retrieves and checks transaction receipt
     ///    - Verifies transaction status matches expectations
-    ///    - Confirms UserOp success by checking nonce invalidation
+    ///    - Confirms Intent success by checking nonce invalidation
     pub async fn process(self, tx_num: usize, env: &Environment) -> eyre::Result<()> {
         let signer = self.key.expect("should have key");
 
@@ -200,12 +200,12 @@ impl TxContext<'_> {
             return Ok(());
         };
 
-        let op_nonce = context.quote().as_ref().unwrap().ty().op.nonce;
+        let intent_nonce = context.quote().as_ref().unwrap().ty().intent.nonce;
 
         // Submit signed call
         let bundle = send_prepared_calls(env, signer, signature, context).await;
 
-        self.check_bundle(bundle, tx_num, None, op_nonce, env).await
+        self.check_bundle(bundle, tx_num, None, intent_nonce, env).await
     }
 
     /// Checks that the submitted bundle has had the expected test outcome.
@@ -214,7 +214,7 @@ impl TxContext<'_> {
         bundle_id: eyre::Result<BundleId>,
         tx_num: usize,
         authorization: Option<SignedAuthorization>,
-        _op_nonce: U256,
+        _intent_nonce: U256,
         env: &Environment,
     ) -> Result<(), eyre::Error> {
         match bundle_id {
@@ -255,17 +255,17 @@ impl TxContext<'_> {
                     return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
                 }
 
-                // UserOp has succeeded if the nonce has been invalidated.
-                let success = if let Some(event) = receipt.decoded_log::<UserOpExecuted>() {
-                    event.incremented && event.err == ENTRYPOINT_NO_ERROR
+                // Intent has succeeded if the nonce has been invalidated.
+                let success = if let Some(event) = receipt.decoded_log::<IntentExecuted>() {
+                    event.incremented && event.err == ORCHESTRATOR_NO_ERROR
                 } else {
                     false
                 };
-                if success && self.expected.failed_user_op() {
-                    return Err(eyre::eyre!("UserOp {tx_num} passed when it should have failed."));
-                } else if !success && !self.expected.failed_user_op() {
+                if success && self.expected.failed_intent() {
+                    return Err(eyre::eyre!("Intent {tx_num} passed when it should have failed."));
+                } else if !success && !self.expected.failed_intent() {
                     return Err(eyre::eyre!(
-                        "Transaction succeeded but UserOp failed for transaction {tx_num}",
+                        "Transaction succeeded but Intent failed for transaction {tx_num}",
                     ));
                 }
 
@@ -285,25 +285,25 @@ impl TxContext<'_> {
     }
 }
 
-pub async fn build_pre_ops<'a>(
+pub async fn build_pre_calls<'a>(
     env: &Environment,
-    pre_ops: &[TxContext<'a>],
+    pre_calls: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<Vec<PreOp>> {
-    let pre_ops = join_all(pre_ops.iter().map(|tx| async move {
-        let signer = tx.key.expect("userop should have a key");
+) -> eyre::Result<Vec<SignedCall>> {
+    let pre_calls = join_all(pre_calls.iter().map(|tx| async move {
+        let signer = tx.key.expect("intent should have a key");
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut op = context.take_preop().unwrap();
-        op.signature =
+        let mut intent = context.take_precall().unwrap();
+        intent.signature =
             Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
                 .abi_encode_packed()
                 .into();
-        op
+        intent
     }))
     .await;
 
-    Ok(pre_ops)
+    Ok(pre_calls)
 }
 
 /// Helper macro for checking the outcome of a successful transaction.

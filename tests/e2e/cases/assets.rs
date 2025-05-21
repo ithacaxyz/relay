@@ -68,8 +68,8 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token, nonce: None },
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                pre_ops: vec![],
-                pre_op: false,
+                pre_calls: vec![],
+                pre_call: false,
             },
             key: Some(admin_key.to_call_key()),
         };
@@ -104,8 +104,8 @@ async fn asset_diff() -> eyre::Result<()> {
             meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
-            pre_ops: vec![],
-            pre_op: false,
+            pre_calls: vec![],
+            pre_call: false,
         },
         key: Some(admin_key.to_call_key()),
     };
@@ -232,8 +232,8 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
             meta: Meta { fee_token: Address::ZERO, nonce: None, fee_payer: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
-            pre_ops: vec![],
-            pre_op: false,
+            pre_calls: vec![],
+            pre_call: false,
         },
         key: Some(admin_key.to_call_key()),
     };

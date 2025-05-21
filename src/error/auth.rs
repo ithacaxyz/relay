@@ -33,7 +33,7 @@ pub enum AuthError {
         /// The item in the request.
         got: Option<Address>,
     },
-    /// The `eoa` field of the provided `UserOp` is not an EIP-7702 delegated account.
+    /// The `eoa` field of the provided `Intent` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),
     /// The provided PREPAccount is not valid.

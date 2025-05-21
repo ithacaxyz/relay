@@ -36,7 +36,7 @@ pub async fn upgrade_account(
         })
         .await?;
 
-    // Sign UserOp digest
+    // Sign Intent digest
     let signature = env.eoa.root_signer().sign_hash(&response.digest).await?;
 
     // Sign 7702 delegation
@@ -93,7 +93,7 @@ async fn invalid_auth_quote_check() -> eyre::Result<()> {
         })
         .await?;
 
-    // Sign UserOp digest
+    // Sign Intent digest
     let signature = env.eoa.root_signer().sign_hash(&response.digest).await?;
     let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
 
