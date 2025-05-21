@@ -399,7 +399,6 @@ impl Signer {
         &self,
         tx: &mut PendingTransaction,
     ) -> Result<B256, SignerError> {
-        let mut retries = 0;
         let mut last_sent_at = Instant::now();
 
         loop {
@@ -419,10 +418,6 @@ impl Signer {
                 }
             }
 
-            if retries > 3 {
-                return Err(SignerError::TxDropped);
-            }
-
             let fees = self.get_fee_context().await?;
             let best_tx = tx.best_tx();
 
@@ -438,27 +433,21 @@ impl Signer {
                     .await?;
                 tx.sent.push(replacement);
                 last_sent_at = Instant::now();
-            } else if !self
-                .provider
-                .get_transaction_by_hash(*best_tx.tx_hash())
-                .await
-                .is_ok_and(|tx| tx.is_some())
-            {
-                // The transaction was dropped, try to rebroadcast it.
+            } else {
+                trace!(tx_hash=%best_tx.tx_hash(), "was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
                 {
                     if !err.is_already_known() {
+                        debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
                         return Err(err.into());
                     }
-                } else {
-                    retries += 1;
                 }
             }
         }
     }
 
     /// Awaits the given [`PendingTransaction`] and watches it for status updates.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(tx_id = %tx.tx.id))]
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
         Span::current().add_link(tx.tx.trace_context.span().span_context().clone());
 
