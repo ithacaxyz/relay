@@ -15,7 +15,7 @@ use super::{
     Key, KeyID,
     PortoAccount::{
         SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
-        upgradeProxyDelegationCall,
+        upgradeProxyAccountCall,
     },
 };
 
@@ -131,14 +131,13 @@ impl Call {
         Ok(WHITELISTED_SELECTORS.iter().any(|sel| sel == &self.data[..4]))
     }
 
-    /// If call is a [`upgradeProxyDelegationCall`], ensures it's upgrading to the latest delegation
+    /// If call is a [`upgradeProxyAccountCall`], ensures it's upgrading to the latest delegation
     /// address.
     ///
     /// Otherwise, returns error.
     pub fn ensure_valid_upgrade(&self, latest_delegation: Address) -> Result<(), RelayError> {
-        if self.data.len() > 4 && self.data[..4] == upgradeProxyDelegationCall::SELECTOR {
-            let new_delegation =
-                upgradeProxyDelegationCall::abi_decode(&self.data)?.newImplementation;
+        if self.data.len() > 4 && self.data[..4] == upgradeProxyAccountCall::SELECTOR {
+            let new_delegation = upgradeProxyAccountCall::abi_decode(&self.data)?.newImplementation;
 
             if latest_delegation != new_delegation {
                 return Err(AuthError::InvalidDelegation(new_delegation).into());
@@ -156,5 +155,5 @@ const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
     setCanExecuteCall::SELECTOR,
     setSpendLimitCall::SELECTOR,
     removeSpendLimitCall::SELECTOR,
-    upgradeProxyDelegationCall::SELECTOR,
+    upgradeProxyAccountCall::SELECTOR,
 ];

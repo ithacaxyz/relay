@@ -111,10 +111,10 @@ sol! {
         /// Optional payment signature to be passed into the `compensate` function
         /// on the `payer`. This signature is NOT included in the EIP712 signature.
         bytes paymentSignature;
-        /// Optional. If non-zero, the EOA must use `supportedDelegationImplementation`.
+        /// Optional. If non-zero, the EOA must use `supportedAccountImplementation`.
         /// Otherwise, if left as `address(0)`, any EOA implementation will be supported.
         /// This field is NOT included in the EIP712 signature.
-        address supportedDelegationImplementation;
+        address supportedAccountImplementation;
     }
 
 
@@ -229,7 +229,7 @@ impl Intent {
             hasher.finalize()
         };
         hasher.update(pre_calls_hash);
-        hasher.update(self.supportedDelegationImplementation);
+        hasher.update(self.supportedAccountImplementation);
         hasher.finalize()
     }
 
@@ -433,7 +433,7 @@ mod tests {
             paymentRecipient: Address::ZERO,
             signature: bytes!(""),
             paymentSignature: bytes!(""),
-            supportedDelegationImplementation: Address::ZERO,
+            supportedAccountImplementation: Address::ZERO,
         };
 
         // Single chain op
@@ -483,7 +483,7 @@ mod tests {
             paymentRecipient: Address::ZERO,
             signature: bytes!(""),
             paymentSignature: bytes!(""),
-            supportedDelegationImplementation: Address::ZERO,
+            supportedAccountImplementation: Address::ZERO,
         };
 
         let expected_digest =

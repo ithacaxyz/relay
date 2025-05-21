@@ -313,7 +313,7 @@ impl Relay {
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
             initData: request.intent.init_data.unwrap_or_default(),
-            supportedDelegationImplementation: delegation,
+            supportedAccountImplementation: delegation,
             encodedPreCalls: request
                 .intent
                 .pre_calls

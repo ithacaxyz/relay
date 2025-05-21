@@ -188,10 +188,9 @@ impl Key {
     /// The derivation is a bit involved:
     ///
     /// 1. Compute the offset for the contract storage, which is given by
-    ///    `uint72(bytes9(keccak256("PORTO_DELEGATION_STORAGE")))`
-    ///    ([`PORTO_DELEGATION_STORAGE_SLOT`]).
+    ///    `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))` ([`PORTO_ACCOUNT_STORAGE_SLOT`]).
     /// 1. Compute the storage slot for `keyStorage` in the contract, which is at
-    ///    `PORTO_DELEGATION_STORAGE_SLOT + 4` (`key_storage_slot`).
+    ///    `PORTO_ACCOUNT_STORAGE_SLOT + 4` (`key_storage_slot`).
     /// 1. Find the seed slot of `LibBytes.BytesStorage`, which is given by
     ///
     ///    ```ignore
@@ -224,7 +223,7 @@ impl Key {
     /// ```
     pub fn storage_slots(&self) -> B256Map<B256> {
         let key_storage_slot = B256::left_padding_from(
-            &(PORTO_DELEGATION_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
+            &(PORTO_ACCOUNT_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
         );
         let bytes_seed_slot = self.seed_slot_for_key(key_storage_slot);
         let mut encoded = &PackedKey::from(self.clone()).abi_encode_packed()[..];
@@ -447,8 +446,8 @@ impl KeyHashWithID {
 
 /// The offset for storage slots in the Porto delegation contract.
 ///
-/// Equivalent to `uint72(bytes9(keccak256("PORTO_DELEGATION_STORAGE")))`
-pub const PORTO_DELEGATION_STORAGE_SLOT: u128 = 2015112712752093870099;
+/// Equivalent to `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))`
+pub const PORTO_ACCOUNT_STORAGE_SLOT: u128 = 1293779133171170665679;
 
 /// The offset for the `keyStorage` variable in the `DelegationStorage` struct in the delegation
 /// contract.

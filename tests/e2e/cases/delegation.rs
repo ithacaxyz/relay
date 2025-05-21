@@ -15,7 +15,7 @@ use relay::{
     signers::Eip712PayLoadSigner,
     types::{
         Call, KeyType, KeyWith712Signer,
-        PortoAccount::{self, upgradeProxyDelegationCall},
+        PortoAccount::{self, upgradeProxyAccountCall},
         Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
@@ -62,7 +62,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     let good_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
 
     assert!(
-        good_quote.context.quote().unwrap().ty().intent.supportedDelegationImplementation
+        good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
             == caps.contracts.delegation_implementation.address
     );
 
@@ -75,7 +75,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         let upgrade_call = vec![Call {
             to: env.eoa.address(),
             value: U256::ZERO,
-            data: upgradeProxyDelegationCall { newImplementation: Address::random() }
+            data: upgradeProxyAccountCall { newImplementation: Address::random() }
                 .abi_encode()
                 .into(),
         }];
@@ -229,7 +229,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
         .from(env.eoa.address())
         .to(env.eoa.address())
         .input(
-            PortoAccount::upgradeProxyDelegationCall { newImplementation: address }
+            PortoAccount::upgradeProxyAccountCall { newImplementation: address }
                 .abi_encode()
                 .into(),
         )
@@ -237,7 +237,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
     let _tx_hash: B256 = env.provider.client().request("eth_sendTransaction", (tx,)).await.unwrap();
 }
 
-/// Ensures upgradeProxyDelegation can be called as a precall.
+/// Ensures upgradeProxyAccount can be called as a precall.
 #[tokio::test(flavor = "multi_thread")]
 async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
@@ -255,7 +255,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
             calls: vec![Call {
                 to: env.eoa.address(),
                 value: U256::ZERO,
-                data: PortoAccount::upgradeProxyDelegationCall {
+                data: PortoAccount::upgradeProxyAccountCall {
                     newImplementation: caps.contracts.delegation_implementation.address,
                 }
                 .abi_encode()

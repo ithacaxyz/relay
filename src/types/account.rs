@@ -159,7 +159,7 @@ sol! {
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
 
         /// The orchestrator address.
-        address public ENTRY_POINT;
+        address public ORCHESTRATOR;
 
         /// Returns whether the given signature is valid and a keyHash that signed the digest.
         function unwrapAndValidateSignature(bytes32 digest, bytes calldata signature)
@@ -175,7 +175,7 @@ sol! {
         address public implementation;
 
         /// Upgrades the implementation.
-        function upgradeProxyDelegation(address newImplementation);
+        function upgradeProxyAccount(address newImplementation);
 
         /// Returns the EIP712 domain of the delegation.
         ///
@@ -392,7 +392,7 @@ impl<P: Provider> Account<P> {
     /// Fetch the orchestrator address from the delegation contract.
     pub async fn get_orchestrator(&self) -> TransportResult<Address> {
         self.delegation
-            .ENTRY_POINT()
+            .ORCHESTRATOR()
             .call()
             .overrides(self.overrides.clone())
             .await
