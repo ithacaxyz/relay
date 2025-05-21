@@ -94,7 +94,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
    - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
    - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
    - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
-   - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
+   - `TEST_PROXY`: Address for proxy contract; deploys a mock if unset.
    - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
    - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
 

@@ -127,7 +127,7 @@ impl Environment {
     /// - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
     /// - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
-    /// - `TEST_DELEGATION`: Address for Delegation contract; deploys a mock if unset.
+    /// - `TEST_PROXY`: Address for Proxy contract; deploys a mock if unset.
     /// - `TEST_ACCOUNT_REGISTRY`: Address for AccountRegistry contract; deploys a mock if unset.
     /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
     /// - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
@@ -140,7 +140,7 @@ impl Environment {
     /// TEST_EOA_PRIVATE_KEY=0xabc123...
     /// TEST_CONTRACTS="./tests/account/out"
     /// TEST_ORCHESTRATOR="0xOrchestratorAddress"
-    /// TEST_DELEGATION="0xDelegationAddress"
+    /// TEST_PROXY="0xProxyAddress"
     /// TEST_ACCOUNT_REGISTRY="0xAccountRegistryAddress"
     /// TEST_ERC20="0xYourErc20Address"
     /// TEST_ERC721="0xYourErc721Address"
@@ -475,7 +475,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     }
 
     // Delegation
-    if let Ok(address) = std::env::var("TEST_DELEGATION") {
+    if let Ok(address) = std::env::var("TEST_PROXY") {
         delegation_proxy =
             Address::from_str(&address).wrap_err("Delegation address parse failed.")?
     }
