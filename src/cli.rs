@@ -3,7 +3,7 @@ use crate::{
     config::RelayConfig,
     constants::{
         DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS,
-        TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
     },
     spawn::try_spawn_with_args,
 };
@@ -46,9 +46,13 @@ pub struct Args {
     /// The port to serve the metrics on.
     #[arg(long = "http.metrics-port", value_name = "PORT", default_value_t = 9000)]
     pub metrics_port: u16,
-    /// The address of the entrypoint.
-    #[arg(long = "entrypoint", required_unless_present("config_only"), value_name = "ENTRYPOINT")]
-    pub entrypoint: Option<Address>,
+    /// The address of the orchestrator.
+    #[arg(
+        long = "orchestrator",
+        required_unless_present("config_only"),
+        value_name = "ORCHESTRATOR"
+    )]
+    pub orchestrator: Option<Address>,
     /// The address of the delegation proxy.
     #[arg(
         long = "delegation-proxy",
@@ -73,7 +77,7 @@ pub struct Args {
     pub endpoints: Option<Vec<Url>>,
     /// The fee recipient address.
     ///
-    /// Defaults to the zero address, which means the fees will be accrued by the entrypoint
+    /// Defaults to the zero address, which means the fees will be accrued by the orchestrator
     /// contract.
     #[arg(long = "fee-recipient", value_name = "ADDRESS", default_value_t = Address::ZERO)]
     pub fee_recipient: Address,
@@ -83,9 +87,9 @@ pub struct Args {
     /// The lifetime of a token price rate.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "300")]
     pub rate_ttl: Duration,
-    /// Extra buffer added to UserOp gas estimates.
-    #[arg(long, value_name = "USER_OP_GAS", default_value_t = USER_OP_GAS_BUFFER)]
-    pub user_op_gas_buffer: u64,
+    /// Extra buffer added to Intent gas estimates.
+    #[arg(long, value_name = "INTENT_GAS", default_value_t = INTENT_GAS_BUFFER)]
+    pub intent_gas_buffer: u64,
     /// Extra buffer added to transaction gas estimates.
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
@@ -148,11 +152,11 @@ impl Args {
             .with_max_connections(self.max_connections)
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
-            .with_entrypoint(self.entrypoint)
+            .with_orchestrator(self.orchestrator)
             .with_delegation_proxy(self.delegation_proxy)
             .with_account_registry(self.account_registry)
             .with_simulator(self.simulator)
-            .with_user_op_gas_buffer(self.user_op_gas_buffer)
+            .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)

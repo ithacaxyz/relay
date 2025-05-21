@@ -11,12 +11,12 @@ use crate::error::{AuthError, RelayError};
 
 use super::{
     AccountRegistry,
-    Delegation::{
-        SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
-        upgradeProxyDelegationCall,
-    },
     IDelegation::{authorizeCall, revokeCall},
     Key, KeyID,
+    PortoAccount::{
+        SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
+        upgradeProxyAccountCall,
+    },
 };
 
 sol! {
@@ -109,8 +109,8 @@ impl Call {
         }
     }
 
-    /// Whether this call is whitelisted for preops.
-    pub fn is_whitelisted_preop(
+    /// Whether this call is whitelisted for precalls.
+    pub fn is_whitelisted_precall(
         &self,
         account: Address,
         latest_delegation: Address,
@@ -131,14 +131,13 @@ impl Call {
         Ok(WHITELISTED_SELECTORS.iter().any(|sel| sel == &self.data[..4]))
     }
 
-    /// If call is a [`upgradeProxyDelegationCall`], ensures it's upgrading to the latest delegation
+    /// If call is a [`upgradeProxyAccountCall`], ensures it's upgrading to the latest delegation
     /// address.
     ///
     /// Otherwise, returns error.
     pub fn ensure_valid_upgrade(&self, latest_delegation: Address) -> Result<(), RelayError> {
-        if self.data.len() > 4 && self.data[..4] == upgradeProxyDelegationCall::SELECTOR {
-            let new_delegation =
-                upgradeProxyDelegationCall::abi_decode(&self.data)?.newImplementation;
+        if self.data.len() > 4 && self.data[..4] == upgradeProxyAccountCall::SELECTOR {
+            let new_delegation = upgradeProxyAccountCall::abi_decode(&self.data)?.newImplementation;
 
             if latest_delegation != new_delegation {
                 return Err(AuthError::InvalidDelegation(new_delegation).into());
@@ -149,12 +148,12 @@ impl Call {
     }
 }
 
-/// All selectors allowed in preops.
+/// All selectors allowed in precalls.
 const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
     authorizeCall::SELECTOR,
     revokeCall::SELECTOR,
     setCanExecuteCall::SELECTOR,
     setSpendLimitCall::SELECTOR,
     removeSpendLimitCall::SELECTOR,
-    upgradeProxyDelegationCall::SELECTOR,
+    upgradeProxyAccountCall::SELECTOR,
 ];

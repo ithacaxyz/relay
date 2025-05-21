@@ -8,7 +8,7 @@ async fn versioned_contracts() -> eyre::Result<()> {
 
     let capabilities = env.relay_endpoint.get_capabilities().await?;
 
-    Version::parse(capabilities.contracts.entrypoint.version.as_ref().unwrap()).unwrap();
+    Version::parse(capabilities.contracts.orchestrator.version.as_ref().unwrap()).unwrap();
     Version::parse(capabilities.contracts.delegation_implementation.version.as_ref().unwrap())
         .unwrap();
 

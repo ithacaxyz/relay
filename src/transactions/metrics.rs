@@ -27,10 +27,10 @@ pub struct TransactionServiceMetrics {
     pub timed_out: Counter,
     /// Duration of polling the transaction service, in nanoseconds.
     pub poll_duration: Histogram,
-    /// Number of user ops that landed on chain and succeeded.
-    pub successful_user_ops: Counter,
-    /// Number of user ops that landed on chain but failed.
-    pub failed_user_ops: Counter,
+    /// Number of intents that landed on chain and succeeded.
+    pub successful_intents: Counter,
+    /// Number of intents that landed on chain but failed.
+    pub failed_intents: Counter,
     /// Number of transaction confirmations received from external provider.
     pub external_confirmations: Counter,
     /// Number of transaction confirmations received from local node provider.

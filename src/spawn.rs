@@ -237,7 +237,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     counter!(
         "relay.info",
         "version" => RELAY_LONG_VERSION,
-        "entrypoint" => config.entrypoint.to_string(),
+        "orchestrator" => config.orchestrator.to_string(),
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
         "fee_recipient" => config.chain.fee_recipient.to_string()

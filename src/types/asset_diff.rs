@@ -20,7 +20,7 @@ impl AssetDiffs {
         AssetDiffBuilder::default()
     }
 
-    /// By default, asset diffs include the user op payment. This ensures it gets removed.
+    /// By default, asset diffs include the intent payment. This ensures it gets removed.
     pub fn remove_payer_fee(&mut self, payer: Address, asset: Asset, fee: U256) {
         // Asset diff expects a None asset address if dealing with the native token.
         let asset = asset.is_native().not().then(|| asset.address());

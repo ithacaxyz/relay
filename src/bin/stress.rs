@@ -88,8 +88,8 @@ impl StressAccount {
                         authorize_keys: vec![],
                         meta: Meta { fee_payer: None, fee_token, nonce: None },
                         revoke_keys: vec![],
-                        pre_ops: vec![],
-                        pre_op: false,
+                        pre_calls: vec![],
+                        pre_call: false,
                     },
                     key: Some(self.key.to_call_key()),
                 })
@@ -98,8 +98,8 @@ impl StressAccount {
 
             // It might happen that we've received a preconfirmation for previous transaction but
             // Relay is not yet at the latest state. For this case we need to make sure that our new
-            // userop does not have the same nonce and otherwise retry a bit later.
-            let nonce = context.quote().unwrap().ty().op.nonce;
+            // intent does not have the same nonce and otherwise retry a bit later.
+            let nonce = context.quote().unwrap().ty().intent.nonce;
             if previous_nonce == Some(nonce) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
@@ -316,7 +316,7 @@ struct Args {
     chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
-    /// This account should have sufficient fee tokens to cover the gas costs of the userops.
+    /// This account should have sufficient fee tokens to cover the gas costs of the intents.
     #[arg(long = "private-key", value_name = "PRIVATE_KEY", required = true, env = "PK")]
     private_key: String,
     /// Address of the fee token to use for testing.

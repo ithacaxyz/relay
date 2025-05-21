@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     CallPermission,
-    Delegation::{SpendInfo, SpendPeriod},
+    PortoAccount::{SpendInfo, SpendPeriod},
 };
 
 /// Represents key permissions.

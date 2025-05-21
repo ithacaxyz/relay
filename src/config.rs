@@ -1,6 +1,6 @@
 //! Relay configuration.
 use crate::constants::{
-    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, TX_GAS_BUFFER, USER_OP_GAS_BUFFER,
+    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER,
 };
 use alloy::{
     primitives::Address,
@@ -29,10 +29,10 @@ pub struct RelayConfig {
     pub quote: QuoteConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
-    /// Entrypoint address.
-    pub entrypoint: Address,
-    /// Previously deployed entrypoints.
-    pub legacy_entrypoints: BTreeSet<Address>,
+    /// Orchestrator address.
+    pub orchestrator: Address,
+    /// Previously deployed orchestrators.
+    pub legacy_orchestrators: BTreeSet<Address>,
     /// Previously deployed delegation implementations.
     pub legacy_delegations: BTreeSet<Address>,
     /// Delegation proxy address.
@@ -73,7 +73,7 @@ pub struct ChainConfig {
     pub fee_tokens: Vec<Address>,
     /// The fee recipient address.
     ///
-    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the entrypoint
+    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
     /// contract.
     pub fee_recipient: Address,
 }
@@ -98,16 +98,16 @@ pub struct QuoteConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GasConfig {
-    /// Extra buffer added to UserOp gas estimates.
-    pub user_op_buffer: u64,
+    /// Extra buffer added to Intent gas estimates.
+    pub intent_buffer: u64,
     /// Extra buffer added to transaction gas estimates.
     pub tx_buffer: u64,
 }
 
 impl QuoteConfig {
-    /// Returns the configured extra buffer added to userOp gas estimates.
-    pub fn user_op_buffer(&self) -> u64 {
-        self.gas.user_op_buffer
+    /// Returns the configured extra buffer added to intent gas estimates.
+    pub fn intent_buffer(&self) -> u64 {
+        self.gas.intent_buffer
     }
 
     /// Returns the configured extra buffer added to transaction gas estimates.
@@ -193,14 +193,14 @@ impl Default for RelayConfig {
             },
             quote: QuoteConfig {
                 constant_rate: None,
-                gas: GasConfig { user_op_buffer: USER_OP_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
+                gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
                 ttl: Duration::from_secs(5),
                 rate_ttl: Duration::from_secs(300),
             },
             transactions: TransactionServiceConfig::default(),
-            legacy_entrypoints: BTreeSet::new(),
+            legacy_orchestrators: BTreeSet::new(),
             legacy_delegations: BTreeSet::new(),
-            entrypoint: Address::ZERO,
+            orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             account_registry: Address::ZERO,
             simulator: Address::ZERO,
@@ -253,9 +253,9 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the buffer added to UserOp gas estimates.
-    pub fn with_user_op_gas_buffer(mut self, buffer: u64) -> Self {
-        self.quote.gas.user_op_buffer = buffer;
+    /// Sets the buffer added to Intent gas estimates.
+    pub fn with_intent_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.intent_buffer = buffer;
         self
     }
 
@@ -307,10 +307,10 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the entrypoint address.
-    pub fn with_entrypoint(mut self, entrypoint: Option<Address>) -> Self {
-        if let Some(entrypoint) = entrypoint {
-            self.entrypoint = entrypoint;
+    /// Sets the orchestrator address.
+    pub fn with_orchestrator(mut self, orchestrator: Option<Address>) -> Self {
+        if let Some(orchestrator) = orchestrator {
+            self.orchestrator = orchestrator;
         }
         self
     }

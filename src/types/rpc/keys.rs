@@ -40,7 +40,7 @@ impl AuthorizeKey {
     /// Transform this key authorization into a series of calls.
     ///
     /// The first call is to add the key to the account. It should only be part of the final
-    /// [`UserOp`] if the key does not already exist.
+    /// [`Intent`] if the key does not already exist.
     ///
     /// The second set of calls is to add call permissions and spending limits to the key.
     ///
@@ -162,9 +162,9 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        Call, CallPermission,
-        Delegation::SpendPeriod,
-        Key, KeyID, KeyType, U40,
+        Call, CallPermission, Key, KeyID, KeyType,
+        PortoAccount::SpendPeriod,
+        U40,
         rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
