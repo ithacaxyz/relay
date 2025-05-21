@@ -370,7 +370,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
     let fees = env.provider.estimate_eip1559_fees().await.unwrap();
-    let new_balance = U256::from(16 * 200_000 * fees.max_fee_per_gas);
+    let new_balance = U256::from(10_000_000 * fees.max_fee_per_gas);
 
     try_join_all(
         signers
