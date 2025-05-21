@@ -434,7 +434,7 @@ impl Signer {
                 tx.sent.push(replacement);
                 last_sent_at = Instant::now();
             } else {
-                // Try resending the transaction, in case it was dropped.
+                trace!(tx_hash=%best_tx.tx_hash(), "was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
                 {
                     if !err.is_already_known() {
