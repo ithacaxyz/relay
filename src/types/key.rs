@@ -459,7 +459,7 @@ mod tests {
     use crate::types::U40;
     use alloy::{
         hex,
-        primitives::{ b256, map::HashMap},
+        primitives::{b256, map::HashMap},
     };
 
     #[test]
