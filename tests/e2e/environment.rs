@@ -175,7 +175,7 @@ impl Environment {
             }
 
             let anvil = Anvil::new()
-                .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args.into_iter()))
+                .args(["--odyssey", "--host", "0.0.0.0"].into_iter().chain(args.into_iter()))
                 .try_spawn()
                 .wrap_err("Failed to spawn Anvil")?;
 
