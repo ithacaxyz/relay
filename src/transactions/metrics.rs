@@ -31,6 +31,10 @@ pub struct TransactionServiceMetrics {
     pub successful_intents: Counter,
     /// Number of intents that landed on chain but failed.
     pub failed_intents: Counter,
+    /// Number of transaction confirmations received from external provider.
+    pub external_confirmations: Counter,
+    /// Number of transaction confirmations received from local node provider.
+    pub local_confirmations: Counter,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.

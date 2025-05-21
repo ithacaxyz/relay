@@ -6,6 +6,7 @@ use alloy::{
     primitives::Address,
     signers::local::coins_bip39::{English, Mnemonic},
 };
+use alloy_chains::Chain;
 use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ pub struct ChainConfig {
     pub endpoints: Vec<Url>,
     /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
     #[serde(with = "crate::serde::hash_map")]
-    pub sequencer_endpoints: HashMap<u64, Url>,
+    pub sequencer_endpoints: HashMap<Chain, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
     /// The fee recipient address.
@@ -154,6 +155,10 @@ pub struct TransactionServiceConfig {
     /// Timeout after which we consider transaction as failed, in seconds.
     #[serde(with = "crate::serde::duration")]
     pub transaction_timeout: Duration,
+    /// Mapping of a chain ID to RPC endpoint of the public node for OP rollups that can be used
+    /// for querying transactions.
+    #[serde(with = "crate::serde::hash_map")]
+    pub public_node_endpoints: HashMap<Chain, Url>,
 }
 
 impl Default for TransactionServiceConfig {
@@ -166,6 +171,7 @@ impl Default for TransactionServiceConfig {
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
             max_queued_per_eoa: 1,
+            public_node_endpoints: HashMap::new(),
         }
     }
 }
@@ -271,12 +277,21 @@ impl RelayConfig {
         self
     }
 
-    /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
+    /// Extends the list of sequencer RPC endpoints.
     pub fn with_sequencer_endpoints(
         mut self,
-        endpoints: impl IntoIterator<Item = (u64, Url)>,
+        endpoints: impl IntoIterator<Item = (Chain, Url)>,
     ) -> Self {
         self.chain.sequencer_endpoints.extend(endpoints);
+        self
+    }
+
+    /// Extends the list of public node RPC endpoints.
+    pub fn with_public_node_endpoints(
+        mut self,
+        endpoints: impl IntoIterator<Item = (Chain, Url)>,
+    ) -> Self {
+        self.transactions.public_node_endpoints.extend(endpoints);
         self
     }
 
