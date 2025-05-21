@@ -44,6 +44,7 @@ pub struct VersionedContracts {
     /// Previously deployed orchestrators.
     pub legacy_orchestrators: Vec<VersionedContract>,
     /// Previously deployed delegation implementations.
+    #[serde(rename = "legacyAccountImplementations")]
     pub legacy_delegations: Vec<VersionedContract>,
     /// Delegation proxy.
     #[serde(rename = "accountProxy")]
