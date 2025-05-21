@@ -6,6 +6,7 @@ use alloy::{
     primitives::Address,
     signers::local::coins_bip39::{English, Mnemonic},
 };
+use alloy_chains::Chain;
 use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ pub struct ChainConfig {
     pub endpoints: Vec<Url>,
     /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
     #[serde(with = "crate::serde::hash_map")]
-    pub sequencer_endpoints: HashMap<u64, Url>,
+    pub sequencer_endpoints: HashMap<Chain, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
     /// The fee recipient address.
@@ -157,7 +158,7 @@ pub struct TransactionServiceConfig {
     /// Mapping of a chain ID to RPC endpoint of the public node for OP rollups that can be used
     /// for querying transactions.
     #[serde(with = "crate::serde::hash_map")]
-    pub public_node_endpoints: HashMap<u64, Url>,
+    pub public_node_endpoints: HashMap<Chain, Url>,
 }
 
 impl Default for TransactionServiceConfig {
@@ -279,7 +280,7 @@ impl RelayConfig {
     /// Extends the list of sequencer RPC endpoints.
     pub fn with_sequencer_endpoints(
         mut self,
-        endpoints: impl IntoIterator<Item = (u64, Url)>,
+        endpoints: impl IntoIterator<Item = (Chain, Url)>,
     ) -> Self {
         self.chain.sequencer_endpoints.extend(endpoints);
         self
@@ -288,7 +289,7 @@ impl RelayConfig {
     /// Extends the list of public node RPC endpoints.
     pub fn with_public_node_endpoints(
         mut self,
-        endpoints: impl IntoIterator<Item = (u64, Url)>,
+        endpoints: impl IntoIterator<Item = (Chain, Url)>,
     ) -> Self {
         self.transactions.public_node_endpoints.extend(endpoints);
         self

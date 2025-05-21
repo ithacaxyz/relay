@@ -1,5 +1,5 @@
 use super::{
-    TxMonitoringHandle,
+    TransactionMonitoringHandle,
     fees::{FeeContext, FeesError, MIN_GAS_PRICE_BUMP},
     metrics::{SignerMetrics, TransactionServiceMetrics},
     transaction::{
@@ -33,6 +33,7 @@ use alloy::{
     sol_types::{SolCall, SolEvent},
     transports::{RpcError, TransportErrorKind},
 };
+use alloy_chains::Chain;
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
@@ -147,7 +148,7 @@ pub struct SignerInner {
     /// Configuration for the service.
     config: TransactionServiceConfig,
     /// Handle for monitoring pending transactions.
-    monitor: TxMonitoringHandle,
+    monitor: TransactionMonitoringHandle,
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -192,14 +193,18 @@ impl Signer {
             )
         };
 
-        let external_provider = if let Some(endpoint) = config.public_node_endpoints.get(&chain_id)
-        {
-            Some(ProviderBuilder::new().connect(endpoint.as_str()).await?.erased())
-        } else {
-            None
-        };
+        let external_provider =
+            if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
+                Some(ProviderBuilder::new().connect(endpoint.as_str()).await?.erased())
+            } else {
+                None
+            };
 
-        let monitor = TxMonitoringHandle::new(provider.clone(), external_provider.clone()).await?;
+        let monitor = TransactionMonitoringHandle::new(
+            provider.clone(),
+            external_provider.clone(),
+            tx_metrics.clone(),
+        );
 
         let inner = SignerInner {
             id,

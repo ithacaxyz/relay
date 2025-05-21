@@ -9,4 +9,4 @@ pub use transaction::{PendingTransaction, RelayTransaction, TransactionStatus, T
 mod fees;
 mod metrics;
 mod monitor;
-pub use monitor::TxMonitoringHandle;
+pub use monitor::TransactionMonitoringHandle;
