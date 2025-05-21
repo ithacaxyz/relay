@@ -447,7 +447,7 @@ impl Signer {
     }
 
     /// Awaits the given [`PendingTransaction`] and watches it for status updates.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(tx_id = %tx.tx.id))]
     async fn watch_transaction(&self, mut tx: PendingTransaction) -> Result<(), SignerError> {
         Span::current().add_link(tx.tx.trace_context.span().span_context().clone());
 
