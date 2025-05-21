@@ -476,8 +476,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     // Proxy
     if let Ok(address) = std::env::var("TEST_PROXY") {
-        delegation_proxy =
-            Address::from_str(&address).wrap_err("Proxy address parse failed.")?
+        delegation_proxy = Address::from_str(&address).wrap_err("Proxy address parse failed.")?
     }
 
     // Account Registry
