@@ -39,12 +39,14 @@ pub struct VersionedContracts {
     /// The delegation implementation.
     ///
     /// This is directly fetched from the proxy.
+    #[serde(rename = "accountImplementation")]
     pub delegation_implementation: VersionedContract,
     /// Previously deployed orchestrators.
     pub legacy_orchestrators: Vec<VersionedContract>,
     /// Previously deployed delegation implementations.
     pub legacy_delegations: Vec<VersionedContract>,
     /// Delegation proxy.
+    #[serde(rename = "accountProxy")]
     pub delegation_proxy: VersionedContract,
     /// Account registry.
     pub account_registry: VersionedContract,
