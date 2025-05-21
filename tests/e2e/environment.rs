@@ -445,7 +445,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     let delegation = deploy_contract(
         &provider,
-        &contracts_path.join("Delegation.sol/Delegation.json"),
+        &contracts_path.join("PortoAccount.sol/PortoAccount.json"),
         Some(orchestrator.abi_encode().into()),
     )
     .await?;
@@ -474,10 +474,10 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
             Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?;
     }
 
-    // Delegation
+    // Proxy
     if let Ok(address) = std::env::var("TEST_PROXY") {
         delegation_proxy =
-            Address::from_str(&address).wrap_err("Delegation address parse failed.")?
+            Address::from_str(&address).wrap_err("Proxy address parse failed.")?
     }
 
     // Account Registry
