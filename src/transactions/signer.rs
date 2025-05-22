@@ -442,7 +442,6 @@ impl Signer {
                 {
                     if !err.is_already_known() {
                         debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
-                        return Err(err.into());
                     }
                 }
             }
