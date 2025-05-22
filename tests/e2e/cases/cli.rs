@@ -45,6 +45,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 sequencer_endpoints: Default::default(),
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),
+                priority_fee_percentile: Default::default(),
             },
             config.clone(),
             registry.clone(),
