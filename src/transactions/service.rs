@@ -536,7 +536,7 @@ mod tests {
             },
             ttl: SystemTime::now(),
             authorization_address: Default::default(),
-            orchestrator: Default::default(),
+            orchestrator2: Default::default(),
             intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
         };
         let sig = Signature::new(Default::default(), Default::default(), Default::default());

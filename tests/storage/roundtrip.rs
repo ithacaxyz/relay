@@ -125,7 +125,7 @@ impl Fixtures {
             native_fee_estimate: r_fee,
             ttl: SystemTime::now(),
             authorization_address: Some(r_address),
-            orchestrator: r_address,
+            orchestrator2: r_address,
         };
         let quote = Signed::new_unchecked(quote, r_sig, r_b256);
         let queued_tx = RelayTransaction {

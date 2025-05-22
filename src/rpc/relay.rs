@@ -420,7 +420,7 @@ impl Relay {
                 .checked_add(self.inner.quote_config.ttl)
                 .expect("should never overflow"),
             authorization_address,
-            orchestrator: *orchestrator.address(),
+            orchestrator2: *orchestrator.address(),
         };
         let sig = self
             .inner

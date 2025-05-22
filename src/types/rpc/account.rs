@@ -283,7 +283,7 @@ mod tests {
                     },
                     ttl: UNIX_EPOCH + Duration::from_secs(0),
                     authorization_address: None,
-                    orchestrator: Address::ZERO,
+                    orchestrator2: Address::ZERO,
                 },
                 signature,
                 B256::ZERO,
