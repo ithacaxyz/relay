@@ -265,7 +265,7 @@ impl Signer {
     #[instrument(skip_all)]
     async fn on_confirmed_transaction(
         &self,
-        tx: &PendingTransaction,
+        tx: PendingTransaction,
         tx_hash: B256,
     ) -> Result<(), StorageError> {
         self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
@@ -281,7 +281,7 @@ impl Signer {
 
         // Spawn a task to record metrics.
         let this = self.clone();
-        tokio::spawn(async move { this.record_confirmed_metrics(tx_hash).await });
+        tokio::spawn(async move { this.record_confirmed_metrics(tx, tx_hash).await });
 
         Ok(())
     }
@@ -457,7 +457,7 @@ impl Signer {
         self.metrics.pending.increment(1);
         match self.watch_transaction_inner(&mut tx).await {
             Ok(tx_hash) => {
-                self.on_confirmed_transaction(&tx, tx_hash).await?;
+                self.on_confirmed_transaction(tx, tx_hash).await?;
             }
             Err(err) => {
                 error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
@@ -473,7 +473,7 @@ impl Signer {
                         self.provider.get_transaction_by_hash(*sent.tx_hash()).await
                     {
                         if sent.block_number.is_some() {
-                            self.on_confirmed_transaction(&tx, *sent.inner.tx_hash()).await?;
+                            self.on_confirmed_transaction(tx, *sent.inner.tx_hash()).await?;
                             return Ok(());
                         }
                     }
@@ -667,7 +667,7 @@ impl Signer {
     }
 
     /// Fetches receipt of a confirmed transaction and records metrics.
-    async fn record_confirmed_metrics(&self, tx_hash: B256) {
+    async fn record_confirmed_metrics(&self, tx: PendingTransaction, tx_hash: B256) {
         // Fetch receipt
         let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
         else {
@@ -698,6 +698,59 @@ impl Signer {
             warn!(%tx_hash, err = %event.err, "intent failed on-chain");
             self.metrics.failed_intents.increment(1);
             return;
+        }
+
+        if let Some(included_at_block) = receipt.block_number {
+            if let Some(block) =
+                self.provider.get_block(included_at_block.into()).await.ok().flatten()
+            {
+                let submitted_at = tx.tx.received_at.timestamp() as u64;
+                let included_at = block.header.timestamp;
+
+                let submitted_at_block = async {
+                    // Firsly try guessing the block based on block time.
+                    let first_guess = included_at_block
+                        - (included_at - submitted_at) / self.block_time.as_secs();
+
+                    // Follow the chain until we find a block after the submission time.
+                    let mut block =
+                        self.provider.get_block(first_guess.into()).await.ok().flatten()?;
+                    while block.header.timestamp <= submitted_at {
+                        block = self
+                            .provider
+                            .get_block((block.header.number + 1).into())
+                            .await
+                            .ok()
+                            .flatten()?;
+                    }
+
+                    // Go back until there are earlier blocks mined after the submission time.
+                    let mut prev_block = self
+                        .provider
+                        .get_block((block.header.number - 1).into())
+                        .await
+                        .ok()
+                        .flatten()?;
+                    while prev_block.header.timestamp > submitted_at {
+                        block = prev_block;
+                        prev_block = self
+                            .provider
+                            .get_block((block.header.number - 1).into())
+                            .await
+                            .ok()
+                            .flatten()?;
+                    }
+
+                    Some(block.header.number)
+                }
+                .await;
+
+                if let Some(submitted_at_block) = submitted_at_block {
+                    self.metrics
+                        .blocks_until_inclusion
+                        .record((included_at_block - submitted_at_block) as f64);
+                }
+            }
         }
 
         self.metrics.successful_intents.increment(1);
