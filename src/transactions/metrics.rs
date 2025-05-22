@@ -35,6 +35,8 @@ pub struct TransactionServiceMetrics {
     pub external_confirmations: Counter,
     /// Number of transaction confirmations received from local node provider.
     pub local_confirmations: Counter,
+    /// TOtal time transaction took to land on chain, including time in queue.
+    pub total_wait_time: Histogram,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.

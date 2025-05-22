@@ -273,8 +273,11 @@ impl Signer {
 
         self.metrics
             .confirmation_time
-            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
+            .record(Utc::now().signed_duration_since(tx.sent_at).num_milliseconds() as f64);
         self.metrics.pending.decrement(1);
+        self.metrics
+            .total_wait_time
+            .record(tx.tx.received_at.signed_duration_since(Utc::now()).num_milliseconds() as f64);
 
         // Spawn a task to record metrics.
         let this = self.clone();
@@ -530,7 +533,7 @@ impl Signer {
                 tx,
                 sent: vec![signed.clone()],
                 signer: self.address(),
-                received_at: Utc::now(),
+                sent_at: Utc::now(),
             };
             self.storage.replace_queued_tx_with_pending(&tx).await?;
 

@@ -31,12 +31,20 @@ pub struct RelayTransaction {
     /// Trace context for the transaction.
     #[serde(with = "crate::serde::trace_context", default)]
     pub trace_context: Context,
+    /// Time at which we've received this transaction.
+    pub received_at: DateTime<Utc>,
 }
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
     pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
-        Self { id: TxId(B256::random()), quote, authorization, trace_context: Context::current() }
+        Self {
+            id: TxId(B256::random()),
+            quote,
+            authorization,
+            trace_context: Context::current(),
+            received_at: Utc::now(),
+        }
     }
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
@@ -151,7 +159,7 @@ pub struct PendingTransaction {
     /// Signer that signed the transaction.
     pub signer: Address,
     /// Time at which we've received this transaction.
-    pub received_at: DateTime<Utc>,
+    pub sent_at: DateTime<Utc>,
 }
 
 impl PendingTransaction {

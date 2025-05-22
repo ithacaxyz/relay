@@ -30,7 +30,7 @@
       },
       {
         "ordinal": 5,
-        "name": "received_at",
+        "name": "sent_at",
         "type_info": "Timestamp"
       }
     ],
