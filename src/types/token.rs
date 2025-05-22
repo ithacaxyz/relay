@@ -1,6 +1,9 @@
 use crate::types::{CoinKind, CoinRegistry, IERC20::IERC20Instance};
 use alloy::{
-    primitives::{Address, ChainId, U256, map::HashMap},
+    primitives::{
+        Address, ChainId, U256,
+        map::{HashMap, HashSet},
+    },
     providers::{DynProvider, Provider},
 };
 use futures_util::future::try_join_all;
@@ -8,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::try_join;
 
 /// Token type with its address, decimals and [`CoinKind`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Token {
     /// Token address.
@@ -87,12 +90,17 @@ impl FeeTokens {
             });
         let fee_tokens = try_join_all(futs).await?;
 
-        let mut map: HashMap<ChainId, Vec<Token>> = HashMap::default();
+        // Collect into a set first to make sure we don't have duplicates
+        let mut map: HashMap<ChainId, HashSet<Token>> = HashMap::default();
         for (chain_id, token) in fee_tokens.into_iter() {
-            map.entry(chain_id).or_default().push(token);
+            map.entry(chain_id).or_default().insert(token);
         }
 
-        Ok(Self(map))
+        Ok(Self(
+            map.into_iter()
+                .map(|(chain_id, token_set)| (chain_id, token_set.into_iter().collect()))
+                .collect(),
+        ))
     }
 
     /// Check if the fee token is supported on the given chain.
