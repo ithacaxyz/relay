@@ -8,8 +8,7 @@ use crate::{
     spawn::try_spawn_with_args,
 };
 use alloy::{
-    primitives::Address,
-    signers::local::coins_bip39::{English, Mnemonic},
+    primitives::Address, providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE, signers::local::coins_bip39::{English, Mnemonic}
 };
 use alloy_chains::Chain;
 use clap::Parser;
@@ -118,6 +117,9 @@ pub struct Args {
     /// The RPC endpoints of the public nodes for OP rollups.
     #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub public_node_endpoints: Vec<(Chain, Url)>,
+    /// Percentile of the priority fees to use for the transactions.
+    #[arg(long = "priority-fee-percentile", value_name = "PERCENTILE", default_value_t = EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE)]
+    pub priority_fee_percentile: f64,
     /// Reads all values from the config file.
     ///
     /// This makes required CLI args not required, but it is important that any required CLI args
@@ -161,6 +163,7 @@ impl Args {
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)
             .with_num_signers(self.num_signers)
+            .with_priority_fee_percentile(self.priority_fee_percentile)
     }
 }
 

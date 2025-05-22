@@ -29,14 +29,12 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::{
-        SignedAuthorization,
-        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST}, SignedAuthorization
     },
-    primitives::{Address, Bytes, ChainId, U256, bytes},
-    providers::{DynProvider, Provider},
+    primitives::{bytes, Address, Bytes, ChainId, U256},
+    providers::{utils::{Eip1559Estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS}, DynProvider, Provider},
     rpc::types::{
-        TransactionReceipt,
-        state::{AccountOverride, StateOverridesBuilder},
+        state::{AccountOverride, StateOverridesBuilder}, TransactionReceipt
     },
     sol_types::{SolCall, SolValue},
 };
@@ -166,7 +164,7 @@ pub struct Relay {
 
 impl Relay {
     /// Create a new Ithaca relay module.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         contracts: VersionedContracts,
         chains: Chains,
@@ -177,6 +175,7 @@ impl Relay {
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
+        priority_fee_percentile: f64,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -188,6 +187,7 @@ impl Relay {
             price_oracle,
             storage,
             asset_info,
+            priority_fee_percentile,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -276,7 +276,7 @@ impl Relay {
 
         let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
 
-        let (orchestrator, delegation, native_fee_estimate, eth_price) = try_join4(
+        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
             // fetch orchestrator from the account and ensure it is supported
             async {
                 let orchestrator = account.get_orchestrator().await?;
@@ -288,7 +288,13 @@ impl Relay {
             // fetch delegation from the account and ensure it is supported
             self.has_supported_delegation(&account).map_err(RelayError::from),
             // fetch chain fees
-            provider.estimate_eip1559_fees().map_err(RelayError::from),
+            provider
+                .get_fee_history(
+                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                    Default::default(),
+                    &[self.inner.priority_fee_percentile],
+                )
+                .map_err(RelayError::from),
             // fetch price in eth
             async {
                 // TODO: only handles eth as native fee token
@@ -296,6 +302,11 @@ impl Relay {
             },
         )
         .await?;
+
+        let native_fee_estimate = Eip1559Estimator::default().estimate(
+            fee_history.latest_block_base_fee().unwrap_or_default(),
+            &fee_history.reward.unwrap_or_default(),
+        );
 
         let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
@@ -1492,6 +1503,8 @@ struct RelayInner {
     storage: RelayStorage,
     /// AssetInfo
     asset_info: AssetInfoServiceHandle,
+    /// Percentile of the priority fees to use for the transactions.
+    priority_fee_percentile: f64,
 }
 
 impl Relay {

@@ -24,10 +24,7 @@ use alloy::{
     primitives::{Address, B256, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionError, Provider, ProviderBuilder,
-        utils::{
-            EIP1559_FEE_ESTIMATION_PAST_BLOCKS, EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-            Eip1559Estimator,
-        },
+        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolEvent},
@@ -310,7 +307,7 @@ impl Signer {
             .get_fee_history(
                 EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
                 Default::default(),
-                &[EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+                &[self.config.priority_fee_percentile],
             )
             .await?;
 

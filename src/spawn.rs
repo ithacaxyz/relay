@@ -202,6 +202,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
+        config.transactions.priority_fee_percentile,
     )
     .into_rpc();
     let onramp = Onramp::new().into_rpc();
