@@ -120,6 +120,9 @@ pub struct Args {
     #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub public_node_endpoints: Vec<(Chain, Url)>,
     /// Percentile of the priority fees to use for the transactions.
+    ///
+    /// Default value is `20.0` which means that priority fee for transactions will be chosen as
+    /// 20th percentile of the priority fees of transactions in latest blocks.
     #[arg(long = "priority-fee-percentile", value_name = "PERCENTILE", default_value_t = EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE)]
     pub priority_fee_percentile: f64,
     /// Reads all values from the config file.
