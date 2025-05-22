@@ -25,7 +25,7 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn catch_invalid_delegation() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
-    let caps = env.relay_endpoint.get_capabilities().await?;
+    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     // Set up PREP account correctly.
@@ -36,10 +36,14 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             .await?;
     }
 
-    let expected_proxy_code =
-        env.provider.get_code_at(caps.contracts.delegation_proxy.address).await?;
-    let expected_impl_code =
-        env.provider.get_code_at(caps.contracts.delegation_implementation.address).await?;
+    let expected_proxy_code = env
+        .provider
+        .get_code_at(caps.chain(env.chain_id).contracts.delegation_proxy.address)
+        .await?;
+    let expected_impl_code = env
+        .provider
+        .get_code_at(caps.chain(env.chain_id).contracts.delegation_implementation.address)
+        .await?;
     let expected_eoa_code = env.provider.get_code_at(env.eoa.address()).await?;
 
     let another_impl = Address::random();
@@ -63,7 +67,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     assert!(
         good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
-            == caps.contracts.delegation_implementation.address
+            == caps.chain(env.chain_id).contracts.delegation_implementation.address
     );
 
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
@@ -146,7 +150,12 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     {
         let mut code = expected_proxy_code.to_vec();
         code[2] = code[2].wrapping_add(1);
-        env.provider.anvil_set_code(caps.contracts.delegation_proxy.address, code.into()).await?;
+        env.provider
+            .anvil_set_code(
+                caps.chain(env.chain_id).contracts.delegation_proxy.address,
+                code.into(),
+            )
+            .await?;
 
         assert!(
             env.relay_endpoint
@@ -172,7 +181,10 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         );
 
         env.provider
-            .anvil_set_code(caps.contracts.delegation_proxy.address, expected_proxy_code)
+            .anvil_set_code(
+                caps.chain(env.chain_id).contracts.delegation_proxy.address,
+                expected_proxy_code,
+            )
             .await?;
     }
 
@@ -207,7 +219,11 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Upgrade implementation to original and expect it to succeed sending the intent.
     {
-        upgrade_delegation(&env, caps.contracts.delegation_implementation.address).await;
+        upgrade_delegation(
+            &env,
+            caps.chain(env.chain_id).contracts.delegation_implementation.address,
+        )
+        .await;
 
         assert!(
             await_calls_status(
@@ -242,7 +258,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
 async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let mut env = Environment::setup_with_prep().await?;
 
-    let caps = env.relay_endpoint.get_capabilities().await?;
+    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     prep_account(&mut env, &[&admin_key]).await?;
@@ -256,7 +272,11 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 to: env.eoa.address(),
                 value: U256::ZERO,
                 data: PortoAccount::upgradeProxyAccountCall {
-                    newImplementation: caps.contracts.delegation_implementation.address,
+                    newImplementation: caps
+                        .chain(env.chain_id)
+                        .contracts
+                        .delegation_implementation
+                        .address,
                 }
                 .abi_encode()
                 .into(),

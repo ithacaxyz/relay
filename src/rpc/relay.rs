@@ -20,8 +20,8 @@ use crate::{
         OrchestratorContract::{self, IntentExecuted},
         SignedCall, SignedCalls, VersionedContracts,
         rpc::{
-            CallReceipt, CallStatusCode, CreateAccountContext, PrepareCallsContext,
-            RelayCapabilities, RelayFees, ValidSignatureProof,
+            CallReceipt, CallStatusCode, ChainCapabilities, ChainFees, CreateAccountContext,
+            PrepareCallsContext, RelayCapabilities, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -86,7 +86,7 @@ pub trait RelayApi {
 
     /// Get capabilities of the relay, which are different sets of configuration values.
     #[method(name = "getCapabilities", aliases = ["wallet_getCapabilities"])]
-    async fn get_capabilities(&self) -> RpcResult<RelayCapabilities>;
+    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities>;
 
     /// Prepares an account for the user.
     #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
@@ -755,30 +755,47 @@ impl RelayApiServer for Relay {
         Ok(RELAY_SHORT_VERSION.to_string())
     }
 
-    async fn get_capabilities(&self) -> RpcResult<RelayCapabilities> {
-        let chains = self.inner.fee_tokens.iter().map(|(chain, tokens)| async move {
-            let rates_fut = tokens.iter().map(|token| async move {
-                // TODO: only handles eth as native fee token
-                Ok(token.clone().with_rate(
-                    self.inner
-                        .price_oracle
-                        .eth_price(token.kind)
-                        .await
-                        .ok_or(QuoteError::UnavailablePrice(token.address))?,
+    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
+        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
+            // Relay needs a chain endpoint to support a chain.
+            self.inner.chains.get(chain_id)?;
+
+            // Relay needs a list of accepted chain tokens to support a chain.
+            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
+
+            Some(async move {
+                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
+                    async move {
+                        // TODO: only handles eth as native fee token
+                        let rate = self
+                            .inner
+                            .price_oracle
+                            .eth_price(token.kind)
+                            .await
+                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
+                        Ok(token.with_rate(rate))
+                    }
+                }))
+                .await?;
+
+                Ok::<_, QuoteError>((
+                    chain_id,
+                    ChainCapabilities {
+                        contracts: self.inner.contracts.clone(),
+                        fees: ChainFees {
+                            recipient: self.inner.fee_recipient,
+                            quote_config: self.inner.quote_config.clone(),
+                            tokens: fee_tokens,
+                        },
+                    },
                 ))
-            });
+            })
+        }))
+        .await?
+        .into_iter()
+        .collect();
 
-            Ok::<_, QuoteError>((*chain, try_join_all(rates_fut).await?))
-        });
-
-        Ok(RelayCapabilities {
-            contracts: self.inner.contracts.clone(),
-            fees: RelayFees {
-                recipient: self.inner.fee_recipient,
-                quote_config: self.inner.quote_config.clone(),
-                tokens: FeeTokens::from_iter(try_join_all(chains).await?),
-            },
-        })
+        Ok(RelayCapabilities(capabilities))
     }
 
     async fn prepare_create_account(
