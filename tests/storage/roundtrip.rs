@@ -1,0 +1,172 @@
+//! Storage roundtrip compatibility tests.
+//!
+//! CI safeguard:
+//! 1. The **base** branch should run `storage::roundtrip::write`, seeding a fresh Postgres database
+//!    with rows produced by the OLD code.
+//! 2. The PR branch should run `storage::roundtrip::read`, which must successfully deserialize
+//!    those same rows with the NEW code.
+//!
+//! If any migration is missing, the read step fails.
+
+use crate::e2e::{SIGNERS_MNEMONIC, common_calls::mint};
+use alloy::{
+    eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
+    network::{Ethereum, EthereumWallet, NetworkWallet},
+    primitives::{Address, B256, Signature, U256, bytes},
+    rpc::types::Authorization,
+};
+use alloy_primitives::ChainId;
+use chrono::Utc;
+use opentelemetry::Context;
+use relay::{
+    signers::DynSigner,
+    storage::{RelayStorage, StorageApi},
+    transactions::{PendingTransaction, RelayTransaction, TxId},
+    types::{CreatableAccount, Intent, KeyHashWithID, PREPAccount, Quote, Signed, rpc::BundleId},
+};
+use sqlx::PgPool;
+use std::{ops::Not, time::SystemTime};
+
+async fn storage() -> eyre::Result<RelayStorage> {
+    // Set up storage
+    let pool = PgPool::connect(&std::env::var("DATABASE_URL").expect("set DATABASE_URL")).await?;
+    sqlx::migrate!().run(&pool).await?;
+    Ok(RelayStorage::pg(pool))
+}
+
+#[tokio::test]
+#[ignore]
+async fn write() -> eyre::Result<()> {
+    let storage = storage().await?;
+    let Fixtures { account, signer: _, chain_id, queued_tx, pending_tx, bundle_id } =
+        Fixtures::generate().await?;
+
+    // Account & Keys
+    storage.write_prep(account.clone()).await?;
+
+    // Queued & Pending txs
+    storage.write_queued_transaction(&queued_tx).await?;
+    storage.replace_queued_tx_with_pending(&pending_tx).await?;
+    storage.write_queued_transaction(&queued_tx).await?;
+
+    // Bundle status
+    storage.add_bundle_tx(bundle_id, chain_id, queued_tx.id).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn read() -> eyre::Result<()> {
+    let storage = storage().await?;
+    let Fixtures { account, signer, chain_id, queued_tx: _, pending_tx: _, bundle_id } =
+        Fixtures::generate().await?;
+
+    // Account & Keys
+    assert!(storage.read_prep(&account.address()).await?.is_some());
+    assert!(storage.read_accounts_from_id(&account.id_signatures[0].id).await?.is_empty().not());
+
+    // Queued & Pending txs
+    assert!(storage.read_queued_transactions(chain_id).await?.is_empty().not());
+    assert!(storage.read_pending_transactions(signer, chain_id).await?.is_empty().not());
+
+    // Bundle status
+    assert!(storage.get_bundle_transactions(bundle_id).await?.is_empty().not());
+
+    Ok(())
+}
+
+struct Fixtures {
+    pub account: CreatableAccount,
+    pub signer: Address,
+    pub chain_id: ChainId,
+    pub queued_tx: RelayTransaction,
+    pub pending_tx: PendingTransaction,
+    pub bundle_id: BundleId,
+}
+
+impl Fixtures {
+    async fn generate() -> eyre::Result<Self> {
+        let signer = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, 1)?.pop().unwrap();
+        let r_address = signer.address();
+
+        let signer = EthereumWallet::new(signer.0);
+        let r_u256 = U256::MAX;
+        let r_b256 = B256::ZERO;
+        let r_sig = Signature::new(r_u256, r_u256, true);
+        let r_u64 = u64::MAX;
+        let r_bytes = bytes!("aaaaaaaaaa");
+        let r_fee = Eip1559Estimation { max_fee_per_gas: 1, max_priority_fee_per_gas: 1 };
+        let account = CreatableAccount::new(
+            PREPAccount::initialize(r_address, vec![mint(r_address, r_address, r_u256)]),
+            vec![KeyHashWithID { hash: r_b256, id: r_address, signature: r_sig }],
+        );
+
+        let authorization = SignedAuthorization::new_unchecked(
+            Authorization { chain_id: r_u256, address: r_address, nonce: r_u64 },
+            1,
+            r_u256,
+            r_u256,
+        );
+        let quote = Quote {
+            chain_id: r_u64,
+            intent: Intent {
+                eoa: r_address,
+                executionData: r_bytes.clone(),
+                nonce: r_u256,
+                payer: r_address,
+                paymentToken: r_address,
+                prePaymentMaxAmount: r_u256,
+                totalPaymentMaxAmount: r_u256,
+                combinedGas: r_u256,
+                encodedPreCalls: vec![r_bytes.clone()],
+                initData: r_bytes.clone(),
+                prePaymentAmount: r_u256,
+                totalPaymentAmount: r_u256,
+                paymentRecipient: r_address,
+                signature: r_bytes.clone(),
+                paymentSignature: r_bytes.clone(),
+                supportedAccountImplementation: r_address,
+            },
+            extra_payment: r_u256,
+            eth_price: r_u256,
+            payment_token_decimals: 1,
+            tx_gas: r_u64,
+            native_fee_estimate: r_fee,
+            ttl: SystemTime::now(),
+            authorization_address: Some(r_address),
+            orchestrator: r_address,
+        };
+        let quote = Signed::new_unchecked(quote, r_sig, r_b256);
+        let queued_tx = RelayTransaction {
+            id: TxId(r_b256),
+            quote,
+            authorization: Some(authorization),
+            trace_context: Context::current(),
+            received_at: Utc::now(),
+        };
+
+        let pending_tx = PendingTransaction {
+            tx: queued_tx.clone(),
+            sent: vec![
+                NetworkWallet::<Ethereum>::sign_transaction_from(
+                    &signer,
+                    r_address,
+                    queued_tx.build(r_u64, r_fee),
+                )
+                .await?,
+            ],
+            signer: r_address,
+            sent_at: Utc::now(),
+        };
+
+        Ok(Self {
+            account,
+            signer: r_address,
+            chain_id: r_u64,
+            queued_tx,
+            pending_tx,
+            bundle_id: BundleId(r_b256),
+        })
+    }
+}
