@@ -8,7 +8,9 @@ use crate::{
     spawn::try_spawn_with_args,
 };
 use alloy::{
-    primitives::Address, providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE, signers::local::coins_bip39::{English, Mnemonic}
+    primitives::Address,
+    providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+    signers::local::coins_bip39::{English, Mnemonic},
 };
 use alloy_chains::Chain;
 use clap::Parser;

@@ -29,12 +29,17 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::{
-        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST}, SignedAuthorization
+        SignedAuthorization,
+        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
     },
-    primitives::{bytes, Address, Bytes, ChainId, U256},
-    providers::{utils::{Eip1559Estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS}, DynProvider, Provider},
+    primitives::{Address, Bytes, ChainId, U256, bytes},
+    providers::{
+        DynProvider, Provider,
+        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
+    },
     rpc::types::{
-        state::{AccountOverride, StateOverridesBuilder}, TransactionReceipt
+        TransactionReceipt,
+        state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
