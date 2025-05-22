@@ -103,13 +103,13 @@ impl StorageApi for PgStorage {
             .map_err(eyre::Error::from)?;
 
         sqlx::query!(
-            "insert into pending_txs (chain_id, sender, tx_id, tx, envelopes, received_at) values ($1, $2, $3, $4, $5, $6)",
+            "insert into pending_txs (chain_id, sender, tx_id, tx, envelopes, sent_at) values ($1, $2, $3, $4, $5, $6)",
             tx.chain_id() as i64, // yikes!
             tx.signer.as_slice(),
             tx.tx.id.as_slice(),
             serde_json::to_value(&tx.tx)?,
             serde_json::to_value(&tx.sent)?,
-            tx.received_at.naive_utc(),
+            tx.sent_at.naive_utc(),
         )
         .execute(&mut *db_tx)
         .await
@@ -175,10 +175,7 @@ impl StorageApi for PgStorage {
                     tx: serde_json::from_value(row.tx)?,
                     sent: serde_json::from_value(row.envelopes)?,
                     signer: Address::from_slice(&row.sender),
-                    received_at: DateTime::from_naive_utc_and_offset(
-                        row.received_at,
-                        *Utc::now().offset(),
-                    ),
+                    sent_at: DateTime::from_naive_utc_and_offset(row.sent_at, *Utc::now().offset()),
                 })
             })
             .collect::<std::result::Result<Vec<_>, _>>()?)
