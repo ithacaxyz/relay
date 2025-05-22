@@ -23,8 +23,14 @@ async fn register_and_unregister_id() -> eyre::Result<()> {
         .process(0, &env)
         .await?;
 
-    let account_registry =
-        env.relay_endpoint.get_capabilities().await?.contracts.account_registry.address;
+    let account_registry = env
+        .relay_endpoint
+        .get_capabilities(vec![env.chain_id])
+        .await?
+        .chain(env.chain_id)
+        .contracts
+        .account_registry
+        .address;
 
     if let EoaKind::Prep(ref account) = env.eoa {
         let account = account.clone().unwrap();
@@ -163,7 +169,7 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
     let mut env = AccountConfig::Prep.setup_environment().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
-    let caps = env.relay_endpoint.get_capabilities().await?;
+    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
 
     // Account will be stored on storage
     prep_account(&mut env, &[&admin_key]).await?;
@@ -173,7 +179,10 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
         .relay_endpoint
         .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
         .await?;
-    assert_eq!(accounts[0].delegation, caps.contracts.delegation_implementation.address);
+    assert_eq!(
+        accounts[0].delegation,
+        caps.chain(env.chain_id).contracts.delegation_implementation.address
+    );
 
     // Deploy on chain
     TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
@@ -185,7 +194,10 @@ async fn ensure_delegation_implementation() -> eyre::Result<()> {
         .relay_endpoint
         .get_accounts(GetAccountsParameters { id: admin_key.id(), chain_id: env.chain_id })
         .await?;
-    assert_eq!(accounts[0].delegation, caps.contracts.delegation_implementation.address);
+    assert_eq!(
+        accounts[0].delegation,
+        caps.chain(env.chain_id).contracts.delegation_implementation.address
+    );
 
     Ok(())
 }

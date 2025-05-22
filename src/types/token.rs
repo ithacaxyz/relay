@@ -109,6 +109,11 @@ impl FeeTokens {
     pub fn iter(&self) -> impl Iterator<Item = (&ChainId, &Vec<Token>)> {
         self.0.iter()
     }
+
+    /// Return a reference to all chain tokens.
+    pub fn chain_tokens(&self, chain_id: ChainId) -> Option<&Vec<Token>> {
+        self.0.get(&chain_id)
+    }
 }
 
 impl FromIterator<(ChainId, Vec<Token>)> for FeeTokens {

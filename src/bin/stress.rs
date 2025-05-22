@@ -178,9 +178,10 @@ impl StressTester {
         let version = relay_client.health().await?;
         info!("Connected to relay at {}, version {}", &args.relay_url, version);
 
-        let caps = relay_client.get_capabilities().await?;
+        let caps = relay_client.get_capabilities(vec![args.chain_id.id()]).await?;
 
-        let supports_fee_token = caps.fees.tokens.contains(args.chain_id.id(), &args.fee_token);
+        let supports_fee_token = caps.chain(args.chain_id.id()).has_token(&args.fee_token);
+
         if !supports_fee_token {
             eyre::bail!("fee token {} is not supported on chain {}", args.fee_token, args.chain_id);
         }
@@ -189,6 +190,7 @@ impl StressTester {
         let accounts = futures_util::future::try_join_all((0..args.accounts).map(|acc_number| {
             let relay_client = relay_client.clone();
             let acc_target = args.accounts;
+            let caps = caps.clone();
             async move {
                 let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
                     .expect("failed to create key for account");
@@ -197,7 +199,11 @@ impl StressTester {
                         .prepare_create_account(PrepareCreateAccountParameters {
                             capabilities: PrepareCreateAccountCapabilities {
                                 authorize_keys: vec![key.to_authorized(None).await?],
-                                delegation: caps.contracts.delegation_proxy.address,
+                                delegation: caps
+                                    .chain(args.chain_id.id())
+                                    .contracts
+                                    .delegation_proxy
+                                    .address,
                             },
                             chain_id: args.chain_id.id(),
                         })
