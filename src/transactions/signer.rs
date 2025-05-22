@@ -277,7 +277,7 @@ impl Signer {
         self.metrics.pending.decrement(1);
         self.metrics
             .total_wait_time
-            .record(tx.tx.received_at.signed_duration_since(Utc::now()).num_milliseconds() as f64);
+            .record(Utc::now().signed_duration_since(tx.tx.received_at).num_milliseconds() as f64);
 
         // Spawn a task to record metrics.
         let this = self.clone();
