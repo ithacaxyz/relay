@@ -2,7 +2,7 @@
 
 mod cases;
 
-mod common_calls;
+pub mod common_calls;
 
 mod config;
 use config::{AccountConfig, PaymentConfig, TestConfig};
