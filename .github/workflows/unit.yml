@@ -90,11 +90,58 @@ jobs:
             -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
             --no-tests=warn
 
+  test-migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Set database URL
+        run: |
+          echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres" >> $GITHUB_ENV
+          echo "SQLX_OFFLINE=true" >> $GITHUB_ENV
+
+      # Write to DB with base branch
+      - name: Write DB
+        run: |
+          git worktree add ../base ${{ github.event.pull_request.base.sha }}
+          (
+            cd ../base
+            cargo test -p relay --test tests -- storage::roundtrip::write --exact --ignored
+          )
+
+      # Read from DB with PR branch
+      - name: Read DB
+        run: cargo test -p relay --test tests -- storage::roundtrip::read --exact --ignored
+
   unit-success:
     name: unit success
     runs-on: ubuntu-latest
     if: always()
-    needs: [test]
+    needs: [test, test-migrations]
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
