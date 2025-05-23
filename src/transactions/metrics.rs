@@ -37,7 +37,8 @@ pub struct TransactionServiceMetrics {
     pub local_confirmations: Counter,
     /// Total time transaction took to land on chain, including time in queue.
     pub total_wait_time: Histogram,
-    /// Number of blocks that were mined before the one transaction was included in.
+    /// How many blocks were mined before the transaction was confirmed, including the block it was
+    /// included in.
     pub blocks_until_inclusion: Histogram,
 }
 
