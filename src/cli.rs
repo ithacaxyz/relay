@@ -181,7 +181,7 @@ impl Args {
             .with_num_signers(self.num_signers)
             .with_priority_fee_percentile(self.priority_fee_percentile)
             .with_banxa_api_url(self.banxa_api_url)
-            .with_banxa_api_key(self.banxa_api_key)
+            .with_banxa_api_key(self.banxa_api_key.unwrap_or_default())
     }
 }
 

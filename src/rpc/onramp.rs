@@ -36,8 +36,8 @@ impl Onramp {
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
         // Add API key header if configured
-        if let Some(api_key) = &config.banxa.api_key {
-            if let Ok(header_value) = HeaderValue::from_str(api_key) {
+        if !config.banxa.secrets.api_key.is_empty() {
+            if let Ok(header_value) = HeaderValue::from_str(&config.banxa.secrets.api_key) {
                 headers.insert("X-Api-Key", header_value);
             }
         }

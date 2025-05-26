@@ -133,18 +133,25 @@ pub struct OnrampConfig {
 pub struct BanxaConfig {
     /// Base URL for Banxa API.
     pub api_url: Url,
-    /// API key for Banxa.
-    pub api_key: Option<String>,
     /// Blockchain identifier for Banxa requests.
     pub blockchain: String,
+    /// Banxa Secrets (API key, Webhook secret, Webhook Key)
+    pub secrets: BanxaSecrets,
+}
+
+/// Banxa Secrets
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BanxaSecrets {
+    /// Banxa API key.
+    pub api_key: String,
 }
 
 impl Default for BanxaConfig {
     fn default() -> Self {
         Self {
             api_url: "https://api.banxa-sandbox.com".parse().expect("valid URL"),
-            api_key: None,
             blockchain: "base".to_string(),
+            secrets: BanxaSecrets { api_key: "".to_string() },
         }
     }
 }
@@ -407,8 +414,8 @@ impl RelayConfig {
     }
 
     /// Sets the Banxa API key.
-    pub fn with_banxa_api_key(mut self, api_key: Option<String>) -> Self {
-        self.onramp.banxa.api_key = api_key;
+    pub fn with_banxa_api_key(mut self, api_key: String) -> Self {
+        self.onramp.banxa.secrets.api_key = api_key;
         self
     }
 
