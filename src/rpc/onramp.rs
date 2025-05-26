@@ -5,6 +5,7 @@ use http::{HeaderMap, HeaderValue, header::ACCEPT};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{
+    config::OnrampConfig,
     error::RelayError,
     types::{OnrampQuote, OnrampQuoteParameters, Order, OrderId, banxa},
 };
@@ -22,17 +23,24 @@ pub trait OnrampApi {
 }
 
 /// Ithaca `onramp_` RPC module.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Onramp {
     client: reqwest::Client,
+    config: OnrampConfig,
 }
 
 impl Onramp {
     /// Create a new onramp RPC module.
-    pub fn new() -> Self {
+    pub fn new(config: OnrampConfig) -> Self {
         let mut headers = HeaderMap::default();
-        // todo: api key
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+
+        // Add API key header if configured
+        if !config.banxa.secrets.api_key.is_empty() {
+            if let Ok(header_value) = HeaderValue::from_str(&config.banxa.secrets.api_key) {
+                headers.insert("X-Api-Key", header_value);
+            }
+        }
 
         Self {
             client: reqwest::Client::builder()
@@ -40,6 +48,7 @@ impl Onramp {
                 .build()
                 // note: this is fatal and can only fail on boot
                 .expect("could not build onramp client"),
+            config,
         }
     }
 }
@@ -47,17 +56,15 @@ impl Onramp {
 #[async_trait]
 impl OnrampApiServer for Onramp {
     async fn get_quote(&self, params: OnrampQuoteParameters) -> RpcResult<OnrampQuote> {
+        let url = format!("{}/porto/v2/quotes/buy", self.config.banxa.api_url);
         let quote: banxa::BuyQuote = self
             .client
-            .get("https://api.banxa-sandbox.com/porto/v2/quotes/buy")
+            .get(&url)
             .query(&[("paymentMethodId", params.payment_method)])
             .query(&[("crypto", params.crypto_currency)])
             .query(&[("fiat", params.fiat_currency)])
             .query(&[("cryptoAmount", params.target_amount)])
-            .query(&[
-                // todo: we need to be able to configure this
-                ("blockchain", "BASE"),
-            ])
+            .query(&[("blockchain", &self.config.banxa.blockchain)])
             .send()
             .await
             .map_err(RelayError::from)?
@@ -76,9 +83,10 @@ impl OnrampApiServer for Onramp {
     }
 
     async fn get_order_status(&self, order_id: OrderId) -> RpcResult<Order> {
+        let url = format!("{}/porto/v2/orders/{order_id}", self.config.banxa.api_url);
         let order: banxa::Order = self
             .client
-            .get(format!("https://api.banxa-sandbox.com/porto/v2/orders/{order_id}"))
+            .get(&url)
             .send()
             .await
             .map_err(RelayError::from)?

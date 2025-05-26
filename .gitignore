@@ -39,3 +39,6 @@ crates/testing/resources/**/cache/*
 # Relay configuration
 relay.yaml
 registry.yaml
+
+# Scratchpad
+_
