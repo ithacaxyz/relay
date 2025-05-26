@@ -120,7 +120,7 @@ impl QuoteConfig {
 }
 
 /// Onramp configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
     /// Banxa API configuration.
@@ -137,12 +137,6 @@ pub struct BanxaConfig {
     pub api_key: Option<String>,
     /// Blockchain identifier for Banxa requests.
     pub blockchain: String,
-}
-
-impl Default for OnrampConfig {
-    fn default() -> Self {
-        Self { banxa: BanxaConfig::default() }
-    }
 }
 
 impl Default for BanxaConfig {
