@@ -46,6 +46,8 @@ async fn respawn_cli() -> eyre::Result<()> {
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),
                 priority_fee_percentile: Default::default(),
+                banxa_api_url: Url::from_str(Default::default()).unwrap(),
+                banxa_api_key: Default::default(),
             },
             config.clone(),
             registry.clone(),
