@@ -15,5 +15,6 @@ mod relay;
 mod simple;
 mod upgrade;
 pub use upgrade::upgrade_account;
+mod fees;
 mod signature;
 mod transactions;
