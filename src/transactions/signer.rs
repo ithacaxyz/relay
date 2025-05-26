@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     config::TransactionServiceConfig,
+    constants::DEFAULT_POLL_INTERVAL,
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -26,7 +27,7 @@ use alloy::{
         DynProvider, PendingTransactionError, Provider, ProviderBuilder,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
-    rpc::types::TransactionRequest,
+    rpc::{client::ClientBuilder, types::TransactionRequest},
     sol_types::{SolCall, SolEvent},
     transports::{RpcError, TransportErrorKind},
 };
@@ -192,7 +193,11 @@ impl Signer {
 
         let external_provider =
             if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
-                Some(ProviderBuilder::new().connect(endpoint.as_str()).await?.erased())
+                let client = ClientBuilder::default()
+                    .connect(endpoint.as_str())
+                    .await?
+                    .with_poll_interval(DEFAULT_POLL_INTERVAL);
+                Some(ProviderBuilder::new().connect_client(client).erased())
             } else {
                 None
             };
