@@ -132,6 +132,17 @@ pub struct Args {
     /// what you want.
     #[arg(long = "config-only", default_value_t = false)]
     pub config_only: bool,
+    /// The base URL for the Banxa API.
+    #[arg(
+        long = "banxa-api-url",
+        value_name = "URL",
+        default_value = "https://api.banxa-sandbox.com",
+        env = "BANXA_API_URL"
+    )]
+    pub banxa_api_url: Url,
+    /// The API key for Banxa.
+    #[arg(long = "banxa-api-key", value_name = "KEY", env = "BANXA_API_KEY")]
+    pub banxa_api_key: Option<String>,
 }
 
 impl Args {
@@ -169,6 +180,8 @@ impl Args {
             .with_max_pending_transactions(self.max_pending_transactions)
             .with_num_signers(self.num_signers)
             .with_priority_fee_percentile(self.priority_fee_percentile)
+            .with_banxa_api_url(self.banxa_api_url)
+            .with_banxa_api_key(self.banxa_api_key)
     }
 }
 

@@ -28,6 +28,8 @@ pub struct RelayConfig {
     pub chain: ChainConfig,
     /// Quote configuration.
     pub quote: QuoteConfig,
+    /// Onramp configuration.
+    pub onramp: OnrampConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
     /// Orchestrator address.
@@ -117,6 +119,42 @@ impl QuoteConfig {
     }
 }
 
+/// Onramp configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnrampConfig {
+    /// Banxa API configuration.
+    pub banxa: BanxaConfig,
+}
+
+/// Banxa API configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BanxaConfig {
+    /// Base URL for Banxa API.
+    pub api_url: Url,
+    /// API key for Banxa.
+    pub api_key: Option<String>,
+    /// Blockchain identifier for Banxa requests.
+    pub blockchain: String,
+}
+
+impl Default for OnrampConfig {
+    fn default() -> Self {
+        Self { banxa: BanxaConfig::default() }
+    }
+}
+
+impl Default for BanxaConfig {
+    fn default() -> Self {
+        Self {
+            api_url: "https://api.banxa-sandbox.com".parse().expect("valid URL"),
+            api_key: None,
+            blockchain: "base".to_string(),
+        }
+    }
+}
+
 /// Secrets (kept out of serialized output).
 #[derive(Debug, Deserialize)]
 pub struct SecretsConfig {
@@ -201,6 +239,7 @@ impl Default for RelayConfig {
                 ttl: Duration::from_secs(5),
                 rate_ttl: Duration::from_secs(300),
             },
+            onramp: OnrampConfig::default(),
             transactions: TransactionServiceConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegations: BTreeSet::new(),
@@ -364,6 +403,18 @@ impl RelayConfig {
     /// Sets the percentile of the priority fees to use for the transactions.
     pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
         self.transactions.priority_fee_percentile = percentile;
+        self
+    }
+
+    /// Sets the Banxa API URL.
+    pub fn with_banxa_api_url(mut self, api_url: Url) -> Self {
+        self.onramp.banxa.api_url = api_url;
+        self
+    }
+
+    /// Sets the Banxa API key.
+    pub fn with_banxa_api_key(mut self, api_key: Option<String>) -> Self {
+        self.onramp.banxa.api_key = api_key;
         self
     }
 
