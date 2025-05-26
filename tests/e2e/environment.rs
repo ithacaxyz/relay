@@ -55,6 +55,7 @@ pub struct EnvironmentConfig {
     ///
     /// Negative value represents `latest - num`.
     pub fork_block_number: Option<i64>,
+    pub fee_recipient: Address,
 }
 
 impl Default for EnvironmentConfig {
@@ -67,6 +68,7 @@ impl Default for EnvironmentConfig {
                 ..Default::default()
             },
             fork_block_number: None,
+            fee_recipient: Address::ZERO,
         }
     }
 }
@@ -88,6 +90,7 @@ pub struct Environment {
     pub chain_id: u64,
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
+    pub signers: Vec<DynSigner>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -196,11 +199,13 @@ impl Environment {
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .connect_client(client);
 
-        // fund relay signers
-        for signer in DynSigner::derive_from_mnemonic(
+        let signers = DynSigner::derive_from_mnemonic(
             SIGNERS_MNEMONIC.parse()?,
             config.transaction_service_config.num_signers,
-        )? {
+        )?;
+
+        // fund relay signers
+        for signer in &signers {
             provider.anvil_set_balance(signer.address(), U256::from(1000e18)).await?;
         }
 
@@ -265,6 +270,7 @@ impl Environment {
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_quote_constant_rate(1.0)
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
+                .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(orchestrator))
                 .with_delegation_proxy(Some(delegation))
                 .with_account_registry(Some(account_registry))
@@ -296,6 +302,7 @@ impl Environment {
             chain_id,
             relay_endpoint,
             relay_handle,
+            signers,
         })
     }
 

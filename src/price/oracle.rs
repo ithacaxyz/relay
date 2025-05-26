@@ -44,7 +44,7 @@ impl Default for PriceOracleConfig {
 }
 
 /// A price oracle that can be used to lookup or update the price of a [`CoinPair`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PriceOracle {
     /// Channel sender to lookup and update pair prices.
     tx: mpsc::UnboundedSender<PriceOracleMessage>,

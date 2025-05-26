@@ -710,9 +710,15 @@ impl Signer {
                 let included_at = block.header.timestamp;
 
                 let submitted_at_block = async {
+                    let block_time = self.block_time.as_millis();
+
                     // Firsly try guessing the block based on block time.
-                    let first_guess = included_at_block
-                        - (included_at - submitted_at) / self.block_time.as_secs();
+                    let first_guess = if block_time == 0 {
+                        included_at_block
+                    } else {
+                        included_at_block
+                            - ((included_at - submitted_at) as u128 * 1000 / block_time) as u64
+                    };
 
                     // Follow the chain until we find a block after the submission time.
                     let mut block =

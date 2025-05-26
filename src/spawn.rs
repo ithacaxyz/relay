@@ -56,6 +56,8 @@ pub struct RelayHandle {
     pub storage: RelayStorage,
     /// Metrics collector handle.
     pub metrics: PrometheusHandle,
+    /// Price oracle.
+    pub price_oracle: PriceOracle,
 }
 
 impl RelayHandle {
@@ -197,7 +199,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         chains.clone(),
         quote_signer,
         config.quote,
-        price_oracle,
+        price_oracle.clone(),
         FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
         config.chain.fee_recipient,
         storage.clone(),
@@ -246,5 +248,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     .absolute(1);
 
     rpc.merge(onramp).expect("could not merge rpc modules");
-    Ok(RelayHandle { local_addr: addr, server: server.start(rpc), chains, storage, metrics })
+    Ok(RelayHandle {
+        local_addr: addr,
+        server: server.start(rpc),
+        chains,
+        storage,
+        metrics,
+        price_oracle,
+    })
 }
