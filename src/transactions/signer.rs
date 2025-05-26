@@ -705,7 +705,7 @@ impl Signer {
                 let included_at = block.header.timestamp;
 
                 let submitted_at_block = async {
-                    let block_time = self.block_time.as_millis() as u128;
+                    let block_time = self.block_time.as_millis();
 
                     // Firsly try guessing the block based on block time.
                     let first_guess = if block_time == 0 {
