@@ -132,6 +132,17 @@ pub struct Args {
     /// what you want.
     #[arg(long = "config-only", default_value_t = false)]
     pub config_only: bool,
+    /// The base URL for the Mercuryo API.
+    #[arg(
+        long = "mercuryo-api-url",
+        value_name = "URL",
+        default_value = "https://sandbox-api.mrcr.io/v1.6",
+        env = "MERCURYO_API_URL"
+    )]
+    pub mercuryo_api_url: Url,
+    /// The API key for Mercuryo.
+    #[arg(long = "mercuryo-api-key", value_name = "KEY", env = "MERCURYO_API_KEY")]
+    pub mercuryo_api_key: Option<String>,
     /// The base URL for the Banxa API.
     #[arg(
         long = "banxa-api-url",
@@ -180,6 +191,8 @@ impl Args {
             .with_max_pending_transactions(self.max_pending_transactions)
             .with_num_signers(self.num_signers)
             .with_priority_fee_percentile(self.priority_fee_percentile)
+            .with_mercuryo_api_url(self.mercuryo_api_url)
+            .with_mercuryo_api_key(self.mercuryo_api_key.unwrap_or_default())
             .with_banxa_api_url(self.banxa_api_url)
             .with_banxa_api_key(self.banxa_api_key.unwrap_or_default())
     }
