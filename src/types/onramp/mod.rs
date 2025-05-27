@@ -4,6 +4,21 @@ use alloy::primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 
 pub mod banxa;
+pub mod mercuryo;
+
+/// An onramp order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnrampOrder {
+    // TODO
+}
+
+/// An onramp order parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnrampOrderParameters {
+    // TODO
+}
 
 /// An order ID.
 ///

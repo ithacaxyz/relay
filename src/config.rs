@@ -135,6 +135,8 @@ pub struct OnrampConfig {
 pub struct MercuryoConfig {
     /// Base URL for Mercuryo API.
     pub api_url: Url,
+    /// Blockchain identifier for Mercuryo requests.
+    pub blockchain: String,
     /// Mercuryo API key.
     pub secrets: MercuryoSecrets,
 }
@@ -154,6 +156,7 @@ impl Default for MercuryoConfig {
     fn default() -> Self {
         Self {
             api_url: "https://sandbox-api.mrcr.io/v1.6".parse().expect("valid URL"),
+            blockchain: "base".to_string(),
             secrets: MercuryoSecrets {
                 api_key: "".to_string(),
                 webhook_secret: "".to_string(),
