@@ -496,6 +496,10 @@ impl Signer {
         &self,
         mut tx: RelayTransaction,
     ) -> Result<(), SignerError> {
+        self.metrics
+            .time_in_queue
+            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
+
         // Fetch the fees for the first transaction.
         let fees = match self
             .get_fee_context()
