@@ -77,9 +77,10 @@ impl StressAccount {
         relay_client: HttpClient,
     ) -> eyre::Result<()> {
         let mut previous_nonce = None;
+        let mut retries = 5;
         loop {
             let prepare_start = Instant::now();
-            let PrepareCallsResponse { context, digest, .. } = relay_client
+            let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
                     calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
                     chain_id,
@@ -94,7 +95,20 @@ impl StressAccount {
                     key: Some(self.key.to_call_key()),
                 })
                 .await
-                .expect("prepare calls failed");
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    retries -= 1;
+                    if retries == 0 {
+                        return Err(err).context("prepare calls failed");
+                    } else {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                }
+            };
+
+            retries = 5;
 
             // It might happen that we've received a preconfirmation for previous transaction but
             // Relay is not yet at the latest state. For this case we need to make sure that our new
