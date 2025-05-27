@@ -371,11 +371,12 @@ impl Relay {
             intent.set_legacy_payment_amount(extra_payment);
         }
 
-        let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
-                .abi_encode(),
-            authorization_address.is_some(),
-        );
+        intent.combinedGas = U256::from(self.inner.quote_config.intent_buffer())
+            + U256::from(approx_intrinsic_cost(
+                &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
+                    .abi_encode(),
+                authorization_address.is_some(),
+            ));
 
         // we estimate gas and fees
         let (asset_diff, sim_result) = orchestrator
@@ -392,8 +393,7 @@ impl Relay {
         // todo: re-evaluate if this is still necessary
         let gas_estimate = GasEstimate::from_combined_gas(
             sim_result.gCombined.to(),
-            intrinsic_gas,
-            &self.inner.quote_config,
+            self.inner.quote_config.tx_buffer(),
         );
 
         debug!(eoa = %request.intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
@@ -404,7 +404,8 @@ impl Relay {
 
         // Calculate amount with updated paymentPerGas
         intent.set_legacy_payment_amount(
-            intent.prePaymentAmount + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
+            intent.prePaymentAmount
+                + U256::from((payment_per_gas * f64::from(intent.combinedGas)).ceil()),
         );
 
         let quote = Quote {

@@ -1,4 +1,3 @@
-use crate::config::QuoteConfig;
 use alloy::sol;
 use serde::{Deserialize, Serialize};
 
@@ -45,12 +44,7 @@ impl GasEstimate {
     /// function, plus any extra buffer.
     ///
     /// The recommended transaction gas is calculated according to the contracts recommendation: [https://github.com/ithacaxyz/account/blob/feffa280d5de487223e43a69126f5b6b3d99a10a/test/SimulateExecute.t.sol#L205-L206]
-    pub fn from_combined_gas(
-        combined_gas: u64,
-        intrinsic_gas: u64,
-        quote_config: &QuoteConfig,
-    ) -> Self {
-        let intent = combined_gas + quote_config.intent_buffer();
-        Self { tx: (intent + 110_000) * 64 / 63 + intrinsic_gas + quote_config.tx_buffer(), intent }
+    pub fn from_combined_gas(combined_gas: u64, tx_gas_buffer: u64) -> Self {
+        Self { tx: (((combined_gas + 110_000) * 64) / 63) + tx_gas_buffer, intent: combined_gas }
     }
 }
