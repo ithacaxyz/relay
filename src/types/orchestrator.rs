@@ -200,7 +200,6 @@ impl<P: Provider> Orchestrator<P> {
         intent: &Intent,
         key_type: KeyType,
         payment_per_gas: f64,
-        token_decimals: u8,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
@@ -266,7 +265,7 @@ impl<P: Provider> Orchestrator<P> {
         // Remove the fee from the asset diff payer as to not confuse the user.
         let simulated_payment = intent.prePaymentAmount
             + (payment_per_gas * simulation_result.gCombined)
-                / U256::from(10u128.pow((token_decimals + PAYMENT_PER_GAS_PRECISION) as u32));
+                / U256::from(10u128.pow(PAYMENT_PER_GAS_PRECISION as u32));
         let payment_token = if intent.paymentToken.is_zero() {
             Asset::Native
         } else {
