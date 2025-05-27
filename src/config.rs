@@ -124,8 +124,44 @@ impl QuoteConfig {
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
+    /// Mercuryo API configuration.
+    pub mercuryo: MercuryoConfig,
     /// Banxa API configuration.
     pub banxa: BanxaConfig,
+}
+
+/// Mercuryo API configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MercuryoConfig {
+    /// Base URL for Mercuryo API.
+    pub api_url: Url,
+    /// Mercuryo API key.
+    pub secrets: MercuryoSecrets,
+}
+
+/// Mercuryo Secrets
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MercuryoSecrets {
+    /// Mercuryo API key.
+    pub api_key: String,
+    /// Mercuryo Webhook secret.
+    pub webhook_secret: String,
+    /// Mercuryo Webhook Sign Key.
+    pub webhook_sign_key: String,
+}
+
+impl Default for MercuryoConfig {
+    fn default() -> Self {
+        Self {
+            api_url: "https://sandbox-api.mrcr.io/v1.6".parse().expect("valid URL"),
+            secrets: MercuryoSecrets {
+                api_key: "".to_string(),
+                webhook_secret: "".to_string(),
+                webhook_sign_key: "".to_string(),
+            },
+        }
+    }
 }
 
 /// Email configuration.
@@ -407,6 +443,18 @@ impl RelayConfig {
     /// Sets the percentile of the priority fees to use for the transactions.
     pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
         self.transactions.priority_fee_percentile = percentile;
+        self
+    }
+
+    /// Sets the Mercuryo API URL.
+    pub fn with_mercuryo_api_url(mut self, api_url: Url) -> Self {
+        self.onramp.mercuryo.api_url = api_url;
+        self
+    }
+
+    /// Sets the Mercuryo API key.
+    pub fn with_mercuryo_api_key(mut self, api_key: String) -> Self {
+        self.onramp.mercuryo.secrets.api_key = api_key;
         self
     }
 
