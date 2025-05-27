@@ -3928,8 +3928,6 @@ dependencies = [
  "rand 0.9.1",
  "serde_json",
  "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -3946,6 +3944,8 @@ dependencies = [
  "rand 0.9.1",
  "serde_json",
  "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -4594,7 +4594,7 @@ dependencies = [
  "opentelemetry 0.29.1",
  "opentelemetry-otlp",
  "opentelemetry-stdout",
- "opentelemetry_sdk 0.29.0",
+ "opentelemetry_sdk 0.30.0",
  "p256",
  "rand 0.9.1",
  "reqwest",
