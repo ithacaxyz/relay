@@ -206,8 +206,9 @@ impl<P: Provider> Orchestrator<P> {
         let gas_validation_offset =
             if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
 
-        let payment_per_gas =
-            U256::from(payment_per_gas * 10u128.pow(PAYMENT_PER_GAS_PRECISION as u32) as f64);
+        let payment_per_gas = U256::from(
+            (payment_per_gas * 10u128.pow(PAYMENT_PER_GAS_PRECISION as u32) as f64).ceil(),
+        );
 
         let simulate_block = SimBlock::default()
             .call(
