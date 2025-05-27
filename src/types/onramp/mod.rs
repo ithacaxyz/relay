@@ -92,6 +92,8 @@ pub enum OnrampCountry {
 pub enum PaymentMethod {
     /// Apple Pay.
     ApplePay,
+    /// Google Pay.
+    GooglePay,
 }
 
 /// Parameters for `onramp_getQuote`.

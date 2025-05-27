@@ -48,6 +48,8 @@ async fn respawn_cli() -> eyre::Result<()> {
                 priority_fee_percentile: Default::default(),
                 mercuryo_api_url: Url::from_str("https://sandbox-api.mrcr.io/v1.6").unwrap(),
                 mercuryo_api_key: Default::default(),
+                mercuryo_webhook_secret: Default::default(),
+                mercuryo_webhook_sign_key: Default::default(),
                 banxa_api_url: Url::from_str("https://api.banxa-sandbox.com").unwrap(),
                 banxa_api_key: Default::default(),
             },

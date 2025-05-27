@@ -143,6 +143,20 @@ pub struct Args {
     /// The API key for Mercuryo.
     #[arg(long = "mercuryo-api-key", value_name = "KEY", env = "MERCURYO_API_KEY")]
     pub mercuryo_api_key: Option<String>,
+    /// The webhook secret for Mercuryo.
+    #[arg(
+        long = "mercuryo-webhook-secret",
+        value_name = "SECRET",
+        env = "MERCURYO_WEBHOOK_SECRET"
+    )]
+    pub mercuryo_webhook_secret: Option<String>,
+    /// The webhook sign key for Mercuryo.
+    #[arg(
+        long = "mercuryo-webhook-sign-key",
+        value_name = "KEY",
+        env = "MERCURYO_WEBHOOK_SIGN_KEY"
+    )]
+    pub mercuryo_webhook_sign_key: Option<String>,
     /// The base URL for the Banxa API.
     #[arg(
         long = "banxa-api-url",

@@ -123,10 +123,10 @@ impl QuoteConfig {
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
-    /// Mercuryo API configuration.
-    pub mercuryo: MercuryoConfig,
     /// Banxa API configuration.
     pub banxa: BanxaConfig,
+    /// Mercuryo API configuration.
+    pub mercuryo: MercuryoConfig,
 }
 
 /// Mercuryo API configuration.
