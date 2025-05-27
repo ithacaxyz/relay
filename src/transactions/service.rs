@@ -1,18 +1,22 @@
 use super::{
-    Signer, SignerEvent, SignerId, SignerTask, TxId,
+    Signer, SignerEvent, SignerId, SignerTask, TransactionMonitoringHandle, TxId,
     metrics::TransactionServiceMetrics,
     transaction::{RelayTransaction, TransactionStatus},
 };
 use crate::{
     config::TransactionServiceConfig,
+    constants::DEFAULT_POLL_INTERVAL,
     error::StorageError,
     signers::DynSigner,
+    spawn::RETRY_LAYER,
     storage::{RelayStorage, StorageApi},
 };
 use alloy::{
     primitives::Address,
-    providers::{DynProvider, Provider},
+    providers::{DynProvider, Provider, ProviderBuilder},
+    rpc::client::ClientBuilder,
 };
+use alloy_chains::Chain;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -112,6 +116,24 @@ impl TransactionService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
+        let external_provider =
+            if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
+                let client = ClientBuilder::default()
+                    .layer(RETRY_LAYER)
+                    .connect(endpoint.as_str())
+                    .await?
+                    .with_poll_interval(DEFAULT_POLL_INTERVAL);
+                Some(ProviderBuilder::new().connect_client(client).erased())
+            } else {
+                None
+            };
+
+        let monitor = TransactionMonitoringHandle::new(
+            provider.clone(),
+            external_provider.clone(),
+            metrics.clone(),
+        );
+
         let mut this = Self {
             signers: Default::default(),
             active_signers: vec![],
@@ -130,7 +152,7 @@ impl TransactionService {
 
         // create all the signers
         for signer in signers {
-            this.create_signer(signer, provider.clone()).await?;
+            this.create_signer(signer, provider.clone(), monitor.clone()).await?;
         }
 
         // insert loaded queue, we need to do it after signers are created so that loaded pending
@@ -149,6 +171,7 @@ impl TransactionService {
         &mut self,
         signer: DynSigner,
         provider: DynProvider,
+        monitor: TransactionMonitoringHandle,
     ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
@@ -162,6 +185,7 @@ impl TransactionService {
             events_tx,
             metrics,
             self.config.clone(),
+            monitor,
         )
         .await?;
         let (task, loaded_transactions) = signer.into_future().await?;

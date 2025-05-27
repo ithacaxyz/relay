@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{
     config::TransactionServiceConfig,
-    constants::DEFAULT_POLL_INTERVAL,
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -24,14 +23,13 @@ use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, B256, Bytes, U256, uint},
     providers::{
-        DynProvider, PendingTransactionError, Provider, ProviderBuilder,
+        DynProvider, PendingTransactionError, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
-    rpc::{client::ClientBuilder, types::TransactionRequest},
+    rpc::types::TransactionRequest,
     sol_types::{SolCall, SolEvent},
     transports::{RpcError, TransportErrorKind},
 };
-use alloy_chains::Chain;
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
@@ -158,6 +156,7 @@ pub struct Signer {
 
 impl Signer {
     /// Creates a new [`Signer`].
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         id: SignerId,
         provider: DynProvider,
@@ -166,6 +165,7 @@ impl Signer {
         events_tx: mpsc::UnboundedSender<SignerEvent>,
         tx_metrics: Arc<TransactionServiceMetrics>,
         config: TransactionServiceConfig,
+        monitor: TransactionMonitoringHandle,
     ) -> eyre::Result<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -190,23 +190,6 @@ impl Signer {
                 1000 * (latest.header.timestamp - start.header.timestamp) / length,
             )
         };
-
-        let external_provider =
-            if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
-                let client = ClientBuilder::default()
-                    .connect(endpoint.as_str())
-                    .await?
-                    .with_poll_interval(DEFAULT_POLL_INTERVAL);
-                Some(ProviderBuilder::new().connect_client(client).erased())
-            } else {
-                None
-            };
-
-        let monitor = TransactionMonitoringHandle::new(
-            provider.clone(),
-            external_provider.clone(),
-            tx_metrics.clone(),
-        );
 
         let inner = SignerInner {
             id,
