@@ -380,7 +380,6 @@ impl Relay {
                 &intent,
                 account_key.keyType,
                 payment_per_gas,
-                token.decimals,
                 self.inner.asset_info.clone(),
             )
             .await?;
