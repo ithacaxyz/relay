@@ -339,10 +339,6 @@ impl Relay {
             ..Default::default()
         };
 
-        // this will force the simulation to go through payment code paths, and get a better
-        // estimation.
-        intent.set_legacy_payment_amount(U256::from(1));
-
         // sign intent
         let signature = mock_key
             .sign_typed_data(
@@ -367,15 +363,15 @@ impl Relay {
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
 
-        if !extra_payment.is_zero() {
-            intent.set_legacy_payment_amount(extra_payment);
-        }
-
         let intrinsic_gas = approx_intrinsic_cost(
             &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
                 .abi_encode(),
             authorization_address.is_some(),
         );
+
+        let initial_payment = U256::from(intrinsic_gas as f64 * payment_per_gas) + extra_payment;
+
+        intent.set_legacy_payment_amount(initial_payment);
 
         // we estimate gas and fees
         let (asset_diff, sim_result) = orchestrator
@@ -404,7 +400,7 @@ impl Relay {
 
         // Calculate amount with updated paymentPerGas
         intent.set_legacy_payment_amount(
-            intent.prePaymentAmount + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
+            extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
         );
 
         let quote = Quote {
