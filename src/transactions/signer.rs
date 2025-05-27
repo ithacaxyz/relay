@@ -496,6 +496,10 @@ impl Signer {
         &self,
         mut tx: RelayTransaction,
     ) -> Result<(), SignerError> {
+        self.metrics
+            .time_in_queue
+            .record(Utc::now().signed_duration_since(tx.received_at).num_milliseconds() as f64);
+
         // Fetch the fees for the first transaction.
         let fees = match self
             .get_fee_context()
@@ -706,7 +710,7 @@ impl Signer {
             if let Some(block) =
                 self.provider.get_block(included_at_block.into()).await.ok().flatten()
             {
-                let submitted_at = tx.tx.received_at.timestamp() as u64;
+                let submitted_at = tx.sent_at.timestamp() as u64;
                 let included_at = block.header.timestamp;
 
                 let submitted_at_block = async {

@@ -40,6 +40,8 @@ pub struct TransactionServiceMetrics {
     /// How many blocks were mined before the transaction was confirmed, including the block it was
     /// included in.
     pub blocks_until_inclusion: Histogram,
+    /// How long transactions have spent in queue before being sent.
+    pub time_in_queue: Histogram,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.
