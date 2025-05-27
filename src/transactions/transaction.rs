@@ -57,7 +57,7 @@ impl RelayTransaction {
         let mut intent = quote.intent.clone();
 
         let payment_amount = (quote.extra_payment
-            + (intent.combinedGas
+            + (U256::from(gas_limit)
                 * U256::from(fees.max_fee_per_gas)
                 * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
             .div_ceil(quote.eth_price))
