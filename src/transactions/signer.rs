@@ -706,7 +706,7 @@ impl Signer {
             if let Some(block) =
                 self.provider.get_block(included_at_block.into()).await.ok().flatten()
             {
-                let submitted_at = tx.tx.received_at.timestamp() as u64;
+                let submitted_at = tx.sent_at.timestamp() as u64;
                 let included_at = block.header.timestamp;
 
                 let submitted_at_block = async {
