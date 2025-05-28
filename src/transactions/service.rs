@@ -18,6 +18,7 @@ use alloy::{
 };
 use alloy_chains::Chain;
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use rand::seq::SliceRandom;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     pin::Pin,
@@ -279,11 +280,15 @@ impl TransactionService {
     /// Picks the best signer for dispatching a transaction. Signer with the highest capacity is
     /// returned.
     fn best_signer_and_tx(&mut self) -> Option<(&mut SignerTask, RelayTransaction)> {
+        // Shuffle the signers to make sure transactions are distributed evenly.
+        let mut signers = self.signers.iter_mut().collect::<Vec<_>>();
+        signers.shuffle(&mut rand::rng());
+
         let mut best_signer = None;
         let mut best_capacity = 0;
         let mut total_pending = 0;
 
-        for signer in self.signers.iter_mut() {
+        for signer in signers {
             total_pending += signer.pending();
 
             let capacity = signer.capacity();
