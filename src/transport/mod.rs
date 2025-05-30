@@ -1,12 +1,23 @@
 //! L2 Transport implementation with `eth_sendRawTransaction` forwarding.
 
 use alloy::{
-    rpc::json_rpc::{RequestPacket, ResponsePacket},
-    transports::{Transport, TransportError, TransportFut},
+    providers::WsConnect,
+    pubsub::PubSubConnect,
+    rpc::{
+        client::BuiltInConnectionString,
+        json_rpc::{RequestPacket, ResponsePacket},
+    },
+    transports::{
+        BoxTransport, Transport, TransportConnect, TransportError, TransportFut, TransportResult,
+    },
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use std::task::{Context, Poll, ready};
+use std::{
+    str::FromStr,
+    task::{Context, Poll, ready},
+};
 use tower::{Layer, Service};
+use url::Url;
 
 pub mod error;
 
@@ -116,6 +127,27 @@ where
 
         self.inner.call(req)
     }
+}
+
+/// Creates a [`BoxTransport`] from a [`Url`].
+///
+/// Returns the transport and a boolean indicating if the transport is local.
+pub async fn create_transport(url: &Url) -> TransportResult<(BoxTransport, bool)> {
+    let url = BuiltInConnectionString::from_str(url.as_str())?;
+    let is_local = url.is_local();
+
+    let transport = match url {
+        BuiltInConnectionString::Ws(url, auth) => WsConnect::new(url.as_str())
+            .with_auth_opt(auth)
+            // Configure max number of retries to prevent provider from becoming useless
+            .with_max_retries(u32::MAX)
+            .into_service()
+            .await?
+            .boxed(),
+        _ => url.connect_boxed().await?,
+    };
+
+    Ok((transport, is_local))
 }
 
 #[cfg(test)]

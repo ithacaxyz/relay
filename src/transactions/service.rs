@@ -10,6 +10,7 @@ use crate::{
     signers::DynSigner,
     spawn::RETRY_LAYER,
     storage::{RelayStorage, StorageApi},
+    transport::create_transport,
 };
 use alloy::{
     primitives::Address,
@@ -119,10 +120,10 @@ impl TransactionService {
 
         let external_provider =
             if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
+                let (transport, is_local) = create_transport(endpoint).await?;
                 let client = ClientBuilder::default()
                     .layer(RETRY_LAYER)
-                    .connect(endpoint.as_str())
-                    .await?
+                    .transport(transport, is_local)
                     .with_poll_interval(DEFAULT_POLL_INTERVAL);
                 Some(ProviderBuilder::new().connect_client(client).erased())
             } else {
