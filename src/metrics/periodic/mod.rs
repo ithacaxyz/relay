@@ -50,3 +50,39 @@ pub async fn spawn_periodic_collectors(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{primitives::address, providers::ProviderBuilder};
+    use metrics_exporter_prometheus::PrometheusBuilder;
+    use tokio::time::{self, Duration};
+
+    #[tokio::test]
+    async fn test_periodic_metrics_collection() {
+        let handle = PrometheusBuilder::new().install_recorder().unwrap();
+
+        let provider = ProviderBuilder::new().disable_recommended_fillers().connect_anvil();
+
+        let url = provider.anvil().endpoint_url();
+
+        // Launches periodic jobs
+        spawn_periodic_collectors(
+            vec![address!("0x4242424242424242424242424242424242424242")],
+            vec![provider.erased()],
+            vec![url.clone()],
+        )
+        .await
+        .unwrap();
+
+        time::sleep(Duration::from_secs(3)).await;
+
+        let metrics_output = handle.render();
+
+        assert!(metrics_output.contains(
+            "balance{address=\"0x4242424242424242424242424242424242424242\",chain_id=\"31337\"} 0"
+        ));
+
+        assert!(metrics_output.contains(format!("node_latency{{url=\"{url}\",quantile").as_str()));
+    }
+}
