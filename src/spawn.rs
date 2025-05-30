@@ -10,7 +10,7 @@ use crate::{
     rpc::{Onramp, OnrampApiServer, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
-    transport::SequencerLayer,
+    transport::{SequencerLayer, create_transport},
     types::{CoinKind, CoinPair, CoinRegistry, FeeTokens, VersionedContracts},
     version::RELAY_LONG_VERSION,
 };
@@ -21,7 +21,7 @@ use alloy::{
     providers::{DynProvider, Provider, ProviderBuilder, RootProvider},
     rpc::client::{BuiltInConnectionString, ClientBuilder},
     signers::local::LocalSigner,
-    transports::{TransportConnect, layers::RetryBackoffLayer},
+    transports::layers::RetryBackoffLayer,
 };
 use alloy_chains::Chain;
 use http::header;
@@ -121,21 +121,13 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
-    // setup metrics exporter and periodic metric collectors
-    let metrics =
-        metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
-    metrics::spawn_periodic_collectors(signer_addresses.clone(), config.chain.endpoints.clone())
-        .await?;
-
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(async |url| {
             let chain_id =
                 RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
 
-            let url = BuiltInConnectionString::from_str(url.as_str())?;
-            let is_local = url.is_local();
-            let transport = url.connect_boxed().await?;
+            let (transport, is_local) = create_transport(&url).await?;
 
             let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
 
@@ -159,6 +151,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
                     .erased(),
             )
         }),
+    )
+    .await?;
+
+    // setup metrics exporter and periodic metric collectors
+    let metrics =
+        metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
+    metrics::spawn_periodic_collectors(
+        signer_addresses.clone(),
+        providers.clone(),
+        config.chain.endpoints.clone(),
     )
     .await?;
 

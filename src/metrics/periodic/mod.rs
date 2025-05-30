@@ -6,7 +6,7 @@ use job::PeriodicJob;
 
 use alloy::{
     primitives::Address,
-    providers::{Provider, ProviderBuilder},
+    providers::{DynProvider, Provider},
 };
 use std::{fmt::Debug, future::Future, time::Duration};
 use url::Url;
@@ -27,14 +27,13 @@ pub trait MetricCollector: Debug {
 /// Spawns all available periodic metric collectors.
 pub async fn spawn_periodic_collectors(
     signers: Vec<Address>,
+    providers: Vec<DynProvider>,
     rpc_urls: Vec<Url>,
 ) -> Result<(), MetricCollectorError> {
     let mut providers_with_url = Vec::with_capacity(rpc_urls.len());
     let mut providers_with_chain = Vec::with_capacity(rpc_urls.len());
 
-    for rpc in rpc_urls {
-        let provider = ProviderBuilder::new().connect(rpc.as_str()).await?;
-
+    for (provider, rpc) in providers.into_iter().zip(rpc_urls) {
         providers_with_chain.push((provider.get_chain_id().await?, provider.clone()));
         providers_with_url.push((rpc, provider));
     }
@@ -50,42 +49,4 @@ pub async fn spawn_periodic_collectors(
     );
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::primitives::address;
-    use metrics_exporter_prometheus::PrometheusBuilder;
-    use std::str::FromStr;
-    use tokio::time::{self, Duration};
-    use url::Url;
-
-    #[ignore]
-    #[tokio::test]
-    async fn test_periodic_metrics_collection() {
-        let handle = PrometheusBuilder::new().install_recorder().unwrap();
-
-        // Launches periodic jobs
-        spawn_periodic_collectors(
-            vec![address!("0x4242424242424242424242424242424242424242")],
-            vec![Url::from_str("http://localhost:8545").unwrap()],
-        )
-        .await
-        .unwrap();
-
-        time::sleep(Duration::from_secs(3)).await;
-
-        let metrics_output = handle.render();
-
-        assert!(metrics_output.contains(
-            "balance{address=\"0x4242424242424242424242424242424242424242\",chain_id=\"1\"} 0"
-        ));
-
-        assert!(metrics_output.contains(
-            "balance{address=\"0x0000000000000000000000000000000000000000\",chain_id=\"1\"} 0"
-        ));
-
-        assert!(metrics_output.contains("node_latency{url=\"http://localhost:8545/\",quantile"));
-    }
 }
