@@ -2,9 +2,6 @@
 mod account;
 pub use account::*;
 
-mod account_registry;
-pub use account_registry::*;
-
 mod action;
 pub use action::*;
 

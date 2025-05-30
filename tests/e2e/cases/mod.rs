@@ -1,6 +1,5 @@
 //! Relay end-to-end test cases
 
-mod account;
 mod assets;
 mod calls;
 mod cli;
@@ -9,12 +8,10 @@ mod keys;
 mod pause;
 mod paymaster;
 mod porto;
-mod prep;
-pub use prep::prep_account;
 mod relay;
 mod simple;
 mod upgrade;
-pub use upgrade::upgrade_account;
+pub use upgrade::{upgrade_account_eagerly, upgrade_account_lazily};
 mod fees;
 mod signature;
 mod transactions;

@@ -40,8 +40,6 @@ pub struct RelayConfig {
     pub legacy_delegations: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
-    /// Account registry address.
-    pub account_registry: Address,
     /// Simulator address.
     pub simulator: Address,
     /// Secrets.
@@ -246,7 +244,6 @@ impl Default for RelayConfig {
             legacy_delegations: BTreeSet::new(),
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
-            account_registry: Address::ZERO,
             simulator: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
@@ -363,14 +360,6 @@ impl RelayConfig {
     pub fn with_delegation_proxy(mut self, delegation_proxy: Option<Address>) -> Self {
         if let Some(delegation_proxy) = delegation_proxy {
             self.delegation_proxy = delegation_proxy;
-        }
-        self
-    }
-
-    /// Sets the account registry address.
-    pub fn with_account_registry(mut self, account_registry: Option<Address>) -> Self {
-        if let Some(account_registry) = account_registry {
-            self.account_registry = account_registry;
         }
         self
     }

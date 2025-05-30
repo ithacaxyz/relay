@@ -1,13 +1,12 @@
 use std::collections::HashSet;
 
 use crate::e2e::{
-    ExpectedOutcome,
+    AuthKind,
     MockErc721::{self},
-    TxContext, await_calls_status,
-    cases::prep_account,
+    await_calls_status,
+    cases::upgrade_account_eagerly,
     common_calls,
-    config::AccountConfig,
-    environment::mint_erc20s,
+    environment::{Environment, mint_erc20s},
     send_prepared_calls,
 };
 use alloy::{
@@ -27,7 +26,7 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_info() -> eyre::Result<()> {
     // Setup environment
-    let env = AccountConfig::Prep.setup_environment().await?;
+    let env = Environment::setup().await?;
     let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20s[1])];
     let provider = env.provider.clone();
 
@@ -50,13 +49,17 @@ async fn asset_info() -> eyre::Result<()> {
 /// Ensures that asset diffs do not include the fee payment diff on the payer.
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_diff_no_fee() -> eyre::Result<()> {
-    // setup environment and prep account
-    let mut env = AccountConfig::Prep.setup_environment().await?;
+    // setup environment
+    let env = Environment::setup().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[&admin_key]).await?;
-    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
-        .process(0, &env)
-        .await?;
+
+    upgrade_account_eagerly(
+        &env,
+        &[admin_key.to_authorized()],
+        &admin_key,
+        crate::e2e::AuthKind::Auth,
+    )
+    .await?;
 
     // create prepare_call request
     for fee_token in [env.fee_token, Address::ZERO] {
@@ -85,13 +88,11 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
 /// Ensures that asset diffs coming from prepare_calls are as expected for both ERC721 and ERC20.
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_diff() -> eyre::Result<()> {
-    // setup environment and prep account
-    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let env = Environment::setup().await?;
+
+    // Prepare account
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[&admin_key]).await?;
-    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
-        .process(0, &env)
-        .await?;
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
 
@@ -174,13 +175,11 @@ async fn asset_diff() -> eyre::Result<()> {
 /// Ensures that asset diffs coming from prepare_calls contain token URIs for ERC721 tokens.
 #[tokio::test(flavor = "multi_thread")]
 async fn asset_diff_has_uri() -> eyre::Result<()> {
-    // setup environment and prep account
-    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let env = Environment::setup().await?;
+
+    // Prepare account
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[&admin_key]).await?;
-    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
-        .process(0, &env)
-        .await?;
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
 

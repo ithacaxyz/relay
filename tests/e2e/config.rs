@@ -1,11 +1,9 @@
-use super::{TxContext, cases::prep_account, environment::Environment};
+use super::{AuthKind, TxContext, cases::upgrade_account_lazily, environment::Environment};
 use strum::EnumIter;
 
 /// Test configuration that will prepare the desired [`Environment`] before a run.
 #[derive(Debug, Clone, Copy)]
 pub struct TestConfig {
-    /// Account configuration.
-    pub account: AccountConfig,
     /// Payment method configuration.
     pub payment: PaymentConfig,
 }
@@ -16,8 +14,8 @@ impl TestConfig {
     where
         F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync,
     {
-        // Setup the initial environment based on account type.
-        let mut env = self.account.setup_environment().await?;
+        // Setup the initial environment.
+        let mut env = Environment::setup().await?;
 
         // Apply native or ERC20 payment method
         env = self.payment.apply(env);
@@ -25,28 +23,21 @@ impl TestConfig {
         // Generate transactions from test case
         let txs = build_txs(&env);
 
-        let mut txs = txs.into_iter().enumerate().peekable();
-        while let Some((tx_num, mut tx)) = txs.next() {
-            // The account needs to be set up in the very first transaction. PREP supports bundling
-            // calls with it, while upgrading an existing EOA does not.
+        let txs = txs.into_iter().enumerate().peekable();
+        for (tx_num, mut tx) in txs {
+            // The account needs to be set up in the very first transaction.
             if tx_num == 0 {
-                match self.account {
-                    AccountConfig::Prep => {
-                        // If a signer is not defined, takes the first authorized key from the tx
-                        // context.
-                        tx.key = Some(tx.key.as_ref().unwrap_or(&tx.authorization_keys[0]));
-                        prep_account(&mut env, &std::mem::take(&mut tx.authorization_keys)).await?;
-                    }
-                    AccountConfig::Upgraded => {
-                        // Since upgrade account cannot bundle a list of Call, it returns them so
-                        // they can be bundled for the following transaction.
-                        let mut calls = tx.upgrade_account(&env, tx_num).await?;
-                        if let Some((_, next_tx)) = txs.peek_mut() {
-                            next_tx.calls.splice(0..0, calls.drain(..));
-                        }
-                        continue;
-                    }
-                }
+                // If a signer is not defined, takes the first authorized key from the tx
+                // context.
+                tx.key = Some(tx.key.as_ref().unwrap_or(&tx.authorization_keys[0]));
+
+                // authorization_keys field on the first tx are handled as initialization keys.
+                upgrade_account_lazily(
+                    &env,
+                    &tx.authorization_keys.drain(..).map(|k| k.to_authorized()).collect::<Vec<_>>(),
+                    tx.auth.clone().unwrap_or(AuthKind::Auth),
+                )
+                .await?;
             }
             tx.process(tx_num, &env).await?;
         }
@@ -55,26 +46,9 @@ impl TestConfig {
     }
 }
 
-impl From<(AccountConfig, PaymentConfig)> for TestConfig {
-    fn from(value: (AccountConfig, PaymentConfig)) -> Self {
-        Self { account: value.0, payment: value.1 }
-    }
-}
-
-/// EOA smart account to be used on a [`Environment`].
-#[derive(Debug, Clone, Copy, EnumIter)]
-pub enum AccountConfig {
-    Prep,
-    Upgraded,
-}
-
-impl AccountConfig {
-    /// Set up the environment based on the account type.
-    pub async fn setup_environment(self) -> eyre::Result<Environment> {
-        match self {
-            AccountConfig::Prep => Environment::setup_with_prep().await,
-            AccountConfig::Upgraded => Environment::setup_with_upgraded().await,
-        }
+impl From<PaymentConfig> for TestConfig {
+    fn from(value: PaymentConfig) -> Self {
+        Self { payment: value }
     }
 }
 

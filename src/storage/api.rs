@@ -3,7 +3,7 @@
 use crate::{
     error::StorageError,
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, KeyID, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -18,14 +18,11 @@ pub type Result<T> = core::result::Result<T, StorageError>;
 /// Storage API.
 #[async_trait]
 pub trait StorageApi: Debug + Send + Sync {
-    /// Reads [`PREPAccount`] from storage.
-    async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>>;
+    /// Reads [`CreatableAccount`] from storage.
+    async fn read_account(&self, address: &Address) -> Result<Option<CreatableAccount>>;
 
-    /// Writes [`PREPAccount`] to storage.
-    async fn write_prep(&self, account: CreatableAccount) -> Result<()>;
-
-    /// Reads all account addresses associated with a ID.
-    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>>;
+    /// Writes [`CreatableAccount`] to storage.
+    async fn write_account(&self, account: CreatableAccount) -> Result<()>;
 
     /// Replaces previously queued transaction with a pending transaction.
     async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> Result<()>;

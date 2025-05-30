@@ -8,7 +8,7 @@ mod pg;
 
 use crate::{
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, KeyID, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -38,16 +38,12 @@ impl RelayStorage {
 
 #[async_trait]
 impl StorageApi for RelayStorage {
-    async fn read_prep(&self, address: &Address) -> api::Result<Option<CreatableAccount>> {
-        self.inner.read_prep(address).await
+    async fn read_account(&self, address: &Address) -> api::Result<Option<CreatableAccount>> {
+        self.inner.read_account(address).await
     }
 
-    async fn write_prep(&self, account: CreatableAccount) -> api::Result<()> {
-        self.inner.write_prep(account).await
-    }
-
-    async fn read_accounts_from_id(&self, id: &KeyID) -> api::Result<Vec<Address>> {
-        self.inner.read_accounts_from_id(id).await
+    async fn write_account(&self, account: CreatableAccount) -> api::Result<()> {
+        self.inner.write_account(account).await
     }
 
     async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> api::Result<()> {

@@ -1,4 +1,4 @@
-use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract, PREPInitData};
+use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract};
 use crate::types::Orchestrator;
 use alloy::{
     dyn_abi::TypedData,
@@ -156,10 +156,6 @@ pub struct PartialIntent {
     pub execution_data: Bytes,
     /// Per delegated EOA.
     pub nonce: U256,
-    /// Optional data for `initPREP` on the delegation.
-    ///
-    /// Excluded from signature.
-    pub init_data: Option<Bytes>,
     /// Optional payer of the gas.
     pub payer: Option<Address>,
     /// Optional array of encoded PreCalls that will be verified and executed before the
@@ -362,28 +358,10 @@ impl SignedCalls for Intent {
         self.nonce
     }
 
-    /// Returns all keys authorized in the current [`Intent`] including `pre_calls`, `executionData`
-    /// and `initData`.
+    /// Returns all keys authorized in the current [`Intent`] including `pre_calls` and
+    /// `executionData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        let keys = self.authorized_keys_from_execution_data()?;
-
-        // Decode keys from initData, if it exists.
-        let mut keys: Vec<Key> = if !self.initData.is_empty() {
-            let prep = PREPInitData::abi_decode_params(&self.initData)?;
-
-            keys.chain(prep.calls.into_iter().filter_map(|call| {
-                // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
-                authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
-            }))
-            .collect()
-        } else {
-            keys.collect()
-        };
-
-        // Extend with pre-authorized keys.
-        keys.extend(self.pre_authorized_keys()?);
-
-        Ok(keys)
+        Ok(self.authorized_keys_from_execution_data()?.chain(self.pre_authorized_keys()?).collect())
     }
 }
 

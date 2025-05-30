@@ -9,32 +9,26 @@ use relay::{
     signers::{DynSigner, Eip712PayLoadSigner},
     transactions::RelayTransaction,
     types::{
-        Call, CreatableAccount, KeyType, KeyWith712Signer, Signature,
+        Call, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
-            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
 
-/// Kind of EOA: PREP or Upgraded.
+/// Kind of EOA.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum EoaKind {
     Upgraded(DynSigner),
-    Prep(Option<CreatableAccount>),
 }
 
 impl EoaKind {
     /// Create a new [`EoaKind`] with [`DynSigner`].
     pub fn create_upgraded(signer: DynSigner) -> Self {
         Self::Upgraded(signer)
-    }
-
-    /// Create a new [`EoaKind`] with [`CreatableAccount`].
-    pub fn create_prep() -> Self {
-        Self::Prep(None)
     }
 
     /// Returns a reference to the inner [`DynSigner`] when dealing with an upgraded account.
@@ -45,15 +39,7 @@ impl EoaKind {
     pub fn root_signer(&self) -> &DynSigner {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer,
-            EoaKind::Prep { .. } => {
-                panic!("eoa is not an upgraded account")
-            }
         }
-    }
-
-    /// Whether self is a PREP account.
-    pub fn is_prep(&self) -> bool {
-        matches!(self, Self::Prep { .. })
     }
 
     /// Returns [`Address`].
@@ -65,9 +51,6 @@ impl EoaKind {
     pub fn address(&self) -> Address {
         match self {
             EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),
-            EoaKind::Prep(account) => {
-                account.as_ref().expect("prep not calculated yet").prep.address
-            }
         }
     }
 }
@@ -79,41 +62,39 @@ pub struct MockAccount {
 }
 
 impl MockAccount {
-    /// Creates a new random account by going through PREP flow.
+    /// Creates a new random account onchain.
     pub async fn new(env: &Environment) -> eyre::Result<Self> {
         Self::with_key(env, B256::random()).await
     }
 
-    /// Creates a new account by going through PREP flow with the given key.
+    /// Creates a new account onchain with the given key.
     pub async fn with_key(env: &Environment, key: B256) -> eyre::Result<Self> {
+        let eoa = DynSigner::from_signing_key(&B256::random().to_string()).await?;
         let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, key).unwrap().unwrap();
 
-        let PrepareCreateAccountResponse { context, address, .. } = env
+        let PrepareUpgradeAccountResponse { context, digests, .. } = env
             .relay_endpoint
-            .prepare_create_account(PrepareCreateAccountParameters {
-                capabilities: PrepareCreateAccountCapabilities {
-                    authorize_keys: vec![key.to_authorized(None).await?],
-                    delegation: env.delegation,
+            .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+                capabilities: UpgradeAccountCapabilities {
+                    authorize_keys: vec![key.to_authorized()],
                 },
-                chain_id: env.chain_id,
+                chain_id: Some(env.chain_id),
+                address: eoa.address(),
+                delegation: env.delegation,
             })
             .await
             .unwrap();
 
         // Using ETH for payments
-        env.provider.anvil_set_balance(address, U256::from(100e18)).await?;
-
-        let signature = key.id_sign(address).await.unwrap();
+        env.provider.anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
 
         env.relay_endpoint
-            .create_account(CreateAccountParameters {
+            .upgrade_account(UpgradeAccountParameters {
                 context,
-                signatures: vec![KeySignature {
-                    public_key: key.publicKey.clone(),
-                    key_type: key.keyType,
-                    value: signature.as_bytes().into(),
-                    prehash: false,
-                }],
+                signatures: UpgradeAccountSignatures {
+                    auth: eoa.sign_hash(&digests.auth_digest).await?,
+                    pre_call: eoa.sign_hash(&digests.pre_call_digest).await?,
+                },
             })
             .await
             .unwrap();
@@ -124,12 +105,12 @@ impl MockAccount {
                 calls: vec![Call {
                     to: env.erc20,
                     value: U256::ZERO,
-                    data: MockErc20::mintCall { a: address, val: U256::from(100e18) }
+                    data: MockErc20::mintCall { a: eoa.address(), val: U256::from(100e18) }
                         .abi_encode()
                         .into(),
                 }],
                 chain_id: env.chain_id,
-                from: Some(address),
+                from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
@@ -151,7 +132,7 @@ impl MockAccount {
 
         assert!(status.status.is_final());
 
-        Ok(MockAccount { address, key })
+        Ok(MockAccount { address: eoa.address(), key })
     }
 
     /// Prepares a simple transaction from the account which is ready to be sent to the transacton

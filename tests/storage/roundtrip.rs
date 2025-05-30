@@ -8,7 +8,7 @@
 //!
 //! If any migration is missing, the read step fails.
 
-use crate::e2e::{SIGNERS_MNEMONIC, common_calls::mint};
+use crate::e2e::SIGNERS_MNEMONIC;
 use alloy::{
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     network::{Ethereum, EthereumWallet, NetworkWallet},
@@ -22,7 +22,7 @@ use relay::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{PendingTransaction, RelayTransaction, TxId},
-    types::{CreatableAccount, Intent, KeyHashWithID, PREPAccount, Quote, Signed, rpc::BundleId},
+    types::{CreatableAccount, Intent, Quote, Signed, SignedCall, rpc::BundleId},
 };
 use sqlx::PgPool;
 use std::{ops::Not, time::SystemTime};
@@ -42,7 +42,7 @@ async fn write() -> eyre::Result<()> {
         Fixtures::generate().await?;
 
     // Account & Keys
-    storage.write_prep(account.clone()).await?;
+    storage.write_account(account.clone()).await?;
 
     // Queued & Pending txs
     storage.write_queued_transaction(&queued_tx).await?;
@@ -63,8 +63,7 @@ async fn read() -> eyre::Result<()> {
         Fixtures::generate().await?;
 
     // Account & Keys
-    assert!(storage.read_prep(&account.address()).await?.is_some());
-    assert!(storage.read_accounts_from_id(&account.id_signatures[0].id).await?.is_empty().not());
+    assert!(storage.read_account(&account.address).await?.is_some());
 
     // Queued & Pending txs
     assert!(storage.read_queued_transactions(chain_id).await?.is_empty().not());
@@ -97,17 +96,19 @@ impl Fixtures {
         let r_u64 = u64::MAX;
         let r_bytes = bytes!("aaaaaaaaaa");
         let r_fee = Eip1559Estimation { max_fee_per_gas: 1, max_priority_fee_per_gas: 1 };
-        let account = CreatableAccount::new(
-            PREPAccount::initialize(r_address, vec![mint(r_address, r_address, r_u256)]),
-            vec![KeyHashWithID { hash: r_b256, id: r_address, signature: r_sig }],
-        );
-
         let authorization = SignedAuthorization::new_unchecked(
             Authorization { chain_id: r_u256, address: r_address, nonce: r_u64 },
             1,
             r_u256,
             r_u256,
         );
+        let pre_call = SignedCall {
+            eoa: r_address,
+            executionData: r_bytes.clone(),
+            nonce: r_u256,
+            signature: r_bytes.clone(),
+        };
+        let account = CreatableAccount::new(r_address, pre_call, authorization.clone());
         let quote = Quote {
             chain_id: r_u64,
             intent: Intent {

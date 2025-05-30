@@ -1,14 +1,13 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
-    Call, U40,
+    U40,
     rpc::{AuthorizeKey, CallKey, Permission, RevokeKey},
 };
 use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
-        Address, B256, Bytes, FixedBytes, Keccak256, Signature as PrimitiveSignature, U256,
-        bytes::Buf, keccak256, map::B256Map,
+        Address, B256, Bytes, FixedBytes, Keccak256, U256, bytes::Buf, keccak256, map::B256Map,
     },
     signers::local::LocalSigner,
     sol,
@@ -262,16 +261,6 @@ impl Key {
 
         slots
     }
-
-    /// Generates the digest associated with this key identifier.
-    pub fn id_digest(&self, prep_address: Address) -> B256 {
-        Self::id_digest_from_hash(self.key_hash(), prep_address)
-    }
-
-    /// Given a key hash, it generates the associated key identifier digest.
-    pub fn id_digest_from_hash(key_hash: B256, prep_address: Address) -> B256 {
-        keccak256((key_hash.abi_encode(), prep_address).abi_encode_sequence())
-    }
 }
 
 /// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.
@@ -281,8 +270,6 @@ pub struct KeyWith712Signer {
     key: Key,
     /// Signer associated with the key that signs eip712
     signer: Arc<dyn Eip712PayLoadSigner>,
-    /// Signer for the key identifier.
-    id_signer: Option<DynSigner>,
     /// Key permissions in case it's not an admin key.
     permissions: Vec<Permission>,
 }
@@ -307,13 +294,12 @@ impl KeyWith712Signer {
         let expiry = U40::ZERO;
         let super_admin = true;
 
-        let (key, signer, id_signer) = match key_type {
+        let (key, signer) = match key_type {
             KeyType::P256 => {
                 let signer = P256Signer::load(&mock_key)?;
                 (
                     Key::p256(signer.public_key(), expiry, super_admin),
                     Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
-                    None,
                 )
             }
             KeyType::WebAuthnP256 => {
@@ -321,7 +307,6 @@ impl KeyWith712Signer {
                 (
                     Key::webauthn(signer.public_key(), expiry, super_admin),
                     Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
-                    Some(DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?))),
                 )
             }
             KeyType::Secp256k1 => {
@@ -329,13 +314,12 @@ impl KeyWith712Signer {
                 (
                     Key::secp256k1(signer.address(), expiry, super_admin),
                     Arc::new(signer.clone()) as Arc<dyn Eip712PayLoadSigner>,
-                    Some(signer),
                 )
             }
             _ => return Ok(None),
         };
 
-        Ok(Some(KeyWith712Signer { key, signer, id_signer, permissions: vec![] }))
+        Ok(Some(KeyWith712Signer { key, signer, permissions: vec![] }))
     }
 
     /// Returns [`KeyWith712Signer`] with additional permissions.
@@ -366,41 +350,13 @@ impl KeyWith712Signer {
     }
 
     /// Returns a [`AuthorizeKey`] equivalent.
-    pub async fn to_authorized(&self, account: Option<Address>) -> eyre::Result<AuthorizeKey> {
-        // Only admin OR webauthn keys require a id signature
-        let signature = if let (Some(account), true) =
-            (account, (self.key.isSuperAdmin || self.keyType.is_webauthn()))
-        {
-            Some(self.id_sign(account).await?.as_bytes().into())
-        } else {
-            None
-        };
-
-        Ok(AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone(), signature })
+    pub fn to_authorized(&self) -> AuthorizeKey {
+        AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone() }
     }
 
     /// Returns its [`RevokeKey`].
     pub fn to_revoked(&self) -> RevokeKey {
-        RevokeKey { hash: self.key_hash(), id: (!self.keyType.is_p256()).then(|| self.id()) }
-    }
-
-    /// Signs the PREP address with the [`KeyID`] signer.
-    ///
-    /// # Panics
-    /// This will panic if it's a P256 key.
-    pub async fn id_sign(
-        &self,
-        address: Address,
-    ) -> Result<PrimitiveSignature, alloy::signers::Error> {
-        self.id_signer.as_ref().expect("no p256").sign_hash(&self.key.id_digest(address)).await
-    }
-
-    /// Key identifier.
-    ///
-    /// # Panics
-    /// This will panic if it's a P256 key.
-    pub fn id(&self) -> KeyID {
-        self.id_signer.as_ref().expect("no p256").address()
+        RevokeKey { hash: self.key_hash() }
     }
 }
 
@@ -416,31 +372,6 @@ impl Deref for KeyWith712Signer {
 
     fn deref(&self) -> &Self::Target {
         &self.key
-    }
-}
-
-/// Key hash with its signature over the PREP account address.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyHashWithID {
-    /// Key hash.
-    pub hash: B256,
-    /// Key identifier.
-    pub id: KeyID,
-    /// Signature over the PREP account address.
-    #[serde(with = "alloy::serde::displayfromstr")]
-    pub signature: PrimitiveSignature,
-}
-
-impl KeyHashWithID {
-    /// Converts self to [`Call`] given a account registry and PREP account address.
-    pub fn to_call(&self, account_registry: Address, account: Address) -> Call {
-        Call::register_account(
-            account_registry,
-            self.signature.as_bytes().into(),
-            self.hash.into(),
-            account,
-        )
     }
 }
 

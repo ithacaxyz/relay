@@ -4,7 +4,7 @@ use semver::{self, Version};
 
 #[tokio::test]
 async fn versioned_contracts() -> eyre::Result<()> {
-    let env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
 
     let capabilities = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
 

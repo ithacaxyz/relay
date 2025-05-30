@@ -1,6 +1,6 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::prep_account, config::AccountConfig,
-    run_e2e_prep,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::upgrade_account_eagerly,
+    environment::Environment, run_e2e,
 };
 use alloy::{primitives::U256, sol_types::SolCall};
 use relay::{
@@ -17,8 +17,7 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_keys() -> eyre::Result<()> {
-    let upgraded_account = AccountConfig::Upgraded;
-    let env = upgraded_account.setup_environment().await?;
+    let env = Environment::setup().await?;
 
     // Set session key permissions
     let permissions = vec![
@@ -48,26 +47,14 @@ async fn get_keys() -> eyre::Result<()> {
             let permissions = if !key.isSuperAdmin { permissions.clone() } else { vec![] };
             AuthorizeKeyResponse {
                 hash: key.key_hash(),
-                authorize_key: AuthorizeKey {
-                    key: key.key().clone(),
-                    permissions,
-                    signature: None,
-                },
+                authorize_key: AuthorizeKey { key: key.key().clone(), permissions },
             }
         })
         .collect::<Vec<_>>();
 
     // Upgrade account and check the first key has been added.
     {
-        TxContext {
-            authorization_keys: vec![&keys[0]],
-            expected: ExpectedOutcome::Pass,
-            auth: Some(AuthKind::Auth),
-            ..Default::default()
-        }
-        .upgrade_account(&env, 0)
-        .await?;
-
+        upgrade_account_eagerly(&env, &[keys[0].to_authorized()], &keys[0], AuthKind::Auth).await?;
         assert_eq!(env.get_eoa_authorized_keys().await?, expected_responses[..1]);
     }
 
@@ -94,7 +81,7 @@ async fn revoke_key() -> eyre::Result<()> {
     let key2 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let key3 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    run_e2e_prep(|_env| {
+    run_e2e(|_env| {
         vec![
             TxContext {
                 authorization_keys: vec![&key1],
@@ -132,7 +119,7 @@ async fn revoke_backup_key() -> eyre::Result<()> {
     let key2 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let key3 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    run_e2e_prep(|_env| {
+    run_e2e(|_env| {
         vec![
             TxContext {
                 authorization_keys: vec![&key1],
@@ -173,14 +160,11 @@ async fn revoke_backup_key() -> eyre::Result<()> {
 /// actually prehash on `estimate_fee`,
 #[tokio::test(flavor = "multi_thread")]
 async fn ensure_prehash_simulation() -> eyre::Result<()> {
-    let mut env = AccountConfig::Prep.setup_environment().await?;
+    let env = Environment::setup().await?;
 
     // Prepare account
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    prep_account(&mut env, &[&admin_key]).await?;
-    TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
-        .process(0, &env)
-        .await?;
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     let mut call_key = admin_key.to_call_key();
     call_key.prehash = true;
@@ -193,11 +177,7 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta {
-                    fee_payer: None,
-                    fee_token: env.fee_token,
-                    nonce: Some(U256::from(1)),
-                },
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
             },

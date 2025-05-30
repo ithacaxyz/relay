@@ -529,7 +529,7 @@ async fn session_key_pre_call() -> Result<()> {
 async fn session_key_pre_call_prep_single_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
-    run_e2e_prep(|env| {
+    run_e2e(|env| {
         assert!(env.erc20 != env.fee_token);
         vec![TxContext {
             authorization_keys: vec![&key],
@@ -563,7 +563,7 @@ async fn session_key_pre_call_prep_single_tx() -> Result<()> {
 async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
-    run_e2e_prep(|env| {
+    run_e2e(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,

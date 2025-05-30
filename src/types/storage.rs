@@ -1,26 +1,59 @@
-use alloy::primitives::Address;
+use super::{
+    SignedCall, SignedCalls,
+    rpc::{AuthorizeKey, AuthorizeKeyResponse},
+};
+use crate::error::RelayError;
+use alloy::{
+    eips::eip7702::SignedAuthorization,
+    primitives::{Address, Bytes},
+    sol_types::SolValue,
+};
 use serde::{Deserialize, Serialize};
-
-use crate::types::{KeyHashWithID, PREPAccount};
 
 /// CreateAccount request that can be reused across chains.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatableAccount {
-    /// PREP account.
-    pub prep: PREPAccount,
-    /// Admin key identifiers with the signature over the PREP account address.
-    pub id_signatures: Vec<KeyHashWithID>,
+    /// EOA generated address.
+    pub address: Address,
+    /// Signed 7702 authorization.
+    pub signed_authorization: SignedAuthorization,
+    /// Initialization calls.
+    pub pre_call: SignedCall,
 }
 
 impl CreatableAccount {
-    /// Return a new [`CreateAccount`].
-    pub fn new(account: PREPAccount, id_signatures: Vec<KeyHashWithID>) -> Self {
-        Self { prep: account, id_signatures }
+    /// Initializes a new account.
+    pub fn new(
+        eoa: Address,
+        pre_call: SignedCall,
+        signed_authorization: SignedAuthorization,
+    ) -> Self {
+        Self { address: eoa, signed_authorization, pre_call }
     }
 
-    /// Returns the address of the PREP account.
-    pub fn address(&self) -> Address {
-        self.prep.address
+    /// Return abi encoded precall.
+    pub fn init_data(&self) -> Bytes {
+        self.pre_call.abi_encode_params().into()
+    }
+
+    /// Return the list of authorized keys as [`AuthorizeKeyResponse`].
+    pub fn authorized_keys(&self) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
+        Ok(self
+            .pre_call
+            .authorized_keys()?
+            .into_iter()
+            .map(|key| {
+                AuthorizeKeyResponse {
+                    hash: key.key_hash(),
+                    authorize_key: AuthorizeKey {
+                        key,
+                        // todo(joshie) get permissions, since it will probably come  with session
+                        // keys
+                        permissions: vec![],
+                    },
+                }
+            })
+            .collect())
     }
 }

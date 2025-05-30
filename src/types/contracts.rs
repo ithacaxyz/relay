@@ -49,8 +49,6 @@ pub struct VersionedContracts {
     /// Delegation proxy.
     #[serde(rename = "accountProxy")]
     pub delegation_proxy: VersionedContract,
-    /// Account registry.
-    pub account_registry: VersionedContract,
     /// Simulator.
     pub simulator: VersionedContract,
 }
@@ -108,7 +106,6 @@ impl VersionedContracts {
             legacy_orchestrators,
             legacy_delegations,
             delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
-            account_registry: VersionedContract::no_version(config.account_registry),
             simulator: VersionedContract::no_version(config.simulator),
         })
     }

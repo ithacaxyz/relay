@@ -5,7 +5,7 @@ mod cases;
 pub mod common_calls;
 
 mod config;
-use config::{AccountConfig, PaymentConfig, TestConfig};
+use config::{PaymentConfig, TestConfig};
 
 mod constants;
 pub use constants::*;
@@ -21,7 +21,6 @@ pub use types::*;
 use alloy::primitives::{Address, B256, Bytes};
 use eyre::{Context, Result};
 use futures_util::future::try_join_all;
-use itertools::iproduct;
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -36,42 +35,20 @@ use relay::{
 use std::{iter, time::Duration};
 use strum::IntoEnumIterator;
 
-/// Runs all configurations (both PREP and upgraded account, in both ERC20 and native payment
-/// methods).
+/// Runs all configurations (in both ERC20 and native payment methods).
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>
 where
     F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    run_configs(build_txs, iproduct!(AccountConfig::iter(), PaymentConfig::iter())).await
+    run_configs(build_txs, PaymentConfig::iter()).await
 }
 
-/// Runs only the PREP account configuration, in both ERC20 and native payment methods.
-pub async fn run_e2e_prep<'a, F>(build_txs: F) -> Result<()>
+/// Runs tests with a ERC20 token as fee.
+pub async fn run_e2e_erc20<'a, F>(build_txs: F) -> Result<()>
 where
     F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    run_configs(build_txs, iproduct!(iter::once(AccountConfig::Prep), PaymentConfig::iter())).await
-}
-
-/// Runs only the upgraded account configuration, in both ERC20 and native payment methods.
-pub async fn run_e2e_upgraded<'a, F>(build_txs: F) -> Result<()>
-where
-    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
-{
-    run_configs(build_txs, iproduct!(iter::once(AccountConfig::Upgraded), PaymentConfig::iter()))
-        .await
-}
-
-/// Runs only the prep account configuration in ERC20.
-pub async fn run_e2e_prep_erc20<'a, F>(build_txs: F) -> Result<()>
-where
-    F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
-{
-    run_configs(
-        build_txs,
-        iproduct!(iter::once(AccountConfig::Prep), iter::once(PaymentConfig::ERC20)),
-    )
-    .await
+    run_configs(build_txs, iter::once(PaymentConfig::ERC20)).await
 }
 
 /// Runs a set of test configurations.
@@ -131,8 +108,7 @@ pub async fn prepare_calls(
     let pre_calls = build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
     // Deliberately omit the `from` address for the very first Intent precalls
-    // to test the path where precalls are signed before the PREPAddress is known. eg. during
-    // creation of the first passkey.
+    // to test the path where precalls are signed before the address is known.
     let from = (tx_num != 0 || !pre_call).then_some(env.eoa.address());
 
     let response = env
@@ -142,7 +118,7 @@ pub async fn prepare_calls(
             calls: tx.calls.clone(),
             chain_id: env.chain_id,
             capabilities: PrepareCallsCapabilities {
-                authorize_keys: tx.authorization_keys(Some(env.eoa.address())).await?,
+                authorize_keys: tx.authorization_keys(),
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
                     fee_payer: None,
