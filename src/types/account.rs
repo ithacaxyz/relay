@@ -11,7 +11,7 @@ use PortoAccount::{
 use alloy::{
     eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, Bytes, FixedBytes, U256, aliases::U192, map::HashMap},
-    providers::{MulticallError, Provider},
+    providers::Provider,
     rpc::types::{
         TransactionRequest,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
@@ -402,29 +402,6 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
-
-        Ok(isValid.then_some(keyHash))
-    }
-
-    /// A helper to combine `initializePREP` and `validateSignature` calls into a single multicall.
-    pub async fn initialize_and_validate_signature(
-        &self,
-        init_data: Bytes,
-        digest: B256,
-        signature: Signature,
-    ) -> Result<Option<B256>, MulticallError> {
-        let (_, unwrapAndValidateSignatureReturn { isValid, keyHash }) = self
-            .delegation
-            .provider()
-            .multicall()
-            .add(self.delegation.initializePREP(init_data))
-            .add(
-                self.delegation
-                    .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into()),
-            )
-            .overrides(self.overrides.clone())
-            .aggregate()
-            .await?;
 
         Ok(isValid.then_some(keyHash))
     }

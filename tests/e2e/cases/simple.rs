@@ -7,7 +7,7 @@ use crate::{
         common_calls as calls, *,
     },
 };
-use alloy::{primitives::U256, sol_types::SolValue, uint};
+use alloy::{primitives::U256, providers::Provider, sol_types::SolValue, uint};
 use eyre::Result;
 use relay::{
     signers::DynSigner,
@@ -15,7 +15,10 @@ use relay::{
         IERC20, KeyType, KeyWith712Signer,
         PortoAccount::SpendPeriod,
         Signature,
-        rpc::{Permission, SpendPermission},
+        rpc::{
+            Permission, PrepareUpgradeAccountParameters, SpendPermission,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+        },
     },
 };
 
@@ -60,36 +63,132 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
+    let env = Environment::setup().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    run_e2e(|_env| {
-        vec![TxContext {
-            authorization_keys: vec![&key],
-            expected: ExpectedOutcome::FailSend,
-            auth: Some(AuthKind::modified_nonce(123)),
-            ..Default::default()
-        }]
-    })
-    .await
+
+    let mut response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature =
+        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with wrong nonce
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+
+    let modified_nonce = 123;
+    let authorization = AuthKind::modified_nonce(modified_nonce).sign(&env, nonce).await?;
+    response.context.authorization.nonce = modified_nonce;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid auth item nonce"))
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
+    let env = Environment::setup().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let dummy_signer = DynSigner::from_signing_key(
         "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
     )
     .await?;
 
-    run_e2e(|_env| {
-        vec![TxContext {
-            authorization_keys: vec![&key],
-            expected: ExpectedOutcome::FailSend,
-            // Signing with an unrelated key should fail during sendAction when calling eth_call
-            auth: Some(AuthKind::modified_signer(dummy_signer.clone())),
-            ..Default::default()
-        }]
-    })
-    .await
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature =
+        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with wrong signer
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::modified_signer(dummy_signer).sign(&env, nonce).await?;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid auth item"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_precall_signature() -> Result<()> {
+    let env = Environment::setup().await?;
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let dummy_signer = DynSigner::from_signing_key(
+        "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    )
+    .await?;
+
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature = dummy_signer.sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with env signer
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid precall recovered address"))
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]

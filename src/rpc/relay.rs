@@ -11,10 +11,10 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::IntentError,
+    error::{IntentError, StorageError},
     provider::ProviderExt,
     types::{
-        AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, MULTICHAIN_NONCE_PREFIX,
+        AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
         ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
         SignedCall, SignedCalls, VersionedContracts,
@@ -214,6 +214,7 @@ impl Relay {
         token: Address,
         authorization_address: Option<Address>,
         account_key: Key,
+        key_slot_override: bool,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
         let chain = self
             .inner
@@ -240,6 +241,11 @@ impl Relay {
                 request.intent.eoa,
                 AccountOverride::default()
                     .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
+                    .with_state_diff(if key_slot_override {
+                        account_key.storage_slots()
+                    } else {
+                        Default::default()
+                    })
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
@@ -669,6 +675,39 @@ impl Relay {
         }
         Ok(())
     }
+
+    /// Simulates the account initialization call.
+    async fn simulate_init(
+        &self,
+        account: &CreatableAccount,
+        chain_id: ChainId,
+    ) -> Result<(), RelayError> {
+        let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
+            .map_err(RelayError::from)
+            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+
+        // Ensures that initialization precall works
+        self.estimate_fee(
+            PartialAction {
+                intent: PartialIntent {
+                    eoa: account.address,
+                    execution_data: Vec::<Call>::new().abi_encode().into(),
+                    nonce: U256::from_be_bytes(B256::random().into()) << 64,
+                    payer: None,
+                    pre_calls: vec![account.pre_call.clone()],
+                },
+                chain_id,
+                prehash: false,
+            },
+            Address::ZERO,
+            Some(account.signed_authorization.address),
+            mock_key.key().clone(),
+            true,
+        )
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -805,6 +844,7 @@ impl RelayApiServer for Relay {
                     request.capabilities.meta.fee_token,
                     maybe_stored.as_ref().map(|acc| acc.signed_authorization.address),
                     key,
+                    false,
                 )
                 .await
                 .inspect_err(|err| {
@@ -943,7 +983,6 @@ impl RelayApiServer for Relay {
         // If there's an authorization address in the quote, we need to fetch the signed one from
         // storage.
         let authorization = if authorization_address.is_some() {
-            // todo(joshie): should we check?
             self.inner
                 .storage
                 .read_account(&intent.eoa)
@@ -968,7 +1007,8 @@ impl RelayApiServer for Relay {
     }
 
     async fn upgrade_account(&self, request: UpgradeAccountParameters) -> RpcResult<()> {
-        let UpgradeAccountParameters { mut context, signatures } = request;
+        let UpgradeAccountParameters { context, signatures } = request;
+        let provider = self.provider(context.chain_id)?;
 
         // Ensures precall authorizes an admin key
         if !context
@@ -981,7 +1021,7 @@ impl RelayApiServer for Relay {
             return Err(KeysError::MissingAdminKey)?;
         }
 
-        // Ensures signatures match the requested account
+        // Ensures signature matches the requested account (7702 auth)
         let got = signatures
             .auth
             .recover_address_from_prehash(&context.authorization.signature_hash())
@@ -990,25 +1030,60 @@ impl RelayApiServer for Relay {
             return Err(AuthError::InvalidAuthAddress { expected: context.address, got }.into());
         }
 
-        // Ensure it's using the lasted delegation implementation.
-        self.ensure_latest_delegation(
-            &Account::new(context.address, self.provider(context.chain_id)?)
-                .with_delegation_override(context.authorization.address()),
-        )
-        .await?;
+        let delegated_account = Account::new(context.address, &provider)
+            .with_delegation_override(context.authorization.address());
+
+        let mut storage_account = CreatableAccount::new(
+            context.address,
+            context.pre_call,
+            context.authorization.into_signed(signatures.auth),
+        );
 
         // Signed by the root eoa key.
-        context.pre_call.signature = signatures.pre_call.as_bytes().into();
+        storage_account.pre_call.signature = signatures.pre_call.as_bytes().into();
+
+        let (_, _, (pre_call_digest, _), expected_nonce) = try_join!(
+            // Ensure it's using the lasted delegation implementation.
+            self.ensure_latest_delegation(&delegated_account,),
+            // Ensures the initialization precall is successful.
+            self.simulate_init(&storage_account, context.chain_id),
+            // Calculate precall digest.
+            async {
+                storage_account
+                    .pre_call
+                    .compute_eip712_data(self.orchestrator(), &provider)
+                    .await
+                    .map_err(RelayError::from)
+            },
+            // Get account nonce.
+            async {
+                provider
+                    .get_transaction_count(context.address)
+                    .pending()
+                    .await
+                    .map_err(RelayError::from)
+            },
+        )?;
+
+        // Ensures signature matches the requested account (precall)
+        let got = signatures.pre_call.recover_address_from_prehash(&pre_call_digest).ok();
+        if got != Some(context.address) {
+            return Err(
+                IntentError::InvalidPreCallRecovery { expected: context.address, got }.into()
+            );
+        }
+
+        // Ensures authorization nonce matches the requested account
+        if expected_nonce != storage_account.signed_authorization.nonce {
+            return Err(AuthError::AuthItemInvalidNonce {
+                expected: expected_nonce,
+                got: storage_account.signed_authorization.nonce,
+            }
+            .into());
+        }
 
         // Write to storage to be used on prepareCalls
-        self.inner
-            .storage
-            .write_account(CreatableAccount::new(
-                context.address,
-                context.pre_call,
-                context.authorization.into_signed(signatures.auth),
-            ))
-            .await?;
+        self.inner.storage.write_account(storage_account).await?;
 
         Ok(())
     }
@@ -1111,17 +1186,8 @@ impl RelayApiServer for Relay {
     ) -> RpcResult<VerifySignatureResponse> {
         let VerifySignatureParameters { address, digest, signature, chain_id } = parameters;
 
-        let provider = self.provider(chain_id)?;
-
-        let account = Account::new(address, &provider);
-        let is_delegated = account.is_delegated().await?;
-
-        if !is_delegated {
-            // todo(joshie): requires initializing with the precall
-            // make sure verify_signature test uses upgrade_account_lazily first
-            todo!()
-        }
-
+        let mut init_pre_call = None;
+        let mut account = Account::new(address, self.provider(chain_id)?);
         let signatures: Vec<Signature> = self
             .get_keys(GetKeysParameters { address, chain_id })
             .await?
@@ -1135,6 +1201,36 @@ impl RelayApiServer for Relay {
             })
             .collect();
 
+        if !account.is_delegated().await? {
+            let Some(stored) = self.inner.storage.read_account(&address).await? else {
+                return Err(StorageError::AccountDoesNotExist(address).into());
+            };
+
+            account = account.with_overrides(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        stored.address,
+                        AccountOverride::default()
+                            .with_code(Bytes::from(
+                                [
+                                    &EIP7702_DELEGATION_DESIGNATOR,
+                                    stored.signed_authorization.address.as_slice(),
+                                ]
+                                .concat(),
+                            ))
+                            .with_state_diff(
+                                stored
+                                    .authorized_keys()?
+                                    .into_iter()
+                                    .flat_map(|k| k.authorize_key.key.storage_slots().into_iter()),
+                            ),
+                    )
+                    .build(),
+            );
+
+            init_pre_call = Some(stored.pre_call);
+        }
+
         let results = try_join_all(
             signatures.into_iter().map(|signature| account.validate_signature(digest, signature)),
         )
@@ -1142,17 +1238,6 @@ impl RelayApiServer for Relay {
         .map_err(RelayError::from)?;
 
         let key_hash = results.into_iter().find_map(|result| result);
-
-        // get initialization precall from storage if we have a valid key hash and the account has
-        // not been upgraded.
-        let init_pre_call = if key_hash.is_some() && !account.is_delegated().await? {
-            let Some(account) = self.inner.storage.read_account(&address).await? else {
-                return Ok(VerifySignatureResponse { valid: false, proof: None });
-            };
-            Some(account.pre_call)
-        } else {
-            None
-        };
 
         let proof = key_hash.map(|key_hash| ValidSignatureProof {
             account: account.address(),

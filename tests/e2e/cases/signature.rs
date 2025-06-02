@@ -1,4 +1,8 @@
-use crate::e2e::{AuthKind, cases::upgrade_account_eagerly, environment::Environment};
+use crate::e2e::{
+    AuthKind,
+    cases::{upgrade_account_eagerly, upgrade_account_lazily},
+    environment::Environment,
+};
 use alloy_primitives::{Address, B256};
 use relay::{
     rpc::RelayApiClient,
@@ -13,8 +17,6 @@ async fn verify_signature() -> eyre::Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let account = env.eoa.address();
 
-    upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
-
     let digest = B256::random();
     let signature = key.sign_payload_hash(digest).await?;
 
@@ -27,7 +29,12 @@ async fn verify_signature() -> eyre::Result<()> {
         })
     };
 
-    // assert that we can verify signature against account address
+    // assert that we can verify signature against account in storage (not onchain)
+    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
+    assert!(verify(account).await?.valid);
+
+    // assert that we can verify signature against account onchain
+    upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
     assert!(verify(account).await?.valid);
 
     Ok(())

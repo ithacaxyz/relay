@@ -3,7 +3,7 @@ use crate::types::{
     OrchestratorContract::OrchestratorContractErrors, PortoAccount::PortoAccountErrors,
 };
 use alloy::{
-    primitives::{B256, Bytes},
+    primitives::{Address, B256, Bytes},
     rpc::types::error::EthRpcErrorCode,
     sol_types::SolInterface,
 };
@@ -38,6 +38,14 @@ pub enum IntentError {
     /// The intent could not be simulated since the orchestrator is paused.
     #[error("the orchestrator is paused")]
     PausedOrchestrator,
+    /// Invalid initialization precall signature.
+    #[error("invalid precall recovered address, expected {expected}, got {got:?}")]
+    InvalidPreCallRecovery {
+        /// The address expected.
+        expected: Address,
+        /// The address recovered item.
+        got: Option<Address>,
+    },
 }
 
 impl IntentError {
@@ -56,6 +64,7 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             IntentError::MissingKey
             | IntentError::MissingSender
             | IntentError::UnallowedPreCall
+            | IntentError::InvalidPreCallRecovery { .. }
             | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
             IntentError::IntentRevert(err) => err.into(),
         }
