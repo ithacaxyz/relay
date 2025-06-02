@@ -83,7 +83,7 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
     } else {
         let mut config = RelayConfig::load_from_file(&config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
-        config.database_url = Some(std::env::var("RELAY_DB_URL")?);
+        config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
     };
 
