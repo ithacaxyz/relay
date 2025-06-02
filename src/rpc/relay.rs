@@ -81,65 +81,65 @@ use crate::{
 };
 
 /// Ithaca `relay_` RPC namespace.
-#[rpc(server, client, namespace = "relay")]
+#[rpc(server, client, namespace = "wallet")]
 pub trait RelayApi {
     /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<String>;
 
     /// Get capabilities of the relay, which are different sets of configuration values.
-    #[method(name = "getCapabilities", aliases = ["wallet_getCapabilities"])]
+    #[method(name = "getCapabilities")]
     async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities>;
 
     /// Prepares an account for the user.
-    #[method(name = "prepareCreateAccount", aliases = ["wallet_prepareCreateAccount"])]
+    #[method(name = "prepareCreateAccount")]
     async fn prepare_create_account(
         &self,
         parameters: PrepareCreateAccountParameters,
     ) -> RpcResult<PrepareCreateAccountResponse>;
 
     /// Initialize an account.
-    #[method(name = "createAccount", aliases = ["wallet_createAccount"])]
+    #[method(name = "createAccount")]
     async fn create_account(
         &self,
         parameters: CreateAccountParameters,
     ) -> RpcResult<Vec<KeyHashWithID>>;
 
     /// Get all accounts from an ID.
-    #[method(name = "getAccounts", aliases = ["wallet_getAccounts"])]
+    #[method(name = "getAccounts")]
     async fn get_accounts(
         &self,
         parameters: GetAccountsParameters,
     ) -> RpcResult<Vec<AccountResponse>>;
 
     /// Get all keys for an account.
-    #[method(name = "getKeys", aliases = ["wallet_getKeys"])]
+    #[method(name = "getKeys")]
     async fn get_keys(&self, parameters: GetKeysParameters)
     -> RpcResult<Vec<AuthorizeKeyResponse>>;
 
     /// Prepares a call bundle for a user.
-    #[method(name = "prepareCalls", aliases = ["wallet_prepareCalls"])]
+    #[method(name = "prepareCalls")]
     async fn prepare_calls(
         &self,
         parameters: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse>;
 
     /// Prepares an EOA to be upgraded.
-    #[method(name = "prepareUpgradeAccount", aliases = ["wallet_prepareUpgradeAccount"])]
+    #[method(name = "prepareUpgradeAccount")]
     async fn prepare_upgrade_account(
         &self,
         parameters: PrepareUpgradeAccountParameters,
     ) -> RpcResult<PrepareCallsResponse>;
 
     /// Send a signed call bundle.
-    #[method(name = "sendPreparedCalls", aliases = ["wallet_sendPreparedCalls"])]
+    #[method(name = "sendPreparedCalls")]
     async fn send_prepared_calls(
         &self,
         parameters: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse>;
 
     /// Upgrade an account.
-    #[method(name = "upgradeAccount", aliases = ["wallet_upgradeAccount"])]
+    #[method(name = "upgradeAccount")]
     async fn upgrade_account(
         &self,
         parameters: UpgradeAccountParameters,
@@ -148,13 +148,13 @@ pub trait RelayApi {
     /// Get the status of a call batch that was sent via `send_prepared_calls`.
     ///
     /// The identifier of the batch is the value returned from `send_prepared_calls`.
-    #[method(name = "getCallsStatus", aliases = ["wallet_getCallsStatus"])]
+    #[method(name = "getCallsStatus")]
     async fn get_calls_status(&self, parameters: BundleId) -> RpcResult<CallsStatus>;
 
     /// Get the status of a call batch that was sent via `send_prepared_calls`.
     ///
     /// The identifier of the batch is the value returned from `send_prepared_calls`.
-    #[method(name = "verifySignature", aliases = ["wallet_verifySignature"])]
+    #[method(name = "verifySignature")]
     async fn verify_signature(
         &self,
         parameters: VerifySignatureParameters,
