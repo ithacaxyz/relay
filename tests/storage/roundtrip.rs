@@ -121,7 +121,6 @@ impl Fixtures {
                 totalPaymentMaxAmount: r_u256,
                 combinedGas: r_u256,
                 encodedPreCalls: vec![r_bytes.clone()],
-                initData: r_bytes.clone(),
                 prePaymentAmount: r_u256,
                 totalPaymentAmount: r_u256,
                 paymentRecipient: r_address,

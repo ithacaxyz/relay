@@ -5,8 +5,8 @@ use crate::{
     error::{AuthError, RelayError},
     types::IDelegation,
 };
-use PortoAccount::{
-    PortoAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+use IthacaAccount::{
+    IthacaAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
 use alloy::{
     eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
@@ -39,7 +39,7 @@ sol! {
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract PortoAccount {
+    contract IthacaAccount {
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -84,9 +84,6 @@ sol! {
 
         /// The `opData` is too short.
         error OpDataTooShort();
-
-        /// The PREP `initData` is invalid.
-        error InvalidPREP();
 
         /// @dev The `keyType` cannot be super admin.
         error KeyTypeCannotBeSuperAdmin();
@@ -158,9 +155,6 @@ sol! {
             virtual
             returns (bool isValid, bytes32 keyHash);
 
-        /// Initializes PREP account with given `initData`.
-        function initializePREP(bytes calldata initData) public virtual returns (bool);
-
         /// The implementation address.
         address public implementation;
 
@@ -221,10 +215,10 @@ pub struct CallPermission {
     pub to: Address,
 }
 
-/// A Porto account.
+/// A Ithaca account.
 #[derive(Debug, Clone)]
 pub struct Account<P: Provider> {
-    delegation: PortoAccountInstance<P>,
+    delegation: IthacaAccountInstance<P>,
     overrides: StateOverride,
 }
 
@@ -232,7 +226,7 @@ impl<P: Provider> Account<P> {
     /// Create a new instance of [`Account`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
-            delegation: PortoAccountInstance::new(address, provider),
+            delegation: IthacaAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
     }

@@ -126,9 +126,9 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        Call, CallPermission, Key, KeyType,
-        PortoAccount::SpendPeriod,
-        U40,
+        Call, CallPermission,
+        IthacaAccount::SpendPeriod,
+        Key, KeyType, U40,
         rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
