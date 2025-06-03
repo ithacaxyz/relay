@@ -82,7 +82,7 @@ pub async fn upgrade_account_eagerly(
 #[tokio::test(flavor = "multi_thread")]
 async fn basic_upgrade() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
     Ok(())

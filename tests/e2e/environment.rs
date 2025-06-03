@@ -434,7 +434,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     let delegation = deploy_contract(
         &provider,
-        &contracts_path.join("PortoAccount.sol/PortoAccount.json"),
+        &contracts_path.join("IthacaAccount.sol/IthacaAccount.json"),
         Some(orchestrator.abi_encode().into()),
     )
     .await?;

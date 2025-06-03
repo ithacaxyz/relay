@@ -25,7 +25,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        KeyWith712Signer, PortoAccount,
+        IthacaAccount, KeyWith712Signer,
         rpc::{
             BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsContext,
             PrepareCallsParameters, PrepareCallsResponse, SendPreparedCallsParameters,

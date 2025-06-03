@@ -1,7 +1,8 @@
 use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract};
 use crate::types::{
-    CallPermission, Orchestrator,
-    PortoAccount::{setCanExecuteCall, setSpendLimitCall},
+    CallPermission,
+    IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
+    Orchestrator,
     rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
 };
 use alloy::{
@@ -94,13 +95,6 @@ sol! {
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
-        /// Optional data for `initPREP` on the delegation.
-        /// This is encoded using ERC7821 style batch execution encoding.
-        /// (ERC7821 is a variant of ERC7579).
-        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
-        /// where `calls` is of type `Call[]`,
-        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
-        bytes initData;
         /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
         uint256 prePaymentAmount;
         /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
@@ -457,7 +451,6 @@ mod tests {
             prePaymentMaxAmount: U256::from(3822601006u64),
             totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
-            initData: bytes!(""),
             encodedPreCalls: vec![],
             prePaymentAmount: U256::from(3822601006u64),
             totalPaymentAmount: U256::from(3822601006u64),
@@ -507,7 +500,6 @@ mod tests {
             prePaymentMaxAmount: U256::from(1021265804),
             totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
-            initData: bytes!(""),
             encodedPreCalls: vec![],
             prePaymentAmount: U256::from(1021265804),
             totalPaymentAmount: U256::from(1021265804),

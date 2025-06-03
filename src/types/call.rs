@@ -11,11 +11,11 @@ use crate::error::{AuthError, RelayError};
 
 use super::{
     IDelegation::{authorizeCall, revokeCall},
-    Key,
-    PortoAccount::{
+    IthacaAccount::{
         SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
         upgradeProxyAccountCall,
     },
+    Key,
 };
 
 sol! {
