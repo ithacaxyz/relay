@@ -66,4 +66,7 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Reads queued transactions for the given chain.
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>>;
+
+    /// Pings the database, checking if the connection is alive.
+    async fn ping(&self) -> Result<()>;
 }

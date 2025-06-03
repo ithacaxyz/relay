@@ -57,6 +57,9 @@ pub enum RelayError {
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<TransportErrorKind>),
+    /// The relay is unhealthy.
+    #[error("service is unhealthy")]
+    Unhealthy,
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -103,6 +106,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::AbiError(_)
             | RelayError::RpcError(_)
             | RelayError::UnsupportedOrchestrator(_)
+            | RelayError::Unhealthy
             | RelayError::InternalError(_) => internal_rpc(err.to_string()),
         }
     }

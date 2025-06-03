@@ -762,7 +762,23 @@ impl Relay {
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<String> {
-        Ok(RELAY_SHORT_VERSION.to_string())
+        let providers = self
+            .inner
+            .chains
+            .chain_ids_iter()
+            .map(|chain_id| self.provider(*chain_id))
+            .collect::<Result<Vec<_>, RelayError>>()?;
+        let chains_ok =
+            try_join_all(providers.into_iter().map(|provider| provider.get_block_number()))
+                .await
+                .is_ok();
+        let db_ok = self.inner.storage.ping().await.is_ok();
+
+        if chains_ok && db_ok {
+            Ok(RELAY_SHORT_VERSION.to_string())
+        } else {
+            Err(RelayError::Unhealthy.into())
+        }
     }
 
     async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
