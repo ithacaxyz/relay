@@ -1,8 +1,12 @@
 use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract};
-use crate::types::Orchestrator;
+use crate::types::{
+    CallPermission, Orchestrator,
+    PortoAccount::{setCanExecuteCall, setSpendLimitCall},
+    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+};
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256},
+    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap},
     providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -244,6 +248,55 @@ impl Intent {
         OrchestratorContract::executeCall { encodedIntent: self.abi_encode().into() }
             .abi_encode()
             .into()
+    }
+}
+
+impl SignedCall {
+    /// Returns all authorized keys with their permissions.
+    pub fn authorized_keys_with_permissions(
+        &self,
+    ) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
+        let mut permissions: HashMap<B256, Vec<Permission>> = HashMap::default();
+
+        for call in self.calls()? {
+            // try decoding as a setSpendLimit call first.
+            if let Ok(setSpendLimitCall { keyHash, token, period, limit }) =
+                setSpendLimitCall::abi_decode(&call.data)
+            {
+                permissions
+                    .entry(keyHash)
+                    .or_default()
+                    .push(SpendPermission { limit, period, token }.into());
+                continue;
+            }
+
+            // if it wasn't a setSpendLimit, try decoding as a setCanExecute.
+            if let Ok(setCanExecuteCall { keyHash, target: to, fnSel: selector, can }) =
+                setCanExecuteCall::abi_decode(&call.data)
+            {
+                if can {
+                    permissions
+                        .entry(keyHash)
+                        .or_default()
+                        .push(CallPermission { selector, to }.into());
+                }
+            }
+        }
+
+        Ok(self
+            .authorized_keys()?
+            .into_iter()
+            .map(|key| {
+                let hash = key.key_hash();
+                AuthorizeKeyResponse {
+                    authorize_key: AuthorizeKey {
+                        permissions: permissions.remove(&hash).unwrap_or_default(),
+                        key,
+                    },
+                    hash,
+                }
+            })
+            .collect())
     }
 }
 

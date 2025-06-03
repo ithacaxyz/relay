@@ -18,6 +18,18 @@ pub enum Permission {
     Spend(SpendPermission),
 }
 
+impl From<CallPermission> for Permission {
+    fn from(perm: CallPermission) -> Self {
+        Permission::Call(perm)
+    }
+}
+
+impl From<SpendPermission> for Permission {
+    fn from(perm: SpendPermission) -> Self {
+        Permission::Spend(perm)
+    }
+}
+
 /// Represents spend permissions.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SpendPermission {

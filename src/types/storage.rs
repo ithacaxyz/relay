@@ -1,7 +1,4 @@
-use super::{
-    SignedCall, SignedCalls,
-    rpc::{AuthorizeKey, AuthorizeKeyResponse},
-};
+use super::{SignedCall, rpc::AuthorizeKeyResponse};
 use crate::error::RelayError;
 use alloy::{
     eips::eip7702::SignedAuthorization,
@@ -39,21 +36,6 @@ impl CreatableAccount {
 
     /// Return the list of authorized keys as [`AuthorizeKeyResponse`].
     pub fn authorized_keys(&self) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        Ok(self
-            .pre_call
-            .authorized_keys()?
-            .into_iter()
-            .map(|key| {
-                AuthorizeKeyResponse {
-                    hash: key.key_hash(),
-                    authorize_key: AuthorizeKey {
-                        key,
-                        // todo(joshie) get permissions, since it will probably come  with session
-                        // keys
-                        permissions: vec![],
-                    },
-                }
-            })
-            .collect())
+        Ok(self.pre_call.authorized_keys_with_permissions()?)
     }
 }
