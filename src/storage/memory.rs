@@ -130,4 +130,8 @@ impl StorageApi for InMemoryStorage {
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>> {
         Ok(self.queued_transactions.get(&chain_id).as_deref().cloned().unwrap_or_default())
     }
+
+    async fn ping(&self) -> Result<()> {
+        Ok(())
+    }
 }
