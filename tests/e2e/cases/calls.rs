@@ -1,7 +1,7 @@
 //! Prepare calls related end-to-end test cases
 
 use crate::e2e::{
-    AuthKind, MockErc20, await_calls_status, cases::upgrade::upgrade_account,
+    AuthKind, MockErc20, await_calls_status, cases::upgrade::upgrade_account_eagerly,
     environment::Environment, send_prepared_calls,
 };
 use alloy::{
@@ -21,12 +21,12 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_with_upgraded_account() -> eyre::Result<()> {
     // Upgrade environment EOA signer with the above admin keys.
-    let env = Environment::setup_with_upgraded().await?;
+    let env = Environment::setup().await?;
 
     let (signers, keys) = try_join_all(
         [KeyType::Secp256k1, KeyType::WebAuthnP256].into_iter().map(async |key_type| {
             let signer = KeyWith712Signer::random_admin(key_type).unwrap().unwrap();
-            let auth = signer.to_authorized(Some(env.eoa.address())).await?;
+            let auth = signer.to_authorized();
             Ok::<_, eyre::Report>((signer, auth))
         }),
     )
@@ -34,7 +34,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
     .into_iter()
     .collect::<(Vec<_>, Vec<_>)>();
 
-    upgrade_account(&env, &keys, AuthKind::Auth).await?;
+    upgrade_account_eagerly(&env, &keys, &signers[0], AuthKind::Auth).await?;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {
@@ -45,9 +45,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
             .into(),
     };
 
-    // upgrade account Intent had nonce 0;
-    let intent_nonce = 1;
-    for (tx_num, signer) in signers.iter().enumerate() {
+    for signer in signers.iter() {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
@@ -57,11 +55,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: Vec::new(), // todo: add test authorize "inline"
                     revoke_keys: Vec::new(),
-                    meta: Meta {
-                        fee_payer: None,
-                        fee_token: env.fee_token,
-                        nonce: Some(U256::from(tx_num + intent_nonce)),
-                    },
+                    meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                     pre_calls: Vec::new(),
                     pre_call: false,
                 },

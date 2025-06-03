@@ -2,22 +2,20 @@
 
 use super::{StorageApi, api::Result};
 use crate::{
-    error::StorageError,
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, KeyID, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
     primitives::{Address, ChainId},
 };
 use async_trait::async_trait;
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
     accounts: DashMap<Address, CreatableAccount>,
-    id_to_accounts: DashMap<Address, Vec<Address>>,
     pending_transactions: DashMap<TxId, PendingTransaction>,
     statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
@@ -26,34 +24,13 @@ pub struct InMemoryStorage {
 
 #[async_trait]
 impl StorageApi for InMemoryStorage {
-    async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>> {
+    async fn read_account(&self, address: &Address) -> Result<Option<CreatableAccount>> {
         Ok(self.accounts.get(address).map(|acc| (*acc).clone()))
     }
 
-    async fn write_prep(&self, account: CreatableAccount) -> Result<()> {
-        let prep_address = account.prep.address;
-        let keys = account.id_signatures.iter().map(|k| k.id).collect::<Vec<_>>();
-
-        // Store PREPAccount if it does not yet exist
-        match self.accounts.entry(prep_address) {
-            Entry::Occupied(_) => {
-                return Err(StorageError::AccountAlreadyExists(account.prep.address));
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(account);
-            }
-        }
-
-        // Store ID -> Address[]
-        for id in keys {
-            self.id_to_accounts.entry(id).or_default().push(prep_address)
-        }
-
+    async fn write_account(&self, account: CreatableAccount) -> Result<()> {
+        self.accounts.insert(account.address, account);
         Ok(())
-    }
-
-    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>> {
-        Ok(self.id_to_accounts.get(id).map(|acc| acc.value().clone()).unwrap_or_default())
     }
 
     async fn replace_queued_tx_with_pending(&self, tx: &PendingTransaction) -> Result<()> {

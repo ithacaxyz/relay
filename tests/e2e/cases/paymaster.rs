@@ -20,9 +20,9 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn use_external_fee_payer() -> eyre::Result<()> {
-    let env: Environment = Environment::setup_with_prep().await?;
+    let env: Environment = Environment::setup().await?;
 
-    // Create eoa and paymaster prep accounts
+    // Create eoa and paymaster accounts
     let eoa = MockAccount::new(&env).await?;
     let paymaster = MockAccount::new(&env).await?;
 

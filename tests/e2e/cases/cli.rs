@@ -9,7 +9,7 @@ use url::Url;
 
 #[tokio::test]
 async fn respawn_cli() -> eyre::Result<()> {
-    let env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
 
     let dir = temp_dir();
     let config = dir.join("relay.yaml");
@@ -27,7 +27,6 @@ async fn respawn_cli() -> eyre::Result<()> {
                 max_connections: Default::default(),
                 orchestrator: Some(env.orchestrator),
                 delegation_proxy: Some(env.delegation),
-                account_registry: Default::default(),
                 simulator: Default::default(),
                 endpoints: Some(vec![
                     Url::from_str(&env._anvil.as_ref().unwrap().endpoint()).unwrap(),

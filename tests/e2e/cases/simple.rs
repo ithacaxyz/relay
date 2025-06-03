@@ -2,27 +2,33 @@
 
 use crate::{
     check,
-    e2e::{cases::prep_account, common_calls as calls, *},
+    e2e::{
+        cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
+        common_calls as calls, *,
+    },
 };
-use alloy::{primitives::U256, sol_types::SolValue, uint};
+use alloy::{primitives::U256, providers::Provider, sol_types::SolValue, uint};
 use eyre::Result;
 use relay::{
     signers::DynSigner,
     types::{
-        IERC20, KeyType, KeyWith712Signer,
-        PortoAccount::SpendPeriod,
-        Signature,
-        rpc::{Permission, SpendPermission},
+        IERC20,
+        IthacaAccount::SpendPeriod,
+        KeyType, KeyWith712Signer, Signature,
+        rpc::{
+            Permission, PrepareUpgradeAccountParameters, SpendPermission,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+        },
     },
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    for key_type in [KeyType::WebAuthnP256] {
+    for key_type in [KeyType::WebAuthnP256, KeyType::Secp256k1] {
         let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
 
         // The first TX will bundle the prep/upgrade calls
-        run_e2e_prep_erc20(|env| {
+        run_e2e(|env| {
             let to = Address::random();
             let transfer_amount = U256::from(10);
             vec![
@@ -57,36 +63,132 @@ async fn auth_then_erc20_transfer() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_nonce() -> Result<()> {
+    let env = Environment::setup().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    run_e2e_upgraded(|_env| {
-        vec![TxContext {
-            authorization_keys: vec![&key],
-            expected: ExpectedOutcome::FailSend,
-            auth: Some(AuthKind::modified_nonce(123)),
-            ..Default::default()
-        }]
-    })
-    .await
+
+    let mut response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature =
+        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with wrong nonce
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+
+    let modified_nonce = 123;
+    let authorization = AuthKind::modified_nonce(modified_nonce).sign(&env, nonce).await?;
+    response.context.authorization.nonce = modified_nonce;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid auth item nonce"))
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_auth_signature() -> Result<()> {
+    let env = Environment::setup().await?;
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let dummy_signer = DynSigner::from_signing_key(
         "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
     )
     .await?;
 
-    run_e2e_upgraded(|_env| {
-        vec![TxContext {
-            authorization_keys: vec![&key],
-            expected: ExpectedOutcome::FailSend,
-            // Signing with an unrelated key should fail during sendAction when calling eth_call
-            auth: Some(AuthKind::modified_signer(dummy_signer.clone())),
-            ..Default::default()
-        }]
-    })
-    .await
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature =
+        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with wrong signer
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::modified_signer(dummy_signer).sign(&env, nonce).await?;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid auth item"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_precall_signature() -> Result<()> {
+    let env = Environment::setup().await?;
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let dummy_signer = DynSigner::from_signing_key(
+        "0x42424242428f97a5a0044266f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    )
+    .await?;
+
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature = dummy_signer.sign_hash(&response.digests.pre_call_digest).await?;
+
+    // Sign 7702 delegation with env signer
+    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Upgrade account should return error
+    assert!(
+        env.relay_endpoint
+            .upgrade_account(UpgradeAccountParameters {
+                context: response.context,
+                signatures: UpgradeAccountSignatures {
+                    auth: authorization.signature()?,
+                    pre_call: precall_signature,
+                },
+            })
+            .await
+            .is_err_and(|err| err.to_string().contains("invalid precall recovered address"))
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -188,7 +290,7 @@ async fn spend_limits_bundled() -> Result<()> {
     let key1 = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
 
-    run_e2e_prep_erc20(|env| {
+    run_e2e_erc20(|env| {
         vec![
             TxContext {
                 expected: ExpectedOutcome::Pass,
@@ -231,7 +333,7 @@ async fn spend_limits_bundled() -> Result<()> {
 async fn spend_limits_bundle_failure() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
-    run_e2e_prep(|env| {
+    run_e2e(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,
@@ -264,7 +366,7 @@ async fn no_fee_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
     // User with no balance on the fee token should fail on prepareCalls.
-    run_e2e_prep_erc20(|env| {
+    run_e2e_erc20(|env| {
         let to = Address::random();
         let transfer_amount = U256::from(10);
 
@@ -282,19 +384,10 @@ async fn no_fee_tx() -> Result<()> {
 /// Ensures prepareCalls can handle two successive requests with an empty nonce.
 #[tokio::test(flavor = "multi_thread")]
 async fn empty_request_nonce() -> eyre::Result<()> {
-    let mut env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    prep_account(&mut env, &[&admin_key]).await?;
-
-    TxContext {
-        expected: ExpectedOutcome::Pass,
-        calls: vec![common_calls::transfer(env.erc20, env.erc20, U256::from(10))],
-        key: Some(&admin_key),
-        ..Default::default()
-    }
-    .process(0, &env)
-    .await?;
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     // precall
     let response = env
@@ -340,7 +433,8 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         })
         .await?;
 
-    assert!(response.context.take_quote().unwrap().ty().intent.nonce == uint!(1_U256));
+    // Its 0 since the upgrade account intent uses a random nonce
+    assert!(response.context.take_quote().unwrap().ty().intent.nonce == uint!(0_U256));
 
     Ok(())
 }
@@ -348,7 +442,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
 /// Ensures sign up only requires one passkey popup.
 #[tokio::test(flavor = "multi_thread")]
 async fn single_sign_up_popup() -> eyre::Result<()> {
-    let mut env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let session_key =
@@ -360,37 +454,15 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
             }),
         ]);
 
-    // Call prepare_calls without a from authorizing session key with admin key.
-    let response = env
-        .relay_endpoint
-        .prepare_calls(PrepareCallsParameters {
-            from: None,
-            calls: vec![],
-            chain_id: env.chain_id,
-            capabilities: PrepareCallsCapabilities {
-                authorize_keys: vec![session_key.to_authorized(None).await?],
-                revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_calls: vec![],
-                pre_call: true,
-            },
-            key: None,
-        })
-        .await?;
+    // prepareUpgradeAccount && upgradeAccount
+    upgrade_account_lazily(
+        &env,
+        &[admin_key.to_authorized(), session_key.to_authorized()],
+        AuthKind::Auth,
+    )
+    .await?;
 
-    let mut accountless_precall = response.context.take_precall().unwrap();
-    accountless_precall.signature = Signature {
-        innerSignature: admin_key.sign_payload_hash(response.digest).await?,
-        keyHash: admin_key.key_hash(),
-        prehash: false,
-    }
-    .abi_encode_packed()
-    .into();
-
-    // prepareCreateAccount && createAccount
-    prep_account(&mut env, &[&admin_key]).await?;
-
-    // initPrep + accountless precall
+    // init precall will be filled by the relay
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -401,7 +473,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
-                pre_calls: vec![accountless_precall],
+                pre_calls: vec![],
                 pre_call: false,
             },
             key: Some(session_key.to_call_key()),

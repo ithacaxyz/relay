@@ -61,13 +61,6 @@ pub struct Args {
         value_name = "DELEGATION"
     )]
     pub delegation_proxy: Option<Address>,
-    /// The address of the account registry.
-    #[arg(
-        long = "account-registry",
-        required_unless_present("config_only"),
-        value_name = "ACCOUNT_REGISTRY"
-    )]
-    pub account_registry: Option<Address>,
     /// The address of the simulator
     #[arg(long = "simulator", required_unless_present("config_only"), value_name = "SIMULATOR")]
     pub simulator: Option<Address>,
@@ -172,7 +165,6 @@ impl Args {
             .with_rate_ttl(self.rate_ttl)
             .with_orchestrator(self.orchestrator)
             .with_delegation_proxy(self.delegation_proxy)
-            .with_account_registry(self.account_registry)
             .with_simulator(self.simulator)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)

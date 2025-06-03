@@ -1,33 +1,23 @@
 use super::{
-    Call,
-    IDelegation::authorizeCall,
-    Key, KeyHash,
-    OrchestratorContract::accountImplementationOfCall,
-    Signature,
-    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission},
+    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, Signature, rpc::Permission,
 };
 use crate::{
     error::{AuthError, RelayError},
     types::IDelegation,
 };
-use PortoAccount::{
-    PortoAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
+use IthacaAccount::{
+    IthacaAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
 use alloy::{
-    eips::eip7702::{
-        SignedAuthorization,
-        constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
-    },
-    primitives::{
-        Address, B256, Bytes, FixedBytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap,
-    },
-    providers::{MulticallError, Provider},
+    eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
+    primitives::{Address, B256, Bytes, FixedBytes, U256, aliases::U192, map::HashMap},
+    providers::Provider,
     rpc::types::{
-        Authorization, TransactionRequest,
+        TransactionRequest,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol,
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolValue},
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -49,7 +39,7 @@ sol! {
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract PortoAccount {
+    contract IthacaAccount {
         /// A spend period.
         #[derive(Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "lowercase")]
@@ -94,9 +84,6 @@ sol! {
 
         /// The `opData` is too short.
         error OpDataTooShort();
-
-        /// The PREP `initData` is invalid.
-        error InvalidPREP();
 
         /// @dev The `keyType` cannot be super admin.
         error KeyTypeCannotBeSuperAdmin();
@@ -168,9 +155,6 @@ sol! {
             virtual
             returns (bool isValid, bytes32 keyHash);
 
-        /// Initializes PREP account with given `initData`.
-        function initializePREP(bytes calldata initData) public virtual returns (bool);
-
         /// The implementation address.
         address public implementation;
 
@@ -231,10 +215,10 @@ pub struct CallPermission {
     pub to: Address,
 }
 
-/// A Porto account.
+/// A Ithaca account.
 #[derive(Debug, Clone)]
 pub struct Account<P: Provider> {
-    delegation: PortoAccountInstance<P>,
+    delegation: IthacaAccountInstance<P>,
     overrides: StateOverride,
 }
 
@@ -242,7 +226,7 @@ impl<P: Provider> Account<P> {
     /// Create a new instance of [`Account`].
     pub fn new(address: Address, provider: P) -> Self {
         Self {
-            delegation: PortoAccountInstance::new(address, provider),
+            delegation: IthacaAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
         }
     }
@@ -416,29 +400,6 @@ impl<P: Provider> Account<P> {
         Ok(isValid.then_some(keyHash))
     }
 
-    /// A helper to combine `initializePREP` and `validateSignature` calls into a single multicall.
-    pub async fn initialize_and_validate_signature(
-        &self,
-        init_data: Bytes,
-        digest: B256,
-        signature: Signature,
-    ) -> Result<Option<B256>, MulticallError> {
-        let (_, unwrapAndValidateSignatureReturn { isValid, keyHash }) = self
-            .delegation
-            .provider()
-            .multicall()
-            .add(self.delegation.initializePREP(init_data))
-            .add(
-                self.delegation
-                    .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into()),
-            )
-            .overrides(self.overrides.clone())
-            .aggregate()
-            .await?;
-
-        Ok(isValid.then_some(keyHash))
-    }
-
     /// Get the next nonce for the given EOA.
     ///
     /// # Note
@@ -451,206 +412,5 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
-    }
-}
-
-/// PREP account based on <https://blog.biconomy.io/prep-deep-dive/>.
-///
-/// Read [`PREPAccount::initialize`] for more information on how it is generated.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PREPAccount {
-    /// EOA generated address.
-    pub address: Address,
-    /// Signed 7702 authorization.
-    pub signed_authorization: SignedAuthorization,
-    /// Salt used to generate the EOA.
-    pub salt: u8,
-    /// Initialization calls.
-    pub init_calls: Vec<Call>,
-}
-
-impl PREPAccount {
-    /// Initializes a new account with the given delegation and digest.
-    ///
-    /// The digest is a hash of the [`Intent`] used to initialize the account.
-    ///
-    /// This generates a new EOA address and a signed authorization for the account using the
-    /// Provably Rootless EIP-7702 Proxy method, which is an application of Nick's Method to
-    /// EIP-7702.
-    ///
-    /// The authorization item is the signed tuple `(0, delegation, 0)`, where `r` is derived by
-    /// taking the lower 160 bits of the hash of the initialization data, `s` is the hash of
-    /// `r`, and `y_parity` is always `0`.
-    ///
-    /// The `r` value is used as an integrity check in the smart contract to prevent front running,
-    /// and the `s` value being the hash of `r` should reasonably prove that the private key is
-    /// unknown.
-    ///
-    /// Finding the associated private key for the signature would take `2^159` operations given the
-    /// predefined prefix (or trillions of years with the most powerful supercomputers available
-    /// today).
-    ///
-    /// See <https://blog.biconomy.io/prep-deep-dive/>
-    pub fn initialize(delegation: Address, init_calls: Vec<Call>) -> Self {
-        let digest = Self::calculate_digest(&init_calls);
-
-        // we mine until we have a valid `r`, `s` combination
-        let mut salt = [0u8; 32];
-        loop {
-            let mut hasher = Keccak256::new();
-            hasher.update(digest);
-            hasher.update(salt);
-            let hash: U256 = hasher.finalize().into();
-
-            // Take only the lower 160bits
-            let r: U256 = (hash << 96) >> 96;
-            let s = keccak256(r.to_be_bytes::<32>());
-
-            let signed_authorization = SignedAuthorization::new_unchecked(
-                Authorization { chain_id: U256::ZERO, address: delegation, nonce: 0 },
-                0,
-                r,
-                s.into(),
-            );
-
-            if let Ok(eoa) = signed_authorization.recover_authority() {
-                return Self { address: eoa, signed_authorization, salt: salt[31], init_calls };
-            }
-
-            // u8 should be enough to find it.
-            salt[31] += 1;
-        }
-    }
-
-    /// Returns the expected PREP digest from a list of [`Call`].
-    fn calculate_digest(calls: &[Call]) -> B256 {
-        let mut hashed_calls = Vec::with_capacity(calls.len());
-        let mut target_padded = [0u8; 32];
-        for call in calls {
-            target_padded[12..].copy_from_slice(call.to.as_slice());
-
-            let mut hasher = Keccak256::new();
-            hasher.update(call.eip712_type_hash().as_slice());
-            hasher.update(target_padded);
-            hasher.update(call.value.to_be_bytes::<32>());
-            hasher.update(keccak256(&call.data));
-            hashed_calls.push(hasher.finalize());
-        }
-
-        keccak256(hashed_calls.abi_encode_packed())
-    }
-
-    /// Return the ABI encoded `initData`.
-    pub fn init_data(&self) -> Bytes {
-        PREPInitData {
-            calls: self.init_calls.clone(),
-            saltAndDelegation: self.salt_and_delegation().abi_encode_packed().into(),
-        }
-        .abi_encode_params()
-        .into()
-    }
-
-    /// Return `saltAndDelegation`.
-    ///
-    /// `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
-    fn salt_and_delegation(&self) -> B256 {
-        let mut salt_and_delegation = [0u8; 32];
-        salt_and_delegation[11] = self.salt;
-        salt_and_delegation[12..].copy_from_slice(self.signed_authorization.address.as_slice());
-        B256::from(salt_and_delegation)
-    }
-
-    /// Verifies that the current account is valid.
-    pub fn is_valid(&self) -> bool {
-        self == &Self::initialize(self.signed_authorization.address, self.init_calls.clone())
-    }
-
-    /// Return the list of authorized keys as [`AuthorizeKeyResponse`].
-    pub fn authorized_keys(&self) -> Vec<AuthorizeKeyResponse> {
-        self.init_calls
-            .iter()
-            .filter(|call| call.to == Address::ZERO)
-            .filter_map(|call| {
-                let authorize = authorizeCall::abi_decode(&call.data).ok()?;
-                Some(AuthorizeKeyResponse {
-                    hash: authorize.key.key_hash(),
-                    authorize_key: AuthorizeKey {
-                        key: authorize.key,
-                        permissions: vec![],
-                        signature: None,
-                    },
-                })
-            })
-            .collect()
-    }
-}
-
-sol! {
-    struct PREPInitData {
-        Call[] calls;
-        bytes saltAndDelegation;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::{
-        primitives::{address, b256, bytes},
-        uint,
-    };
-
-    const INIT_CALLS: [Call; 2] = [
-        Call {
-            to: address!("0x100000000000000000636f6e736F6c652E6C6f67"),
-            value: uint!(2000000000000000000_U256),
-            data: bytes!(
-                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
-            ),
-        },
-        Call {
-            to: address!("0x200000000000000000636f6e736F6c652E6C6f67"),
-            value: uint!(4000000000000000000_U256),
-            data: bytes!(
-                "0xcebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a0"
-            ),
-        },
-    ];
-
-    #[test]
-    fn initialize_solidity() {
-        struct Case {
-            target: Address,
-            target_salt: u8,
-            delegation: Address,
-            digest: B256,
-            salt_and_delegation: Bytes,
-            init_data: Bytes,
-        }
-
-        let cases = [Case {
-            target: address!("0xce2b4b648ba29b5ba6fb739ecf25ec36f082a08d"),
-            target_salt: 4u8,
-            delegation: address!("0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9"),
-            digest: b256!("0x4d395bfc5ea4edf4801a023c61aa43c295ab95392a2ab9a894bf2854490c3c72"),
-            salt_and_delegation: bytes!(
-                "0x0000000000000000000000045991a2df15a8f6a256d3ec51e99254cd3fb576a9"
-            ),
-            init_data: bytes!(
-                "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000003e00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000100000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000636f6e736f6c652e6c6f670000000000000000000000000000000000000000000000003782dace9d90000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104cebfe33600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000004024c8e0b2b31a1f91f54334f27e04c1aac5b5f0bad187ce4394080477c7c3424952b6c9019ff4c7abe65658e46cc544d7cbd1b591402bf14bc4b94753c65942a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000045991a2df15a8f6a256d3ec51e99254cd3fb576a9"
-            ),
-        }];
-
-        for Case { target, target_salt, delegation, digest, salt_and_delegation, init_data } in
-            cases
-        {
-            let acc = PREPAccount::initialize(delegation, INIT_CALLS.to_vec());
-            assert_eq!(digest, PREPAccount::calculate_digest(&INIT_CALLS));
-            assert_eq!(target, acc.address);
-            assert_eq!(target_salt, acc.salt);
-            assert_eq!(&salt_and_delegation, acc.salt_and_delegation().as_slice());
-            assert_eq!(init_data, acc.init_data());
-        }
     }
 }
