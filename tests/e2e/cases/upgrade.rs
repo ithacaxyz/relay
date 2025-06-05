@@ -37,7 +37,7 @@ pub async fn upgrade_account_lazily(
     assert!(response.context.pre_call.is_multichain());
 
     // Sign Intent digest
-    let precall_signature = env.eoa.root_signer().sign_hash(&response.digests.exec).await?;
+    let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation
     let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
