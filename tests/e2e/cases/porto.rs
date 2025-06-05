@@ -53,7 +53,7 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: PortoAccount::setCanExecuteCall {
+                        data: IthacaAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -113,7 +113,7 @@ async fn execution_guard_target_scope() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: PortoAccount::setCanExecuteCall {
+                        data: IthacaAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
                             target: env.erc20,
@@ -171,7 +171,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: PortoAccount::setCanExecuteCall {
+                        data: IthacaAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: MockErc20::transferCall::SELECTOR.into(),
@@ -258,7 +258,7 @@ async fn execution_guard_default() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: PortoAccount::setCanExecuteCall {
+                        data: IthacaAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -422,7 +422,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
                     Call {
                         to: Address::ZERO,
                         value: U256::ZERO,
-                        data: PortoAccount::setCanExecuteCall {
+                        data: IthacaAccount::setCanExecuteCall {
                             keyHash: session_key.key_hash(),
                             can: true,
                             fnSel: DEFAULT_EXECUTE_SELECTOR,
@@ -529,7 +529,7 @@ async fn session_key_pre_call() -> Result<()> {
 async fn session_key_pre_call_prep_single_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
-    run_e2e_prep(|env| {
+    run_e2e(|env| {
         assert!(env.erc20 != env.fee_token);
         vec![TxContext {
             authorization_keys: vec![&key],
@@ -563,7 +563,7 @@ async fn session_key_pre_call_prep_single_tx() -> Result<()> {
 async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
-    run_e2e_prep(|env| {
+    run_e2e(|env| {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate,

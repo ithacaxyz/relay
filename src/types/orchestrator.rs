@@ -159,7 +159,7 @@ sol! {
     }
 }
 
-/// A Porto orchestrator.
+/// The orchestrator.
 #[derive(Debug)]
 pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,

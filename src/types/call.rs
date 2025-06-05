@@ -10,13 +10,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AuthError, RelayError};
 
 use super::{
-    AccountRegistry,
     IDelegation::{authorizeCall, revokeCall},
-    Key, KeyID,
-    PortoAccount::{
+    IthacaAccount::{
         SpendPeriod, removeSpendLimitCall, setCanExecuteCall, setSpendLimitCall,
         upgradeProxyAccountCall,
     },
+    Key,
 };
 
 sol! {
@@ -84,29 +83,6 @@ impl Call {
         Self::self_call(
             removeSpendLimitCall { keyHash: key_hash, token, period }.abi_encode().into(),
         )
-    }
-
-    /// Create a call to register an account.
-    pub fn register_account(
-        account_registry: Address,
-        signature: Bytes,
-        data: Bytes,
-        account: Address,
-    ) -> Self {
-        Self {
-            to: account_registry,
-            value: U256::ZERO,
-            data: AccountRegistry::registerCall { signature, data, account }.abi_encode().into(),
-        }
-    }
-
-    /// Create a call to remove an account from the registry.
-    pub fn unregister_account(registry: Address, id: KeyID) -> Self {
-        Self {
-            to: registry,
-            value: U256::ZERO,
-            data: AccountRegistry::removeAccountCall { id }.abi_encode().into(),
-        }
     }
 
     /// Whether this call is whitelisted for precalls.

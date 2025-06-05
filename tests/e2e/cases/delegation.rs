@@ -1,5 +1,7 @@
 use crate::e2e::{
-    ExpectedOutcome, TxContext, await_calls_status, cases::prep_account, environment::Environment,
+    AuthKind, await_calls_status,
+    cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
+    environment::Environment,
     send_prepared_calls,
 };
 use alloy::{
@@ -14,9 +16,9 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, KeyType, KeyWith712Signer,
-        PortoAccount::{self, upgradeProxyAccountCall},
-        Signature, SignedCall,
+        Call,
+        IthacaAccount::{self, upgradeProxyAccountCall},
+        KeyType, KeyWith712Signer, Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -24,17 +26,12 @@ use relay::{
 /// Ensures unsupported delegation implementations and proxies are caught.
 #[tokio::test(flavor = "multi_thread")]
 async fn catch_invalid_delegation() -> eyre::Result<()> {
-    let mut env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
     let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    // Set up PREP account correctly.
-    {
-        prep_account(&mut env, &[&admin_key]).await?;
-        TxContext { expected: ExpectedOutcome::Pass, key: Some(&admin_key), ..Default::default() }
-            .process(0, &env)
-            .await?;
-    }
+    // Set up account correctly.
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     let expected_proxy_code = env
         .provider
@@ -245,7 +242,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
         .from(env.eoa.address())
         .to(env.eoa.address())
         .input(
-            PortoAccount::upgradeProxyAccountCall { newImplementation: address }
+            IthacaAccount::upgradeProxyAccountCall { newImplementation: address }
                 .abi_encode()
                 .into(),
         )
@@ -256,12 +253,12 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
 /// Ensures upgradeProxyAccount can be called as a precall.
 #[tokio::test(flavor = "multi_thread")]
 async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
-    let mut env = Environment::setup_with_prep().await?;
+    let env = Environment::setup().await?;
 
     let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    prep_account(&mut env, &[&admin_key]).await?;
+    upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
 
     // Create PreCall with the upgrade call
     let response = env
@@ -271,7 +268,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
             calls: vec![Call {
                 to: env.eoa.address(),
                 value: U256::ZERO,
-                data: PortoAccount::upgradeProxyAccountCall {
+                data: IthacaAccount::upgradeProxyAccountCall {
                     newImplementation: caps
                         .chain(env.chain_id)
                         .contracts

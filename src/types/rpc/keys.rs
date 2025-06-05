@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::KeysError,
-    types::{Call, Key, KeyHash, KeyID, KeyType},
+    types::{Call, Key, KeyHash, KeyType},
 };
 
 use super::Permission;
@@ -31,9 +31,6 @@ pub struct AuthorizeKey {
     pub key: Key,
     /// The permissions for the key.
     pub permissions: Vec<Permission>,
-    /// Signature over the PREPAddress if it's an admin key or webauthn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<Bytes>,
 }
 
 impl AuthorizeKey {
@@ -46,11 +43,7 @@ impl AuthorizeKey {
     ///
     /// The third set of calls is to register the mapping from key id to account address in a
     /// registry.
-    pub fn into_calls(
-        mut self,
-        account_registry: Address,
-        account: Option<Address>,
-    ) -> Result<(Call, Vec<Call>), KeysError> {
+    pub fn into_calls(mut self) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
 
         if self.key.isSuperAdmin && self.key_type().is_p256() {
@@ -65,23 +58,6 @@ impl AuthorizeKey {
                 Call::set_spend_limit(self.key.key_hash(), perm.token, perm.period, perm.limit)
             }
         }));
-
-        // If we already have a deployed account, any admin OR webauthn keys must come with a key
-        // identifier signature over the EOA address.
-        if let Some(account) = account {
-            if self.key.isSuperAdmin || self.key_type().is_webauthn() {
-                let Some(id_signature) = self.signature else {
-                    return Err(KeysError::MissingKeyID(self.key.key_hash()));
-                };
-
-                calls.push(Call::register_account(
-                    account_registry,
-                    id_signature,
-                    self.key.key_hash().into(),
-                    account,
-                ))
-            }
-        }
 
         Ok((Call::authorize(self.key), calls))
     }
@@ -113,24 +89,12 @@ pub struct AuthorizeKeyResponse {
 pub struct RevokeKey {
     /// Key hash to revoke.
     pub hash: B256,
-    /// Key id to remove from the registry.
-    pub id: Option<KeyID>,
 }
 
 impl RevokeKey {
     /// Transform into a series of calls.
-    ///
-    /// The first call is to the delegation to revoke the key.
-    /// If a [`KeyID`] is present, a second call will be added targeting the account registry to
-    /// unregister the key id.
-    pub fn into_calls(self, registry: Address) -> Vec<Call> {
-        if let Some(id) = self.id {
-            // Unregister needs to come first, otherwise the next call would fail since there would
-            // be no key to check execute permissions.
-            vec![Call::unregister_account(registry, id), Call::revoke(self.hash)]
-        } else {
-            vec![Call::revoke(self.hash)]
-        }
+    pub fn into_calls(self) -> Vec<Call> {
+        vec![Call::revoke(self.hash)]
     }
 }
 
@@ -162,9 +126,9 @@ mod tests {
     use alloy::primitives::{Address, B256, Bytes, U256, fixed_bytes};
 
     use crate::types::{
-        Call, CallPermission, Key, KeyID, KeyType,
-        PortoAccount::SpendPeriod,
-        U40,
+        Call, CallPermission,
+        IthacaAccount::SpendPeriod,
+        Key, KeyType, U40,
         rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, RevokeKey, SpendPermission},
     };
 
@@ -190,10 +154,9 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
-            signature: None,
         };
 
-        let (authorize, calls) = key.clone().into_calls(Address::random(), None).unwrap();
+        let (authorize, calls) = key.clone().into_calls().unwrap();
 
         assert_eq!(authorize, Call::authorize(key.clone().key));
         assert_eq!(calls.len(), 2);
@@ -239,7 +202,6 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
-            signature: None,
         };
 
         assert_eq!(
@@ -266,7 +228,6 @@ mod tests {
                     to: Address::ZERO,
                     selector: fixed_bytes!("0xa9059cbb"),
                 })],
-                signature: None,
             },
         };
 
@@ -301,7 +262,6 @@ mod tests {
                         to: Address::ZERO,
                         selector: fixed_bytes!("0xa9059cbb"),
                     })],
-                    signature: None,
                 },
             }
         );
@@ -309,17 +269,9 @@ mod tests {
 
     #[test]
     fn test_revoke_key_into_calls() {
-        let key_id = KeyID::random();
-        let registry = Address::random();
         let hash = B256::random();
 
-        let revoke = RevokeKey { hash, id: None };
-        assert_eq!(revoke.into_calls(registry), vec![Call::revoke(hash)]);
-
-        let revoke = RevokeKey { hash, id: Some(key_id) };
-        assert_eq!(
-            revoke.into_calls(registry),
-            vec![Call::unregister_account(registry, key_id), Call::revoke(hash)]
-        );
+        let revoke = RevokeKey { hash };
+        assert_eq!(revoke.into_calls(), vec![Call::revoke(hash)]);
     }
 }

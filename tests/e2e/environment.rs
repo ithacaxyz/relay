@@ -48,7 +48,6 @@ const MULTICALL3_BYTECODE: Bytes = bytes!(
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct EnvironmentConfig {
-    pub is_prep: bool,
     pub block_time: Option<f64>,
     pub transaction_service_config: TransactionServiceConfig,
     /// The default block number to use for forking.
@@ -61,7 +60,6 @@ pub struct EnvironmentConfig {
 impl Default for EnvironmentConfig {
     fn default() -> Self {
         Self {
-            is_prep: false,
             block_time: None,
             transaction_service_config: TransactionServiceConfig {
                 num_signers: 1,
@@ -108,18 +106,11 @@ impl std::fmt::Debug for Environment {
 }
 
 impl Environment {
-    /// Sets up the test environment with a [`PREPAccount`].
-    ///
-    /// Read [`Self::setup`] for more information on setup.
-    pub async fn setup_with_prep() -> eyre::Result<Self> {
-        Self::setup(EnvironmentConfig { is_prep: true, ..Default::default() }).await
-    }
-
     /// Sets up the test environment with a upgraded account using [`DynSigner`].
     ///
     /// Read [`Self::setup`] for more information on setup.
-    pub async fn setup_with_upgraded() -> eyre::Result<Self> {
-        Self::setup(EnvironmentConfig { is_prep: false, ..Default::default() }).await
+    pub async fn setup() -> eyre::Result<Self> {
+        Self::setup_with_config(EnvironmentConfig::default()).await
     }
 
     /// Sets up the test environment including Anvil, contracts, and the relay service.
@@ -131,7 +122,6 @@ impl Environment {
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
     /// - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
     /// - `TEST_PROXY`: Address for Proxy contract; deploys a mock if unset.
-    /// - `TEST_ACCOUNT_REGISTRY`: Address for AccountRegistry contract; deploys a mock if unset.
     /// - `TEST_ERC20`: Address for ERC20 token; deploys a mock if unset.
     /// - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
     ///
@@ -144,11 +134,10 @@ impl Environment {
     /// TEST_CONTRACTS="./tests/account/out"
     /// TEST_ORCHESTRATOR="0xOrchestratorAddress"
     /// TEST_PROXY="0xProxyAddress"
-    /// TEST_ACCOUNT_REGISTRY="0xAccountRegistryAddress"
     /// TEST_ERC20="0xYourErc20Address"
     /// TEST_ERC721="0xYourErc721Address"
     /// ```
-    pub async fn setup(config: EnvironmentConfig) -> eyre::Result<Self> {
+    pub async fn setup_with_config(config: EnvironmentConfig) -> eyre::Result<Self> {
         dotenvy::dotenv().ok();
 
         // Spawns a local Ethereum node if one is not specified.
@@ -210,36 +199,30 @@ impl Environment {
         }
 
         // Get or deploy mock contracts.
-        let (simulator, delegation, orchestrator, account_registry, erc20s, erc721) =
+        let (simulator, delegation, orchestrator, erc20s, erc721) =
             get_or_deploy_contracts(&provider).await?;
 
-        let eoa = if config.is_prep {
-            EoaKind::create_prep()
-        } else {
-            EoaKind::create_upgraded(
-                DynSigner::from_signing_key(
-                    &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
-                )
-                .await
-                .wrap_err("EOA signer load failed")?,
+        let eoa = EoaKind::create_upgraded(
+            DynSigner::from_signing_key(
+                &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
             )
-        };
+            .await
+            .wrap_err("EOA signer load failed")?,
+        );
 
         // fund EOA
-        if !eoa.is_prep() {
-            // mints erc20 and fee_token
-            mint_erc20s(&erc20s[..2], &[eoa.address()], &provider).await?;
+        // mints erc20 and fee_token
+        mint_erc20s(&erc20s[..2], &[eoa.address()], &provider).await?;
 
-            provider
-                .send_transaction(TransactionRequest {
-                    to: Some(TxKind::Call(eoa.address())),
-                    value: Some(U256::from(1000e18)),
-                    ..Default::default()
-                })
-                .await?
-                .get_receipt()
-                .await?;
-        }
+        provider
+            .send_transaction(TransactionRequest {
+                to: Some(TxKind::Call(eoa.address())),
+                value: Some(U256::from(1000e18)),
+                ..Default::default()
+            })
+            .await?
+            .get_receipt()
+            .await?;
 
         // Ensure our registry has our tokens
         let chain_id = provider.get_chain_id().await?;
@@ -273,7 +256,6 @@ impl Environment {
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(orchestrator))
                 .with_delegation_proxy(Some(delegation))
-                .with_account_registry(Some(account_registry))
                 .with_simulator(Some(simulator))
                 .with_intent_gas_buffer(0) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
@@ -438,7 +420,7 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Address, Address, Vec<Address>, Address), eyre::Error> {
+) -> Result<(Address, Address, Address, Vec<Address>, Address), eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
@@ -452,7 +434,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
 
     let delegation = deploy_contract(
         &provider,
-        &contracts_path.join("PortoAccount.sol/PortoAccount.json"),
+        &contracts_path.join("IthacaAccount.sol/IthacaAccount.json"),
         Some(orchestrator.abi_encode().into()),
     )
     .await?;
@@ -461,13 +443,6 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         &provider,
         &contracts_path.join("EIP7702Proxy.sol/EIP7702Proxy.json"),
         Some((delegation, Address::ZERO).abi_encode().into()),
-    )
-    .await?;
-
-    let mut account_registry = deploy_contract(
-        &provider,
-        &contracts_path.join("AccountRegistry.sol/AccountRegistry.json"),
-        None,
     )
     .await?;
 
@@ -484,12 +459,6 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     // Proxy
     if let Ok(address) = std::env::var("TEST_PROXY") {
         delegation_proxy = Address::from_str(&address).wrap_err("Proxy address parse failed.")?
-    }
-
-    // Account Registry
-    if let Ok(address) = std::env::var("TEST_ACCOUNT_REGISTRY") {
-        account_registry =
-            Address::from_str(&address).wrap_err("Account Registry address parse failed.")?
     }
 
     // Simulator
@@ -533,7 +502,7 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((simulator, delegation_proxy, orchestrator, account_registry, erc20s, erc721))
+    Ok((simulator, delegation_proxy, orchestrator, erc20s, erc721))
 }
 
 async fn deploy_contract<P: Provider>(

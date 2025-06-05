@@ -19,7 +19,7 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pause() -> eyre::Result<()> {
-    let env: Environment = Environment::setup_with_prep().await?;
+    let env: Environment = Environment::setup().await?;
     let eoa = MockAccount::new(&env).await?;
     let orchestrator = OrchestratorContractInstance::new(env.orchestrator, &env.provider);
 

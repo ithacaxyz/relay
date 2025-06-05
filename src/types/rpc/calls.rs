@@ -117,24 +117,26 @@ impl PrepareCallsParameters {
     ///    return its 0th nonce.
     /// 3. If this is a intent and there are any previous precall entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
-    /// 4. If this is the first intent of a PREP account (`maybe_prep`), return 0.
+    /// 4. If this is the intent of a non delegated account (`maybe_stored`), return random.
     /// 5. If none of the above match, query for the next account nonce onchain (for
     ///    `DEFAULT_SEQUENCE_KEY`).
     pub async fn get_nonce(
         &self,
-        maybe_prep: Option<&CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         provider: &DynProvider,
     ) -> Result<U256, RelayError> {
+        // Create a random sequence key.
+        let random_nonce = loop {
+            let sequence_key = U192::from_be_bytes(B192::random().into());
+            if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
+                break U256::from(sequence_key) << 64;
+            }
+        };
+
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
         } else if self.capabilities.pre_call {
-            // Create a random sequence key.
-            loop {
-                let sequence_key = U192::from_be_bytes(B192::random().into());
-                if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
-                    return Ok(U256::from(sequence_key) << 64);
-                }
-            }
+            Ok(random_nonce)
         } else if let Some(precall) = self
             .capabilities
             .pre_calls
@@ -143,8 +145,8 @@ impl PrepareCallsParameters {
             .max_by_key(|precall| precall.nonce)
         {
             Ok(precall.nonce + uint!(1_U256))
-        } else if maybe_prep.is_some() {
-            Ok(U256::ZERO)
+        } else if maybe_stored.is_some() {
+            Ok(random_nonce)
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)

@@ -3,7 +3,7 @@ use alloy::{
     primitives::{Address, B256, U256, bytes},
     sol_types::SolCall,
 };
-use relay::types::{Call, IERC721, Key, PortoAccount::SpendPeriod};
+use relay::types::{Call, IERC721, IthacaAccount::SpendPeriod, Key};
 
 /// Native transfer value call.
 pub fn transfer_native(recipient: Address, amount: U256) -> Call {

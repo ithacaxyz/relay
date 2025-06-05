@@ -1,6 +1,6 @@
 use crate::e2e::{
-    await_calls_status,
-    cases::prep_account,
+    AuthKind, await_calls_status,
+    cases::upgrade::upgrade_account_lazily,
     environment::{Environment, EnvironmentConfig},
     send_prepared_calls,
 };
@@ -20,8 +20,7 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn ensure_valid_fees() -> eyre::Result<()> {
     let fee_recipient = Address::random();
-    let mut env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         fee_recipient,
         transaction_service_config: TransactionServiceConfig {
             num_signers: 1,
@@ -34,7 +33,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     let signer = env.signers[0].clone();
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
-    prep_account(&mut env, &[&admin_key]).await?;
+    upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
 
     let fee_token_decimals = IERC20::new(env.fee_token, &env.provider).decimals().call().await?;
 

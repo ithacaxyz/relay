@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     CallPermission,
-    PortoAccount::{SpendInfo, SpendPeriod},
+    IthacaAccount::{SpendInfo, SpendPeriod},
 };
 
 /// Represents key permissions.
@@ -16,6 +16,18 @@ pub enum Permission {
     /// Spend permission.
     #[serde(rename = "spend")]
     Spend(SpendPermission),
+}
+
+impl From<CallPermission> for Permission {
+    fn from(perm: CallPermission) -> Self {
+        Permission::Call(perm)
+    }
+}
+
+impl From<SpendPermission> for Permission {
+    fn from(perm: SpendPermission) -> Self {
+        Permission::Spend(perm)
+    }
 }
 
 /// Represents spend permissions.

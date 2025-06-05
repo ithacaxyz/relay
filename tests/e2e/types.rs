@@ -1,7 +1,4 @@
-use super::{
-    await_calls_status, cases::upgrade_account, environment::Environment, prepare_calls,
-    send_prepared_calls,
-};
+use super::{await_calls_status, environment::Environment, prepare_calls, send_prepared_calls};
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, U256},
@@ -10,7 +7,7 @@ use alloy::{
 };
 use derive_more::Debug;
 use eyre::WrapErr;
-use futures_util::future::{BoxFuture, join_all, try_join_all};
+use futures_util::future::{BoxFuture, join_all};
 use relay::{
     signers::DynSigner,
     types::{
@@ -100,7 +97,7 @@ impl AuthKind {
 
     pub async fn sign(&self, env: &Environment, nonce: u64) -> eyre::Result<SignedAuthorization> {
         let auth_struct = alloy::eips::eip7702::Authorization {
-            chain_id: U256::from(0),
+            chain_id: U256::ZERO,
             address: env.delegation,
             nonce: self.nonce().unwrap_or(nonce),
         };
@@ -118,6 +115,7 @@ impl AuthKind {
 
 /// Context for executing a test transaction
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct TxContext<'a> {
     /// List of calls to execute
     pub calls: Vec<Call>,
@@ -143,37 +141,9 @@ pub struct TxContext<'a> {
 }
 
 impl TxContext<'_> {
-    /// Upgrades an account from the first [`TxContext`] of a test case.
-    ///
-    /// Since upgrade account cannot bundle a list of [`Call`], it returns them so they can be
-    /// bundled for the following transaction.
-    pub async fn upgrade_account(
-        &self,
-        env: &Environment,
-        tx_num: usize,
-    ) -> Result<Vec<Call>, eyre::Error> {
-        let (tx_hash, authorization) = upgrade_account(
-            env,
-            &self.authorization_keys(Some(env.eoa.address())).await?,
-            self.auth.clone().expect("should have"),
-        )
-        .await
-        .map_or_else(|e| (Err(e), None), |(a, b)| (Ok(a), Some(b)));
-
-        // Check test expectations
-        let intent_nonce = U256::ZERO; // first transaction
-        self.check_bundle(tx_hash, tx_num, authorization, intent_nonce, env).await?;
-
-        Ok(self.calls.clone())
-    }
-
     /// Returns authorization keys as a list of [`AuthorizeKey`].
-    pub async fn authorization_keys(
-        &self,
-        account: Option<Address>,
-    ) -> eyre::Result<Vec<AuthorizeKey>> {
-        try_join_all(self.authorization_keys.iter().map(async |k| k.to_authorized(account).await))
-            .await
+    pub fn authorization_keys(&self) -> Vec<AuthorizeKey> {
+        self.authorization_keys.iter().map(|k| k.to_authorized()).collect()
     }
 
     /// Returns keys as a list of [`RevokeKey`].

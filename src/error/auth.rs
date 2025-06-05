@@ -1,5 +1,4 @@
 use super::invalid_params;
-use crate::types::PREPAccount;
 use alloy::primitives::Address;
 use thiserror::Error;
 
@@ -7,12 +6,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum AuthError {
     /// Invalid authorization item address.
-    #[error("invalid auth item, expected {expected}, got {got}")]
+    #[error("invalid auth item, expected {expected}, got {got:?}")]
     InvalidAuthAddress {
         /// The address expected.
         expected: Address,
         /// The address in the authorization item.
-        got: Address,
+        got: Option<Address>,
     },
     /// The provided EIP-7702 auth item is not chain agnostic.
     #[error("the auth item is not chain agnostic")]
@@ -36,9 +35,6 @@ pub enum AuthError {
     /// The `eoa` field of the provided `Intent` is not an EIP-7702 delegated account.
     #[error("eoa not delegated: {0}")]
     EoaNotDelegated(Address),
-    /// The provided PREPAccount is not valid.
-    #[error("invalid PREPAccount item: {0:?}")]
-    InvalidPrep(PREPAccount),
     /// The delegation is invalid.
     #[error("invalid delegation {0}")]
     InvalidDelegation(Address),
@@ -61,7 +57,6 @@ impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
             | AuthError::AuthItemNotChainAgnostic
             | AuthError::AuthItemInvalidNonce { .. }
             | AuthError::InvalidAuthItem { .. }
-            | AuthError::InvalidPrep { .. }
             | AuthError::InvalidDelegation { .. }
             | AuthError::InvalidDelegationProxy { .. }
             | AuthError::EoaNotDelegated(..) => invalid_params(err.to_string()),

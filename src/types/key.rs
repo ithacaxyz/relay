@@ -1,14 +1,13 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
-    Call, U40,
+    U40,
     rpc::{AuthorizeKey, CallKey, Permission, RevokeKey},
 };
 use IDelegation::getKeysReturn;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{
-        Address, B256, Bytes, FixedBytes, Keccak256, Signature as PrimitiveSignature, U256,
-        bytes::Buf, keccak256, map::B256Map,
+        Address, B256, Bytes, FixedBytes, Keccak256, U256, bytes::Buf, keccak256, map::B256Map,
     },
     signers::local::LocalSigner,
     sol,
@@ -188,9 +187,9 @@ impl Key {
     /// The derivation is a bit involved:
     ///
     /// 1. Compute the offset for the contract storage, which is given by
-    ///    `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))` ([`PORTO_ACCOUNT_STORAGE_SLOT`]).
+    ///    `uint72(bytes9(keccak256("ITHACA_ACCOUNT_STORAGE")))` ([`ITHACA_ACCOUNT_STORAGE_SLOT`]).
     /// 1. Compute the storage slot for `keyStorage` in the contract, which is at
-    ///    `PORTO_ACCOUNT_STORAGE_SLOT + 4` (`key_storage_slot`).
+    ///    `ITHACA_ACCOUNT_STORAGE_SLOT + 4` (`key_storage_slot`).
     /// 1. Find the seed slot of `LibBytes.BytesStorage`, which is given by
     ///
     ///    ```ignore
@@ -223,7 +222,7 @@ impl Key {
     /// ```
     pub fn storage_slots(&self) -> B256Map<B256> {
         let key_storage_slot = B256::left_padding_from(
-            &(PORTO_ACCOUNT_STORAGE_SLOT + PORTO_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
+            &(ITHACA_ACCOUNT_STORAGE_SLOT + ITHACA_KEY_STORAGE_SLOT_OFFSET).to_be_bytes(),
         );
         let bytes_seed_slot = self.seed_slot_for_key(key_storage_slot);
         let mut encoded = &PackedKey::from(self.clone()).abi_encode_packed()[..];
@@ -262,16 +261,6 @@ impl Key {
 
         slots
     }
-
-    /// Generates the digest associated with this key identifier.
-    pub fn id_digest(&self, prep_address: Address) -> B256 {
-        Self::id_digest_from_hash(self.key_hash(), prep_address)
-    }
-
-    /// Given a key hash, it generates the associated key identifier digest.
-    pub fn id_digest_from_hash(key_hash: B256, prep_address: Address) -> B256 {
-        keccak256((key_hash.abi_encode(), prep_address).abi_encode_sequence())
-    }
 }
 
 /// Helper type that contains a [`Key`] and its [`Eip712PayLoadSigner`] signer.
@@ -281,8 +270,6 @@ pub struct KeyWith712Signer {
     key: Key,
     /// Signer associated with the key that signs eip712
     signer: Arc<dyn Eip712PayLoadSigner>,
-    /// Signer for the key identifier.
-    id_signer: Option<DynSigner>,
     /// Key permissions in case it's not an admin key.
     permissions: Vec<Permission>,
 }
@@ -307,13 +294,12 @@ impl KeyWith712Signer {
         let expiry = U40::ZERO;
         let super_admin = true;
 
-        let (key, signer, id_signer) = match key_type {
+        let (key, signer) = match key_type {
             KeyType::P256 => {
                 let signer = P256Signer::load(&mock_key)?;
                 (
                     Key::p256(signer.public_key(), expiry, super_admin),
                     Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
-                    None,
                 )
             }
             KeyType::WebAuthnP256 => {
@@ -321,7 +307,6 @@ impl KeyWith712Signer {
                 (
                     Key::webauthn(signer.public_key(), expiry, super_admin),
                     Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
-                    Some(DynSigner(Arc::new(LocalSigner::from_bytes(&mock_key)?))),
                 )
             }
             KeyType::Secp256k1 => {
@@ -329,13 +314,12 @@ impl KeyWith712Signer {
                 (
                     Key::secp256k1(signer.address(), expiry, super_admin),
                     Arc::new(signer.clone()) as Arc<dyn Eip712PayLoadSigner>,
-                    Some(signer),
                 )
             }
             _ => return Ok(None),
         };
 
-        Ok(Some(KeyWith712Signer { key, signer, id_signer, permissions: vec![] }))
+        Ok(Some(KeyWith712Signer { key, signer, permissions: vec![] }))
     }
 
     /// Returns [`KeyWith712Signer`] with additional permissions.
@@ -366,41 +350,13 @@ impl KeyWith712Signer {
     }
 
     /// Returns a [`AuthorizeKey`] equivalent.
-    pub async fn to_authorized(&self, account: Option<Address>) -> eyre::Result<AuthorizeKey> {
-        // Only admin OR webauthn keys require a id signature
-        let signature = if let (Some(account), true) =
-            (account, (self.key.isSuperAdmin || self.keyType.is_webauthn()))
-        {
-            Some(self.id_sign(account).await?.as_bytes().into())
-        } else {
-            None
-        };
-
-        Ok(AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone(), signature })
+    pub fn to_authorized(&self) -> AuthorizeKey {
+        AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone() }
     }
 
     /// Returns its [`RevokeKey`].
     pub fn to_revoked(&self) -> RevokeKey {
-        RevokeKey { hash: self.key_hash(), id: (!self.keyType.is_p256()).then(|| self.id()) }
-    }
-
-    /// Signs the PREP address with the [`KeyID`] signer.
-    ///
-    /// # Panics
-    /// This will panic if it's a P256 key.
-    pub async fn id_sign(
-        &self,
-        address: Address,
-    ) -> Result<PrimitiveSignature, alloy::signers::Error> {
-        self.id_signer.as_ref().expect("no p256").sign_hash(&self.key.id_digest(address)).await
-    }
-
-    /// Key identifier.
-    ///
-    /// # Panics
-    /// This will panic if it's a P256 key.
-    pub fn id(&self) -> KeyID {
-        self.id_signer.as_ref().expect("no p256").address()
+        RevokeKey { hash: self.key_hash() }
     }
 }
 
@@ -419,39 +375,14 @@ impl Deref for KeyWith712Signer {
     }
 }
 
-/// Key hash with its signature over the PREP account address.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyHashWithID {
-    /// Key hash.
-    pub hash: B256,
-    /// Key identifier.
-    pub id: KeyID,
-    /// Signature over the PREP account address.
-    #[serde(with = "alloy::serde::displayfromstr")]
-    pub signature: PrimitiveSignature,
-}
-
-impl KeyHashWithID {
-    /// Converts self to [`Call`] given a account registry and PREP account address.
-    pub fn to_call(&self, account_registry: Address, account: Address) -> Call {
-        Call::register_account(
-            account_registry,
-            self.signature.as_bytes().into(),
-            self.hash.into(),
-            account,
-        )
-    }
-}
-
-/// The offset for storage slots in the Porto delegation contract.
+/// The offset for storage slots in the Ithaca delegation contract.
 ///
-/// Equivalent to `uint72(bytes9(keccak256("PORTO_ACCOUNT_STORAGE")))`
-pub const PORTO_ACCOUNT_STORAGE_SLOT: u128 = 1293779133171170665679;
+/// Equivalent to `uint72(bytes9(keccak256("ITHACA_ACCOUNT_STORAGE")))`
+pub const ITHACA_ACCOUNT_STORAGE_SLOT: u128 = 1264628507133665080054;
 
 /// The offset for the `keyStorage` variable in the `DelegationStorage` struct in the delegation
 /// contract.
-pub const PORTO_KEY_STORAGE_SLOT_OFFSET: u128 = 4;
+pub const ITHACA_KEY_STORAGE_SLOT_OFFSET: u128 = 3;
 
 #[cfg(test)]
 mod tests {
@@ -495,7 +426,7 @@ mod tests {
         assert_eq!(
             key.storage_slots(),
             HashMap::from_iter([(
-                b256!("0x22e9b02827ae1b9352e2477471a8eba480f98ced116c8ef37c042c3a95d13a24"),
+                b256!("0xec82776901c239c8bfa43afd5a3c4205b3a8a6c46c4356a57c23e16ea01b5232"),
                 b256!("0xdeadbeef0000000000020100000000000000000000000000000000000000000b")
             ),])
         );
@@ -517,11 +448,11 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("0x7e8bef5aab303a0f409ba1799a7b87091449f8d19d9d67b94db017e2e516dddc"),
+                    b256!("0x634965d61bcfa66dd854504846f92e2e994b1f2696be90b8da006a9b416a1cd3"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbe26")
                 ),
                 (
-                    b256!("0x87722af65ab80f4e75613cd2f3adde1844853f8a17c3fc8bde542c0f34ab61f2"),
+                    b256!("0x30fb32459e6d5e9b93230e2eeb9c4b039f23573fa4684e133f661118945e1c4a"),
                     b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
             ])
@@ -551,45 +482,45 @@ mod tests {
             key.storage_slots(),
             HashMap::from_iter([
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419e"),
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f53"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419b"),
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f54"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419d"),
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f55"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419a"),
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f56"),
                     b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
                 ),
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419f"),
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f57"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f58"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f59"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f5a"),
+                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                ),
+                (
+                    b256!("0x4f4e938b01f5b349610591034b977e19591ad761feaa484949b0f469da7d7f5b"),
                     b256!("0x0000000000020100000000000000000000000000000000000000000000000000")
                 ),
                 (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da99419c"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994197"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x001d224e9921f1f32ba73624ac02453ab8f2fa6f2bbac3e1a15846a89eaaa410"),
+                    b256!("0x8926ebd658de21a7cb091b3c1d67bc85f1e13a8fa14ff75644ccce22967a04c7"),
                     b256!("0x00000000000000000000000000000000000000000000000000000000000107ff")
                 ),
-                (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994198"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                ),
-                (
-                    b256!("0x5bc8e0a914ee7aea266bca0eb7c8c9354e5c3905c6a292c44a5b0f38da994199"),
-                    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                )
             ])
         );
     }

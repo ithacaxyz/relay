@@ -104,8 +104,7 @@ fn assert_signer_metrics(paused: usize, active: usize, env: &Environment) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basic_concurrent() -> eyre::Result<()> {
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(1.0),
         fork_block_number: pinned_test_fork_block_number(),
         ..Default::default()
@@ -173,8 +172,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dropped_transaction() -> eyre::Result<()> {
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(1.0),
         ..Default::default()
     })
@@ -204,9 +202,9 @@ async fn dropped_transaction() -> eyre::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_bump() -> eyre::Result<()> {
-    let config = EnvironmentConfig { is_prep: true, block_time: Some(1.0), ..Default::default() };
+    let config = EnvironmentConfig { block_time: Some(1.0), ..Default::default() };
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
-    let env = Environment::setup(config).await.unwrap();
+    let env = Environment::setup_with_config(config).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // setup account
@@ -266,8 +264,7 @@ async fn fee_bump() -> eyre::Result<()> {
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
 async fn fee_growth_nonce_gap() -> eyre::Result<()> {
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(1.0),
         ..Default::default()
     })
@@ -325,8 +322,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_out_of_funds() -> eyre::Result<()> {
     let num_signers = 3;
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(0.2),
         transaction_service_config: TransactionServiceConfig {
             num_signers,
@@ -408,8 +404,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn resume_paused() -> eyre::Result<()> {
     let num_signers = 5;
-    let env = Environment::setup(EnvironmentConfig {
-        is_prep: true,
+    let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(0.2),
         transaction_service_config: TransactionServiceConfig {
             num_signers,
@@ -496,7 +491,6 @@ async fn resume_paused() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn diverged_nonce() -> eyre::Result<()> {
     let config = EnvironmentConfig {
-        is_prep: true,
         block_time: Some(1.0),
         transaction_service_config: TransactionServiceConfig {
             nonce_check_interval: Duration::from_millis(100),
@@ -505,7 +499,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         ..Default::default()
     };
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
-    let env = Environment::setup(config.clone()).await.unwrap();
+    let env = Environment::setup_with_config(config.clone()).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
 
     // alter signer nonce to invalidate the nonce cached by service
@@ -540,7 +534,6 @@ async fn diverged_nonce() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn restart_with_pending() -> eyre::Result<()> {
     let mut config = EnvironmentConfig {
-        is_prep: true,
         block_time: Some(1.0),
         transaction_service_config: TransactionServiceConfig {
             max_transactions_per_signer: 3,
@@ -553,7 +546,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
         config.transaction_service_config.num_signers,
     )
     .unwrap();
-    let env = Environment::setup(config.clone()).await.unwrap();
+    let env = Environment::setup_with_config(config.clone()).await.unwrap();
     let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
     let storage = env.relay_handle.storage.clone();
     let provider = env.provider.clone();

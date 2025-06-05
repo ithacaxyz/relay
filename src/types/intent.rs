@@ -1,8 +1,13 @@
-use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract, PREPInitData};
-use crate::types::Orchestrator;
+use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract};
+use crate::types::{
+    CallPermission,
+    IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
+    Orchestrator,
+    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+};
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256},
+    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap},
     providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -90,13 +95,6 @@ sol! {
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
-        /// Optional data for `initPREP` on the delegation.
-        /// This is encoded using ERC7821 style batch execution encoding.
-        /// (ERC7821 is a variant of ERC7579).
-        /// `abi.encode(calls, abi.encodePacked(bytes32(saltAndDelegation)))`,
-        /// where `calls` is of type `Call[]`,
-        /// and `saltAndDelegation` is `bytes32((uint256(salt) << 160) | uint160(delegation))`.
-        bytes initData;
         /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
         uint256 prePaymentAmount;
         /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
@@ -156,10 +154,6 @@ pub struct PartialIntent {
     pub execution_data: Bytes,
     /// Per delegated EOA.
     pub nonce: U256,
-    /// Optional data for `initPREP` on the delegation.
-    ///
-    /// Excluded from signature.
-    pub init_data: Option<Bytes>,
     /// Optional payer of the gas.
     pub payer: Option<Address>,
     /// Optional array of encoded PreCalls that will be verified and executed before the
@@ -248,6 +242,55 @@ impl Intent {
         OrchestratorContract::executeCall { encodedIntent: self.abi_encode().into() }
             .abi_encode()
             .into()
+    }
+}
+
+impl SignedCall {
+    /// Returns all authorized keys with their permissions.
+    pub fn authorized_keys_with_permissions(
+        &self,
+    ) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
+        let mut permissions: HashMap<B256, Vec<Permission>> = HashMap::default();
+
+        for call in self.calls()? {
+            // try decoding as a setSpendLimit call first.
+            if let Ok(setSpendLimitCall { keyHash, token, period, limit }) =
+                setSpendLimitCall::abi_decode(&call.data)
+            {
+                permissions
+                    .entry(keyHash)
+                    .or_default()
+                    .push(SpendPermission { limit, period, token }.into());
+                continue;
+            }
+
+            // if it wasn't a setSpendLimit, try decoding as a setCanExecute.
+            if let Ok(setCanExecuteCall { keyHash, target: to, fnSel: selector, can }) =
+                setCanExecuteCall::abi_decode(&call.data)
+            {
+                if can {
+                    permissions
+                        .entry(keyHash)
+                        .or_default()
+                        .push(CallPermission { selector, to }.into());
+                }
+            }
+        }
+
+        Ok(self
+            .authorized_keys()?
+            .into_iter()
+            .map(|key| {
+                let hash = key.key_hash();
+                AuthorizeKeyResponse {
+                    authorize_key: AuthorizeKey {
+                        permissions: permissions.remove(&hash).unwrap_or_default(),
+                        key,
+                    },
+                    hash,
+                }
+            })
+            .collect())
     }
 }
 
@@ -362,28 +405,10 @@ impl SignedCalls for Intent {
         self.nonce
     }
 
-    /// Returns all keys authorized in the current [`Intent`] including `pre_calls`, `executionData`
-    /// and `initData`.
+    /// Returns all keys authorized in the current [`Intent`] including `pre_calls` and
+    /// `executionData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        let keys = self.authorized_keys_from_execution_data()?;
-
-        // Decode keys from initData, if it exists.
-        let mut keys: Vec<Key> = if !self.initData.is_empty() {
-            let prep = PREPInitData::abi_decode_params(&self.initData)?;
-
-            keys.chain(prep.calls.into_iter().filter_map(|call| {
-                // Attempt to decode the call as an authorizeCall; ignore if unsuccessful.
-                authorizeCall::abi_decode(&call.data).ok().map(|decoded| decoded.key)
-            }))
-            .collect()
-        } else {
-            keys.collect()
-        };
-
-        // Extend with pre-authorized keys.
-        keys.extend(self.pre_authorized_keys()?);
-
-        Ok(keys)
+        Ok(self.authorized_keys_from_execution_data()?.chain(self.pre_authorized_keys()?).collect())
     }
 }
 
@@ -426,7 +451,6 @@ mod tests {
             prePaymentMaxAmount: U256::from(3822601006u64),
             totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
-            initData: bytes!(""),
             encodedPreCalls: vec![],
             prePaymentAmount: U256::from(3822601006u64),
             totalPaymentAmount: U256::from(3822601006u64),
@@ -476,7 +500,6 @@ mod tests {
             prePaymentMaxAmount: U256::from(1021265804),
             totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
-            initData: bytes!(""),
             encodedPreCalls: vec![],
             prePaymentAmount: U256::from(1021265804),
             totalPaymentAmount: U256::from(1021265804),
@@ -516,7 +539,7 @@ mod tests {
         assert_eq!(
             Bytes::from(intent.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003600000000000000000000000000000000000000000000000000000000000000380000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a00000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f395000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004153bb2d85711417ea08f129fe6f1472a228294501d9e5b94f5165f6986316a8e64205c4e7305fc5a4ab9d6101e579932bb8ac293174fc9c0861153b830afe01f01c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a19600000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c00000000000000000000000000000000000000000000000000000000009896800000000000000000000000000000000000000000000000000000000000000340000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000036000000000000000000000000000000000000000000000000000000000000003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f39500000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004153bb2d85711417ea08f129fe6f1472a228294501d9e5b94f5165f6986316a8e64205c4e7305fc5a4ab9d6101e579932bb8ac293174fc9c0861153b830afe01f01c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )
         );
     }

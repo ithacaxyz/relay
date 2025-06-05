@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{StorageApi, api::Result};
 use crate::{
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, KeyID, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -44,7 +44,7 @@ enum TxStatus {
 #[async_trait]
 impl StorageApi for PgStorage {
     #[instrument(self)]
-    async fn read_prep(&self, address: &Address) -> Result<Option<CreatableAccount>> {
+    async fn read_account(&self, address: &Address) -> Result<Option<CreatableAccount>> {
         let row =
             sqlx::query!(r#"select account from accounts where address = $1"#, address.as_slice())
                 .fetch_optional(&self.pool)
@@ -55,43 +55,20 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn write_prep(&self, account: CreatableAccount) -> Result<()> {
+    async fn write_account(&self, account: CreatableAccount) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
-        sqlx::query!(
-            "insert into accounts (address, account) values ($1, $2)",
-            account.prep.address.as_slice(),
-            serde_json::to_value(&account)?
+        sqlx::query(
+            "insert into accounts (address, account) values ($1, $2)  on conflict (address) do update set account = excluded.account",
         )
+        .bind(account.address.as_slice())
+        .bind(serde_json::to_value(&account)?)
         .execute(&mut *tx)
         .await
         .map_err(eyre::Error::from)?;
 
-        for id_sig in &account.id_signatures {
-            sqlx::query!(
-                "insert into keys (key_id, account_address, key_hash, signature) values ($1, $2, $3, $4)",
-                id_sig.id.as_slice(),
-                account.prep.address.as_slice(),
-                id_sig.hash.as_slice(),
-                &id_sig.signature.as_bytes()
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(eyre::Error::from)?;
-        }
         tx.commit().await.map_err(eyre::Error::from)?;
 
         Ok(())
-    }
-
-    #[instrument(self)]
-    async fn read_accounts_from_id(&self, id: &KeyID) -> Result<Vec<Address>> {
-        let rows =
-            sqlx::query!("select account_address from keys where key_id = $1", id.as_slice())
-                .fetch_all(&self.pool)
-                .await
-                .map_err(eyre::Error::from)?;
-
-        Ok(rows.into_iter().map(|row| Address::from_slice(&row.account_address)).collect())
     }
 
     #[instrument(skip_all)]

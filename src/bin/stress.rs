@@ -35,9 +35,9 @@ use relay::{
         IERC20::IERC20Instance,
         KeyType, KeyWith712Signer,
         rpc::{
-            CreateAccountParameters, KeySignature, Meta, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCreateAccountCapabilities,
-            PrepareCreateAccountParameters, PrepareCreateAccountResponse,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -206,33 +206,33 @@ impl StressTester {
             let acc_target = args.accounts;
             let caps = caps.clone();
             async move {
+                let eoa = DynSigner::from_signing_key(&B256::random().to_string()).await?;
                 let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
                     .expect("failed to create key for account");
-                let PrepareCreateAccountResponse { capabilities: _, digests: _, context, address } =
-                    relay_client
-                        .prepare_create_account(PrepareCreateAccountParameters {
-                            capabilities: PrepareCreateAccountCapabilities {
-                                authorize_keys: vec![key.to_authorized(None).await?],
-                                delegation: caps
-                                    .chain(args.chain_id.id())
-                                    .contracts
-                                    .delegation_proxy
-                                    .address,
-                            },
-                            chain_id: args.chain_id.id(),
-                        })
-                        .await
-                        .wrap_err("failed to prepare create account")?;
+                let PrepareUpgradeAccountResponse { context, digests, .. } = relay_client
+                    .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+                        capabilities: UpgradeAccountCapabilities {
+                            authorize_keys: vec![key.to_authorized()],
+                        },
+                        chain_id: Some(args.chain_id.id()),
+                        address: eoa.address(),
+                        delegation: caps
+                            .chain(args.chain_id.id())
+                            .contracts
+                            .delegation_proxy
+                            .address,
+                    })
+                    .await
+                    .wrap_err("failed to prepare create account")?;
 
+                let address = eoa.address();
                 relay_client
-                    .create_account(CreateAccountParameters {
+                    .upgrade_account(UpgradeAccountParameters {
                         context,
-                        signatures: vec![KeySignature {
-                            public_key: key.publicKey.clone(),
-                            key_type: key.keyType,
-                            value: key.id_sign(address).await?.as_bytes().into(),
-                            prehash: false,
-                        }],
+                        signatures: UpgradeAccountSignatures {
+                            auth: eoa.sign_hash(&digests.auth).await?,
+                            exec: eoa.sign_hash(&digests.exec).await?,
+                        },
                     })
                     .await
                     .wrap_err("failed to create account")?;
