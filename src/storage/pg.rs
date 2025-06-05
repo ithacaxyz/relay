@@ -299,6 +299,52 @@ impl StorageApi for PgStorage {
             .collect::<std::result::Result<_, _>>()?)
     }
 
+    async fn verified_email_exists(&self, email: &str) -> Result<bool> {
+        let exists = sqlx::query!(
+            "select * from emails where email = $1 and verified_at is not null",
+            email
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?
+        .is_some();
+
+        Ok(exists)
+    }
+
+    async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
+        sqlx::query!(
+            "insert into emails (address, email, token) values ($1, $2, $3) on conflict(address, email) do update set token = $3",
+            account.as_slice(),
+            email,
+            token,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    /// Verifies an unverified email in the database if the verification code is valid.
+    ///
+    /// Should remove any other verified emails for the same account address.
+    ///
+    /// Returns true if the email was verified successfully.
+    async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
+        let affected = sqlx::query!(
+            "update emails set verified_at = now() where address = $1 and email = $2 and token = $3",
+            account.as_slice(),
+            email,
+            token
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(affected.rows_affected() > 0)
+    }
+
     async fn ping(&self) -> Result<()> {
         if let Some(mut connection) = self.pool.try_acquire() {
             connection.ping().await.map_err(eyre::Error::from).map_err(Into::into)

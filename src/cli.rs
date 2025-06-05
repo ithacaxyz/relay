@@ -136,6 +136,9 @@ pub struct Args {
     /// The API key for Banxa.
     #[arg(long = "banxa-api-key", value_name = "KEY", env = "BANXA_API_KEY")]
     pub banxa_api_key: Option<String>,
+    /// The API key for Resend.
+    #[arg(long = "resend-api-key", value_name = "KEY", env = "RESEND_API_KEY")]
+    pub resend_api_key: Option<String>,
 }
 
 impl Args {
@@ -174,6 +177,7 @@ impl Args {
             .with_priority_fee_percentile(self.priority_fee_percentile)
             .with_banxa_api_url(self.banxa_api_url)
             .with_banxa_api_key(self.banxa_api_key.unwrap_or_default())
+            .with_resend_api_key(self.resend_api_key)
     }
 }
 

@@ -30,6 +30,8 @@ pub struct RelayConfig {
     pub quote: QuoteConfig,
     /// Onramp configuration.
     pub onramp: OnrampConfig,
+    /// Email configuration.
+    pub email: EmailConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
     /// Orchestrator address.
@@ -123,6 +125,14 @@ impl QuoteConfig {
 pub struct OnrampConfig {
     /// Banxa API configuration.
     pub banxa: BanxaConfig,
+}
+
+/// Email configuration.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailConfig {
+    /// Resend API key.
+    pub resend_api_key: Option<String>,
 }
 
 /// Banxa API configuration.
@@ -239,6 +249,7 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             onramp: OnrampConfig::default(),
+            email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegations: BTreeSet::new(),
@@ -405,6 +416,12 @@ impl RelayConfig {
     /// Sets the Banxa API key.
     pub fn with_banxa_api_key(mut self, api_key: String) -> Self {
         self.onramp.banxa.secrets.api_key = api_key;
+        self
+    }
+
+    /// Sets the Resend API key.
+    pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
+        self.email.resend_api_key = api_key.or(self.email.resend_api_key);
         self
     }
 

@@ -7,7 +7,7 @@ use crate::{
     constants::DEFAULT_POLL_INTERVAL,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
-    rpc::{Onramp, OnrampApiServer, Relay, RelayApiServer},
+    rpc::{AccountApiServer, AccountRpc, Onramp, OnrampApiServer, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
     transport::{SequencerLayer, create_transport},
@@ -31,6 +31,7 @@ use jsonrpsee::server::{
     middleware::{http::ProxyGetRequestLayer, rpc::RpcServiceBuilder},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
+use resend_rs::Resend;
 use sqlx::PgPool;
 use std::{net::SocketAddr, path::Path, str::FromStr, sync::Arc};
 use tower::ServiceBuilder;
@@ -196,7 +197,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             .await?;
 
     // todo: avoid all this darn cloning
-    let mut rpc = Relay::new(
+    let relay = Relay::new(
         contracts,
         chains.clone(),
         quote_signer,
@@ -207,9 +208,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
-    )
-    .into_rpc();
+    );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
+    let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
+        AccountRpc::new(relay.clone(), Resend::new(resend_api_key), storage.clone()).into_rpc()
+    });
+    let mut rpc = relay.into_rpc();
 
     // http layers
     let cors = CorsLayer::new()
@@ -250,6 +254,12 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     .absolute(1);
 
     rpc.merge(onramp).expect("could not merge rpc modules");
+    if let Some(account_rpc) = account_rpc {
+        rpc.merge(account_rpc).expect("could not merge rpc modules");
+    } else {
+        warn!("No e-mail provider configured.");
+    }
+
     Ok(RelayHandle {
         local_addr: addr,
         server: server.start(rpc),
