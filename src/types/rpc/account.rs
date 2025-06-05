@@ -56,9 +56,9 @@ pub struct PrepareUpgradeAccountResponse {
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeAccountDigests {
     /// 7702 authorization digest.
-    pub auth_digest: B256,
-    /// Precall digest.
-    pub pre_call_digest: B256,
+    pub auth: B256,
+    /// Precall execution digest.
+    pub exec: B256,
 }
 
 /// Context for `wallet_upgradeAccount`.
@@ -89,12 +89,12 @@ pub struct UpgradeAccountParameters {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeAccountSignatures {
-    /// 7702 authorization digest.
+    /// 7702 authorization signature.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub auth: Signature,
-    /// Precall digest.
+    /// Precall execution signature.
     #[serde(with = "alloy::serde::displayfromstr")]
-    pub pre_call: Signature,
+    pub exec: Signature,
 }
 
 /// Response for `wallet_upgradeAccount`.

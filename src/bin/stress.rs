@@ -230,8 +230,8 @@ impl StressTester {
                     .upgrade_account(UpgradeAccountParameters {
                         context,
                         signatures: UpgradeAccountSignatures {
-                            auth: eoa.sign_hash(&digests.auth_digest).await?,
-                            pre_call: eoa.sign_hash(&digests.pre_call_digest).await?,
+                            auth: eoa.sign_hash(&digests.auth).await?,
+                            exec: eoa.sign_hash(&digests.exec).await?,
                         },
                     })
                     .await
