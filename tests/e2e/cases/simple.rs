@@ -77,8 +77,7 @@ async fn invalid_auth_nonce() -> Result<()> {
         .await?;
 
     // Sign Intent digest
-    let precall_signature =
-        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+    let precall_signature = env.eoa.root_signer().sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with wrong nonce
     let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
@@ -94,7 +93,7 @@ async fn invalid_auth_nonce() -> Result<()> {
                 context: response.context,
                 signatures: UpgradeAccountSignatures {
                     auth: authorization.signature()?,
-                    pre_call: precall_signature,
+                    exec: precall_signature,
                 },
             })
             .await
@@ -124,8 +123,7 @@ async fn invalid_auth_signature() -> Result<()> {
         .await?;
 
     // Sign Intent digest
-    let precall_signature =
-        env.eoa.root_signer().sign_hash(&response.digests.pre_call_digest).await?;
+    let precall_signature = env.eoa.root_signer().sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with wrong signer
     let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
@@ -138,7 +136,7 @@ async fn invalid_auth_signature() -> Result<()> {
                 context: response.context,
                 signatures: UpgradeAccountSignatures {
                     auth: authorization.signature()?,
-                    pre_call: precall_signature,
+                    exec: precall_signature,
                 },
             })
             .await
@@ -168,7 +166,7 @@ async fn invalid_precall_signature() -> Result<()> {
         .await?;
 
     // Sign Intent digest
-    let precall_signature = dummy_signer.sign_hash(&response.digests.pre_call_digest).await?;
+    let precall_signature = dummy_signer.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with env signer
     let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
@@ -181,7 +179,7 @@ async fn invalid_precall_signature() -> Result<()> {
                 context: response.context,
                 signatures: UpgradeAccountSignatures {
                     auth: authorization.signature()?,
-                    pre_call: precall_signature,
+                    exec: precall_signature,
                 },
             })
             .await

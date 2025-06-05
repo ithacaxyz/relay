@@ -935,7 +935,7 @@ impl RelayApiServer for Relay {
             .map_err(RelayError::from)?;
 
         let digests =
-            UpgradeAccountDigests { auth_digest: authorization.signature_hash(), pre_call_digest };
+            UpgradeAccountDigests { auth: authorization.signature_hash(), exec: pre_call_digest };
 
         let response = PrepareUpgradeAccountResponse {
             chain_id,
@@ -1039,7 +1039,7 @@ impl RelayApiServer for Relay {
         );
 
         // Signed by the root eoa key.
-        storage_account.pre_call.signature = signatures.pre_call.as_bytes().into();
+        storage_account.pre_call.signature = signatures.exec.as_bytes().into();
 
         let (_, _, (pre_call_digest, _), expected_nonce) = try_join!(
             // Ensure it's using the lasted delegation implementation.
@@ -1065,7 +1065,7 @@ impl RelayApiServer for Relay {
         )?;
 
         // Ensures signature matches the requested account (precall)
-        let got = signatures.pre_call.recover_address_from_prehash(&pre_call_digest).ok();
+        let got = signatures.exec.recover_address_from_prehash(&pre_call_digest).ok();
         if got != Some(context.address) {
             return Err(
                 IntentError::InvalidPreCallRecovery { expected: context.address, got }.into()
