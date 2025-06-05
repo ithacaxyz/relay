@@ -4,6 +4,7 @@ mod assets;
 mod calls;
 mod cli;
 mod delegation;
+mod errors;
 mod keys;
 mod pause;
 mod paymaster;

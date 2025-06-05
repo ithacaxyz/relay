@@ -1,6 +1,7 @@
 use super::{internal_rpc, invalid_params, rpc_err};
-use crate::types::{
-    IthacaAccount::IthacaAccountErrors, OrchestratorContract::OrchestratorContractErrors,
+use crate::{
+    error::ContractErrors,
+    types::{IthacaAccount::IthacaAccountErrors, OrchestratorContract::OrchestratorContractErrors},
 };
 use alloy::{
     primitives::{Address, B256, Bytes},
@@ -102,6 +103,11 @@ impl IntentRevert {
                 .map(|err| format!("{err:?}"))
                 .or_else(|| {
                     IthacaAccountErrors::abi_decode(&revert_reason)
+                        .ok()
+                        .map(|err| format!("{err:?}"))
+                })
+                .or_else(|| {
+                    ContractErrors::ContractErrorsErrors::abi_decode(&revert_reason)
                         .ok()
                         .map(|err| format!("{err:?}"))
                 }),
