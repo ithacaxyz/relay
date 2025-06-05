@@ -1,6 +1,6 @@
 //! Relay end-to-end test constants
 
-use super::{eoa::EoaKind, *};
+use super::*;
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
@@ -74,7 +74,7 @@ impl Default for EnvironmentConfig {
 pub struct Environment {
     pub _anvil: Option<AnvilInstance>,
     pub provider: DynProvider,
-    pub eoa: EoaKind,
+    pub eoa: DynSigner,
     pub orchestrator: Address,
     pub delegation: Address,
     /// Minted to the eoa.
@@ -202,13 +202,11 @@ impl Environment {
         let (simulator, delegation, orchestrator, erc20s, erc721) =
             get_or_deploy_contracts(&provider).await?;
 
-        let eoa = EoaKind::create_upgraded(
-            DynSigner::from_signing_key(
-                &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
-            )
-            .await
-            .wrap_err("EOA signer load failed")?,
-        );
+        let eoa = DynSigner::from_signing_key(
+            &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
+        )
+        .await
+        .wrap_err("EOA signer load failed")?;
 
         // fund EOA
         // mints erc20 and fee_token

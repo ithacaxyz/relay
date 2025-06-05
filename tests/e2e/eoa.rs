@@ -17,44 +17,6 @@ use relay::{
         },
     },
 };
-
-/// Kind of EOA.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum EoaKind {
-    Upgraded(DynSigner),
-}
-
-impl EoaKind {
-    /// Create a new [`EoaKind`] with [`DynSigner`].
-    pub fn create_upgraded(signer: DynSigner) -> Self {
-        Self::Upgraded(signer)
-    }
-
-    /// Returns a reference to the inner [`DynSigner`] when dealing with an upgraded account.
-    ///
-    /// # Panics
-    ///
-    /// This will panic if it's not an upgraded account.
-    pub fn root_signer(&self) -> &DynSigner {
-        match self {
-            EoaKind::Upgraded(dyn_signer) => dyn_signer,
-        }
-    }
-
-    /// Returns [`Address`].
-    ///
-    /// # Panics
-    ///
-    /// It will panic if the account has not been yet created when dealing with
-    /// [`CreatableAccount`].
-    pub fn address(&self) -> Address {
-        match self {
-            EoaKind::Upgraded(dyn_signer) => dyn_signer.address(),
-        }
-    }
-}
-
 /// An account that can be used to send intents.
 pub struct MockAccount {
     pub address: Address,
