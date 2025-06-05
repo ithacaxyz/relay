@@ -5,6 +5,9 @@ pub use asset::AssetError;
 mod auth;
 pub use auth::AuthError;
 
+mod contracts;
+pub use contracts::ContractErrors;
+
 mod keys;
 pub use keys::KeysError;
 
