@@ -329,7 +329,7 @@ impl Signer {
 
         // Try eth_call before committing to send the actual transaction
         self.provider
-            .call(request)
+            .call(request.clone())
             .await
             .and_then(|res| {
                 OrchestratorContract::executeCall::abi_decode_returns(&res)
@@ -341,6 +341,9 @@ impl Signer {
                     return Err(SignerError::IntentRevert { revert_reason: result.into() });
                 }
                 Ok(())
+            })
+            .inspect_err(|err| {
+                trace!(?err, ?request, "transaction simulation failed");
             })?;
 
         Ok(())
