@@ -5,19 +5,14 @@ use super::{
 };
 use crate::{
     config::TransactionServiceConfig,
-    constants::DEFAULT_POLL_INTERVAL,
     error::StorageError,
     signers::DynSigner,
-    spawn::RETRY_LAYER,
     storage::{RelayStorage, StorageApi},
-    transport::create_transport,
 };
 use alloy::{
     primitives::Address,
-    providers::{DynProvider, Provider, ProviderBuilder},
-    rpc::client::ClientBuilder,
+    providers::{DynProvider, Provider},
 };
-use alloy_chains::Chain;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rand::seq::SliceRandom;
 use std::{
@@ -118,23 +113,9 @@ impl TransactionService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
-        let external_provider =
-            if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
-                let (transport, is_local) = create_transport(endpoint).await?;
-                let client = ClientBuilder::default()
-                    .layer(RETRY_LAYER)
-                    .transport(transport, is_local)
-                    .with_poll_interval(DEFAULT_POLL_INTERVAL);
-                Some(ProviderBuilder::new().connect_client(client).erased())
-            } else {
-                None
-            };
-
-        let monitor = TransactionMonitoringHandle::new(
-            provider.clone(),
-            external_provider.clone(),
-            metrics.clone(),
-        );
+        let monitor =
+            TransactionMonitoringHandle::new(provider.clone(), config.clone(), metrics.clone())
+                .await?;
 
         let mut this = Self {
             signers: Default::default(),
