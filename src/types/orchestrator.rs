@@ -11,7 +11,7 @@ use alloy::{
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::{Asset, KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
@@ -225,6 +225,8 @@ impl<P: Provider> Orchestrator<P> {
                     .into_transaction_request(),
             )
             .with_state_overrides(self.overrides.clone());
+
+        trace!(?simulate_block, "simulating intent");
 
         let result = self
             .orchestrator

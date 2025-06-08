@@ -312,6 +312,20 @@ impl Relay {
             ..Default::default()
         };
 
+        let extra_payment = self.estimate_extra_fee(&chain, &intent).await?
+            * U256::from(10u128.pow(token.decimals as u32))
+            / eth_price;
+
+        let intrinsic_gas = approx_intrinsic_cost(
+            &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
+                .abi_encode(),
+            authorization_address.is_some(),
+        );
+
+        let initial_payment = U256::from(intrinsic_gas as f64 * payment_per_gas) + extra_payment;
+
+        intent.set_legacy_payment_amount(initial_payment);
+
         // sign intent
         let signature = mock_key
             .sign_typed_data(
@@ -331,20 +345,6 @@ impl Relay {
         }
         .abi_encode_packed()
         .into();
-
-        let extra_payment = self.estimate_extra_fee(&chain, &intent).await?
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
-
-        let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
-                .abi_encode(),
-            authorization_address.is_some(),
-        );
-
-        let initial_payment = U256::from(intrinsic_gas as f64 * payment_per_gas) + extra_payment;
-
-        intent.set_legacy_payment_amount(initial_payment);
 
         // we estimate gas and fees
         let (asset_diff, sim_result) = orchestrator
