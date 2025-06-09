@@ -85,7 +85,7 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
         let mut config = RelayConfig::load_from_file(&config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
-        config
+        config.with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
     };
 
     let registry = if !registry_path.as_ref().exists() {

@@ -31,6 +31,7 @@ pub struct RelayConfig {
     /// Onramp configuration.
     pub onramp: OnrampConfig,
     /// Email configuration.
+    #[serde(default)]
     pub email: EmailConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
