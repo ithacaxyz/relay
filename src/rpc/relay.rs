@@ -136,7 +136,7 @@ pub trait RelayApi {
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Relay {
     inner: Arc<RelayInner>,
 }

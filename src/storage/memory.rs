@@ -20,6 +20,8 @@ pub struct InMemoryStorage {
     statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
+    unverified_emails: DashMap<(Address, String), String>,
+    verified_emails: DashMap<String, Address>,
 }
 
 #[async_trait]
@@ -106,6 +108,32 @@ impl StorageApi for InMemoryStorage {
 
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>> {
         Ok(self.queued_transactions.get(&chain_id).as_deref().cloned().unwrap_or_default())
+    }
+
+    async fn verified_email_exists(&self, email: &str) -> Result<bool> {
+        Ok(self.verified_emails.contains_key(email))
+    }
+
+    async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
+        self.unverified_emails.insert((account, email.to_string()), token.to_string());
+
+        Ok(())
+    }
+
+    async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
+        let key = (account, email.to_string());
+        let valid = self
+            .unverified_emails
+            .get(&key)
+            .map(|expected_token| token == *expected_token)
+            .unwrap_or_default();
+
+        if valid {
+            self.unverified_emails.remove(&key);
+            self.verified_emails.insert(email.to_string(), account);
+        }
+
+        Ok(valid)
     }
 
     async fn ping(&self) -> Result<()> {

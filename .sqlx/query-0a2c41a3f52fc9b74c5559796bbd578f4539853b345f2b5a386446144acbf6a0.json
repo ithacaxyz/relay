@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into emails (address, email, token) values ($1, $2, $3) on conflict(address, email) do update set token = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0a2c41a3f52fc9b74c5559796bbd578f4539853b345f2b5a386446144acbf6a0"
+}

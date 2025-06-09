@@ -47,6 +47,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 priority_fee_percentile: Default::default(),
                 banxa_api_url: Url::from_str("https://api.banxa-sandbox.com").unwrap(),
                 banxa_api_key: Default::default(),
+                resend_api_key: Default::default(),
             },
             config.clone(),
             registry.clone(),

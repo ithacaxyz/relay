@@ -38,7 +38,7 @@ async fn storage() -> eyre::Result<RelayStorage> {
 #[ignore]
 async fn write() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer: _, chain_id, queued_tx, pending_tx, bundle_id } =
+    let Fixtures { account, signer: _, chain_id, queued_tx, pending_tx, bundle_id, email } =
         Fixtures::generate().await?;
 
     // Account & Keys
@@ -52,6 +52,9 @@ async fn write() -> eyre::Result<()> {
     // Bundle status
     storage.add_bundle_tx(bundle_id, chain_id, queued_tx.id).await?;
 
+    // Email
+    storage.add_unverified_email(email.0, &email.1, &email.2).await?;
+
     Ok(())
 }
 
@@ -59,7 +62,7 @@ async fn write() -> eyre::Result<()> {
 #[ignore]
 async fn read() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer, chain_id, queued_tx: _, pending_tx: _, bundle_id } =
+    let Fixtures { account, signer, chain_id, queued_tx: _, pending_tx: _, bundle_id, email } =
         Fixtures::generate().await?;
 
     // Account & Keys
@@ -72,6 +75,10 @@ async fn read() -> eyre::Result<()> {
     // Bundle status
     assert!(storage.get_bundle_transactions(bundle_id).await?.is_empty().not());
 
+    // Email
+    storage.verify_email(email.0, &email.1, &email.2).await?;
+    storage.verified_email_exists(&email.2).await?;
+
     Ok(())
 }
 
@@ -82,6 +89,7 @@ struct Fixtures {
     pub queued_tx: RelayTransaction,
     pub pending_tx: PendingTransaction,
     pub bundle_id: BundleId,
+    pub email: (Address, String, String),
 }
 
 impl Fixtures {
@@ -167,6 +175,7 @@ impl Fixtures {
             queued_tx,
             pending_tx,
             bundle_id: BundleId(r_b256),
+            email: (r_address, "hello@there.all".to_string(), "12345678".to_string()),
         })
     }
 }

@@ -106,6 +106,23 @@ impl StorageApi for RelayStorage {
         self.inner.read_queued_transactions(chain_id).await
     }
 
+    async fn verified_email_exists(&self, email: &str) -> api::Result<bool> {
+        self.inner.verified_email_exists(email).await
+    }
+
+    async fn add_unverified_email(
+        &self,
+        account: Address,
+        email: &str,
+        token: &str,
+    ) -> api::Result<()> {
+        self.inner.add_unverified_email(account, email, token).await
+    }
+
+    async fn verify_email(&self, account: Address, email: &str, token: &str) -> api::Result<bool> {
+        self.inner.verify_email(account, email, token).await
+    }
+
     async fn ping(&self) -> api::Result<()> {
         self.inner.ping().await
     }

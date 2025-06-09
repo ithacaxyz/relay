@@ -8,6 +8,9 @@ pub use auth::AuthError;
 mod contracts;
 pub use contracts::ContractErrors;
 
+mod email;
+pub use email::EmailError;
+
 mod keys;
 pub use keys::KeysError;
 

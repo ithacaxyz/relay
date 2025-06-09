@@ -64,6 +64,19 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Reads queued transactions for the given chain.
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>>;
 
+    /// Checks if a verified email exists.
+    async fn verified_email_exists(&self, email: &str) -> Result<bool>;
+
+    /// Adds an unverified email to the database.
+    async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()>;
+
+    /// Verifies an unverified email in the database if the verification code is valid.
+    ///
+    /// Should remove any other verified emails for the same account address.
+    ///
+    /// Returns true if the email was verified successfully.
+    async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool>;
+
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
 }
