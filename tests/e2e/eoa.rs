@@ -64,6 +64,7 @@ impl MockAccount {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![Call {
                     to: env.erc20,
                     value: U256::ZERO,
@@ -103,6 +104,7 @@ impl MockAccount {
         let PrepareCallsResponse { mut context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![],
                 chain_id: env.chain_id,
                 from: Some(self.address),
@@ -118,7 +120,7 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().intent.signature = Signature {
+        context.quote_mut().unwrap().ty_mut().output.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,

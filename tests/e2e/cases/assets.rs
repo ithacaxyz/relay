@@ -67,6 +67,7 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
     // create prepare_call request
     for fee_token in [env.fee_token, Address::ZERO] {
         let params = PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![], // fill in per test
             chain_id: env.chain_id,
@@ -101,6 +102,7 @@ async fn asset_diff() -> eyre::Result<()> {
 
     // create prepare_call request
     let params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: vec![], // fill in per test
         chain_id: env.chain_id,
@@ -209,6 +211,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 
     // create prepare_call request with 2 mints.
     let mut params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: if std::env::var("TEST_ERC721").is_ok() {
             vec![

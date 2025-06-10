@@ -152,7 +152,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .map(|mut tx| {
             // Set invalid signature for some of the transactions
             if rand::random_bool(0.5) {
-                tx.quote.ty_mut().intent.signature = Default::default();
+                tx.quote.ty_mut().output.signature = Default::default();
                 invalid += 1;
             }
 

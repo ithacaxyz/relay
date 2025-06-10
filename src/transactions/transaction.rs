@@ -54,7 +54,7 @@ impl RelayTransaction {
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let quote = self.quote.ty();
-        let mut intent = quote.intent.clone();
+        let mut intent = quote.output.clone();
 
         let payment_amount = (quote.extra_payment
             + (U256::from(gas_limit)
@@ -110,7 +110,7 @@ impl RelayTransaction {
 
     /// Returns the EOA of the intent.
     pub fn eoa(&self) -> &Address {
-        &self.quote.ty().intent.eoa
+        &self.quote.ty().output.eoa
     }
 }
 

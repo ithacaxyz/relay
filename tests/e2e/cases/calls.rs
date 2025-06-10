@@ -49,6 +49,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![erc20_transfer.clone()],
                 chain_id: env.chain_id,
                 from: Some(env.eoa.address()),

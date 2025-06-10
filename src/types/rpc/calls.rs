@@ -4,8 +4,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
+        Account, Asset, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, IERC20, Key,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
     },
 };
 use alloy::{
@@ -18,7 +18,7 @@ use alloy::{
     },
     providers::DynProvider,
     rpc::types::Log,
-    sol_types::SolEvent,
+    sol_types::{SolCall, SolEvent},
     uint,
 };
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,8 @@ pub struct PrepareCallsParameters {
     /// precall.
     #[serde(default)]
     pub key: Option<CallKey>,
+    /// Required funds on the target chain.
+    pub required_funds: Vec<(Address, U256)>,
 }
 
 impl PrepareCallsParameters {
@@ -150,6 +152,43 @@ impl PrepareCallsParameters {
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
+        }
+    }
+
+    /// Return a self that will be used as a funding intent
+    pub fn build_funding_intent(
+        eoa: Address,
+        chain_id: ChainId,
+        funding_asset: Asset,
+        amount: U256,
+        fee_token: Address,
+        request_key: CallKey,
+    ) -> Self {
+        // todo: escrow
+        let escrow = Address::ZERO;
+        let escrow_call = if funding_asset.is_native() {
+            Call { to: escrow, value: amount, data: Default::default() }
+        } else {
+            Call {
+                to: funding_asset.address(),
+                value: U256::ZERO,
+                data: IERC20::transferCall { to: escrow, amount }.abi_encode().into(),
+            }
+        };
+
+        PrepareCallsParameters {
+            calls: vec![escrow_call],
+            chain_id,
+            from: Some(eoa),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                revoke_keys: vec![],
+                pre_calls: vec![],
+                pre_call: false,
+            },
+            key: Some(request_key),
+            required_funds: vec![],
         }
     }
 }
@@ -271,7 +310,7 @@ impl PrepareCallsContext {
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
             PrepareCallsContext::Quote(quote) => {
-                quote.ty().intent.compute_eip712_data(orchestrator_address, provider).await
+                quote.ty().output.compute_eip712_data(orchestrator_address, provider).await
             }
             PrepareCallsContext::PreCall(pre_call) => {
                 pre_call.compute_eip712_data(orchestrator_address, provider).await
