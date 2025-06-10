@@ -5,6 +5,9 @@ pub use account::*;
 mod action;
 pub use action::*;
 
+mod asset;
+pub use asset::*;
+
 mod asset_diff;
 pub use asset_diff::*;
 

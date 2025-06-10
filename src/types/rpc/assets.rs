@@ -1,0 +1,81 @@
+//! RPC account-related request and response types.
+
+use alloy::primitives::{Address, ChainId, U256};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use crate::types::{AssetMetadata, AssetType};
+
+/// Address-based asset or native.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(untagged)]
+pub enum AddressOrNative {
+    /// Address.
+    Address(Address),
+    /// The special keyword `"native"`.
+    #[serde(rename = "native")]
+    Native,
+}
+
+impl AddressOrNative {
+    /// Returns the address
+    ///
+    /// # Panics
+    /// It will panic if self is of the native variant.
+    pub fn address(&self) -> Address {
+        match self {
+            AddressOrNative::Address(address) => *address,
+            AddressOrNative::Native => panic!(),
+        }
+    }
+}
+
+/// One item inside each vector that lives under the per-chain key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetFilterItem {
+    /// Address of the asset if not native.
+    pub address: AddressOrNative,
+    /// Asset type.
+    #[serde(rename = "type")]
+    pub asset_type: AssetType,
+}
+
+/// Request parameters for `wallet_getAssets`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAssetsParameters {
+    /// Address of the EOA to query.
+    pub account: Address,
+    /// Optional per-chain asset filter. Overrides other filters.
+    #[serde(default, with = "alloy::serde::quantity::hashmap")]
+    pub asset_filter: HashMap<ChainId, Vec<AssetFilterItem>>,
+    /// Restrict results to these asset types.
+    #[serde(default)]
+    pub asset_type_filter: Vec<AssetType>,
+    /// Restrict results to these chains.
+    #[serde(default)]
+    pub chain_filter: Vec<ChainId>,
+}
+
+/// Asset as described on ERC7811.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Asset7811 {
+    /// Address or native
+    pub address: AddressOrNative,
+    /// Balance in the smallest unit.
+    pub balance: U256,
+    /// Native, ERC721 or ERC20
+    #[serde(rename = "type")]
+    pub asset_type: AssetType,
+    /// Asset metadata.
+    #[serde(default)]
+    pub metadata: Option<AssetMetadata>,
+}
+
+/// Response for `wallet_getAssets`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GetAssetsResponse(
+    #[serde(with = "alloy::serde::quantity::hashmap")] pub HashMap<ChainId, Vec<Asset7811>>,
+);

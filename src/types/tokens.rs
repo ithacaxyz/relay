@@ -1,5 +1,4 @@
 use alloy::sol;
-use serde::{Deserialize, Serialize};
 
 sol! {
     #[sol(rpc)]
@@ -27,14 +26,4 @@ sol! {
         function tokenURI(uint256 id) public view virtual returns (string);
         function burn(uint256 id) public virtual;
     }
-}
-
-/// Contract token variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TokenKind {
-    /// ERC20.
-    ERC20,
-    /// ERC721.
-    ERC721,
 }
