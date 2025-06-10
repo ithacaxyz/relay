@@ -47,6 +47,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     env.provider().anvil_set_code(another_impl, expected_impl_code).await?;
 
     let params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: vec![],
         chain_id: env.chain_id(),
@@ -63,7 +64,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     let good_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
 
     assert!(
-        good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
+         good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
             == caps.chain(env.chain_id()).contracts.delegation_implementation.address
     );
 
@@ -265,6 +266,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![Call {
                 to: env.eoa.address(),
@@ -304,6 +306,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),

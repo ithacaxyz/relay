@@ -142,6 +142,8 @@ sol! {
     }
 
     /// A struct to fund an account on an output chain from a multi chain intent.
+    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Transfer {
         address token;
         uint256 amount;
@@ -420,6 +422,46 @@ impl SignedCalls for Intent {
     /// `executionData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         Ok(self.authorized_keys_from_execution_data()?.chain(self.pre_authorized_keys()?).collect())
+    }
+}
+
+/// Kind of intent to be simulated and created.
+#[derive(Debug)]
+pub enum IntentKind {
+    /// Single chain intent.
+    Single,
+    /// Output of a multi chain intent. usize is the leaf nth.
+    MultiOutput(usize),
+    /// Input of a multi chain intent. usize is the leaf nth.
+    MultiInput(usize),
+}
+
+impl IntentKind {
+    /// Returns `true` if this is [`IntentKind::Single`].
+    pub fn is_single(&self) -> bool {
+        matches!(self, IntentKind::Single)
+    }
+
+    /// Returns `true` if this is [`IntentKind::MultiOutput`].
+    pub fn is_multi_output(&self) -> bool {
+        matches!(self, IntentKind::MultiOutput(_))
+    }
+
+    /// Returns `true` if this is [`IntentKind::MultiInput`].
+    pub fn is_multi_input(&self) -> bool {
+        matches!(self, IntentKind::MultiInput(_))
+    }
+
+    /// Returns the nth leaf if dealing with a multi chain intent.
+    ///
+    /// # Panics
+    /// It will panic if self is of the single intent variant.
+    pub fn leaf_nth(&self) -> usize {
+        match self {
+            IntentKind::Single => panic!("Only multi chain intents have a leaf number."),
+            IntentKind::MultiOutput(leaf) => *leaf,
+            IntentKind::MultiInput(leaf) => *leaf,
+        }
     }
 }
 

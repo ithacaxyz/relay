@@ -567,7 +567,8 @@ mod tests {
             ttl: SystemTime::now(),
             authorization_address: Default::default(),
             orchestrator: Default::default(),
-            intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            output: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            inputs: vec![],
         };
         let sig = Signature::new(Default::default(), Default::default(), Default::default());
         let quote = SignedQuote::new_unchecked(quote, sig, Default::default());

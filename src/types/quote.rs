@@ -17,8 +17,10 @@ pub type SignedQuote = Signed<Quote>;
 pub struct Quote {
     /// Chain id.
     pub chain_id: ChainId,
-    /// Intent.
-    pub intent: Intent,
+    /// Output intent.
+    pub output: Intent,
+    /// Funding intent
+    pub inputs: Vec<(ChainId, Intent)>,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
     /// Price of the ETH in the [`Intent::paymentToken`] in wei.
@@ -57,7 +59,11 @@ impl Quote {
         if let Some(address) = self.authorization_address {
             hasher.update(address);
         }
-        hasher.update(self.intent.digest());
+        hasher.update(self.output.digest());
+        for (chain, intent) in &self.inputs {
+            hasher.update(chain.to_be_bytes());
+            hasher.update(intent.digest());
+        }
         hasher.update(
             self.ttl
                 .duration_since(UNIX_EPOCH)
