@@ -3,6 +3,9 @@
 mod account;
 pub use account::*;
 
+mod assets;
+pub use assets::*;
+
 mod calls;
 pub use calls::*;
 
