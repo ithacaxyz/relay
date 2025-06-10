@@ -120,6 +120,7 @@ impl Fixtures {
         let quote = Quote {
             chain_id: r_u64,
             intent: Intent {
+                chain_id: r_u256,
                 eoa: r_address,
                 executionData: r_bytes.clone(),
                 nonce: r_u256,

@@ -296,6 +296,7 @@ impl Relay {
 
         // fill intent
         let mut intent = Intent {
+            chain_id: U256::from(request.chain_id),
             eoa: request.intent.eoa,
             executionData: request.intent.execution_data.clone(),
             nonce: request.intent.nonce,
