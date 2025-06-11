@@ -302,7 +302,7 @@ impl RelayConfig {
 
     /// Sets a constant rate for the price oracle. Used for testing.
     pub fn with_quote_constant_rate(mut self, constant_rate: Option<f64>) -> Self {
-        self.quote.constant_rate = constant_rate;
+        self.quote.constant_rate = constant_rate.or(self.quote.constant_rate);
         self
     }
 
