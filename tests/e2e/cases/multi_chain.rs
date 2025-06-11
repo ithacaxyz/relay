@@ -21,7 +21,8 @@ async fn test_multi_chain_setup() -> Result<()> {
 
     // Verify each chain has providers
     for i in 0..3 {
-        assert!(env.provider_for(i).is_some());
+        // Just access provider to verify it exists - panics if invalid index
+        let _ = env.provider_for(i);
     }
 
     // Verify contracts have same addresses on all chains
@@ -40,7 +41,7 @@ async fn test_multi_chain_funding() -> Result<()> {
 
     // Verify EOA is funded on both chains
     for i in 0..2 {
-        let provider = env.provider_for(i).unwrap();
+        let provider = env.provider_for(i);
         let balance = provider.get_balance(env.eoa.address()).await?;
 
         // Should have 1000 ETH
@@ -56,7 +57,7 @@ async fn test_multi_chain_token_balances() -> Result<()> {
 
     // Check ERC20 balances on both chains
     for i in 0..2 {
-        let provider = env.provider_for(i).unwrap();
+        let provider = env.provider_for(i);
 
         // Check fee token balance
         let fee_token_balance = IERC20::IERC20Instance::new(env.fee_token, provider)
@@ -88,8 +89,8 @@ async fn test_multi_chain_token_balances() -> Result<()> {
 async fn test_multi_chain_mining() -> Result<()> {
     let env = Environment::setup_multi_chain(2).await?;
 
-    let provider0 = env.provider_for(0).unwrap();
-    let provider1 = env.provider_for(1).unwrap();
+    let provider0 = env.provider_for(0);
+    let provider1 = env.provider_for(1);
 
     // Get initial block numbers
     let initial_block0 = provider0.get_block_number().await?;
@@ -129,7 +130,7 @@ async fn test_multi_chain_relay_service() -> Result<()> {
 
     // Verify all providers are functional
     for i in 0..3 {
-        let provider = env.provider_for(i).unwrap();
+        let provider = env.provider_for(i);
         let block_number = provider.get_block_number().await?;
         // Just verify we can successfully get block number - the fact that it succeeds means the
         // provider is functional

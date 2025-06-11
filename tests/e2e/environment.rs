@@ -181,7 +181,7 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
     signers: &[DynSigner],
     eoa: &DynSigner,
 ) -> eyre::Result<ContractAddresses> {
-    // fund relay signers on first chain in parallel
+    // fund relay signers on first chain
     try_join_all(
         signers
             .iter()
@@ -221,7 +221,7 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     let (orchestrator_code, delegation_code, simulator_code, erc721_code, erc20_code) =
         contract_codes;
 
-    // Fund signers in parallel
+    // Fund signers
     try_join_all(
         signers
             .iter()
@@ -229,7 +229,7 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     )
     .await?;
 
-    // Set all contract codes on the current chain in parallel
+    // Set all contract codes on the current chain
     let contract_deployments = vec![
         provider.anvil_set_code(contracts.orchestrator, (**orchestrator_code).clone()),
         provider.anvil_set_code(contracts.delegation, (**delegation_code).clone()),
@@ -360,7 +360,7 @@ impl Environment {
 
         providers.push(first_provider.erased());
 
-        // Set up remaining chains with same contract addresses in parallel
+        // Set up remaining chains with same contract addresses
         if config.num_chains > 1 {
             let contract_codes = (
                 orchestrator_code.clone(),
@@ -403,7 +403,7 @@ impl Environment {
             providers.extend(additional_providers);
         }
 
-        // Query chain IDs from all providers in parallel
+        // Query chain IDs from all providers
         let chain_ids =
             try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
 
@@ -491,8 +491,14 @@ impl Environment {
     }
 
     /// Get the provider for a specific chain index.
-    pub fn provider_for(&self, index: usize) -> Option<&DynProvider> {
-        self.providers.get(index)
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the chain index is out of bounds.
+    pub fn provider_for(&self, index: usize) -> &DynProvider {
+        self.providers
+            .get(index)
+            .unwrap_or_else(|| panic!("No provider for chain index {index}"))
     }
 
     /// Get the default provider (first chain).
@@ -540,7 +546,7 @@ impl Environment {
         hash: B256,
         chain_index: usize,
     ) -> Option<TxEnvelope> {
-        let provider = self.provider_for(chain_index)?;
+        let provider = self.provider_for(chain_index);
         let tx =
             provider.get_transaction_by_hash(hash).await.unwrap().map(|tx| tx.inner.into_inner());
         provider.anvil_drop_transaction(hash).await.unwrap();
@@ -559,10 +565,9 @@ impl Environment {
     /// mining and then disabling it. This means that this method would cause a block mined while
     /// executed.
     pub async fn disable_mining_on_chain(&self, chain_index: usize) {
-        if let Some(provider) = self.provider_for(chain_index) {
-            provider.anvil_set_auto_mine(true).await.unwrap();
-            provider.anvil_set_auto_mine(false).await.unwrap();
-        }
+        let provider = self.provider_for(chain_index);
+        provider.anvil_set_auto_mine(true).await.unwrap();
+        provider.anvil_set_auto_mine(false).await.unwrap();
     }
 
     /// Disables mining on the default chain.
@@ -572,9 +577,8 @@ impl Environment {
 
     /// Enables mining of blocks on a specific chain.
     pub async fn enable_mining_on_chain(&self, chain_index: usize) {
-        if let Some(provider) = self.provider_for(chain_index) {
-            provider.anvil_set_auto_mine(true).await.unwrap();
-        }
+        let provider = self.provider_for(chain_index);
+        provider.anvil_set_auto_mine(true).await.unwrap();
     }
 
     /// Enables mining on the default chain.
@@ -584,9 +588,8 @@ impl Environment {
 
     /// Mines a single block on a specific chain.
     pub async fn mine_block_on_chain(&self, chain_index: usize) {
-        if let Some(provider) = self.provider_for(chain_index) {
-            provider.anvil_mine(None, None).await.unwrap();
-        }
+        let provider = self.provider_for(chain_index);
+        provider.anvil_mine(None, None).await.unwrap();
     }
 
     /// Mines a block on the default chain.
@@ -602,10 +605,7 @@ impl Environment {
         priority_fee: u128,
         chain_index: usize,
     ) {
-        let provider = match self.provider_for(chain_index) {
-            Some(p) => p,
-            None => return,
-        };
+        let provider = self.provider_for(chain_index);
 
         let chain_id = self.chain_id_for(chain_index);
 
@@ -657,10 +657,7 @@ impl Environment {
     /// Fetches the current base_fee_per_gas and spawns a task setting blocks basefee to it on a
     /// specific chain.
     pub async fn freeze_basefee_on_chain(&self, chain_index: usize) {
-        let provider = match self.provider_for(chain_index) {
-            Some(p) => p.clone(),
-            None => return,
-        };
+        let provider = self.provider_for(chain_index).clone();
 
         let basefee = provider
             .get_block(Default::default())
