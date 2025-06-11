@@ -496,9 +496,7 @@ impl Environment {
     ///
     /// This method panics if the chain index is out of bounds.
     pub fn provider_for(&self, index: usize) -> &DynProvider {
-        self.providers
-            .get(index)
-            .unwrap_or_else(|| panic!("No provider for chain index {index}"))
+        self.providers.get(index).unwrap_or_else(|| panic!("No provider for chain index {index}"))
     }
 
     /// Get the default provider (first chain).
