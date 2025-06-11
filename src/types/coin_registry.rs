@@ -43,7 +43,7 @@ impl CoinRegistry {
 
         self.iter()
             .filter(|(key, kind)| *kind == source_kind && key.chain == target_chain)
-            .map(|(key, _)| key.address.into())
+            .map(|(key, _)| super::Asset::from_optional_address(key.address))
             .collect()
     }
 

@@ -106,6 +106,14 @@ impl Asset {
             Asset::Token(address) => *address,
         }
     }
+
+    /// Creates an Asset from an optional address.
+    /// 
+    /// If the address is `Some`, converts it to a token asset.
+    /// If the address is `None`, returns the native asset.
+    pub fn from_optional_address(address: Option<Address>) -> Self {
+        if let Some(address) = address { address.into() } else { Self::Native }
+    }
 }
 
 impl From<Address> for Asset {
@@ -119,11 +127,6 @@ impl From<Address> for Asset {
     }
 }
 
-impl From<Option<Address>> for Asset {
-    fn from(asset: Option<Address>) -> Self {
-        if let Some(asset) = asset { asset.into() } else { Asset::Native }
-    }
-}
 
 /// Represents metadata for an asset.
 #[derive(Debug, Clone)]
