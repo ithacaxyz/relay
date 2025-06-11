@@ -23,7 +23,7 @@ async fn verify_signature() -> eyre::Result<()> {
     let verify = |address: Address| {
         env.relay_endpoint.verify_signature(VerifySignatureParameters {
             address,
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             digest,
             signature: signature.clone(),
         })

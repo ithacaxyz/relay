@@ -6,6 +6,7 @@ mod cli;
 mod delegation;
 mod errors;
 mod keys;
+mod multi_chain;
 mod pause;
 mod paymaster;
 mod porto;

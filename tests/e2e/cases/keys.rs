@@ -174,7 +174,7 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],

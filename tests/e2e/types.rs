@@ -219,7 +219,7 @@ impl TxContext<'_> {
                 }
 
                 if authorization.is_some()
-                    && env.provider.get_code_at(env.eoa.address()).await?
+                    && env.provider().get_code_at(env.eoa.address()).await?
                         != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
                     return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));
