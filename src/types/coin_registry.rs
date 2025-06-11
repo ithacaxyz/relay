@@ -36,7 +36,7 @@ impl CoinRegistry {
         source_chain: ChainId,
         source_asset: Option<Address>,
         target_chain: ChainId,
-    ) -> Vec<super::Asset> {
+    ) -> Vec<Asset> {
         let Some(source_kind) = self.get(&(source_chain, source_asset).into()) else {
             return vec![];
         };
