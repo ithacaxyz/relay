@@ -219,7 +219,6 @@ impl AssetInfoServiceHandle {
 
         Ok(builder.build(metadata, tokens_uris))
     }
-
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
 ///
@@ -244,9 +243,7 @@ impl AssetInfoService {
 
     /// Returns a new handle connected to this service.
     pub fn handle(&self) -> AssetInfoServiceHandle {
-        AssetInfoServiceHandle {
-            command_tx: self.command_tx.clone(),
-        }
+        AssetInfoServiceHandle { command_tx: self.command_tx.clone() }
     }
 
     /// Lookups the asset info for a chain id and a list of assets.
