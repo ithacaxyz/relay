@@ -155,7 +155,7 @@ async fn setup_anvil_instances(
                 .chain_id(chain_id)
                 .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args.into_iter()))
                 .try_spawn()
-                .wrap_err(format!("Failed to spawn Anvil for chain {} (index {})", chain_id, i))?;
+                .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {i})"))?;
 
             endpoints.push(anvil.endpoint_url());
             anvils.push(anvil);
@@ -208,13 +208,15 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
     Ok(ContractAddresses { simulator, delegation, orchestrator, erc20s, erc721 })
 }
 
+type ContractCodeTuple = (Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>);
+
 /// Set up a secondary chain by replicating contracts from primary chain
 async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     provider: P,
     contracts: &ContractAddresses,
     signers: &[DynSigner],
     eoa_address: Address,
-    contract_codes: &(Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>),
+    contract_codes: &ContractCodeTuple,
 ) -> eyre::Result<DynProvider> {
     let (orchestrator_code, delegation_code, simulator_code, erc721_code, erc20_code) =
         contract_codes;
@@ -381,7 +383,7 @@ impl Environment {
                         .layer(RETRY_LAYER.clone())
                         .connect(endpoint.as_str())
                         .await
-                        .wrap_err(format!("Failed to connect to endpoint for chain index {}", i))?;
+                        .wrap_err(format!("Failed to connect to endpoint for chain index {i}"))?;
                     let provider = ProviderBuilder::new()
                         .wallet(EthereumWallet::from(deployer.0.clone()))
                         .connect_client(client);
@@ -485,7 +487,7 @@ impl Environment {
         self.chain_ids
             .get(index)
             .copied()
-            .unwrap_or_else(|| panic!("No chain ID for chain index {}", index))
+            .unwrap_or_else(|| panic!("No chain ID for chain index {index}"))
     }
 
     /// Get the provider for a specific chain index.
@@ -625,7 +627,6 @@ impl Environment {
 
             join_all((0..10).map(|i| {
                 let signer = &signer;
-                let provider = provider;
                 async move {
                     let mut tx = TxEip1559 {
                         chain_id,

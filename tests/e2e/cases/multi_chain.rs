@@ -124,15 +124,16 @@ async fn test_multi_chain_relay_service() -> Result<()> {
     for i in 0..3 {
         let chain_id = env.chain_id_for(i);
         // The relay service should be able to handle requests for each chain
-        assert!(chain_id > 0, "Chain {} should have a valid chain ID", i);
+        assert!(chain_id > 0, "Chain {i} should have a valid chain ID");
     }
-    
+
     // Verify all providers are functional
     for i in 0..3 {
         let provider = env.provider_for(i).unwrap();
         let block_number = provider.get_block_number().await?;
-        // Just verify we can successfully get block number - the fact that it succeeds means the provider is functional
-        assert!(block_number > 0, "Chain {} should have valid block number", i);
+        // Just verify we can successfully get block number - the fact that it succeeds means the
+        // provider is functional
+        assert!(block_number > 0, "Chain {i} should have valid block number");
     }
 
     Ok(())
