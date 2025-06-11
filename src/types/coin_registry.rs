@@ -1,4 +1,4 @@
-use super::CoinKind;
+use super::{Asset, CoinKind};
 use alloy::primitives::{Address, ChainId, address};
 use alloy_chains::{Chain, NamedChain};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -43,7 +43,7 @@ impl CoinRegistry {
 
         self.iter()
             .filter(|(key, kind)| *kind == source_kind && key.chain == target_chain)
-            .map(|(key, _)| super::Asset::from_optional_address(key.address))
+            .map(|(key, _)| Asset::from_address(key.address))
             .collect()
     }
 
