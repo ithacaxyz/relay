@@ -187,7 +187,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             .await?;
 
     // construct asset info service
-    let asset_info = AssetInfoService::new(512, registry.clone());
+    let asset_info = AssetInfoService::new(512);
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 

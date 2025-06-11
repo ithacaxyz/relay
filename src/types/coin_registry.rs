@@ -27,6 +27,26 @@ impl CoinRegistry {
         self.0.iter()
     }
 
+    /// Returns all equivalent coins on `target_chain`, given a `source_chain` and
+    /// `source_asset`.
+    ///
+    /// A none `source_asset` represents the source chain native asset.
+    pub fn get_from_other_chain(
+        &self,
+        source_chain: ChainId,
+        source_asset: Option<Address>,
+        target_chain: ChainId,
+    ) -> Vec<super::Asset> {
+        let Some(source_kind) = self.get(&(source_chain, source_asset).into()) else {
+            return vec![];
+        };
+
+        self.iter()
+            .filter(|(key, kind)| *kind == source_kind && key.chain == target_chain)
+            .map(|(key, _)| key.address.into())
+            .collect()
+    }
+
     /// Load from a YAML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
         let file = std::fs::File::open(path)?;
@@ -155,5 +175,29 @@ mod tests {
         default_registry.save_to_file(file.path()).unwrap();
 
         assert_eq!(default_registry, CoinRegistry::load_from_file(file.path()).unwrap());
+    }
+
+    #[test]
+    fn test_get_from_other_chain() {
+        let registry = CoinRegistry::default();
+        
+        // Test ETH equivalents
+        let ethereum: ChainId = Chain::mainnet().into();
+        let odyssey: ChainId = NamedChain::Odyssey.into();
+        
+        // ETH on mainnet -> ETH on odyssey
+        let eth_on_odyssey = registry.get_from_other_chain(ethereum, None, odyssey);
+        assert_eq!(eth_on_odyssey.len(), 1);
+        assert_eq!(eth_on_odyssey[0], super::super::Asset::Native);
+        
+        // USDT on ethereum -> USDT on odyssey
+        let usdt_address = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
+        let usdt_on_odyssey = registry.get_from_other_chain(ethereum, Some(usdt_address), odyssey);
+        assert_eq!(usdt_on_odyssey.len(), 2); // There are 2 USDT addresses on odyssey
+        
+        // Non-existent token
+        let random_address = address!("0x0000000000000000000000000000000000000000");
+        let not_found = registry.get_from_other_chain(ethereum, Some(random_address), odyssey);
+        assert_eq!(not_found.len(), 0);
     }
 }

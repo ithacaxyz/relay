@@ -2,7 +2,7 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetWithInfo, CoinRegistry,
+        Asset, AssetDiffs, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
@@ -20,7 +20,6 @@ use alloy::{
 use schnellru::{ByLength, LruMap};
 use std::{
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
 };
 use tokio::{
@@ -57,8 +56,6 @@ pub enum AssetInfoServiceMessage {
 #[derive(Debug, Clone)]
 pub struct AssetInfoServiceHandle {
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
-    /// Coin registry.
-    coin_registry: Arc<CoinRegistry>,
 }
 
 impl AssetInfoServiceHandle {
@@ -223,26 +220,6 @@ impl AssetInfoServiceHandle {
         Ok(builder.build(metadata, tokens_uris))
     }
 
-    /// Returns all equivalent [`Asset`] on `target_chain`, given a `source_chain` and
-    /// `source_asset`.
-    ///
-    /// A none `source_asset` represents the source chain native asset.
-    pub fn get_from_other_chain(
-        &self,
-        source_chain: ChainId,
-        source_asset: Option<Address>,
-        target_chain: ChainId,
-    ) -> Vec<Asset> {
-        let Some(source_kind) = self.coin_registry.get(&(source_chain, source_asset).into()) else {
-            return vec![];
-        };
-
-        self.coin_registry
-            .iter()
-            .filter(|(key, kind)| *kind == source_kind && key.chain == target_chain)
-            .map(|(key, _)| key.address.into())
-            .collect()
-    }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
 ///
@@ -256,22 +233,19 @@ pub struct AssetInfoService {
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
     /// Incoming messages for the service.
     command_rx: UnboundedReceiver<AssetInfoServiceMessage>,
-    /// Coin registry.
-    coin_registry: Arc<CoinRegistry>,
 }
 
 impl AssetInfoService {
     /// Creates a new [`AssetInfoService`].
-    pub fn new(capacity: u32, coin_registry: Arc<CoinRegistry>) -> Self {
+    pub fn new(capacity: u32) -> Self {
         let (command_tx, command_rx) = unbounded_channel();
-        Self { cache: LruMap::new(ByLength::new(capacity)), command_tx, command_rx, coin_registry }
+        Self { cache: LruMap::new(ByLength::new(capacity)), command_tx, command_rx }
     }
 
     /// Returns a new handle connected to this service.
     pub fn handle(&self) -> AssetInfoServiceHandle {
         AssetInfoServiceHandle {
             command_tx: self.command_tx.clone(),
-            coin_registry: self.coin_registry.clone(),
         }
     }
 
