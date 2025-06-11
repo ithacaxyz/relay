@@ -33,6 +33,7 @@ If no `--config` flag is given, a default `relay.yaml` is created in the working
 Similarly, if no `--registry` flag is given, a default registry configuration file `registry.yaml` is created in the working directory.
 
 Examples:
+
 ```yaml
 # relay.yaml
 
@@ -62,7 +63,6 @@ cargo test
 
 End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) under a git submodule located at `tests/account`. These tests depend on building certain these contracts.
 
-
 1. **Prerequisites**
 
    Make sure [Foundry](https://getfoundry.sh/) is installed and available in your PATH.
@@ -76,8 +76,8 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 3. **Build the contracts**
 
    ```bash
-   $ cd tests/account
-   $ forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol && forge build lib/solady/test/utils/mocks/MockERC721.sol
+   cd tests/account
+   forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol && forge build lib/solady/test/utils/mocks/MockERC721.sol
    ```
 
 4. **Run the Tests**
@@ -85,7 +85,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
    You can run the tests still in the same directory as before.
 
    ```bash
-    $ TEST_CONTRACTS=$(pwd)/out cargo test -- e2e
+   TEST_CONTRACTS=$(pwd)/out cargo test -- e2e
    ```
 
    More advanced options are available through the following environment variables with `.env` support.
