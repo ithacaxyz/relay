@@ -82,7 +82,7 @@ pub struct Args {
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "300")]
     pub rate_ttl: Duration,
     /// The constant rate for the price oracle. Used for testing.
-    #[arg(long, value_name = "RATE", default_value = None)]
+    #[arg(long, value_name = "RATE")]
     pub constant_rate: Option<f64>,
     /// Extra buffer added to Intent gas estimates.
     #[arg(long, value_name = "INTENT_GAS", default_value_t = INTENT_GAS_BUFFER)]
