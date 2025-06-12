@@ -211,7 +211,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
-        AccountRpc::new(relay.clone(), Resend::new(resend_api_key), storage.clone()).into_rpc()
+        AccountRpc::new(relay.clone(), Resend::new(resend_api_key), storage.clone(), config.porto_base_url.clone()).into_rpc()
     });
     let mut rpc = relay.into_rpc();
 

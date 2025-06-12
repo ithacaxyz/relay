@@ -50,6 +50,9 @@ pub struct RelayConfig {
     pub secrets: SecretsConfig,
     /// Database URL.
     pub database_url: Option<String>,
+    /// Porto base URL.
+    #[serde(rename = "portoBaseUrl")]
+    pub porto_base_url: Option<String>,
 }
 
 /// Server configuration.
@@ -423,6 +426,12 @@ impl RelayConfig {
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);
+        self
+    }
+
+    /// Sets the Porto base URL.
+    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
+        self.porto_base_url = value.or(self.porto_base_url);
         self
     }
 
