@@ -888,18 +888,19 @@ impl Relay {
                             ttl: SystemTime::now()
                                 .checked_add(self.inner.quote_config.ttl)
                                 .expect("should never overflow"),
+                            multi_chain_root: None,
                         },
                     )
                 } else {
                     let asset: Asset = asset.into();
-                    let funding_intents = try_join_all(funding_chains.into_iter().enumerate().map(
+                    let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                         async |(leaf, (chain_id, amount))| {
                             self.prepare_calls_inner(
                                 PrepareCallsParameters::build_funding_intent(
                                     eoa,
-                                    chain_id,
+                                    *chain_id,
                                     asset,
-                                    amount,
+                                    *amount,
                                     Address::ZERO,
                                     request_key.clone(),
                                 ),
@@ -934,7 +935,18 @@ impl Relay {
                             ttl: SystemTime::now()
                                 .checked_add(self.inner.quote_config.ttl)
                                 .expect("should never overflow"),
-                        },
+                            multi_chain_root: None,
+                        }
+                        .with_merkle_payload(
+                            funding_chains
+                                .iter()
+                                .map(|(chain, _)| {
+                                    self.provider(*chain)
+                                        .map(|p| (p, self.inner.contracts.orchestrator.address))
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
+                        )
+                        .await?,
                     )
                 }
             } else {
@@ -955,6 +967,7 @@ impl Relay {
                         ttl: SystemTime::now()
                             .checked_add(self.inner.quote_config.ttl)
                             .expect("should never overflow"),
+                        multi_chain_root: None,
                     },
                 )
             };
@@ -969,10 +982,9 @@ impl Relay {
             (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
         };
 
-        // todo: if multichain, digest becomes merkle sig
-        // Calculate the eip712 digest that the user will need to sign.
+        // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_eip712_data(self.orchestrator(), &provider)
+            .compute_signing_digest(self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 

@@ -8,10 +8,9 @@ use alloy::{
 use alloy_merkle_tree::tree::{MerkleProof, MerkleTree};
 use futures_util::future::try_join_all;
 
-/// Cached merkle tree data for a specific orchestrator.
+/// Cached merkle tree data.
 #[derive(Debug)]
 struct TreeCache {
-    orchestrator: Address,
     tree: MerkleTree,
     leaves: Vec<B256>,
 }
@@ -24,29 +23,25 @@ struct TreeCache {
 /// The merkle tree is cached after first computation for efficiency.
 #[derive(Debug)]
 pub struct Intents {
-    intents: Vec<Intent>,
+    /// Intents with respective provider and orchestrator address
+    intents: Vec<(Intent, DynProvider, Address)>,
     cached_tree: Option<TreeCache>,
 }
 
 impl Intents {
-    /// Creates a new `Intents` collection from a vector of intents.
+    /// Creates a new `Intents` collection from a vector of intents and matching providers &
+    /// orchestrator addresses.
     ///
     /// The order of intents is preserved as provided.
-    pub fn new(intents: Vec<Intent>) -> Self {
+    pub fn new(intents: Vec<(Intent, DynProvider, Address)>) -> Self {
         Self { intents, cached_tree: None }
     }
 
     /// Computes EIP-712 signing hashes for all intents.
-    async fn compute_leaf_hashes(
-        &self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> eyre::Result<Vec<B256>> {
-        Ok(try_join_all(
-            self.intents
-                .iter()
-                .map(|intent| intent.compute_eip712_data(orchestrator_address, provider)),
-        )
+    async fn compute_leaf_hashes(&self) -> eyre::Result<Vec<B256>> {
+        Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
+            intent.compute_eip712_data(*orchestrator_address, provider)
+        }))
         .await?
         .into_iter()
         .map(|(hash, _)| hash)
@@ -64,24 +59,12 @@ impl Intents {
     }
 
     /// Gets or computes the cached tree and leaves.
-    async fn get_or_compute_tree(
-        &mut self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> eyre::Result<&TreeCache> {
+    async fn get_or_compute_tree(&mut self) -> eyre::Result<&TreeCache> {
         // Check if we have a valid cache for this orchestrator
-        if self.cached_tree.is_none()
-            || self
-                .cached_tree
-                .as_ref()
-                .is_some_and(|cache| cache.orchestrator != orchestrator_address)
-        {
-            let leaves = self.compute_leaf_hashes(orchestrator_address, provider).await?;
-            self.cached_tree = Some(TreeCache {
-                orchestrator: orchestrator_address,
-                tree: Self::build_tree(leaves.iter().copied()),
-                leaves,
-            });
+        if self.cached_tree.is_none() {
+            let leaves = self.compute_leaf_hashes().await?;
+            self.cached_tree =
+                Some(TreeCache { tree: Self::build_tree(leaves.iter().copied()), leaves });
         }
 
         Ok(self.cached_tree.as_ref().expect("cache should exist after computation"))
@@ -96,16 +79,12 @@ impl Intents {
     /// The leaf hashes are the EIP-712 signing hashes that would be signed by users,
     /// ensuring the merkle root represents the exact intents that were authorized.
     /// The tree is cached after first computation for efficiency.
-    pub async fn root(
-        &mut self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> eyre::Result<B256> {
+    pub async fn root(&mut self) -> eyre::Result<B256> {
         if self.intents.is_empty() {
             return Ok(B256::ZERO);
         }
 
-        Ok(self.get_or_compute_tree(orchestrator_address, provider).await?.tree.root)
+        Ok(self.get_or_compute_tree().await?.tree.root)
     }
 
     /// Gets a merkle proof for the intent at the given index.
@@ -115,17 +94,12 @@ impl Intents {
     /// The proof can be used to verify that a specific intent is included in
     /// the batch without needing to know all other intents. This is useful for
     /// on-chain verification where gas costs need to be minimized.
-    pub async fn get_proof(
-        &mut self,
-        index: usize,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> eyre::Result<Option<MerkleProof>> {
+    pub async fn get_proof(&mut self, index: usize) -> eyre::Result<Option<MerkleProof>> {
         if index >= self.intents.len() {
             return Ok(None);
         }
 
-        let cache = self.get_or_compute_tree(orchestrator_address, provider).await?;
+        let cache = self.get_or_compute_tree().await?;
         Ok(cache.tree.create_proof(&cache.leaves[index]))
     }
 
