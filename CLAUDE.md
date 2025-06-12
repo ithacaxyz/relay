@@ -95,6 +95,31 @@ The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 ac
 - OpenTelemetry tracing for observability
 - WebSocket and HTTP provider support for chain connections
 
+### Testing Guidelines
+
+When creating tests that require a provider or chain interaction:
+- **Always use the test environment from `tests/e2e/environment.rs`**
+- Do not create standalone provider instances or custom test setups
+- The e2e environment provides:
+  - Pre-configured Anvil instance (or external node support)
+  - Deployed test contracts (orchestrator, delegation, simulator, ERC20s, ERC721)
+  - Funded test accounts and signers
+  - Relay service integration
+  - Proper chain configuration
+
+Example:
+```rust
+use crate::e2e::Environment;
+
+#[tokio::test]
+async fn test_with_provider() {
+    let env = Environment::setup().await.unwrap();
+    // Use env.provider for chain interactions
+    // Use env.relay_endpoint for relay RPC calls
+    // Access deployed contracts via env.orchestrator, env.delegation, etc.
+}
+```
+
 ## GitHub Integration
 
 When you need to fetch information from GitHub (issues, pull requests, releases, etc.), always prefer using the GitHub CLI (`gh`) over web fetching. The `gh` command provides direct access to GitHub's API and is more reliable than web scraping.
