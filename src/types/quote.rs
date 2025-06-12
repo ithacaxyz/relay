@@ -8,8 +8,26 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// A relay-signed [`Quote`].
-pub type SignedQuote = Signed<Quote>;
+/// A relay-signed [`Quotes`].
+pub type SignedQuotes = Signed<Quotes>;
+
+/// A set of quotes from the relay with a set of intents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quotes {
+    /// A quote for each intent.
+    ///
+    /// For a single-chain workflow, this will have exactly one item, the output intent.
+    ///
+    /// For a multi-chain workflow, this will have multiple items, where the last one is the output
+    /// intent.
+    pub quotes: Vec<Quote>,
+    /// The time at which this estimate expires.
+    ///
+    /// This is a UNIX timestamp in seconds.
+    #[serde(with = "crate::serde::timestamp")]
+    pub ttl: SystemTime,
+}
 
 /// A quote from a relay for a given [`Intent`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,8 +37,6 @@ pub struct Quote {
     pub chain_id: ChainId,
     /// Output intent.
     pub output: Intent,
-    /// Funding intent
-    pub inputs: Vec<(ChainId, Intent)>,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
     /// Price of the ETH in the [`Intent::paymentToken`] in wei.
@@ -32,11 +48,6 @@ pub struct Quote {
     pub tx_gas: u64,
     /// The fee estimate for the action in the destination chains native token.
     pub native_fee_estimate: Eip1559Estimation,
-    /// The time at which this estimate expires.
-    ///
-    /// This is a UNIX timestamp in seconds.
-    #[serde(with = "crate::serde::timestamp")]
-    pub ttl: SystemTime,
     /// An optional unsigned authorization item.
     ///
     /// The account in `intent.eoa` will be delegated to this address.
@@ -46,12 +57,6 @@ pub struct Quote {
 }
 
 impl Quote {
-    /// Add a signature turning the quote into a [`SignedQuote`].
-    pub fn into_signed(self, signature: Signature) -> SignedQuote {
-        let digest = self.digest();
-        SignedQuote::new_unchecked(self, signature, digest)
-    }
-
     /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
@@ -60,9 +65,23 @@ impl Quote {
             hasher.update(address);
         }
         hasher.update(self.output.digest());
-        for (chain, intent) in &self.inputs {
-            hasher.update(chain.to_be_bytes());
-            hasher.update(intent.digest());
+        hasher.update(self.orchestrator);
+        hasher.finalize()
+    }
+}
+
+impl Quotes {
+    /// Add a signature turning the quotes into a [`SignedQuotes`].
+    pub fn into_signed(self, signature: Signature) -> SignedQuotes {
+        let digest = self.digest();
+        SignedQuotes::new_unchecked(self, signature, digest)
+    }
+
+    /// Compute a digest of the quotes for signing.
+    pub fn digest(&self) -> B256 {
+        let mut hasher = Keccak256::new();
+        for quote in &self.quotes {
+            hasher.update(quote.digest());
         }
         hasher.update(
             self.ttl
@@ -71,7 +90,6 @@ impl Quote {
                 .as_secs()
                 .to_be_bytes(),
         );
-        hasher.update(self.orchestrator);
         hasher.finalize()
     }
 }
