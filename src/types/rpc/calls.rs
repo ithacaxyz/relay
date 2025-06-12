@@ -5,7 +5,7 @@ use crate::{
     error::{IntentError, RelayError},
     types::{
         Account, Asset, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, IERC20, Key,
-        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
@@ -251,17 +251,17 @@ pub struct PrepareCallsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PrepareCallsContext {
-    /// The [`SignedQuote`] of the prepared call bundle.
+    /// The [`SignedQuotes`] of the prepared call bundle.
     #[serde(rename = "quote")]
-    Quote(Box<SignedQuote>),
+    Quote(Box<SignedQuotes>),
     /// The [`PreCall`] of the prepared call bundle.
     #[serde(rename = "preCall")]
     PreCall(SignedCall),
 }
 
 impl PrepareCallsContext {
-    /// Initializes [`PrepareCallsContext`] with a [`SignedQuote`].
-    pub fn with_quote(quote: SignedQuote) -> Self {
+    /// Initializes [`PrepareCallsContext`] with [`SignedQuotes`].
+    pub fn with_quotes(quote: SignedQuotes) -> Self {
         Self::Quote(Box::new(quote))
     }
 
@@ -270,24 +270,24 @@ impl PrepareCallsContext {
         Self::PreCall(precall)
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote(&self) -> Option<&SignedQuote> {
+    /// Returns quotes immutable reference if it exists.
+    pub fn quote(&self) -> Option<&SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
+    /// Returns quotes mutable reference if it exists.
+    pub fn quote_mut(&mut self) -> Option<&mut SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Consumes self and returns quote if it exists.
-    pub fn take_quote(self) -> Option<SignedQuote> {
+    /// Consumes self and returns quotes if it exists.
+    pub fn take_quote(self) -> Option<SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(*signed),
             PrepareCallsContext::PreCall(_) => None,
@@ -309,8 +309,10 @@ impl PrepareCallsContext {
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
-            PrepareCallsContext::Quote(quote) => {
-                quote.ty().output.compute_eip712_data(orchestrator_address, provider).await
+            PrepareCallsContext::Quote(_quotes) => {
+                // todo(onbjerg): this needs to be a tree root
+                // quote.ty().output.compute_eip712_data(orchestrator_address, provider).await
+                todo!()
             }
             PrepareCallsContext::PreCall(pre_call) => {
                 pre_call.compute_eip712_data(orchestrator_address, provider).await

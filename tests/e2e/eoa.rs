@@ -101,7 +101,7 @@ impl MockAccount {
     /// Prepares a simple transaction from the account which is ready to be sent to the transacton
     /// service.
     pub async fn prepare_tx(&self, env: &Environment) -> RelayTransaction {
-        let PrepareCallsResponse { mut context, digest, .. } = env
+        let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 required_funds: vec![],
@@ -120,7 +120,9 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().output.signature = Signature {
+        // todo(onbjerg): this assumes a single intent
+        let mut quote = context.take_quote().unwrap().ty().quotes[0].clone();
+        quote.output.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,
@@ -128,6 +130,6 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(context.take_quote().unwrap(), None)
+        RelayTransaction::new(quote, None)
     }
 }
