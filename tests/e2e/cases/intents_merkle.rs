@@ -89,10 +89,10 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
             .expect("Should get proof for valid index");
 
         // Verify proof using alloy-merkle-tree
-        assert!(MerkleTree::verify_proof(&proof), "Proof for intent {} should be valid", i);
+        assert!(MerkleTree::verify_proof(&proof), "Proof for intent {i} should be valid");
 
         // Verify the proof root matches our calculated root
-        assert_eq!(proof.root, root, "Proof root should match calculated root for intent {}", i);
+        assert_eq!(proof.root, root, "Proof root should match calculated root for intent {i}");
     }
 
     // Test invalid index
@@ -142,8 +142,7 @@ pub async fn test_large_intents_batch(env: &Environment) -> eyre::Result<()> {
 
         assert!(
             MerkleTree::verify_proof(&proof),
-            "Proof for intent {} in large batch should be valid",
-            i
+            "Proof for intent {i} in large batch should be valid"
         );
     }
 
