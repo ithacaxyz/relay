@@ -14,5 +14,6 @@ mod simple;
 mod upgrade;
 pub use upgrade::{upgrade_account_eagerly, upgrade_account_lazily};
 mod fees;
+mod intents_merkle;
 mod signature;
 mod transactions;
