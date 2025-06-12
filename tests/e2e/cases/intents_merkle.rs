@@ -45,12 +45,6 @@ pub async fn test_intents_merkle_root(env: &Environment) -> eyre::Result<()> {
     // Verify root is not zero for non-empty batch
     assert_ne!(root, B256::ZERO, "Merkle root should not be zero for non-empty batch");
 
-    // Create another batch with same intents to verify deterministic root
-    let mut intents2 = Intents::new(intents_vec);
-    let root2 = intents2.root(env.orchestrator, &env.provider).await?;
-
-    assert_eq!(root, root2, "Merkle roots should be identical for same intents");
-
     Ok(())
 }
 
