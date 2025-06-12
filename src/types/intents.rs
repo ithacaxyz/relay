@@ -138,25 +138,4 @@ impl Intents {
     pub fn is_empty(&self) -> bool {
         self.intents.is_empty()
     }
-
-    /// Returns a reference to the intent at the given index.
-    pub fn get(&self, index: usize) -> Option<&Intent> {
-        self.intents.get(index)
-    }
-
-    /// Returns an iterator over the intents.
-    pub fn iter(&self) -> std::slice::Iter<'_, Intent> {
-        self.intents.iter()
-    }
-
-    /// Returns a reference to the underlying vector of intents.
-    pub fn as_slice(&self) -> &[Intent] {
-        &self.intents
-    }
-}
-
-impl From<Vec<Intent>> for Intents {
-    fn from(intents: Vec<Intent>) -> Self {
-        Self::new(intents)
-    }
 }
