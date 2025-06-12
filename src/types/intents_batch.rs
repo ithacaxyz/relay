@@ -8,6 +8,14 @@ use alloy::{
 use alloy_merkle_tree::tree::{MerkleProof, MerkleTree};
 use futures_util::future::try_join_all;
 
+/// Cached merkle tree data for a specific orchestrator.
+#[derive(Debug)]
+struct TreeCache {
+    orchestrator: Address,
+    tree: MerkleTree,
+    leaves: Vec<B256>,
+}
+
 /// A wrapper for multiple intents that provides merkle tree operations.
 ///
 /// This struct enables efficient verification of intent batches on-chain by
@@ -18,13 +26,15 @@ use futures_util::future::try_join_all;
 #[derive(Debug)]
 pub struct Intents {
     intents: Vec<Intent>,
-    tree: Option<MerkleTree>,
-    leaves: Option<Vec<B256>>,
+    cached_tree: Option<TreeCache>,
 }
 
 impl Clone for Intents {
     fn clone(&self) -> Self {
-        Self { intents: self.intents.clone(), tree: None, leaves: None }
+        Self {
+            intents: self.intents.clone(),
+            cached_tree: None, // Don't clone the cache
+        }
     }
 }
 
@@ -33,24 +43,22 @@ impl Intents {
     ///
     /// The order of intents is preserved as provided.
     pub fn new(intents: Vec<Intent>) -> Self {
-        Self { intents, tree: None, leaves: None }
+        Self { intents, cached_tree: None }
     }
 
     /// Computes EIP-712 signing hashes for all intents in parallel.
-    ///
-    /// Returns an iterator over the hashes.
     async fn compute_leaf_hashes(
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<impl Iterator<Item = B256>> {
+    ) -> eyre::Result<Vec<B256>> {
         let eip712_futures = self
             .intents
             .iter()
             .map(|intent| intent.compute_eip712_data(orchestrator_address, provider));
 
         let eip712_results = try_join_all(eip712_futures).await?;
-        Ok(eip712_results.into_iter().map(|(hash, _)| hash))
+        Ok(eip712_results.into_iter().map(|(hash, _)| hash).collect())
     }
 
     /// Builds a merkle tree from the given leaf hashes.
@@ -68,18 +76,20 @@ impl Intents {
         &mut self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<(&[B256], &MerkleTree)> {
-        // If we don't have a cached tree, compute it
-        if self.tree.is_none() || self.leaves.is_none() {
-            let leaves: Vec<B256> =
-                self.compute_leaf_hashes(orchestrator_address, provider).await?.collect();
+    ) -> eyre::Result<&TreeCache> {
+        // Check if we have a valid cache for this orchestrator
+        let needs_compute = match &self.cached_tree {
+            Some(cache) => cache.orchestrator != orchestrator_address,
+            None => true,
+        };
+
+        if needs_compute {
+            let leaves = self.compute_leaf_hashes(orchestrator_address, provider).await?;
             let tree = Self::build_tree(leaves.iter().copied());
-            self.tree = Some(tree);
-            self.leaves = Some(leaves);
+            self.cached_tree = Some(TreeCache { orchestrator: orchestrator_address, tree, leaves });
         }
 
-        // Return cached values
-        Ok((self.leaves.as_ref().expect("should exist"), self.tree.as_ref().expect("should exist")))
+        Ok(self.cached_tree.as_ref().expect("cache should exist after computation"))
     }
 
     /// Returns the merkle root of all intents.
@@ -100,8 +110,8 @@ impl Intents {
             return Ok(B256::ZERO);
         }
 
-        let (_, tree) = self.get_or_compute_tree(orchestrator_address, provider).await?;
-        Ok(tree.root)
+        let cache = self.get_or_compute_tree(orchestrator_address, provider).await?;
+        Ok(cache.tree.root)
     }
 
     /// Gets a merkle proof for the intent at the given index.
@@ -121,8 +131,8 @@ impl Intents {
             return Ok(None);
         }
 
-        let (leaves, tree) = self.get_or_compute_tree(orchestrator_address, provider).await?;
-        Ok(tree.create_proof(&leaves[index]))
+        let cache = self.get_or_compute_tree(orchestrator_address, provider).await?;
+        Ok(cache.tree.create_proof(&cache.leaves[index]))
     }
 
     /// Returns the number of intents.
@@ -202,8 +212,8 @@ mod tests {
 
         assert_eq!(intents.len(), 2);
         assert!(!intents.is_empty());
-        assert_eq!(intents.get(0).unwrap().nonce, uint!(1_U256));
-        assert_eq!(intents.get(1).unwrap().nonce, uint!(2_U256));
+        assert_eq!(intents.get(0).expect("should have first intent").nonce, uint!(1_U256));
+        assert_eq!(intents.get(1).expect("should have second intent").nonce, uint!(2_U256));
     }
 
     #[test]
@@ -221,15 +231,15 @@ mod tests {
 
         // Verify order is preserved as provided
         assert_eq!(
-            intents.get(0).unwrap().paymentToken,
+            intents.get(0).expect("should have first intent").paymentToken,
             address!("0000000000000000000000000000000000000003")
         );
         assert_eq!(
-            intents.get(1).unwrap().paymentToken,
+            intents.get(1).expect("should have second intent").paymentToken,
             address!("0000000000000000000000000000000000000001")
         );
         assert_eq!(
-            intents.get(2).unwrap().paymentToken,
+            intents.get(2).expect("should have third intent").paymentToken,
             address!("0000000000000000000000000000000000000002")
         );
     }
