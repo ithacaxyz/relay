@@ -115,19 +115,14 @@ pub async fn test_empty_intents_batch(env: &Environment) -> eyre::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn intents_merkle_root() -> eyre::Result<()> {
+async fn intents_merkle() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    test_intents_merkle_root(&env).await
-}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn intents_merkle_proofs() -> eyre::Result<()> {
-    let env = Environment::setup().await?;
-    test_intents_merkle_proofs(&env).await
-}
+    tokio::try_join!(
+        test_intents_merkle_root(&env),
+        test_intents_merkle_proofs(&env),
+        test_empty_intents_batch(&env)
+    )?;
 
-#[tokio::test(flavor = "multi_thread")]
-async fn empty_intents_batch() -> eyre::Result<()> {
-    let env = Environment::setup().await?;
-    test_empty_intents_batch(&env).await
+    Ok(())
 }
