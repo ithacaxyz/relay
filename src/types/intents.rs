@@ -70,12 +70,12 @@ impl Intents {
         provider: &DynProvider,
     ) -> eyre::Result<&TreeCache> {
         // Check if we have a valid cache for this orchestrator
-        let needs_compute = match &self.cached_tree {
-            Some(cache) => cache.orchestrator != orchestrator_address,
-            None => true,
-        };
-
-        if needs_compute {
+        if self.cached_tree.is_none()
+            || self
+                .cached_tree
+                .as_ref()
+                .is_some_and(|cache| cache.orchestrator != orchestrator_address)
+        {
             let leaves = self.compute_leaf_hashes(orchestrator_address, provider).await?;
             self.cached_tree = Some(TreeCache {
                 orchestrator: orchestrator_address,
@@ -105,8 +105,7 @@ impl Intents {
             return Ok(B256::ZERO);
         }
 
-        let cache = self.get_or_compute_tree(orchestrator_address, provider).await?;
-        Ok(cache.tree.root)
+        Ok(self.get_or_compute_tree(orchestrator_address, provider).await?.tree.root)
     }
 
     /// Gets a merkle proof for the intent at the given index.

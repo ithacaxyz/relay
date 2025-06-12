@@ -33,8 +33,8 @@ pub use key::*;
 mod intent;
 pub use intent::*;
 
-mod intents_batch;
-pub use intents_batch::*;
+mod intents;
+pub use intents::*;
 
 mod onramp;
 pub use onramp::*;
