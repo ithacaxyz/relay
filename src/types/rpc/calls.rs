@@ -302,17 +302,23 @@ impl PrepareCallsContext {
         }
     }
 
-    /// Calculate the eip712 digest that the user will need to sign.
-    pub async fn compute_eip712_data(
+    /// Calculate the digest that the user will need to sign.
+    ///
+    /// It will be a eip712 signing hash in a single chain intent and a merkle root in a multi chain
+    /// intent.
+    pub async fn compute_signing_digest(
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
-            PrepareCallsContext::Quote(_quotes) => {
-                // todo(onbjerg): this needs to be a tree root
-                // quote.ty().output.compute_eip712_data(orchestrator_address, provider).await
-                todo!()
+            PrepareCallsContext::Quote(context) => {
+                let output_quote = context.ty().quotes.last().expect("should exist");
+                if let Some(root) = context.ty().multi_chain_root {
+                    Ok((root, TypedData::from_struct(&output_quote.output, None)))
+                } else {
+                    output_quote.output.compute_eip712_data(orchestrator_address, provider).await
+                }
             }
             PrepareCallsContext::PreCall(pre_call) => {
                 pre_call.compute_eip712_data(orchestrator_address, provider).await
