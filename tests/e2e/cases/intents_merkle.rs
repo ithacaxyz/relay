@@ -1,15 +1,18 @@
 //! Intents merkle tree end-to-end test cases
 
 use crate::e2e::Environment;
-use alloy::primitives::{Address, B256, Bytes, U256, uint};
+use alloy::{
+    primitives::{Address, B256, Bytes, U256, uint},
+    sol_types::SolValue,
+};
 use alloy_merkle_tree::tree::MerkleTree;
-use relay::types::{Intent, Intents};
+use relay::types::{Call, Intent, Intents};
 
 /// Creates a test intent with specified nonce and payment token
 fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Intent {
     Intent {
         eoa,
-        executionData: Bytes::default(),
+        executionData: Vec::<Call>::new().abi_encode().into(),
         nonce,
         payer: Address::ZERO,
         paymentToken: payment_token,
