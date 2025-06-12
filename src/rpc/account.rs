@@ -83,12 +83,9 @@ impl AccountApiServer for AccountRpc {
             "Verify email address for Porto",
         )
         .with_text(&format!(
-            "Please verify your email address.\n\n\
-            Use the following link to verify your email address:\n\n\
+            "Click the following link to verify your email address:\n\n\
             {url}\n\n\
-            If you did not sign up for Porto, please ignore this email.\n\
-            This is an automated message. Please do NOT reply to this email.\n\
-            Thanks!"
+            If you did not create a Porto account, you can safely ignore this."
         ));
 
         self.client.emails.send(mail).await.map_err(|err| EmailError::InternalError(err.into()))?;
