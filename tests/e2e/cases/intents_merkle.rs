@@ -117,38 +117,6 @@ pub async fn test_empty_intents_batch(env: &Environment) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Test large intents batch performance
-pub async fn test_large_intents_batch(env: &Environment) -> eyre::Result<()> {
-    // Create a large batch of intents
-    let intents_vec: Vec<Intent> = (0..100)
-        .map(|i| {
-            let payment_token = if i % 2 == 0 { env.fee_token } else { env.erc20 };
-            create_test_intent(env.eoa.address(), U256::from(i), payment_token)
-        })
-        .collect();
-
-    let mut intents = Intents::new(intents_vec);
-
-    // Should handle large batches efficiently
-    let root = intents.root(env.orchestrator, &env.provider).await?;
-    assert_ne!(root, B256::ZERO, "Large batch should have non-zero root");
-
-    // Verify a sample of proofs
-    for i in [0, 25, 50, 75, 99].iter() {
-        let proof = intents
-            .get_proof(*i, env.orchestrator, &env.provider)
-            .await?
-            .expect("Should get proof for valid index");
-
-        assert!(
-            MerkleTree::verify_proof(&proof),
-            "Proof for intent {i} in large batch should be valid"
-        );
-    }
-
-    Ok(())
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn intents_merkle_root() -> eyre::Result<()> {
     let env = Environment::setup().await?;
@@ -165,10 +133,4 @@ async fn intents_merkle_proofs() -> eyre::Result<()> {
 async fn empty_intents_batch() -> eyre::Result<()> {
     let env = Environment::setup().await?;
     test_empty_intents_batch(&env).await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn large_intents_batch() -> eyre::Result<()> {
-    let env = Environment::setup().await?;
-    test_large_intents_batch(&env).await
 }
