@@ -39,8 +39,8 @@ pub struct RelayConfig {
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
     pub legacy_orchestrators: BTreeSet<Address>,
-    /// Previously deployed delegation implementations.
-    pub legacy_delegations: BTreeSet<Address>,
+    /// Previously deployed delegation proxies.
+    pub legacy_delegation_proxies: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Simulator address.
@@ -134,6 +134,8 @@ pub struct OnrampConfig {
 pub struct EmailConfig {
     /// Resend API key.
     pub resend_api_key: Option<String>,
+    /// Porto base URL.
+    pub porto_base_url: Option<String>,
 }
 
 /// Banxa API configuration.
@@ -253,7 +255,7 @@ impl Default for RelayConfig {
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
-            legacy_delegations: BTreeSet::new(),
+            legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
@@ -301,8 +303,8 @@ impl RelayConfig {
     }
 
     /// Sets a constant rate for the price oracle. Used for testing.
-    pub fn with_quote_constant_rate(mut self, constant_rate: f64) -> Self {
-        self.quote.constant_rate = Some(constant_rate);
+    pub fn with_quote_constant_rate(mut self, constant_rate: Option<f64>) -> Self {
+        self.quote.constant_rate = constant_rate.or(self.quote.constant_rate);
         self
     }
 
@@ -423,6 +425,12 @@ impl RelayConfig {
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);
+        self
+    }
+
+    /// Sets the Porto base URL.
+    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
+        self.email.porto_base_url = value.or(self.email.porto_base_url);
         self
     }
 
