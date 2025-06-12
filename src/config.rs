@@ -39,8 +39,8 @@ pub struct RelayConfig {
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
     pub legacy_orchestrators: BTreeSet<Address>,
-    /// Previously deployed delegation implementations.
-    pub legacy_delegations: BTreeSet<Address>,
+    /// Previously deployed delegation proxies.
+    pub legacy_delegation_proxies: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Simulator address.
@@ -253,7 +253,7 @@ impl Default for RelayConfig {
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
-            legacy_delegations: BTreeSet::new(),
+            legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
