@@ -546,12 +546,8 @@ enum QueueError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Intent, Quote, SignedQuote};
-    use alloy::{
-        eips::eip1559::Eip1559Estimation,
-        primitives::{Signature, U256},
-    };
-    use std::time::SystemTime;
+    use crate::types::{Intent, Quote};
+    use alloy::{eips::eip1559::Eip1559Estimation, primitives::U256};
 
     fn create_tx(sender: Address) -> RelayTransaction {
         let quote = Quote {
@@ -564,14 +560,10 @@ mod tests {
                 max_fee_per_gas: Default::default(),
                 max_priority_fee_per_gas: Default::default(),
             },
-            ttl: SystemTime::now(),
             authorization_address: Default::default(),
             orchestrator: Default::default(),
             output: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
-            inputs: vec![],
         };
-        let sig = Signature::new(Default::default(), Default::default(), Default::default());
-        let quote = SignedQuote::new_unchecked(quote, sig, Default::default());
         RelayTransaction::new(quote, None)
     }
 

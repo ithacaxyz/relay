@@ -1,4 +1,4 @@
-use crate::types::SignedQuote;
+use crate::types::Quote;
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
@@ -25,7 +25,7 @@ pub struct RelayTransaction {
     /// Id of the transaction.
     pub id: TxId,
     /// [`Intent`] to send.
-    pub quote: SignedQuote,
+    pub quote: Quote,
     /// EIP-7702 [`SignedAuthorization`] to attach, if any.
     pub authorization: Option<SignedAuthorization>,
     /// Trace context for the transaction.
@@ -37,7 +37,7 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
+    pub fn new(quote: Quote, authorization: Option<SignedAuthorization>) -> Self {
         Self {
             id: TxId(B256::random()),
             quote,
@@ -49,11 +49,11 @@ impl RelayTransaction {
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
-        let gas_limit = self.quote.ty().tx_gas;
+        let gas_limit = self.quote.tx_gas;
         let max_fee_per_gas = fees.max_fee_per_gas;
         let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
-        let quote = self.quote.ty();
+        let quote = &self.quote;
         let mut intent = quote.output.clone();
 
         let payment_amount = (quote.extra_payment
@@ -100,17 +100,17 @@ impl RelayTransaction {
 
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
-        self.quote.ty().chain_id
+        self.quote.chain_id
     }
 
     /// Returns the maximum fee we can afford for a transaction.
     pub fn max_fee_for_transaction(&self) -> u128 {
-        self.quote.ty().native_fee_estimate.max_fee_per_gas
+        self.quote.native_fee_estimate.max_fee_per_gas
     }
 
     /// Returns the EOA of the intent.
     pub fn eoa(&self) -> &Address {
-        &self.quote.ty().output.eoa
+        &self.quote.output.eoa
     }
 }
 
@@ -165,7 +165,7 @@ pub struct PendingTransaction {
 impl PendingTransaction {
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
-        self.tx.quote.ty().chain_id
+        self.tx.quote.chain_id
     }
 
     /// Returns the [`BundleId`] of the transaction.

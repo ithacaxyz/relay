@@ -434,7 +434,8 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         .await?;
 
     // Its 0 since the upgrade account intent uses a random nonce
-    assert!(response.context.take_quote().unwrap().ty().output.nonce == uint!(0_U256));
+    // todo(onbjerg): this assumes a single intent
+    assert!(response.context.take_quote().unwrap().ty().quotes[0].output.nonce == uint!(0_U256));
 
     Ok(())
 }

@@ -17,22 +17,20 @@ use crate::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
-        SignedCall, SignedCalls, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, VersionedContracts,
         rpc::{
-            AddressOrNative, Asset7811, AssetFilterItem, CallReceipt, CallStatusCode,
+            AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
             ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse,
             PrepareCallsContext, PrepareUpgradeAccountResponse, RelayCapabilities,
-            UpgradeAccountContext, UpgradeAccountDigests, ValidSignatureProof,
+            SendPreparedCallsCapabilities, UpgradeAccountContext, UpgradeAccountDigests,
+            ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
-    eips::eip7702::{
-        SignedAuthorization,
-        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    },
+    eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
     primitives::{Address, B256, Bytes, ChainId, U256, bytes},
     providers::{
         DynProvider, Provider,
@@ -68,7 +66,7 @@ use crate::{
     transactions::{RelayTransaction, TransactionStatus},
     types::{
         Account, CreatableAccount, Intent, KeyWith712Signer, Orchestrator, PartialAction,
-        PartialIntent, Quote, Signature, SignedQuote,
+        PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, GetKeysParameters,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
@@ -390,14 +388,10 @@ impl Relay {
             chain_id: request.chain_id,
             payment_token_decimals: token.decimals,
             output: intent,
-            inputs: vec![],
             extra_payment,
             eth_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
-            ttl: SystemTime::now()
-                .checked_add(self.inner.quote_config.ttl)
-                .expect("should never overflow"),
             authorization_address,
             orchestrator: *orchestrator.address(),
         };
@@ -406,84 +400,117 @@ impl Relay {
     }
 
     #[instrument(skip_all)]
-    async fn send_action(
+    async fn send_intents(
         &self,
-        mut quote: SignedQuote,
-        authorization: Option<SignedAuthorization>,
+        mut quotes: SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        key: CallKey,
     ) -> RpcResult<BundleId> {
-        let chain_id = quote.ty().chain_id;
-        let Chain { provider, transactions, .. } =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
-
-        // check that the authorization item matches what's in the quote
-        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
-            return Err(AuthError::InvalidAuthItem {
-                expected: quote.ty().authorization_address,
-                got: authorization.map(|auth| auth.address),
-            }
-            .into());
-        }
-
-        if let Some(auth) = &authorization {
-            if !auth.inner().chain_id().is_zero() {
-                return Err(AuthError::AuthItemNotChainAgnostic.into());
-            }
-
-            let expected_nonce = provider
-                .get_transaction_count(quote.ty().output.eoa)
-                .await
-                .map_err(RelayError::from)?;
-
-            if expected_nonce != auth.nonce {
-                return Err(AuthError::AuthItemInvalidNonce {
-                    expected: expected_nonce,
-                    got: auth.nonce,
-                }
-                .into());
-            }
-        } else {
-            let account = Account::new(quote.ty().output.eoa, provider);
-            if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.ty().output.eoa).into());
-            }
+        // if we do **not** get an error here, then the quote ttl must be in the past, which means
+        // it is expired
+        if SystemTime::now().duration_since(quotes.ty().ttl).is_ok() {
+            return Err(QuoteError::QuoteExpired.into());
         }
 
         // this can be done by just verifying the signature & intent hash against the rfq
         // ticket from `relay_estimateFee`'
-        if !quote
+        if !quotes
             .recover_address()
             .is_ok_and(|address| address == self.inner.quote_signer.address())
         {
             return Err(QuoteError::InvalidQuoteSignature.into());
         }
 
-        // if we do **not** get an error here, then the quote ttl must be in the past, which means
-        // it is expired
-        if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
-            return Err(QuoteError::QuoteExpired.into());
+        let bundle_id = BundleId(*quotes.hash()); // todo
+        for quote in quotes.ty_mut().quotes.iter_mut() {
+            let chain_id = quote.chain_id;
+            let Chain { provider, transactions, .. } =
+                self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+
+            let authorization_address = quote.authorization_address;
+            let intent = &mut quote.output;
+
+            // todo: if multichain, fill proof, otherwise use signature directly.
+            // Fill Intent with the fee payment signature (if exists).
+            intent.paymentSignature = capabilities.fee_signature.clone();
+
+            // Fill Intent with the user signature.
+            let key_hash = key.key_hash();
+            intent.signature = Signature {
+                innerSignature: signature.clone(),
+                keyHash: key_hash,
+                prehash: key.prehash,
+            }
+            .abi_encode_packed()
+            .into();
+
+            // Set non-eip712 payment fields. Since they are not included into the signature so we
+            // need to enforce it here.
+            intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
+
+            // If there's an authorization address in the quote, we need to fetch the signed one
+            // from storage.
+            let authorization = if authorization_address.is_some() {
+                self.inner
+                    .storage
+                    .read_account(&intent.eoa)
+                    .await
+                    .map(|opt| opt.map(|acc| acc.signed_authorization))?
+            } else {
+                None
+            };
+
+            // check that the authorization item matches what's in the quote
+            if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
+                return Err(AuthError::InvalidAuthItem {
+                    expected: quote.authorization_address,
+                    got: authorization.map(|auth| auth.address),
+                }
+                .into());
+            }
+
+            if let Some(auth) = &authorization {
+                if !auth.inner().chain_id().is_zero() {
+                    return Err(AuthError::AuthItemNotChainAgnostic.into());
+                }
+
+                let expected_nonce = provider
+                    .get_transaction_count(quote.output.eoa)
+                    .await
+                    .map_err(RelayError::from)?;
+
+                if expected_nonce != auth.nonce {
+                    return Err(AuthError::AuthItemInvalidNonce {
+                        expected: expected_nonce,
+                        got: auth.nonce,
+                    }
+                    .into());
+                }
+            } else {
+                let account = Account::new(quote.output.eoa, provider);
+                if !account.is_delegated().await? {
+                    return Err(AuthError::EoaNotDelegated(quote.output.eoa).into());
+                }
+            }
+
+            // set our payment recipient
+            quote.output.paymentRecipient = self.inner.fee_recipient;
+
+            let tx = RelayTransaction::new(quote.clone(), authorization.clone());
+            self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
+
+            let span = span!(
+                Level::INFO, "send tx",
+                otel.kind = ?SpanKind::Producer,
+                messaging.system = "pg",
+                messaging.destination.name = "tx",
+                messaging.operation.name = "send",
+                messaging.operation.type = "send",
+                messaging.message.id = %tx.id
+            );
+            transactions.send_transaction(tx).instrument(span).await?;
         }
-
-        // set our payment recipient
-        quote.ty_mut().output.paymentRecipient = self.inner.fee_recipient;
-
-        let tx = RelayTransaction::new(quote, authorization);
-
-        // TODO: Right now we only support a single transaction per action and per bundle, so we can
-        // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
-        // this is already supported by current storage API.
-        let bundle_id = BundleId(*tx.id);
-        self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
-
-        let span = span!(
-            Level::INFO, "send tx",
-            otel.kind = ?SpanKind::Producer,
-            messaging.system = "pg",
-            messaging.destination.name = "tx",
-            messaging.operation.name = "send",
-            messaging.operation.type = "send",
-            messaging.message.id = %tx.id
-        );
-        transactions.send_transaction(tx).instrument(span).await?;
 
         Ok(bundle_id)
     }
@@ -826,7 +853,7 @@ impl Relay {
                 return Err(IntentError::MissingKey.into());
             };
 
-            let (asset_diffs, quote) = if let Some((requested_asset, funds)) =
+            let (asset_diffs, quotes) = if let Some((requested_asset, funds)) =
                 request.required_funds.first()
             {
                 // Only query inventory, if funds have been requested in the target chain.
@@ -850,8 +877,19 @@ impl Relay {
 
                 if funding_chains.is_empty() {
                     // No funding chains required to execute the intent
-                    self.build_intent(&request, maybe_stored, calls, nonce, IntentKind::Single)
-                        .await?
+                    let (asset_diffs, quote) = self
+                        .build_intent(&request, maybe_stored, calls, nonce, IntentKind::Single)
+                        .await?;
+
+                    (
+                        asset_diffs,
+                        Quotes {
+                            quotes: vec![quote],
+                            ttl: SystemTime::now()
+                                .checked_add(self.inner.quote_config.ttl)
+                                .expect("should never overflow"),
+                        },
+                    )
                 } else {
                     let asset: Asset = asset.into();
                     let funding_intents = try_join_all(funding_chains.into_iter().enumerate().map(
@@ -872,7 +910,7 @@ impl Relay {
                     ))
                     .await?;
 
-                    let (asset_diffs, mut quote) = self
+                    let (asset_diffs, quote) = self
                         .build_intent(
                             &request,
                             maybe_stored,
@@ -882,36 +920,53 @@ impl Relay {
                         )
                         .await?;
 
-                    quote.inputs = funding_intents
-                        .iter()
-                        .map(|resp| {
-                            let funding = resp.context.quote().expect("should exist").ty();
-                            (funding.chain_id, funding.output.clone())
-                        })
-                        .collect();
-
                     // todo: assetdiffs should change
-                    (asset_diffs, quote)
+                    (
+                        asset_diffs,
+                        Quotes {
+                            quotes: funding_intents
+                                .iter()
+                                .flat_map(|resp| {
+                                    resp.context.quote().expect("should exist").ty().quotes.clone()
+                                })
+                                .chain(std::iter::once(quote))
+                                .collect(),
+                            ttl: SystemTime::now()
+                                .checked_add(self.inner.quote_config.ttl)
+                                .expect("should never overflow"),
+                        },
+                    )
                 }
             } else {
-                self.build_intent(
-                    &request,
-                    maybe_stored,
-                    calls,
-                    nonce,
-                    intent_kind.unwrap_or(IntentKind::Single),
+                let (asset_diffs, quote) = self
+                    .build_intent(
+                        &request,
+                        maybe_stored,
+                        calls,
+                        nonce,
+                        intent_kind.unwrap_or(IntentKind::Single),
+                    )
+                    .await?;
+
+                (
+                    asset_diffs,
+                    Quotes {
+                        quotes: vec![quote],
+                        ttl: SystemTime::now()
+                            .checked_add(self.inner.quote_config.ttl)
+                            .expect("should never overflow"),
+                    },
                 )
-                .await?
             };
 
             let sig = self
                 .inner
                 .quote_signer
-                .sign_hash(&quote.digest())
+                .sign_hash(&quotes.digest())
                 .await
                 .map_err(|err| RelayError::InternalError(err.into()))?;
 
-            (asset_diffs, PrepareCallsContext::with_quote(quote.into_signed(sig)))
+            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
         };
 
         // todo: if multichain, digest becomes merkle sig
@@ -1183,52 +1238,20 @@ impl RelayApiServer for Relay {
         request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
         let SendPreparedCallsParameters { capabilities, context, signature, key } = request;
-        let Some(mut quote) = context.take_quote() else {
+        let Some(quotes) = context.take_quote() else {
             return Err(QuoteError::QuoteNotFound.into());
         };
 
-        let authorization_address = quote.ty().authorization_address;
-        let intent = &mut quote.ty_mut().output;
+        // broadcasts intents in transactions
+        let bundle_id =
+            self.send_intents(quotes, capabilities, signature, key).await.inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to submit call bundle transaction.",
+                );
+            })?;
 
-        // todo: if multichain, fill proof
-        // Fill Intent with the fee payment signature (if exists).
-        intent.paymentSignature = capabilities.fee_signature;
-
-        // Fill Intent with the user signature.
-        let key_hash = key.key_hash();
-        intent.signature =
-            Signature { innerSignature: signature, keyHash: key_hash, prehash: key.prehash }
-                .abi_encode_packed()
-                .into();
-
-        // Set non-eip712 payment fields. Since they are not included into the signature so we need
-        // to enforce it here.
-        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
-
-        // If there's an authorization address in the quote, we need to fetch the signed one from
-        // storage.
-        let authorization = if authorization_address.is_some() {
-            self.inner
-                .storage
-                .read_account(&intent.eoa)
-                .await
-                .map(|opt| opt.map(|acc| acc.signed_authorization))?
-        } else {
-            None
-        };
-
-        // Broadcast transaction with Intent
-        let id = self.send_action(quote, authorization).await.inspect_err(|err| {
-            error!(
-                %err,
-                "Failed to submit call bundle transaction.",
-            );
-        })?;
-
-        // todo: for now it's fine, but this will change in the future.
-        let response = SendPreparedCallsResponse { id };
-
-        Ok(response)
+        Ok(SendPreparedCallsResponse { id: bundle_id })
     }
 
     async fn upgrade_account(&self, request: UpgradeAccountParameters) -> RpcResult<()> {
