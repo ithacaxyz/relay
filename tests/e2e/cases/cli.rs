@@ -48,6 +48,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 banxa_api_url: Url::from_str("https://api.banxa-sandbox.com").unwrap(),
                 banxa_api_key: Default::default(),
                 resend_api_key: Default::default(),
+                porto_base_url: Default::default(),
             },
             config.clone(),
             registry.clone(),

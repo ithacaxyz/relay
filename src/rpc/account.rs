@@ -50,13 +50,13 @@ pub struct AccountRpc {
 
 impl AccountRpc {
     /// Create a new account RPC module.
-    pub fn new(relay: Relay, client: Resend, storage: RelayStorage, porto_base_url: Option<String>) -> Self {
-        Self { 
-            relay, 
-            client, 
-            storage,
-            porto_base_url: porto_base_url.unwrap_or_else(|| "porto.sh".to_string()),
-        }
+    pub fn new(
+        relay: Relay,
+        client: Resend,
+        storage: RelayStorage,
+        porto_base_url: String,
+    ) -> Self {
+        Self { relay, client, storage, porto_base_url }
     }
 }
 

@@ -50,9 +50,6 @@ pub struct RelayConfig {
     pub secrets: SecretsConfig,
     /// Database URL.
     pub database_url: Option<String>,
-    /// Porto base URL.
-    #[serde(rename = "portoBaseUrl")]
-    pub porto_base_url: Option<String>,
 }
 
 /// Server configuration.
@@ -137,6 +134,8 @@ pub struct OnrampConfig {
 pub struct EmailConfig {
     /// Resend API key.
     pub resend_api_key: Option<String>,
+    /// Porto base URL.
+    pub porto_base_url: Option<String>,
 }
 
 /// Banxa API configuration.
@@ -431,7 +430,7 @@ impl RelayConfig {
 
     /// Sets the Porto base URL.
     pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
-        self.porto_base_url = value.or(self.porto_base_url);
+        self.email.porto_base_url = value.or(self.email.porto_base_url);
         self
     }
 
