@@ -22,20 +22,10 @@ struct TreeCache {
 /// providing merkle root calculation and proof generation for a list of intents.
 ///
 /// The merkle tree is cached after first computation for efficiency.
-/// ```
 #[derive(Debug)]
 pub struct Intents {
     intents: Vec<Intent>,
     cached_tree: Option<TreeCache>,
-}
-
-impl Clone for Intents {
-    fn clone(&self) -> Self {
-        Self {
-            intents: self.intents.clone(),
-            cached_tree: None, // Don't clone the cache
-        }
-    }
 }
 
 impl Intents {
@@ -46,19 +36,21 @@ impl Intents {
         Self { intents, cached_tree: None }
     }
 
-    /// Computes EIP-712 signing hashes for all intents in parallel.
+    /// Computes EIP-712 signing hashes for all intents.
     async fn compute_leaf_hashes(
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<Vec<B256>> {
-        let eip712_futures = self
-            .intents
-            .iter()
-            .map(|intent| intent.compute_eip712_data(orchestrator_address, provider));
-
-        let eip712_results = try_join_all(eip712_futures).await?;
-        Ok(eip712_results.into_iter().map(|(hash, _)| hash).collect())
+        Ok(try_join_all(
+            self.intents
+                .iter()
+                .map(|intent| intent.compute_eip712_data(orchestrator_address, provider)),
+        )
+        .await?
+        .into_iter()
+        .map(|(hash, _)| hash)
+        .collect())
     }
 
     /// Builds a merkle tree from the given leaf hashes.
@@ -85,8 +77,11 @@ impl Intents {
 
         if needs_compute {
             let leaves = self.compute_leaf_hashes(orchestrator_address, provider).await?;
-            let tree = Self::build_tree(leaves.iter().copied());
-            self.cached_tree = Some(TreeCache { orchestrator: orchestrator_address, tree, leaves });
+            self.cached_tree = Some(TreeCache {
+                orchestrator: orchestrator_address,
+                tree: Self::build_tree(leaves.iter().copied()),
+                leaves,
+            });
         }
 
         Ok(self.cached_tree.as_ref().expect("cache should exist after computation"))
@@ -153,11 +148,6 @@ impl Intents {
     /// Returns an iterator over the intents.
     pub fn iter(&self) -> std::slice::Iter<'_, Intent> {
         self.intents.iter()
-    }
-
-    /// Returns the underlying vector of intents.
-    pub fn into_inner(self) -> Vec<Intent> {
-        self.intents
     }
 
     /// Returns a reference to the underlying vector of intents.
