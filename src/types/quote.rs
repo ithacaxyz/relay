@@ -1,9 +1,12 @@
 //! Quote types.
 
-use crate::types::{Intent, Signed};
+use crate::{
+    error::{QuoteError, RelayError},
+    types::{Intent, Intents, Signed},
+};
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Signature, U256},
-    providers::utils::Eip1559Estimation,
+    providers::{DynProvider, utils::Eip1559Estimation},
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,6 +30,38 @@ pub struct Quotes {
     /// This is a UNIX timestamp in seconds.
     #[serde(with = "crate::serde::timestamp")]
     pub ttl: SystemTime,
+    /// Merkle root if it's a multichain
+    pub multi_chain_root: Option<B256>,
+}
+
+impl Quotes {
+    /// Sets the merkle payload to every quote.
+    pub async fn with_merkle_payload(
+        mut self,
+        providers: Vec<(DynProvider, Address)>,
+    ) -> Result<Self, RelayError> {
+        if self.quotes.len() != providers.len() {
+            return Err(QuoteError::InvalidNumberOfIntents {
+                expected: providers.len(),
+                got: self.quotes.len(),
+            }
+            .into());
+        }
+
+        let mut intents = Intents::new(
+            self.quotes
+                .iter()
+                .zip(providers)
+                .map(|(quote, (provider, orchestrator))| {
+                    (quote.output.clone(), provider, orchestrator)
+                })
+                .collect(),
+        );
+
+        self.multi_chain_root = Some(intents.root().await?);
+
+        Ok(self)
+    }
 }
 
 /// A quote from a relay for a given [`Intent`].
@@ -90,6 +125,9 @@ impl Quotes {
                 .as_secs()
                 .to_be_bytes(),
         );
+        if let Some(root) = self.multi_chain_root {
+            hasher.update(root);
+        }
         hasher.finalize()
     }
 }
