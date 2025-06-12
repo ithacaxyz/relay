@@ -134,6 +134,8 @@ pub struct OnrampConfig {
 pub struct EmailConfig {
     /// Resend API key.
     pub resend_api_key: Option<String>,
+    /// Porto base URL.
+    pub porto_base_url: Option<String>,
 }
 
 /// Banxa API configuration.
@@ -423,6 +425,12 @@ impl RelayConfig {
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);
+        self
+    }
+
+    /// Sets the Porto base URL.
+    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
+        self.email.porto_base_url = value.or(self.email.porto_base_url);
         self
     }
 
