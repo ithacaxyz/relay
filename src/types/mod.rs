@@ -33,6 +33,9 @@ pub use key::*;
 mod intent;
 pub use intent::*;
 
+mod intents;
+pub use intents::*;
+
 mod onramp;
 pub use onramp::*;
 
