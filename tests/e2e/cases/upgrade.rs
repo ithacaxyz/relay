@@ -40,7 +40,7 @@ pub async fn upgrade_account_lazily(
     let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation
-    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
     let authorization = auth.sign(env, nonce).await?;
 
     // Upgrade account.
@@ -97,7 +97,7 @@ async fn returning_customer() -> eyre::Result<()> {
     upgrade_account_eagerly(&env, &[key1.to_authorized()], &key1, AuthKind::Auth).await?;
 
     // Clear 7702
-    env.provider.anvil_set_code(env.eoa.address(), Bytes::new()).await?;
+    env.provider().anvil_set_code(env.eoa.address(), Bytes::new()).await?;
 
     // Upgrading again should succeed
     upgrade_account_eagerly(&env, &[key2.to_authorized()], &key2, AuthKind::Auth).await?;

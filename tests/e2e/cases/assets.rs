@@ -28,7 +28,7 @@ async fn asset_info() -> eyre::Result<()> {
     // Setup environment
     let env = Environment::setup().await?;
     let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20s[1])];
-    let provider = env.provider.clone();
+    let provider = env.provider().clone();
 
     // Spawn AssetInfoService
     let service = AssetInfoService::new(10);
@@ -66,7 +66,7 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
         let params = PrepareCallsParameters {
             from: Some(env.eoa.address()),
             calls: vec![], // fill in per test
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 meta: Meta { fee_payer: None, fee_token, nonce: None },
                 authorize_keys: vec![],
@@ -94,13 +94,13 @@ async fn asset_diff() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
 
     // create prepare_call request
     let params = PrepareCallsParameters {
         from: Some(env.eoa.address()),
         calls: vec![], // fill in per test
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
             authorize_keys: vec![],
@@ -181,7 +181,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
 
     // ensure we always have the expected amount of unique tokens with URIs in our asset diffs.
     let ensure_tokens_with_uris = |resp: &PrepareCallsResponse, expected: usize| -> Vec<U256> {
@@ -226,7 +226,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
                 common_calls::mint(env.erc721, env.eoa.address(), U256::from(1338u64)),
             ]
         },
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             meta: Meta { fee_token: Address::ZERO, nonce: None, fee_payer: None },
             authorize_keys: vec![],

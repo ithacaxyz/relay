@@ -6,15 +6,15 @@ use semver::{self, Version};
 async fn versioned_contracts() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
-    let capabilities = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
+    let capabilities = env.relay_endpoint.get_capabilities(vec![env.chain_id()]).await?;
 
     Version::parse(
-        capabilities.chain(env.chain_id).contracts.orchestrator.version.as_ref().unwrap(),
+        capabilities.chain(env.chain_id()).contracts.orchestrator.version.as_ref().unwrap(),
     )
     .unwrap();
     Version::parse(
         capabilities
-            .chain(env.chain_id)
+            .chain(env.chain_id())
             .contracts
             .delegation_implementation
             .version

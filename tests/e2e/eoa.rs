@@ -40,7 +40,7 @@ impl MockAccount {
                 capabilities: UpgradeAccountCapabilities {
                     authorize_keys: vec![key.to_authorized()],
                 },
-                chain_id: Some(env.chain_id),
+                chain_id: Some(env.chain_id()),
                 address: eoa.address(),
                 delegation: env.delegation,
             })
@@ -48,7 +48,7 @@ impl MockAccount {
             .unwrap();
 
         // Using ETH for payments
-        env.provider.anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
+        env.provider().anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
 
         env.relay_endpoint
             .upgrade_account(UpgradeAccountParameters {
@@ -71,7 +71,7 @@ impl MockAccount {
                         .abi_encode()
                         .into(),
                 }],
-                chain_id: env.chain_id,
+                chain_id: env.chain_id(),
                 from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
@@ -104,7 +104,7 @@ impl MockAccount {
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![],
-                chain_id: env.chain_id,
+                chain_id: env.chain_id(),
                 from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],

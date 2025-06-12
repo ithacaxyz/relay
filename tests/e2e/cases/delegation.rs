@@ -27,29 +27,29 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn catch_invalid_delegation() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
+    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id()]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     // Set up account correctly.
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     let expected_proxy_code = env
-        .provider
-        .get_code_at(caps.chain(env.chain_id).contracts.delegation_proxy.address)
+        .provider()
+        .get_code_at(caps.chain(env.chain_id()).contracts.delegation_proxy.address)
         .await?;
     let expected_impl_code = env
-        .provider
-        .get_code_at(caps.chain(env.chain_id).contracts.delegation_implementation.address)
+        .provider()
+        .get_code_at(caps.chain(env.chain_id()).contracts.delegation_implementation.address)
         .await?;
-    let expected_eoa_code = env.provider.get_code_at(env.eoa.address()).await?;
+    let expected_eoa_code = env.provider().get_code_at(env.eoa.address()).await?;
 
     let another_impl = Address::random();
-    env.provider.anvil_set_code(another_impl, expected_impl_code).await?;
+    env.provider().anvil_set_code(another_impl, expected_impl_code).await?;
 
     let params = PrepareCallsParameters {
         from: Some(env.eoa.address()),
         calls: vec![],
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             authorize_keys: vec![],
             revoke_keys: vec![],
@@ -64,7 +64,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     assert!(
         good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
-            == caps.chain(env.chain_id).contracts.delegation_implementation.address
+            == caps.chain(env.chain_id()).contracts.delegation_implementation.address
     );
 
     let signed_payload = admin_key.sign_payload_hash(good_quote.digest).await?;
@@ -114,7 +114,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Change the proxy before sending the quote and expect it to fail offchain.
     {
-        env.provider
+        env.provider()
             .anvil_set_code(
                 env.eoa.address(),
                 Bytes::from(
@@ -140,16 +140,16 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         );
 
         // Reset proxy address on EOA
-        env.provider.anvil_set_code(env.eoa.address(), expected_eoa_code.clone()).await?;
+        env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code.clone()).await?;
     }
 
     // Change the delegation proxy bytecodecode and prepare_calls & send_prepared_calls should fail.
     {
         let mut code = expected_proxy_code.to_vec();
         code[2] = code[2].wrapping_add(1);
-        env.provider
+        env.provider()
             .anvil_set_code(
-                caps.chain(env.chain_id).contracts.delegation_proxy.address,
+                caps.chain(env.chain_id()).contracts.delegation_proxy.address,
                 code.into(),
             )
             .await?;
@@ -177,9 +177,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             .is_failed()
         );
 
-        env.provider
+        env.provider()
             .anvil_set_code(
-                caps.chain(env.chain_id).contracts.delegation_proxy.address,
+                caps.chain(env.chain_id()).contracts.delegation_proxy.address,
                 expected_proxy_code,
             )
             .await?;
@@ -187,7 +187,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Upgrade implementation to another one and expect it to fail.
     {
-        env.provider.anvil_set_code(env.eoa.address(), expected_eoa_code).await?;
+        env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code).await?;
         upgrade_delegation(&env, another_impl).await;
 
         assert!(
@@ -218,7 +218,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     {
         upgrade_delegation(
             &env,
-            caps.chain(env.chain_id).contracts.delegation_implementation.address,
+            caps.chain(env.chain_id()).contracts.delegation_implementation.address,
         )
         .await;
 
@@ -237,7 +237,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 }
 
 async fn upgrade_delegation(env: &Environment, address: Address) {
-    env.provider.anvil_impersonate_account(env.eoa.address()).await.unwrap();
+    env.provider().anvil_impersonate_account(env.eoa.address()).await.unwrap();
     let tx = TransactionRequest::default()
         .from(env.eoa.address())
         .to(env.eoa.address())
@@ -247,7 +247,8 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
                 .into(),
         )
         .gas_limit(100_000);
-    let _tx_hash: B256 = env.provider.client().request("eth_sendTransaction", (tx,)).await.unwrap();
+    let _tx_hash: B256 =
+        env.provider().client().request("eth_sendTransaction", (tx,)).await.unwrap();
 }
 
 /// Ensures upgradeProxyAccount can be called as a precall.
@@ -255,7 +256,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
 async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
-    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id]).await?;
+    let caps = env.relay_endpoint.get_capabilities(vec![env.chain_id()]).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
@@ -270,7 +271,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 value: U256::ZERO,
                 data: IthacaAccount::upgradeProxyAccountCall {
                     newImplementation: caps
-                        .chain(env.chain_id)
+                        .chain(env.chain_id())
                         .contracts
                         .delegation_implementation
                         .address,
@@ -278,7 +279,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 .abi_encode()
                 .into(),
             }],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -305,7 +306,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
