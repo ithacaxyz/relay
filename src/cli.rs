@@ -81,6 +81,9 @@ pub struct Args {
     /// The lifetime of a token price rate.
     #[arg(long, value_name = "SECONDS", value_parser = parse_duration_secs, default_value = "300")]
     pub rate_ttl: Duration,
+    /// The constant rate for the price oracle. Used for testing.
+    #[arg(long, value_name = "RATE")]
+    pub constant_rate: Option<f64>,
     /// Extra buffer added to Intent gas estimates.
     #[arg(long, value_name = "INTENT_GAS", default_value_t = INTENT_GAS_BUFFER)]
     pub intent_gas_buffer: u64,
@@ -166,6 +169,7 @@ impl Args {
             .with_max_connections(self.max_connections)
             .with_quote_ttl(self.quote_ttl)
             .with_rate_ttl(self.rate_ttl)
+            .with_quote_constant_rate(self.constant_rate)
             .with_orchestrator(self.orchestrator)
             .with_delegation_proxy(self.delegation_proxy)
             .with_simulator(self.simulator)

@@ -249,7 +249,7 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_quote_constant_rate(1.0)
+                .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(orchestrator))
