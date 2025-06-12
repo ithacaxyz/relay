@@ -65,10 +65,16 @@ impl VersionedContracts {
             }));
 
         let legacy_delegations =
-            try_join_all(config.legacy_delegations.iter().map(async |&address| {
+            try_join_all(config.legacy_delegation_proxies.iter().map(async |&proxy_address| {
+                let implementation = DelegationProxyInstance::new(proxy_address, provider)
+                    .implementation()
+                    .call()
+                    .await
+                    .map_err(TransportErrorKind::custom)?;
+
                 Ok(VersionedContract::new(
-                    address,
-                    Account::new(address, provider).version().await?,
+                    implementation,
+                    Account::new(implementation, provider).version().await?,
                 ))
             }));
 
