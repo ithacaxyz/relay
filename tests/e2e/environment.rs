@@ -140,6 +140,7 @@ async fn setup_anvil_instances(
             if let Ok(fork_url) = &fork_url {
                 args.extend(["--fork-url", fork_url]);
                 args.extend(["--fork-block-number", &fork_block_number]);
+                args.extend(["--no-rate-limit"]);
             }
             let block_time = config.block_time.map(|t| t.to_string());
             if let Some(block_time) = &block_time {
