@@ -181,62 +181,62 @@ impl ContractAddresses {
     fn simulator(&self) -> Address {
         self.simulator.0
     }
-    
+
     /// Get delegation proxy address
     fn delegation(&self) -> Address {
         self.delegation.0
     }
-    
+
     /// Get delegation implementation address
     fn delegation_implementation(&self) -> Address {
         self.delegation_implementation.0
     }
-    
+
     /// Get orchestrator address
     fn orchestrator(&self) -> Address {
         self.orchestrator.0
     }
-    
+
     /// Get ERC721 address
     fn erc721(&self) -> Address {
         self.erc721.0
     }
-    
+
     /// Get all ERC20 addresses
     fn erc20_addresses(&self) -> Vec<Address> {
         self.erc20s.iter().map(|(addr, _)| *addr).collect()
     }
-    
+
     /// Get first ERC20 address
     fn erc20(&self) -> Address {
         self.erc20s[0].0
     }
-    
+
     /// Get simulator bytecode
     fn simulator_code(&self) -> Option<&Arc<Bytes>> {
         self.simulator.1.as_ref()
     }
-    
+
     /// Get delegation proxy bytecode
     fn delegation_code(&self) -> Option<&Arc<Bytes>> {
         self.delegation.1.as_ref()
     }
-    
+
     /// Get delegation implementation bytecode
     fn delegation_implementation_code(&self) -> Option<&Arc<Bytes>> {
         self.delegation_implementation.1.as_ref()
     }
-    
+
     /// Get orchestrator bytecode
     fn orchestrator_code(&self) -> Option<&Arc<Bytes>> {
         self.orchestrator.1.as_ref()
     }
-    
+
     /// Get ERC721 bytecode
     fn erc721_code(&self) -> Option<&Arc<Bytes>> {
         self.erc721.1.as_ref()
     }
-    
+
     /// Get ERC20 bytecode (from first ERC20)
     fn erc20_code(&self) -> Option<&Arc<Bytes>> {
         self.erc20s.first().and_then(|(_, code)| code.as_ref())
@@ -283,7 +283,6 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     signers: &[DynSigner],
     eoa_address: Address,
 ) -> eyre::Result<DynProvider> {
-
     // Fund signers
     try_join_all(
         signers
@@ -294,11 +293,24 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
 
     // Set all contract codes on the current chain - secondary chains should always have bytecode
     let contract_deployments = vec![
-        provider.anvil_set_code(contracts.orchestrator(), contracts.orchestrator_code().unwrap().as_ref().clone()),
-        provider.anvil_set_code(contracts.delegation(), contracts.delegation_code().unwrap().as_ref().clone()),
-        provider.anvil_set_code(contracts.delegation_implementation(), contracts.delegation_implementation_code().unwrap().as_ref().clone()),
-        provider.anvil_set_code(contracts.simulator(), contracts.simulator_code().unwrap().as_ref().clone()),
-        provider.anvil_set_code(contracts.erc721(), contracts.erc721_code().unwrap().as_ref().clone()),
+        provider.anvil_set_code(
+            contracts.orchestrator(),
+            contracts.orchestrator_code().unwrap().as_ref().clone(),
+        ),
+        provider.anvil_set_code(
+            contracts.delegation(),
+            contracts.delegation_code().unwrap().as_ref().clone(),
+        ),
+        provider.anvil_set_code(
+            contracts.delegation_implementation(),
+            contracts.delegation_implementation_code().unwrap().as_ref().clone(),
+        ),
+        provider.anvil_set_code(
+            contracts.simulator(),
+            contracts.simulator_code().unwrap().as_ref().clone(),
+        ),
+        provider
+            .anvil_set_code(contracts.erc721(), contracts.erc721_code().unwrap().as_ref().clone()),
     ];
 
     let erc20_code = contracts.erc20_code().unwrap();
@@ -409,7 +421,14 @@ impl Environment {
         let mut contracts = setup_primary_chain(&first_provider, &signers, &eoa).await?;
 
         // Get the code from the first chain and populate the contracts struct
-        let (orchestrator_code, delegation_code, delegation_impl_code, simulator_code, erc721_code, erc20_code) = tokio::try_join!(
+        let (
+            orchestrator_code,
+            delegation_code,
+            delegation_impl_code,
+            simulator_code,
+            erc721_code,
+            erc20_code,
+        ) = tokio::try_join!(
             first_provider.get_code_at(contracts.orchestrator()),
             first_provider.get_code_at(contracts.delegation()),
             first_provider.get_code_at(contracts.delegation_implementation()),
@@ -424,7 +443,7 @@ impl Environment {
         contracts.delegation_implementation.1 = Some(Arc::new(delegation_impl_code));
         contracts.simulator.1 = Some(Arc::new(simulator_code));
         contracts.erc721.1 = Some(Arc::new(erc721_code));
-        
+
         // Update all ERC20s with the same bytecode
         let erc20_code = Arc::new(erc20_code);
         for erc20 in &mut contracts.erc20s {
@@ -452,13 +471,7 @@ impl Environment {
                         .wallet(EthereumWallet::from(deployer.0.clone()))
                         .connect_client(client);
 
-                    setup_secondary_chain(
-                        provider,
-                        &contracts,
-                        &signers,
-                        eoa_address,
-                    )
-                    .await
+                    setup_secondary_chain(provider, &contracts, &signers, eoa_address).await
                 }
             });
 
