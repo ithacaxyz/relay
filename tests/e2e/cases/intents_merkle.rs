@@ -36,22 +36,22 @@ pub async fn test_intents_merkle_root(env: &Environment) -> eyre::Result<()> {
     let intents_vec = vec![
         (
             create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         (
             create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         (
             create_test_intent(env.eoa.address(), uint!(3_U256), env.fee_token),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         (
             create_test_intent(env.eoa.address(), uint!(4_U256), env.erc20),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
     ];
@@ -76,7 +76,7 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
         // Single-chain intent
         (
             create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         // Multi-chain intent
@@ -86,13 +86,13 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
                 (MULTICHAIN_NONCE_PREFIX << 240) | uint!(100_U256),
                 env.fee_token,
             ),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         // Another single-chain intent
         (
             create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
         // Another multi-chain intent
@@ -102,7 +102,7 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
                 (MULTICHAIN_NONCE_PREFIX << 240) | uint!(200_U256),
                 env.erc20,
             ),
-            env.provider.clone(),
+            env.provider().clone(),
             env.orchestrator,
         ),
     ];

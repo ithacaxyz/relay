@@ -294,14 +294,14 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_assets_with_filter() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
 
     let response = env
         .relay_endpoint
         .get_assets(GetAssetsParameters {
             account: env.eoa.address(),
             asset_filter: HashMap::from_iter([(
-                env.chain_id,
+                env.chain_id(),
                 vec![
                     AssetFilterItem {
                         address: AddressOrNative::Native,
@@ -323,7 +323,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
         })
         .await?;
 
-    let chain_user_assets = response.0.get(&env.chain_id).unwrap();
+    let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
     assert!(chain_user_assets.len() == 3);
 
     assert!(chain_user_assets[0].address == AddressOrNative::Native);
@@ -349,7 +349,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_assets_no_filter() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
 
     let response = env
         .relay_endpoint
@@ -364,16 +364,16 @@ async fn get_assets_no_filter() -> eyre::Result<()> {
     // Gets the number of fee tokens in the environment chain
     let chain_fee_tokens_num = env
         .relay_endpoint
-        .get_capabilities(vec![env.chain_id])
+        .get_capabilities(vec![env.chain_id()])
         .await?
         .0
-        .get(&env.chain_id)
+        .get(&env.chain_id())
         .unwrap()
         .fees
         .tokens
         .len();
 
-    let chain_user_assets = response.0.get(&env.chain_id).unwrap();
+    let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
     assert!(chain_user_assets.len() == chain_fee_tokens_num);
 
     Ok(())
