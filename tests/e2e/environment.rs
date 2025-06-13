@@ -166,13 +166,81 @@ async fn setup_anvil_instances(
 }
 
 /// Contract addresses for deployed contracts
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ContractAddresses {
-    simulator: Address,
-    delegation: Address,
-    orchestrator: Address,
-    erc20s: Vec<Address>,
-    erc721: Address,
+    simulator: (Address, Option<Arc<Bytes>>),
+    delegation: (Address, Option<Arc<Bytes>>),
+    delegation_implementation: (Address, Option<Arc<Bytes>>),
+    orchestrator: (Address, Option<Arc<Bytes>>),
+    erc20s: Vec<(Address, Option<Arc<Bytes>>)>,
+    erc721: (Address, Option<Arc<Bytes>>),
+}
+
+impl ContractAddresses {
+    /// Get simulator address
+    fn simulator(&self) -> Address {
+        self.simulator.0
+    }
+    
+    /// Get delegation proxy address
+    fn delegation(&self) -> Address {
+        self.delegation.0
+    }
+    
+    /// Get delegation implementation address
+    fn delegation_implementation(&self) -> Address {
+        self.delegation_implementation.0
+    }
+    
+    /// Get orchestrator address
+    fn orchestrator(&self) -> Address {
+        self.orchestrator.0
+    }
+    
+    /// Get ERC721 address
+    fn erc721(&self) -> Address {
+        self.erc721.0
+    }
+    
+    /// Get all ERC20 addresses
+    fn erc20_addresses(&self) -> Vec<Address> {
+        self.erc20s.iter().map(|(addr, _)| *addr).collect()
+    }
+    
+    /// Get first ERC20 address
+    fn erc20(&self) -> Address {
+        self.erc20s[0].0
+    }
+    
+    /// Get simulator bytecode
+    fn simulator_code(&self) -> Option<&Arc<Bytes>> {
+        self.simulator.1.as_ref()
+    }
+    
+    /// Get delegation proxy bytecode
+    fn delegation_code(&self) -> Option<&Arc<Bytes>> {
+        self.delegation.1.as_ref()
+    }
+    
+    /// Get delegation implementation bytecode
+    fn delegation_implementation_code(&self) -> Option<&Arc<Bytes>> {
+        self.delegation_implementation.1.as_ref()
+    }
+    
+    /// Get orchestrator bytecode
+    fn orchestrator_code(&self) -> Option<&Arc<Bytes>> {
+        self.orchestrator.1.as_ref()
+    }
+    
+    /// Get ERC721 bytecode
+    fn erc721_code(&self) -> Option<&Arc<Bytes>> {
+        self.erc721.1.as_ref()
+    }
+    
+    /// Get ERC20 bytecode (from first ERC20)
+    fn erc20_code(&self) -> Option<&Arc<Bytes>> {
+        self.erc20s.first().and_then(|(_, code)| code.as_ref())
+    }
 }
 
 /// Set up the primary chain with contract deployments
@@ -190,11 +258,11 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
     .await?;
 
     // Deploy contracts on first chain
-    let (simulator, delegation, orchestrator, erc20s, erc721) =
-        get_or_deploy_contracts(provider).await?;
+    let contracts = get_or_deploy_contracts(provider).await?;
 
     // Fund EOA and mint tokens on first chain
-    mint_erc20s(&erc20s[..2], &[eoa.address()], provider).await?;
+    let erc20_addresses = contracts.erc20_addresses();
+    mint_erc20s(&erc20_addresses[..2], &[eoa.address()], provider).await?;
     provider
         .send_transaction(TransactionRequest {
             to: Some(TxKind::Call(eoa.address())),
@@ -205,10 +273,8 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
         .get_receipt()
         .await?;
 
-    Ok(ContractAddresses { simulator, delegation, orchestrator, erc20s, erc721 })
+    Ok(contracts)
 }
-
-type ContractCodeTuple = (Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>, Arc<Bytes>);
 
 /// Set up a secondary chain by replicating contracts from primary chain
 async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
@@ -216,10 +282,7 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     contracts: &ContractAddresses,
     signers: &[DynSigner],
     eoa_address: Address,
-    contract_codes: &ContractCodeTuple,
 ) -> eyre::Result<DynProvider> {
-    let (orchestrator_code, delegation_code, simulator_code, erc721_code, erc20_code) =
-        contract_codes;
 
     // Fund signers
     try_join_all(
@@ -229,23 +292,26 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     )
     .await?;
 
-    // Set all contract codes on the current chain
+    // Set all contract codes on the current chain - secondary chains should always have bytecode
     let contract_deployments = vec![
-        provider.anvil_set_code(contracts.orchestrator, (**orchestrator_code).clone()),
-        provider.anvil_set_code(contracts.delegation, (**delegation_code).clone()),
-        provider.anvil_set_code(contracts.simulator, (**simulator_code).clone()),
-        provider.anvil_set_code(contracts.erc721, (**erc721_code).clone()),
+        provider.anvil_set_code(contracts.orchestrator(), contracts.orchestrator_code().unwrap().as_ref().clone()),
+        provider.anvil_set_code(contracts.delegation(), contracts.delegation_code().unwrap().as_ref().clone()),
+        provider.anvil_set_code(contracts.delegation_implementation(), contracts.delegation_implementation_code().unwrap().as_ref().clone()),
+        provider.anvil_set_code(contracts.simulator(), contracts.simulator_code().unwrap().as_ref().clone()),
+        provider.anvil_set_code(contracts.erc721(), contracts.erc721_code().unwrap().as_ref().clone()),
     ];
 
+    let erc20_code = contracts.erc20_code().unwrap();
     let erc20_deployments = contracts
         .erc20s
         .iter()
-        .map(|&erc20| provider.anvil_set_code(erc20, (**erc20_code).clone()));
+        .map(|(addr, _)| provider.anvil_set_code(*addr, erc20_code.as_ref().clone()));
 
     try_join_all(contract_deployments.into_iter().chain(erc20_deployments)).await?;
 
     // Fund EOA and mint tokens
-    mint_erc20s(&contracts.erc20s[..2], &[eoa_address], &provider).await?;
+    let erc20_addresses = contracts.erc20_addresses();
+    mint_erc20s(&erc20_addresses[..2], &[eoa_address], &provider).await?;
     provider
         .send_transaction(TransactionRequest {
             to: Some(TxKind::Call(eoa_address)),
@@ -340,43 +406,41 @@ impl Environment {
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .connect_client(client);
 
-        let contracts = setup_primary_chain(&first_provider, &signers, &eoa).await?;
+        let mut contracts = setup_primary_chain(&first_provider, &signers, &eoa).await?;
 
-        // Get the code from the first chain before moving the provider
-        let (orchestrator_code, delegation_code, simulator_code, erc721_code, erc20_code) = tokio::try_join!(
-            first_provider.get_code_at(contracts.orchestrator),
-            first_provider.get_code_at(contracts.delegation),
-            first_provider.get_code_at(contracts.simulator),
-            first_provider.get_code_at(contracts.erc721),
-            first_provider.get_code_at(contracts.erc20s[0]) // All ERC20s have the same bytecode
+        // Get the code from the first chain and populate the contracts struct
+        let (orchestrator_code, delegation_code, delegation_impl_code, simulator_code, erc721_code, erc20_code) = tokio::try_join!(
+            first_provider.get_code_at(contracts.orchestrator()),
+            first_provider.get_code_at(contracts.delegation()),
+            first_provider.get_code_at(contracts.delegation_implementation()),
+            first_provider.get_code_at(contracts.simulator()),
+            first_provider.get_code_at(contracts.erc721()),
+            first_provider.get_code_at(contracts.erc20()) // All ERC20s have the same bytecode
         )?;
 
-        // Wrap in Arc to avoid cloning large bytecode across chains
-        let orchestrator_code = Arc::new(orchestrator_code);
-        let delegation_code = Arc::new(delegation_code);
-        let simulator_code = Arc::new(simulator_code);
-        let erc721_code = Arc::new(erc721_code);
+        // Update contracts with bytecode
+        contracts.orchestrator.1 = Some(Arc::new(orchestrator_code));
+        contracts.delegation.1 = Some(Arc::new(delegation_code));
+        contracts.delegation_implementation.1 = Some(Arc::new(delegation_impl_code));
+        contracts.simulator.1 = Some(Arc::new(simulator_code));
+        contracts.erc721.1 = Some(Arc::new(erc721_code));
+        
+        // Update all ERC20s with the same bytecode
         let erc20_code = Arc::new(erc20_code);
+        for erc20 in &mut contracts.erc20s {
+            erc20.1 = Some(erc20_code.clone());
+        }
 
         providers.push(first_provider.erased());
 
         // Set up remaining chains with same contract addresses
         if config.num_chains > 1 {
-            let contract_codes = (
-                orchestrator_code.clone(),
-                delegation_code.clone(),
-                simulator_code.clone(),
-                erc721_code.clone(),
-                erc20_code.clone(),
-            );
-
             let setup_futures = (1..config.num_chains).map(|i| {
                 let endpoint = endpoints[i].clone();
                 let deployer = deployer.clone();
                 let eoa_address = eoa.address();
                 let contracts = contracts.clone();
                 let signers = signers.clone();
-                let contract_codes = contract_codes.clone();
 
                 async move {
                     let client = ClientBuilder::default()
@@ -393,7 +457,6 @@ impl Environment {
                         &contracts,
                         &signers,
                         eoa_address,
-                        &contract_codes,
                     )
                     .await
                 }
@@ -411,7 +474,7 @@ impl Environment {
         let mut registry = CoinRegistry::default();
         for &chain_id in &chain_ids {
             registry.extend(
-                contracts.erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)),
+                contracts.erc20s.iter().map(|(addr, _)| ((chain_id, Some(*addr)), CoinKind::USDT)),
             );
         }
 
@@ -438,11 +501,11 @@ impl Environment {
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_quote_constant_rate(Some(1.0))
-                .with_fee_tokens(&[contracts.erc20s.as_slice(), &[Address::ZERO]].concat())
+                .with_fee_tokens(&[contracts.erc20_addresses(), vec![Address::ZERO]].concat())
                 .with_fee_recipient(config.fee_recipient)
-                .with_orchestrator(Some(contracts.orchestrator))
-                .with_delegation_proxy(Some(contracts.delegation))
-                .with_simulator(Some(contracts.simulator))
+                .with_orchestrator(Some(contracts.orchestrator()))
+                .with_delegation_proxy(Some(contracts.delegation()))
+                .with_simulator(Some(contracts.simulator()))
                 .with_intent_gas_buffer(0) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
@@ -455,17 +518,18 @@ impl Environment {
             .build(relay_handle.http_url())
             .wrap_err("Failed to build relay client")?;
 
+        let erc20_addresses = contracts.erc20_addresses();
         Ok(Self {
             anvils,
             providers,
             chain_ids,
             eoa,
-            orchestrator: contracts.orchestrator,
-            delegation: contracts.delegation,
-            fee_token: contracts.erc20s[1],
-            erc20: contracts.erc20s[0],
-            erc20s: contracts.erc20s[2..].to_vec(),
-            erc721: contracts.erc721,
+            orchestrator: contracts.orchestrator(),
+            delegation: contracts.delegation(),
+            fee_token: erc20_addresses[1],
+            erc20: erc20_addresses[0],
+            erc20s: erc20_addresses[2..].to_vec(),
+            erc721: contracts.erc721(),
             relay_endpoint,
             relay_handle,
             signers,
@@ -705,7 +769,7 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Address, Vec<Address>, Address), eyre::Error> {
+) -> Result<ContractAddresses, eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
@@ -787,7 +851,14 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
-    Ok((simulator, delegation_proxy, orchestrator, erc20s, erc721))
+    Ok(ContractAddresses {
+        simulator: (simulator, None),
+        delegation: (delegation_proxy, None),
+        delegation_implementation: (delegation, None),
+        orchestrator: (orchestrator, None),
+        erc20s: erc20s.into_iter().map(|addr| (addr, None)).collect(),
+        erc721: (erc721, None),
+    })
 }
 
 async fn deploy_contract<P: Provider>(
