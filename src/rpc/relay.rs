@@ -13,9 +13,10 @@ use crate::{
     asset::AssetInfoServiceHandle,
     error::{IntentError, StorageError},
     provider::ProviderExt,
+    transactions::TxId,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
-        IntentKind, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
+        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, VersionedContracts,
         rpc::{
@@ -422,97 +423,155 @@ impl Relay {
             return Err(QuoteError::InvalidQuoteSignature.into());
         }
 
-        let bundle_id = BundleId(*quotes.hash()); // todo
-        for quote in quotes.ty_mut().quotes.iter_mut() {
-            let chain_id = quote.chain_id;
-            let Chain { provider, transactions, .. } =
-                self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let bundle_id = BundleId(*quotes.hash());
 
-            let authorization_address = quote.authorization_address;
-            let intent = &mut quote.output;
+        // compute real signature
+        let key_hash = key.key_hash();
+        let signature = Signature {
+            innerSignature: signature.clone(),
+            keyHash: key_hash,
+            prehash: key.prehash,
+        }
+        .abi_encode_packed()
+        .into();
 
-            // todo: if multichain, fill proof, otherwise use signature directly.
-            // Fill Intent with the fee payment signature (if exists).
-            intent.paymentSignature = capabilities.fee_signature.clone();
+        // single chain workflow
+        if quotes.ty().multi_chain_root.is_none() {
+            // send intent
+            self.send_intent(
+                bundle_id,
+                // safety: we know there is 1 element
+                quotes.ty().quotes.first().unwrap().clone(),
+                capabilities,
+                signature,
+            )
+            .await?;
+            return Ok(bundle_id);
+        }
 
-            // Fill Intent with the user signature.
-            let key_hash = key.key_hash();
-            intent.signature = Signature {
-                innerSignature: signature.clone(),
-                keyHash: key_hash,
-                prehash: key.prehash,
-            }
-            .abi_encode_packed()
-            .into();
-
-            // Set non-eip712 payment fields. Since they are not included into the signature so we
-            // need to enforce it here.
-            intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
-
-            // If there's an authorization address in the quote, we need to fetch the signed one
-            // from storage.
-            let authorization = if authorization_address.is_some() {
-                self.inner
-                    .storage
-                    .read_account(&intent.eoa)
-                    .await
-                    .map(|opt| opt.map(|acc| acc.signed_authorization))?
-            } else {
-                None
-            };
-
-            // check that the authorization item matches what's in the quote
-            if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
-                return Err(AuthError::InvalidAuthItem {
-                    expected: quote.authorization_address,
-                    got: authorization.map(|auth| auth.address),
-                }
-                .into());
-            }
-
-            if let Some(auth) = &authorization {
-                if !auth.inner().chain_id().is_zero() {
-                    return Err(AuthError::AuthItemNotChainAgnostic.into());
-                }
-
-                let expected_nonce = provider
-                    .get_transaction_count(quote.output.eoa)
-                    .await
-                    .map_err(RelayError::from)?;
-
-                if expected_nonce != auth.nonce {
-                    return Err(AuthError::AuthItemInvalidNonce {
-                        expected: expected_nonce,
-                        got: auth.nonce,
-                    }
-                    .into());
-                }
-            } else {
-                let account = Account::new(quote.output.eoa, provider);
-                if !account.is_delegated().await? {
-                    return Err(AuthError::EoaNotDelegated(quote.output.eoa).into());
-                }
-            }
-
-            // set our payment recipient
-            quote.output.paymentRecipient = self.inner.fee_recipient;
-
-            let tx = RelayTransaction::new(quote.clone(), authorization.clone());
-            self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
-
-            let span = span!(
-                Level::INFO, "send tx",
-                otel.kind = ?SpanKind::Producer,
-                messaging.system = "pg",
-                messaging.destination.name = "tx",
-                messaging.operation.name = "send",
-                messaging.operation.type = "send",
-                messaging.message.id = %tx.id
-            );
-            transactions.send_transaction(tx).instrument(span).await?;
+        // todo: parallelize
+        // todo: check all chains supported before sending intents
+        let mut intents = Intents::new(
+            quotes
+                .ty()
+                .quotes
+                .iter()
+                .map(|quote| {
+                    (
+                        quote.output.clone(),
+                        self.provider(quote.chain_id).unwrap(),
+                        quote.orchestrator,
+                    )
+                })
+                .collect(),
+        );
+        for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
+            let proof = intents
+                .get_proof(idx)
+                .await
+                // todo: error handling
+                .unwrap()
+                .unwrap();
+            let merkle_sig =
+                [proof.siblings.abi_encode(), proof.root.to_vec(), signature.to_vec()].abi_encode();
+            self.send_intent(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
+                .await?;
         }
 
         Ok(bundle_id)
+    }
+
+    #[instrument(skip_all)]
+    async fn send_intent(
+        &self,
+        bundle_id: BundleId,
+        mut quote: Quote,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+    ) -> RpcResult<TxId> {
+        let chain_id = quote.chain_id;
+        // todo: chain support should probably be checked before we send txs
+        let Chain { provider, transactions, .. } =
+            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+
+        let authorization_address = quote.authorization_address;
+        let intent = &mut quote.output;
+
+        // Fill Intent with the fee payment signature (if exists).
+        intent.paymentSignature = capabilities.fee_signature.clone();
+
+        // Fill Intent with the user signature.
+        intent.signature = signature;
+
+        // Set non-eip712 payment fields. Since they are not included into the signature so we
+        // need to enforce it here.
+        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
+
+        // If there's an authorization address in the quote, we need to fetch the signed one
+        // from storage.
+        // todo: we should probably fetch this before sending any tx
+        let authorization = if authorization_address.is_some() {
+            self.inner
+                .storage
+                .read_account(&intent.eoa)
+                .await
+                .map(|opt| opt.map(|acc| acc.signed_authorization))?
+        } else {
+            None
+        };
+
+        // check that the authorization item matches what's in the quote
+        if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
+            return Err(AuthError::InvalidAuthItem {
+                expected: quote.authorization_address,
+                got: authorization.map(|auth| auth.address),
+            }
+            .into());
+        }
+
+        if let Some(auth) = &authorization {
+            // todo: same as above
+            if !auth.inner().chain_id().is_zero() {
+                return Err(AuthError::AuthItemNotChainAgnostic.into());
+            }
+
+            let expected_nonce =
+                provider.get_transaction_count(quote.output.eoa).await.map_err(RelayError::from)?;
+
+            if expected_nonce != auth.nonce {
+                return Err(AuthError::AuthItemInvalidNonce {
+                    expected: expected_nonce,
+                    got: auth.nonce,
+                }
+                .into());
+            }
+        } else {
+            let account = Account::new(quote.output.eoa, provider);
+            // todo: same as above
+            if !account.is_delegated().await? {
+                return Err(AuthError::EoaNotDelegated(quote.output.eoa).into());
+            }
+        }
+
+        // set our payment recipient
+        quote.output.paymentRecipient = self.inner.fee_recipient;
+
+        let tx = RelayTransaction::new(quote.clone(), authorization.clone());
+        let tx_id = tx.id;
+        self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
+
+        let span = span!(
+            Level::INFO, "send tx",
+            otel.kind = ?SpanKind::Producer,
+            messaging.system = "pg",
+            messaging.destination.name = "tx",
+            messaging.operation.name = "send",
+            messaging.operation.type = "send",
+            messaging.message.id = %tx.id
+        );
+        transactions.send_transaction(tx).instrument(span).await?;
+
+        Ok(tx_id)
     }
 
     /// Get keys from an account.
