@@ -39,7 +39,6 @@ alloy = { version = "1.0.9", features = [
     "signer-mnemonic",
 ], default-features = false }
 alloy-chains = "0.2"
-alloy-merkle-tree = "0.7.4"
 async-trait = "0.1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }

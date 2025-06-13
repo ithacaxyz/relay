@@ -13,12 +13,13 @@ use crate::{
     asset::AssetInfoServiceHandle,
     error::{IntentError, StorageError},
     provider::ProviderExt,
+    signers::Eip712PayLoadSigner,
     transactions::TxId,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
-        Quotes, SignedCall, SignedCalls, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
             ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse,
@@ -32,7 +33,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, address, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -53,7 +54,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{sync::Arc, time::SystemTime};
+use std::{iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
@@ -191,7 +192,7 @@ impl Relay {
                 max_fee_per_gas: u128::MAX,
                 max_priority_fee_per_gas: u128::MAX,
                 to: (!Address::ZERO).into(),
-                input: intent.encode_execute(),
+                input: intent.encode_execute(false),
                 ..Default::default()
             };
             let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
@@ -226,6 +227,7 @@ impl Relay {
             .chains
             .get(request.chain_id)
             .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
+
         let provider = chain.provider.clone();
         let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
             return Err(QuoteError::UnsupportedFeeToken(token).into());
@@ -318,6 +320,12 @@ impl Relay {
                 .into_iter()
                 .map(|pre_call| pre_call.abi_encode().into())
                 .collect(),
+            encodedFundTransfers: request
+                .intent
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
             ..Default::default()
         };
 
@@ -326,8 +334,11 @@ impl Relay {
             / eth_price;
 
         let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
-                .abi_encode(),
+            &OrchestratorContract::executeCall {
+                isMultiChain: !intent_kind.is_single(),
+                encodedIntent: intent.abi_encode().into(),
+            }
+            .abi_encode(),
             authorization_address.is_some(),
         );
 
@@ -355,6 +366,26 @@ impl Relay {
         .abi_encode_packed()
         .into();
 
+        if !intent.encodedFundTransfers.is_empty() {
+            // todo: tx service could expose a way to sign simulated intents?
+            let signers = DynSigner::derive_from_mnemonic(
+                "forget sound story reveal safe minimum wasp mechanic solar predict harsh catch"
+                    .parse()
+                    .unwrap(),
+                1,
+            )?;
+            intent.funder = address!("0xa15bb66138824a1c7167f5e85b957d04dd34e468");
+            let (digest, _) = intent.compute_eip712_data(self.orchestrator(), &provider).await?;
+            let signature = signers[0].sign_payload_hash(digest).await?;
+            intent.funderSignature = Signature {
+                innerSignature: signature,
+                keyHash: account_key.key_hash(),
+                prehash: request.prehash,
+            }
+            .abi_encode_packed()
+            .into();
+        }
+
         // todo: simulate with executeMultiChain if intent.is_multichain
         // we estimate gas and fees
         let (asset_diff, sim_result) = orchestrator
@@ -381,9 +412,14 @@ impl Relay {
         intent.signature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
-        intent.set_legacy_payment_amount(
-            extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-        );
+        if !intent_kind.is_single() {
+            // todo: temporary
+            intent.set_legacy_payment_amount(U256::ZERO);
+        } else {
+            intent.set_legacy_payment_amount(
+                extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
+            )
+        }
 
         let quote = Quote {
             chain_id: request.chain_id,
@@ -395,6 +431,7 @@ impl Relay {
             native_fee_estimate,
             authorization_address,
             orchestrator: *orchestrator.address(),
+            is_multi_chain: !intent_kind.is_single(),
         };
 
         Ok((asset_diff, quote))
@@ -465,15 +502,12 @@ impl Relay {
                 })
                 .collect(),
         );
+
+        // todo: error handling
+        let root = intents.root().await.unwrap();
         for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
-            let proof = intents
-                .get_proof(idx)
-                .await
-                // todo: error handling
-                .unwrap()
-                .unwrap();
-            let merkle_sig =
-                [proof.siblings.abi_encode(), proof.root.to_vec(), signature.to_vec()].abi_encode();
+            let proof = intents.get_proof(idx).await.unwrap().unwrap();
+            let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
             self.send_intent(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
                 .await?;
         }
@@ -786,6 +820,7 @@ impl Relay {
                     nonce: U256::from_be_bytes(B256::random().into()) << 64,
                     payer: None,
                     pre_calls: vec![account.pre_call.clone()],
+                    fund_transfers: vec![],
                 },
                 chain_id,
                 prehash: false,
@@ -841,6 +876,7 @@ impl Relay {
                             .map(|acc| acc.pre_call.clone())
                             .chain(request.capabilities.pre_calls.clone())
                             .collect(),
+                        fund_transfers: intent_kind.fund_transfers(),
                     },
                     chain_id: request.chain_id,
                     prehash: request_key.prehash,
@@ -916,21 +952,18 @@ impl Relay {
                 request.required_funds.first()
             {
                 // Only query inventory, if funds have been requested in the target chain.
-                let (params, asset) = if requested_asset.is_zero() {
-                    (GetAssetsParameters::native(eoa, request.chain_id), AddressOrNative::Native)
+                let asset = if requested_asset.is_zero() {
+                    AddressOrNative::Native
                 } else {
-                    (
-                        GetAssetsParameters::erc20(eoa, request.chain_id, *requested_asset),
-                        AddressOrNative::Address(*requested_asset),
-                    )
+                    AddressOrNative::Address(*requested_asset)
                 };
 
                 // todo: what about fees?
-                let Some(funding_chains) = self.get_assets(params).await?.find_funding_chains(
-                    request.chain_id,
-                    asset,
-                    *funds,
-                ) else {
+                let Some(funding_chains) = self
+                    .get_assets(GetAssetsParameters::eoa(eoa))
+                    .await?
+                    .find_funding_chains(request.chain_id, asset, *funds)
+                else {
                     panic!("todo error not enough funds")
                 };
 
@@ -952,6 +985,7 @@ impl Relay {
                     )
                 } else {
                     let asset: Asset = asset.into();
+
                     let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                         async |(leaf, (chain_id, amount))| {
                             self.prepare_calls_inner(
@@ -960,7 +994,8 @@ impl Relay {
                                     *chain_id,
                                     asset,
                                     *amount,
-                                    Address::ZERO,
+                                    // todo: should get the equivalent coin
+                                    request.capabilities.meta.fee_token,
                                     request_key.clone(),
                                 ),
                                 Some(IntentKind::MultiInput(leaf)),
@@ -970,13 +1005,21 @@ impl Relay {
                     ))
                     .await?;
 
+                    let mut missing_funds = U256::ZERO;
+                    for (_, amount) in funding_chains.iter() {
+                        missing_funds += amount;
+                    }
+
                     let (asset_diffs, quote) = self
                         .build_intent(
                             &request,
                             maybe_stored,
                             calls,
                             nonce,
-                            IntentKind::MultiOutput(funding_intents.len()),
+                            IntentKind::MultiOutput(
+                                funding_intents.len(),
+                                vec![(*requested_asset, missing_funds)],
+                            ),
                         )
                         .await?;
 
@@ -999,6 +1042,7 @@ impl Relay {
                         .with_merkle_payload(
                             funding_chains
                                 .iter()
+                                .chain(iter::once(&(request.chain_id, U256::ZERO)))
                                 .map(|(chain, _)| {
                                     self.provider(*chain)
                                         .map(|p| (p, self.inner.contracts.orchestrator.address))

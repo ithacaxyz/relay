@@ -1,19 +1,12 @@
 //! Batch operations for multiple intents with merkle tree support.
 
 use super::{Intent, SignedCalls};
+use crate::types::LazyMerkleTree;
 use alloy::{
     primitives::{Address, B256},
     providers::DynProvider,
 };
-use alloy_merkle_tree::tree::{MerkleProof, MerkleTree};
 use futures_util::future::try_join_all;
-
-/// Cached merkle tree data.
-#[derive(Debug)]
-struct TreeCache {
-    tree: MerkleTree,
-    leaves: Vec<B256>,
-}
 
 /// A wrapper for multiple intents that provides merkle tree operations.
 ///
@@ -25,7 +18,7 @@ struct TreeCache {
 pub struct Intents {
     /// Intents with respective provider and orchestrator address
     intents: Vec<(Intent, DynProvider, Address)>,
-    cached_tree: Option<TreeCache>,
+    cached_tree: Option<LazyMerkleTree>,
 }
 
 impl Intents {
@@ -38,7 +31,7 @@ impl Intents {
     }
 
     /// Computes EIP-712 signing hashes for all intents.
-    async fn compute_leaf_hashes(&self) -> eyre::Result<Vec<B256>> {
+    pub async fn compute_leaf_hashes(&self) -> eyre::Result<Vec<B256>> {
         Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
             intent.compute_eip712_data(*orchestrator_address, provider)
         }))
@@ -48,26 +41,17 @@ impl Intents {
         .collect())
     }
 
-    /// Builds a merkle tree from the given leaf hashes.
-    fn build_tree(leaves: impl Iterator<Item = B256>) -> MerkleTree {
-        let mut tree = MerkleTree::new();
-        for leaf in leaves {
-            tree.insert(leaf);
-        }
-        tree.finish();
-        tree
-    }
-
     /// Gets or computes the cached tree and leaves.
-    async fn get_or_compute_tree(&mut self) -> eyre::Result<&TreeCache> {
+    async fn get_or_compute_tree(&mut self) -> eyre::Result<&mut LazyMerkleTree> {
         // Check if we have a valid cache for this orchestrator
         if self.cached_tree.is_none() {
             let leaves = self.compute_leaf_hashes().await?;
-            self.cached_tree =
-                Some(TreeCache { tree: Self::build_tree(leaves.iter().copied()), leaves });
+            let leaves_count = leaves.len();
+            let tree = LazyMerkleTree::from_leaves(leaves, leaves_count)?;
+            self.cached_tree = Some(tree);
         }
 
-        Ok(self.cached_tree.as_ref().expect("cache should exist after computation"))
+        Ok(self.cached_tree.as_mut().expect("cache should exist"))
     }
 
     /// Returns the merkle root of all intents.
@@ -84,7 +68,9 @@ impl Intents {
             return Ok(B256::ZERO);
         }
 
-        Ok(self.get_or_compute_tree().await?.tree.root)
+        let tree = self.get_or_compute_tree().await?;
+
+        Ok(tree.root()?)
     }
 
     /// Gets a merkle proof for the intent at the given index.
@@ -94,13 +80,12 @@ impl Intents {
     /// The proof can be used to verify that a specific intent is included in
     /// the batch without needing to know all other intents. This is useful for
     /// on-chain verification where gas costs need to be minimized.
-    pub async fn get_proof(&mut self, index: usize) -> eyre::Result<Option<MerkleProof>> {
+    pub async fn get_proof(&mut self, index: usize) -> eyre::Result<Option<Vec<B256>>> {
         if index >= self.intents.len() {
             return Ok(None);
         }
 
-        let cache = self.get_or_compute_tree().await?;
-        Ok(cache.tree.create_proof(&cache.leaves[index]))
+        Ok(Some(self.get_or_compute_tree().await?.proof(index)?))
     }
 
     /// Returns the number of intents.

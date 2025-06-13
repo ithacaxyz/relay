@@ -286,18 +286,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-merkle-tree"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59196035b66b6c4eebb4d7156ccec7730f98e93fd8a6faab7a5fe4396ec5f890"
-dependencies = [
- "alloy-dyn-abi",
- "alloy-primitives",
- "anyhow",
- "hashbrown 0.15.4",
-]
-
-[[package]]
 name = "alloy-network"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4620,7 +4608,6 @@ version = "14.0.0"
 dependencies = [
  "alloy",
  "alloy-chains",
- "alloy-merkle-tree",
  "alloy-primitives",
  "async-trait",
  "base64 0.22.1",

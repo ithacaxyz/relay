@@ -563,6 +563,7 @@ mod tests {
             authorization_address: Default::default(),
             orchestrator: Default::default(),
             output: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            is_multi_chain: false,
         };
         RelayTransaction::new(quote, None)
     }

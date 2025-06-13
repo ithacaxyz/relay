@@ -5,8 +5,7 @@ use alloy::{
     primitives::{Address, B256, Bytes, U256, uint},
     sol_types::SolValue,
 };
-use alloy_merkle_tree::tree::MerkleTree;
-use relay::types::{Call, Intent, Intents};
+use relay::types::{Call, Intent, Intents, LazyMerkleTree};
 
 /// Creates a test intent with specified nonce and payment token
 fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Intent {
@@ -20,13 +19,15 @@ fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Inte
         totalPaymentMaxAmount: U256::ZERO,
         combinedGas: uint!(500000_U256),
         encodedPreCalls: vec![],
-        encodedFundTransfers: Bytes::default(),
+        encodedFundTransfers: vec![],
         prePaymentAmount: U256::ZERO,
         totalPaymentAmount: U256::ZERO,
         paymentRecipient: Address::ZERO,
         signature: Bytes::default(),
         paymentSignature: Bytes::default(),
         supportedAccountImplementation: Address::ZERO,
+        funder: Address::ZERO,
+        funderSignature: Bytes::default(),
     }
 }
 
@@ -108,17 +109,18 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
     ];
 
     let mut intents = Intents::new(intents_vec.clone());
+    let leaves = intents.compute_leaf_hashes().await?;
     let root = intents.root().await?;
 
     // Generate and verify proof for each intent
-    for i in 0..intents.len() {
+    for (i, leaf) in leaves.into_iter().enumerate() {
         let proof = intents.get_proof(i).await?.expect("Should get proof for valid index");
 
-        // Verify proof using alloy-merkle-tree
-        assert!(MerkleTree::verify_proof(&proof), "Proof for intent {i} should be valid");
-
-        // Verify the proof root matches our calculated root
-        assert_eq!(proof.root, root, "Proof root should match calculated root for intent {i}");
+        // Verify proof
+        assert!(
+            LazyMerkleTree::verify_proof(&root, &proof, &leaf),
+            "Proof for intent {i} should be valid"
+        );
     }
 
     // Test invalid index
