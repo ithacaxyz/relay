@@ -74,7 +74,7 @@ impl Chains {
 
         // Create and spawn the interop service
         let (interop_service, interop_handle) = InteropService::new(tx_handles);
-        tokio::spawn(interop_service.into_future());
+        tokio::spawn(interop_service);
 
         Ok(Self { chains, interop: interop_handle })
     }

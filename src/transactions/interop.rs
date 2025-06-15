@@ -4,7 +4,11 @@ use super::{
 use crate::{error::StorageError, types::rpc::BundleId};
 use alloy::primitives::{ChainId, map::HashMap};
 use futures_util::future::JoinAll;
-use std::sync::Arc;
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 use tokio::sync::mpsc;
 use tracing::{error, instrument};
 
@@ -155,25 +159,25 @@ impl InteropService {
 
         (service, handle)
     }
+}
 
-    /// Runs the interop service.
-    pub async fn into_future(mut self) {
-        loop {
-            tokio::select! {
-                Some(command) = self.command_rx.recv() => {
-                    match command {
-                        InteropServiceMessage::SendBundle(bundle) => {
-                            let inner = Arc::clone(&self.inner);
-                            tokio::spawn(async move {
-                                if let Err(e) = inner.send_and_watch_bundle(bundle).await {
-                                    error!("Failed to process interop bundle: {:?}", e);
-                                }
-                            });
+impl Future for InteropService {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        while let Poll::Ready(Some(command)) = self.command_rx.poll_recv(cx) {
+            match command {
+                InteropServiceMessage::SendBundle(bundle) => {
+                    let inner = Arc::clone(&self.inner);
+                    tokio::spawn(async move {
+                        if let Err(e) = inner.send_and_watch_bundle(bundle).await {
+                            error!("Failed to process interop bundle: {:?}", e);
                         }
-                    }
+                    });
                 }
-                else => break,
             }
         }
+
+        Poll::Pending
     }
 }
