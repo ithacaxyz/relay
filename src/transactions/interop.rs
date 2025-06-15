@@ -1,5 +1,5 @@
 use super::{
-    RelayTransaction, TransactionServiceHandle, TransactionStatus, TransactionFailureReason,
+    RelayTransaction, TransactionFailureReason, TransactionServiceHandle, TransactionStatus,
 };
 use crate::{
     error::StorageError,
@@ -7,12 +7,9 @@ use crate::{
 };
 use alloy::primitives::ChainId;
 use futures_util::future::JoinAll;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{error, instrument};
 
 /// Bundle of transactions for cross-chain execution.
 #[derive(Debug, Clone)]
@@ -54,7 +51,6 @@ impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
     }
 }
 
-
 #[derive(Debug)]
 pub enum InteropServiceMessage {
     /// Send an [`InteropBundle`].
@@ -69,7 +65,10 @@ pub struct InteropServiceHandle {
 
 impl InteropServiceHandle {
     /// Sends an interop bundle to the service.
-    pub fn send_bundle(&self, bundle: InteropBundle) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
+    pub fn send_bundle(
+        &self,
+        bundle: InteropBundle,
+    ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
         self.command_tx.send(InteropServiceMessage::SendBundle(bundle))
     }
 }
@@ -82,21 +81,25 @@ struct InteropServiceInner {
 
 impl InteropServiceInner {
     /// Creates a new interop service inner state.
-    fn new(tx_service_handles: HashMap<ChainId, TransactionServiceHandle>) -> Self {
+    fn new(
+        tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
+    ) -> Self {
         Self { tx_service_handles }
     }
 
     async fn send_and_watch_transactions(
-        &self, 
+        &self,
         transactions: &[RelayTransaction],
     ) -> Result<(), InteropBundleError> {
         let mut handles = Vec::new();
-        
+
         for tx in transactions {
-            let handle = self.tx_service_handles
+            let handle = self
+                .tx_service_handles
                 .get(&tx.chain_id())
                 .ok_or_else(|| {
-                    let err = Arc::new(format!("no transaction service for chain {}", tx.chain_id()));
+                    let err =
+                        Arc::new(format!("no transaction service for chain {}", tx.chain_id()));
                     InteropBundleError::TransactionError(err)
                 })?
                 .send_transaction(tx.clone())
@@ -127,12 +130,12 @@ impl InteropServiceInner {
         Ok(())
     }
 
+    #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
     async fn send_and_watch_bundle(&self, bundle: InteropBundle) -> Result<(), InteropBundleError> {
-        // Send and wait for source transactions to confirm
         self.send_and_watch_transactions(&bundle.src_transactions).await?;
+        self.send_and_watch_transactions(&bundle.dst_transactions).await?;
 
-        // Send and wait for destination transactions to confirm
-        self.send_and_watch_transactions(&bundle.dst_transactions).await
+        Ok(())
     }
 }
 
@@ -145,21 +148,23 @@ pub struct InteropService {
 
 impl InteropService {
     /// Creates a new interop service.
-    pub fn new(tx_service_handles: HashMap<ChainId, TransactionServiceHandle>) -> (Self, InteropServiceHandle) {
+    pub fn new(
+        tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
+    ) -> (Self, InteropServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        
+
         let service = Self {
             inner: Arc::new(InteropServiceInner::new(tx_service_handles)),
             command_rx,
         };
-        
+
         let handle = InteropServiceHandle { command_tx };
-        
+
         (service, handle)
     }
 
     /// Runs the interop service.
-    pub async fn run(mut self) {
+    pub async fn into_future(mut self) {
         loop {
             tokio::select! {
                 Some(command) = self.command_rx.recv() => {

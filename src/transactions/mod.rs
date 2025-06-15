@@ -5,7 +5,9 @@ pub use service::*;
 mod signer;
 pub use signer::*;
 mod transaction;
-pub use transaction::{PendingTransaction, RelayTransaction, TransactionStatus, TransactionFailureReason, TxId};
+pub use transaction::{
+    PendingTransaction, RelayTransaction, TransactionFailureReason, TransactionStatus, TxId,
+};
 mod fees;
 mod metrics;
 mod monitor;

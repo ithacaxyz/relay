@@ -10,7 +10,9 @@ use crate::{
     provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
-    transactions::{TransactionService, TransactionServiceHandle},
+    transactions::{
+        InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
+    },
 };
 
 /// A single supported chain.
@@ -31,6 +33,8 @@ pub struct Chain {
 pub struct Chains {
     /// The providers for each chain.
     chains: HashMap<ChainId, Chain>,
+    /// Handle to the interop service.
+    interop: InteropServiceHandle,
 }
 
 impl Chains {
@@ -62,7 +66,17 @@ impl Chains {
             .await?,
         );
 
-        Ok(Self { chains })
+        // Create a HashMap of transaction service handles for the interop service
+        let tx_handles: HashMap<ChainId, TransactionServiceHandle> = chains
+            .iter()
+            .map(|(chain_id, chain)| (*chain_id, chain.transactions.clone()))
+            .collect();
+
+        // Create and spawn the interop service
+        let (interop_service, interop_handle) = InteropService::new(tx_handles);
+        tokio::spawn(interop_service.into_future());
+
+        Ok(Self { chains, interop: interop_handle })
     }
 
     /// Get a provider for a given chain ID.
@@ -78,6 +92,9 @@ impl Chains {
 
 impl std::fmt::Debug for Chains {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Chains").field("providers", &self.chains.keys()).finish()
+        f.debug_struct("Chains")
+            .field("providers", &self.chains.keys())
+            .field("interop", &self.interop)
+            .finish()
     }
 }
