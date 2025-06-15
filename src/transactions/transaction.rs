@@ -114,6 +114,7 @@ impl RelayTransaction {
     }
 }
 
+/// Error occurred while processing a transaction.
 pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 impl<T> TransactionFailureReason for T where T: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 

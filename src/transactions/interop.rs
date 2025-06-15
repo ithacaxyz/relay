@@ -1,13 +1,10 @@
 use super::{
     RelayTransaction, TransactionFailureReason, TransactionServiceHandle, TransactionStatus,
 };
-use crate::{
-    error::StorageError,
-    types::rpc::BundleId,
-};
-use alloy::primitives::ChainId;
+use crate::{error::StorageError, types::rpc::BundleId};
+use alloy::primitives::{ChainId, map::HashMap};
 use futures_util::future::JoinAll;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, instrument};
 
@@ -81,9 +78,7 @@ struct InteropServiceInner {
 
 impl InteropServiceInner {
     /// Creates a new interop service inner state.
-    fn new(
-        tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-    ) -> Self {
+    fn new(tx_service_handles: HashMap<ChainId, TransactionServiceHandle>) -> Self {
         Self { tx_service_handles }
     }
 
@@ -153,10 +148,8 @@ impl InteropService {
     ) -> (Self, InteropServiceHandle) {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let service = Self {
-            inner: Arc::new(InteropServiceInner::new(tx_service_handles)),
-            command_rx,
-        };
+        let service =
+            Self { inner: Arc::new(InteropServiceInner::new(tx_service_handles)), command_rx };
 
         let handle = InteropServiceHandle { command_tx };
 
