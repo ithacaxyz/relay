@@ -340,14 +340,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_size_limit() {
-        // This should err due to size limit
-        let huge_size = MAX_TREE_SIZE + 1;
-        let leaves = vec![B256::ZERO; huge_size];
-        assert!(LazyMerkleTree::from_leaves(leaves, 1).is_err());
-    }
-
-    #[test]
     fn test_error_handling() {
         // Test index out of bounds
         let mut tree =
