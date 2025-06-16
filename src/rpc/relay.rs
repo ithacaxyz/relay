@@ -14,7 +14,7 @@ use crate::{
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
-    transactions::TxId,
+    transactions::InteropBundle,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
@@ -475,14 +475,34 @@ impl Relay {
         // single chain workflow
         if quotes.ty().multi_chain_root.is_none() {
             // send intent
-            self.send_intent(
-                bundle_id,
-                // safety: we know there is 1 element
-                quotes.ty().quotes.first().unwrap().clone(),
-                capabilities,
-                signature,
-            )
-            .await?;
+            let tx = self
+                .prepare_tx(
+                    bundle_id,
+                    // safety: we know there is 1 element
+                    quotes.ty().quotes.first().unwrap().clone(),
+                    capabilities,
+                    signature,
+                )
+                .await?;
+
+            let span = span!(
+                Level::INFO, "send tx",
+                otel.kind = ?SpanKind::Producer,
+                messaging.system = "pg",
+                messaging.destination.name = "tx",
+                messaging.operation.name = "send",
+                messaging.operation.type = "send",
+                messaging.message.id = %tx.id
+            );
+            self.inner
+                .chains
+                .get(tx.chain_id())
+                .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
+                .transactions
+                .send_transaction(tx)
+                .instrument(span)
+                .await?;
+
             return Ok(bundle_id);
         }
 
@@ -503,29 +523,48 @@ impl Relay {
                 .collect(),
         );
 
+        let mut bundle = InteropBundle {
+            id: bundle_id,
+            src_transactions: Vec::new(),
+            dst_transactions: Vec::new(),
+        };
+
+        // last quote is the output intent
+        let dst_idx = quotes.ty().quotes.len() - 1;
+
         // todo: error handling
         let root = intents.root().await.unwrap();
         for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
             let proof = intents.get_proof(idx).await.unwrap().unwrap();
             let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
-            self.send_intent(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
+            let tx = self
+                .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
                 .await?;
+
+            
+            if idx == dst_idx {
+                bundle.dst_transactions.push(tx.clone());
+            } else {
+                bundle.src_transactions.push(tx.clone());
+            }
         }
+
+        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
 
         Ok(bundle_id)
     }
 
     #[instrument(skip_all)]
-    async fn send_intent(
+    async fn prepare_tx(
         &self,
         bundle_id: BundleId,
         mut quote: Quote,
         capabilities: SendPreparedCallsCapabilities,
         signature: Bytes,
-    ) -> RpcResult<TxId> {
+    ) -> RpcResult<RelayTransaction> {
         let chain_id = quote.chain_id;
         // todo: chain support should probably be checked before we send txs
-        let Chain { provider, transactions, .. } =
+        let Chain { provider, .. } =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         let authorization_address = quote.authorization_address;
@@ -591,21 +630,9 @@ impl Relay {
         quote.output.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote.clone(), authorization.clone());
-        let tx_id = tx.id;
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
 
-        let span = span!(
-            Level::INFO, "send tx",
-            otel.kind = ?SpanKind::Producer,
-            messaging.system = "pg",
-            messaging.destination.name = "tx",
-            messaging.operation.name = "send",
-            messaging.operation.type = "send",
-            messaging.message.id = %tx.id
-        );
-        transactions.send_transaction(tx).instrument(span).await?;
-
-        Ok(tx_id)
+        Ok(tx)
     }
 
     /// Get keys from an account.

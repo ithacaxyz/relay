@@ -88,6 +88,11 @@ impl Chains {
     pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
         self.chains.keys()
     }
+
+    /// Get the interop service handle.
+    pub fn interop(&self) -> &InteropServiceHandle {
+        &self.interop
+    }
 }
 
 impl std::fmt::Debug for Chains {
