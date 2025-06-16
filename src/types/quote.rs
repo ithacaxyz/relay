@@ -2,7 +2,7 @@
 
 use crate::types::{Intent, Signed};
 use alloy::{
-    primitives::{Address, B256, ChainId, Keccak256, Signature, U256},
+    primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
     providers::utils::Eip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
@@ -67,5 +67,11 @@ impl Quote {
         );
         hasher.update(self.orchestrator);
         hasher.finalize()
+    }
+}
+
+impl Sealable for Quote {
+    fn hash_slow(&self) -> B256 {
+        self.digest()
     }
 }
