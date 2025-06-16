@@ -81,12 +81,20 @@ jobs:
             ~/.config/.foundry/cache
           key: rpc-cache-${{ hashFiles('tests/assets/rpc-cache-keyfile') }}
 
+      - name: Set test filter
+        run: |
+          if [ "${{ matrix.variant }}" = "base_sepolia" ]; then
+            echo "TEST_FILTER=(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not test(~multi*chain)" >> $GITHUB_ENV
+          else
+            echo "TEST_FILTER=kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" >> $GITHUB_ENV
+          fi
+
       - name: Run tests
         run: |
           TEST_CONTRACTS=tests/account/out cargo nextest run \
             --locked \
             --workspace \
-            -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
+            -E "$TEST_FILTER" \
             --no-tests=warn
 
   test-migrations:
