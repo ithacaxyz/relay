@@ -194,7 +194,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
         assert!(
             env.relay_endpoint
-                .prepare_calls(params.clone())
+                .prepare_calls(params)
                 .await
                 .is_err_and(|err| err.to_string().contains("invalid delegation 0x"))
         );
@@ -225,6 +225,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         .await;
 
         // Create a fresh quote after restoring the implementation
+        // The old quote was prepared with different delegation state, causing UnsupportedAccountImplementation error
         let fresh_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
         let fresh_signed_payload = admin_key.sign_payload_hash(fresh_quote.digest).await?;
 
