@@ -190,92 +190,106 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
         .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
 }
 
+/// A deployed contract with its address and optional bytecode
+#[derive(Clone)]
+struct DeployedContract {
+    address: Address,
+    bytecode: Option<Arc<Bytes>>,
+}
+
+impl DeployedContract {
+    /// Create a new deployed contract
+    fn new(address: Address) -> Self {
+        Self { address, bytecode: None }
+    }
+}
+
 /// Contract addresses for deployed contracts
 #[derive(Clone)]
 struct ContractAddresses {
-    simulator: (Address, Option<Arc<Bytes>>),
-    delegation: (Address, Option<Arc<Bytes>>),
-    delegation_implementation: (Address, Option<Arc<Bytes>>),
-    orchestrator: (Address, Option<Arc<Bytes>>),
-    funder: (Address, Option<Arc<Bytes>>),
-    erc20s: Vec<(Address, Option<Arc<Bytes>>)>,
-    erc721: (Address, Option<Arc<Bytes>>),
+    simulator: DeployedContract,
+    delegation: DeployedContract,
+    delegation_implementation: DeployedContract,
+    orchestrator: DeployedContract,
+    funder: DeployedContract,
+    erc20s: Vec<DeployedContract>,
+    erc721: DeployedContract,
 }
 
 impl ContractAddresses {
     /// Get simulator address
     fn simulator(&self) -> Address {
-        self.simulator.0
+        self.simulator.address
     }
 
     /// Get delegation proxy address
     fn delegation(&self) -> Address {
-        self.delegation.0
+        self.delegation.address
     }
 
     /// Get delegation implementation address
     fn delegation_implementation(&self) -> Address {
-        self.delegation_implementation.0
+        self.delegation_implementation.address
     }
 
     /// Get orchestrator address
     fn orchestrator(&self) -> Address {
-        self.orchestrator.0
+        self.orchestrator.address
     }
 
     /// Get funder address
     fn funder(&self) -> Address {
-        self.funder.0
+        self.funder.address
     }
 
     /// Get ERC721 address
     fn erc721(&self) -> Address {
-        self.erc721.0
+        self.erc721.address
     }
 
     /// Get all ERC20 addresses
     fn erc20_addresses(&self) -> Vec<Address> {
-        self.erc20s.iter().map(|(addr, _)| *addr).collect()
+        self.erc20s.iter().map(|contract| contract.address).collect()
     }
 
     /// Get first ERC20 address
     fn erc20(&self) -> Address {
-        self.erc20s[0].0
+        self.erc20s[0].address
     }
 
     /// Get simulator bytecode
     fn simulator_code(&self) -> Option<&Arc<Bytes>> {
-        self.simulator.1.as_ref()
+        self.simulator.bytecode.as_ref()
     }
 
     /// Get delegation proxy bytecode
     fn delegation_code(&self) -> Option<&Arc<Bytes>> {
-        self.delegation.1.as_ref()
+        self.delegation.bytecode.as_ref()
     }
 
     /// Get delegation implementation bytecode
     fn delegation_implementation_code(&self) -> Option<&Arc<Bytes>> {
-        self.delegation_implementation.1.as_ref()
+        self.delegation_implementation.bytecode.as_ref()
     }
 
     /// Get orchestrator bytecode
     fn orchestrator_code(&self) -> Option<&Arc<Bytes>> {
-        self.orchestrator.1.as_ref()
+        self.orchestrator.bytecode.as_ref()
     }
 
     /// Get funder bytecode
     fn funder_code(&self) -> Option<&Arc<Bytes>> {
-        self.funder.1.as_ref()
+        self.funder.bytecode.as_ref()
     }
 
     /// Get ERC721 bytecode
     fn erc721_code(&self) -> Option<&Arc<Bytes>> {
-        self.erc721.1.as_ref()
+        self.erc721.bytecode.as_ref()
     }
 
     /// Get ERC20 bytecode (from first ERC20)
     fn erc20_code(&self) -> Option<&Arc<Bytes>> {
-        self.erc20s.first().and_then(|(_, code)| code.as_ref())
+        self.erc20s.first().and_then(|contract| contract.bytecode.as_ref())
     }
 }
 
@@ -365,7 +379,7 @@ async fn setup_secondary_chain<P: Provider + WalletProvider + 'static>(
     let erc20_deployments = contracts
         .erc20s
         .iter()
-        .map(|(addr, _)| provider.anvil_set_code(*addr, erc20_code.as_ref().clone()));
+        .map(|contract| provider.anvil_set_code(contract.address, erc20_code.as_ref().clone()));
 
     try_join_all(contract_deployments.into_iter().chain(erc20_deployments)).await?;
 
@@ -499,17 +513,17 @@ impl Environment {
         )?;
 
         // Update contracts with bytecode
-        contracts.orchestrator.1 = Some(Arc::new(orchestrator_code));
-        contracts.funder.1 = Some(Arc::new(funder_code));
-        contracts.delegation.1 = Some(Arc::new(delegation_code));
-        contracts.delegation_implementation.1 = Some(Arc::new(delegation_impl_code));
-        contracts.simulator.1 = Some(Arc::new(simulator_code));
-        contracts.erc721.1 = Some(Arc::new(erc721_code));
+        contracts.orchestrator.bytecode = Some(Arc::new(orchestrator_code));
+        contracts.funder.bytecode = Some(Arc::new(funder_code));
+        contracts.delegation.bytecode = Some(Arc::new(delegation_code));
+        contracts.delegation_implementation.bytecode = Some(Arc::new(delegation_impl_code));
+        contracts.simulator.bytecode = Some(Arc::new(simulator_code));
+        contracts.erc721.bytecode = Some(Arc::new(erc721_code));
 
         // Update all ERC20s with the same bytecode
         let erc20_code = Arc::new(erc20_code);
         for erc20 in &mut contracts.erc20s {
-            erc20.1 = Some(erc20_code.clone());
+            erc20.bytecode = Some(erc20_code.clone());
         }
 
         providers.push(first_provider.erased());
@@ -549,7 +563,10 @@ impl Environment {
         let mut registry = CoinRegistry::default();
         for &chain_id in &chain_ids {
             registry.extend(
-                contracts.erc20s.iter().map(|(addr, _)| ((chain_id, Some(*addr)), CoinKind::USDT)),
+                contracts
+                    .erc20s
+                    .iter()
+                    .map(|contract| ((chain_id, Some(contract.address)), CoinKind::USDT)),
             );
         }
 
@@ -935,13 +952,13 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     }
 
     Ok(ContractAddresses {
-        simulator: (simulator, None),
-        delegation: (delegation_proxy, None),
-        delegation_implementation: (delegation, None),
-        orchestrator: (orchestrator, None),
-        funder: (funder, None),
-        erc20s: erc20s.into_iter().map(|addr| (addr, None)).collect(),
-        erc721: (erc721, None),
+        simulator: DeployedContract::new(simulator),
+        delegation: DeployedContract::new(delegation_proxy),
+        delegation_implementation: DeployedContract::new(delegation),
+        orchestrator: DeployedContract::new(orchestrator),
+        funder: DeployedContract::new(funder),
+        erc20s: erc20s.into_iter().map(DeployedContract::new).collect(),
+        erc721: DeployedContract::new(erc721),
     })
 }
 
