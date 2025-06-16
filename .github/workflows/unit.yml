@@ -84,7 +84,7 @@ jobs:
       - name: Set test filter
         run: |
           if [ "${{ matrix.variant }}" = "base_sepolia" ]; then
-            echo "TEST_FILTER=(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not test(~multi*chain)" >> $GITHUB_ENV
+            echo "TEST_FILTER=(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not (test(~multichain) or test(~multi_chain))" >> $GITHUB_ENV
           else
             echo "TEST_FILTER=kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" >> $GITHUB_ENV
           fi
