@@ -1,2 +1,2 @@
-DELETE FROM txs WHERE status = 'confirmed';
-ALTER TABLE txs ADD COLUMN receipt jsonb;
+delete from txs where status = 'confirmed';
+alter table txs add column receipt jsonb;
