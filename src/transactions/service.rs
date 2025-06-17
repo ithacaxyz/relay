@@ -363,8 +363,8 @@ impl Future for TransactionService {
                             debug!(tx_id = %id, %err, "transaction failed");
                             this.metrics.failed.increment(1);
                         }
-                        TransactionStatus::Confirmed(hash) => {
-                            debug!(tx_id = %id, %hash, "transaction confirmed");
+                        TransactionStatus::Confirmed(receipt) => {
+                            debug!(tx_id = %id, %receipt.transaction_hash, "transaction confirmed");
                             this.metrics.confirmed.increment(1);
                         }
                         _ => {}

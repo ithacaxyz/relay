@@ -1,6 +1,7 @@
 use alloy::{
     primitives::B256,
     providers::{DynProvider, PendingTransactionConfig, Provider},
+    rpc::types::TransactionReceipt,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{sync::Arc, time::Duration};
@@ -29,7 +30,11 @@ impl TransactionMonitoringHandle {
     }
 
     /// Attempts to wait for a transaction confirmation.
-    pub async fn watch_transaction(&self, tx_hash: B256, timeout: Duration) -> Option<B256> {
+    pub async fn watch_transaction(
+        &self,
+        tx_hash: B256,
+        timeout: Duration,
+    ) -> Option<TransactionReceipt> {
         let config = PendingTransactionConfig::new(tx_hash).with_timeout(Some(timeout));
 
         let watch_with_provider = async |provider: &DynProvider, is_external: bool| {
@@ -41,14 +46,18 @@ impl TransactionMonitoringHandle {
                 };
 
             if is_confirmed {
-                if is_external {
-                    self.metrics.external_confirmations.increment(1);
-                } else {
-                    self.metrics.local_confirmations.increment(1);
+                if let Ok(Some(receipt)) = provider.get_transaction_receipt(tx_hash).await {
+                    if is_external {
+                        self.metrics.external_confirmations.increment(1);
+                    } else {
+                        self.metrics.local_confirmations.increment(1);
+                    }
+
+                    return Some(receipt);
                 }
             }
 
-            is_confirmed
+            None
         };
 
         let mut futures = core::iter::once(Box::pin(watch_with_provider(&self.provider, false)))
@@ -56,8 +65,8 @@ impl TransactionMonitoringHandle {
             .collect::<FuturesUnordered<_>>();
 
         while let Some(result) = futures.next().await {
-            if result {
-                return Some(tx_hash);
+            if let Some(receipt) = result {
+                return Some(receipt);
             }
         }
 

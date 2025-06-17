@@ -39,7 +39,7 @@ use alloy::{
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::{
-        Authorization, TransactionReceipt,
+        Authorization,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
@@ -1493,32 +1493,14 @@ impl RelayApiServer for Relay {
             .flatten()
             .any(|(_, status)| matches!(status, TransactionStatus::Failed(_)));
 
-        let receipts = try_join_all(
-            tx_statuses
-                .iter()
-                .flatten()
-                .flat_map(|(chain_id, status)| {
-                    Some((chain_id, TransactionStatus::tx_hash(status)?))
-                })
-                .map(|(chain_id, tx_hash)| async move {
-                    let provider = self.inner.chains.get(*chain_id).unwrap().provider;
-                    Ok::<_, RelayError>((
-                        chain_id,
-                        provider
-                            .get_transaction_receipt(tx_hash)
-                            .await
-                            .map_err(RelayError::from)?,
-                    ))
-                }),
-        )
-        .await?;
-
-        // filter out non existing receipts, as we can assume this means the tx is pending, which is
-        // handled separately
-        let receipts: Vec<(ChainId, TransactionReceipt)> = receipts
-            .into_iter()
-            .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
-            .collect();
+        let receipts = tx_statuses
+            .iter()
+            .flatten()
+            .filter_map(|(chain_id, status)| match status {
+                TransactionStatus::Confirmed(receipt) => Some((*chain_id, receipt.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
         // note(onbjerg): this currently rests on the assumption that there is only one intent per
         // transaction, and that each transaction in a bundle originates from a single user
