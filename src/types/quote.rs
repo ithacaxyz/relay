@@ -134,7 +134,7 @@ impl Quotes {
     }
 }
 
-impl Sealable for Quote {
+impl Sealable for Quotes {
     fn hash_slow(&self) -> B256 {
         self.digest()
     }
