@@ -706,8 +706,10 @@ impl Signer {
                     let first_guess = if block_time == 0 {
                         included_at_block
                     } else {
-                        included_at_block
-                            - ((included_at - submitted_at) as u128 * 1000 / block_time) as u64
+                        included_at_block.saturating_sub(
+                            ((included_at.saturating_sub(submitted_at)) as u128 * 1000 / block_time)
+                                as u64,
+                        )
                     };
 
                     // Follow the chain until we find a block after the submission time.

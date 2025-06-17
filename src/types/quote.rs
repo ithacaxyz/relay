@@ -7,6 +7,8 @@ use crate::{
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Signature, U256},
     providers::{DynProvider, utils::Eip1559Estimation},
+    primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
+    providers::utils::Eip1559Estimation,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -131,5 +133,11 @@ impl Quotes {
             hasher.update(root);
         }
         hasher.finalize()
+    }
+}
+
+impl Sealable for Quote {
+    fn hash_slow(&self) -> B256 {
+        self.digest()
     }
 }
