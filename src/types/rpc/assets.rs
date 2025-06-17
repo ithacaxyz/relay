@@ -4,7 +4,7 @@ use alloy::primitives::{Address, ChainId, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{AssetMetadata, AssetType};
+use crate::types::{Asset, AssetMetadata, AssetType};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -30,6 +30,15 @@ impl AddressOrNative {
     }
 }
 
+impl From<AddressOrNative> for Asset {
+    fn from(value: AddressOrNative) -> Self {
+        match value {
+            AddressOrNative::Address(address) => Asset::Token(address),
+            AddressOrNative::Native => Asset::Native,
+        }
+    }
+}
+
 /// One item inside each vector that lives under the per-chain key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +51,7 @@ pub struct AssetFilterItem {
 }
 
 /// Request parameters for `wallet_getAssets`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GetAssetsParameters {
     /// Address of the EOA to query.
@@ -56,6 +65,13 @@ pub struct GetAssetsParameters {
     /// Restrict results to these chains.
     #[serde(default)]
     pub chain_filter: Vec<ChainId>,
+}
+
+impl GetAssetsParameters {
+    /// Generates parameters to get assets eoa on all chains.
+    pub fn eoa(account: Address) -> Self {
+        Self { account, ..Default::default() }
+    }
 }
 
 /// Asset as described on ERC7811.
@@ -79,3 +95,64 @@ pub struct Asset7811 {
 pub struct GetAssetsResponse(
     #[serde(with = "alloy::serde::quantity::hashmap")] pub HashMap<ChainId, Vec<Asset7811>>,
 );
+
+impl GetAssetsResponse {
+    /// Generates a list of chain and amount tuples that fund a target chain operation.
+    ///
+    /// If it returns None, there were not enough funds across all chains.
+    /// If Some(empty), destination chain does not require any funding from other chains..
+    pub fn find_funding_chains(
+        &self,
+        target_chain: ChainId,
+        asset: AddressOrNative,
+        amount: U256,
+    ) -> Option<Vec<(ChainId, U256)>> {
+        let existing = self
+            .0
+            .get(&target_chain)
+            .and_then(|assets| assets.iter().find(|a| a.address == asset).map(|a| a.balance))
+            .unwrap_or(U256::ZERO);
+
+        let mut remaining = if existing >= amount { U256::ZERO } else { amount - existing };
+
+        if remaining.is_zero() {
+            return Some(vec![]);
+        }
+
+        // collect (chain, balance) for all other chains that have >0 balance
+        let mut sources: Vec<(ChainId, U256)> = self
+            .0
+            .iter()
+            .filter_map(|(&chain, assets)| {
+                if chain == target_chain {
+                    return None;
+                }
+                let balance = assets
+                    .iter()
+                    .find(|a| a.address == asset)
+                    .map(|a| a.balance)
+                    .unwrap_or(U256::ZERO);
+                if balance.is_zero() { None } else { Some((chain, balance)) }
+            })
+            .collect();
+
+        // highest balances first
+        sources.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        let mut plan = Vec::new();
+        for (chain, balance) in sources {
+            if remaining.is_zero() {
+                break;
+            }
+            let take = if balance >= remaining { remaining } else { balance };
+            plan.push((chain, take));
+            remaining -= take;
+        }
+
+        if remaining.is_zero() {
+            return Some(plan);
+        }
+
+        None
+    }
+}

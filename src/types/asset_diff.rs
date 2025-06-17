@@ -117,6 +117,12 @@ impl From<Address> for Asset {
     }
 }
 
+impl From<Option<Address>> for Asset {
+    fn from(asset: Option<Address>) -> Self {
+        if let Some(asset) = asset { asset.into() } else { Asset::Native }
+    }
+}
+
 /// Represents metadata for an asset.
 #[derive(Debug, Clone)]
 pub struct AssetWithInfo {

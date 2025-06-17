@@ -24,6 +24,7 @@ async fn pause() -> eyre::Result<()> {
     let orchestrator = OrchestratorContractInstance::new(env.orchestrator, env.provider());
 
     let prepare_params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(eoa.address),
         calls: vec![],
         chain_id: env.chain_id(),
