@@ -541,7 +541,6 @@ impl Relay {
                 .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
                 .await?;
 
-            
             if idx == dst_idx {
                 bundle.dst_transactions.push(tx.clone());
             } else {
