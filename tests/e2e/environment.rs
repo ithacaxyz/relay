@@ -598,6 +598,7 @@ impl Environment {
                 .with_orchestrator(Some(contracts.orchestrator()))
                 .with_delegation_proxy(Some(contracts.delegation()))
                 .with_simulator(Some(contracts.simulator()))
+                .with_funder(Some(contracts.funder()))
                 .with_intent_gas_buffer(0) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)

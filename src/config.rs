@@ -45,6 +45,8 @@ pub struct RelayConfig {
     pub delegation_proxy: Address,
     /// Simulator address.
     pub simulator: Address,
+    /// Funder address.
+    pub funder: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -259,6 +261,7 @@ impl Default for RelayConfig {
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
+            funder: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -382,6 +385,14 @@ impl RelayConfig {
     pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
         if let Some(simulator) = simulator {
             self.simulator = simulator;
+        }
+        self
+    }
+
+    /// Sets the funder address.
+    pub fn with_funder(mut self, funder: Option<Address>) -> Self {
+        if let Some(funder) = funder {
+            self.funder = funder;
         }
         self
     }

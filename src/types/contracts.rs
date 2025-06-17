@@ -51,6 +51,8 @@ pub struct VersionedContracts {
     pub delegation_proxy: VersionedContract,
     /// Simulator.
     pub simulator: VersionedContract,
+    /// Funder.
+    pub funder: VersionedContract,
 }
 
 impl VersionedContracts {
@@ -113,6 +115,7 @@ impl VersionedContracts {
             legacy_delegations,
             delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
             simulator: VersionedContract::no_version(config.simulator),
+            funder: VersionedContract::no_version(config.funder),
         })
     }
 }

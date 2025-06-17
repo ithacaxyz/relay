@@ -64,6 +64,9 @@ pub struct Args {
     /// The address of the simulator
     #[arg(long = "simulator", required_unless_present("config_only"), value_name = "SIMULATOR")]
     pub simulator: Option<Address>,
+    /// The address of the funder
+    #[arg(long = "funder", required_unless_present("config_only"), value_name = "FUNDER")]
+    pub funder: Option<Address>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -176,6 +179,7 @@ impl Args {
             .with_orchestrator(self.orchestrator)
             .with_delegation_proxy(self.delegation_proxy)
             .with_simulator(self.simulator)
+            .with_funder(self.funder)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)

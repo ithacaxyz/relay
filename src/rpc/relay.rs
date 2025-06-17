@@ -33,7 +33,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, address, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -374,7 +374,7 @@ impl Relay {
                     .unwrap(),
                 1,
             )?;
-            intent.funder = address!("0xa15bb66138824a1c7167f5e85b957d04dd34e468");
+            intent.funder = self.inner.contracts.funder.address;
             let (digest, _) = intent.compute_eip712_data(self.orchestrator(), &provider).await?;
             let signature = signers[0].sign_payload_hash(digest).await?;
             intent.funderSignature = Signature {

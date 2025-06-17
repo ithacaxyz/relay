@@ -255,6 +255,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         "orchestrator" => config.orchestrator.to_string(),
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
+        "funder" => config.funder.to_string(),
         "fee_recipient" => config.chain.fee_recipient.to_string()
     )
     .absolute(1);
