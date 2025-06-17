@@ -64,3 +64,6 @@ pub use storage::*;
 
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;
+
+mod merkle;
+pub use merkle::*;

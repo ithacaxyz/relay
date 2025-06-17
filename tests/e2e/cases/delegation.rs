@@ -194,7 +194,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
         assert!(
             env.relay_endpoint
-                .prepare_calls(params)
+                .prepare_calls(params.clone())
                 .await
                 .is_err_and(|err| err.to_string().contains("invalid delegation 0x"))
         );
@@ -224,10 +224,14 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         )
         .await;
 
+        let fresh_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
+        let fresh_signed_payload = admin_key.sign_payload_hash(fresh_quote.digest).await?;
+
         assert!(
             await_calls_status(
                 &env,
-                send_prepared_calls(&env, &admin_key, signed_payload, good_quote.context).await?
+                send_prepared_calls(&env, &admin_key, fresh_signed_payload, fresh_quote.context)
+                    .await?
             )
             .await?
             .status

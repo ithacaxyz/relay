@@ -7,6 +7,7 @@ mod delegation;
 mod errors;
 mod keys;
 mod multi_chain;
+mod multichain_usdt_transfer;
 mod pause;
 mod paymaster;
 mod porto;

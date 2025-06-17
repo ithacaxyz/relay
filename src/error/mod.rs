@@ -1,5 +1,7 @@
 //! Relay error types.
 mod asset;
+use std::error::Error;
+
 pub use asset::AssetError;
 
 mod auth;
@@ -69,6 +71,13 @@ pub enum RelayError {
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
+}
+
+impl RelayError {
+    /// Creates an [`RelayError::InternalError`] from an error.
+    pub fn internal(err: impl Error + Send + Sync + 'static) -> Self {
+        Self::InternalError(err.into())
+    }
 }
 
 impl From<reqwest::Error> for RelayError {

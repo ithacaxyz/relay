@@ -66,7 +66,7 @@ impl RelayTransaction {
         intent.prePaymentAmount = payment_amount;
         intent.totalPaymentAmount = payment_amount;
 
-        let input = intent.encode_execute();
+        let input = intent.encode_execute(quote.is_multi_chain);
 
         if let Some(auth) = &self.authorization {
             TxEip7702 {
@@ -114,6 +114,7 @@ impl RelayTransaction {
     }
 }
 
+/// Error occurred while processing a transaction.
 pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 impl<T> TransactionFailureReason for T where T: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 

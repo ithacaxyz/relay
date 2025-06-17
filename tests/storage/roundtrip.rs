@@ -132,7 +132,9 @@ impl Fixtures {
             signature: r_bytes.clone(),
             paymentSignature: r_bytes.clone(),
             supportedAccountImplementation: r_address,
-            encodedFundTransfers: r_bytes.clone(),
+            encodedFundTransfers: vec![r_bytes.clone()],
+            funder: r_address,
+            funderSignature: r_bytes.clone(),
         };
         let quote = Quote {
             chain_id: r_u64,
@@ -144,6 +146,7 @@ impl Fixtures {
             native_fee_estimate: r_fee,
             authorization_address: Some(r_address),
             orchestrator: r_address,
+            is_multi_chain: false,
         };
         let queued_tx = RelayTransaction {
             id: TxId(r_b256),

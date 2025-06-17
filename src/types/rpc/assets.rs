@@ -68,34 +68,9 @@ pub struct GetAssetsParameters {
 }
 
 impl GetAssetsParameters {
-    /// Generates parameters to get native assets from target chain.
-    pub fn native(account: Address, chain: ChainId) -> Self {
-        Self {
-            account,
-            asset_filter: HashMap::from_iter([(
-                chain,
-                vec![AssetFilterItem {
-                    address: AddressOrNative::Native,
-                    asset_type: AssetType::Native,
-                }],
-            )]),
-            ..Default::default()
-        }
-    }
-
-    /// Generates parameters to get erc20 assets from target chain.
-    pub fn erc20(account: Address, chain: ChainId, address: Address) -> Self {
-        Self {
-            account,
-            asset_filter: HashMap::from_iter([(
-                chain,
-                vec![AssetFilterItem {
-                    address: AddressOrNative::Address(address),
-                    asset_type: AssetType::ERC20,
-                }],
-            )]),
-            ..Default::default()
-        }
+    /// Generates parameters to get assets eoa on all chains.
+    pub fn eoa(account: Address) -> Self {
+        Self { account, ..Default::default() }
     }
 }
 
