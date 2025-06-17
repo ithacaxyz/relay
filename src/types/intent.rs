@@ -259,10 +259,13 @@ impl Intent {
 
     /// Returns all fund transfers in the intent.
     pub fn fund_transfers(&self) -> Result<Vec<(Address, U256)>, alloy::sol_types::Error> {
-        self.encodedFundTransfers.iter().map(|transfer| {
-            let transfer = Transfer::abi_decode(transfer)?;
-            Ok((transfer.token, transfer.amount))
-        }).collect()
+        self.encodedFundTransfers
+            .iter()
+            .map(|transfer| {
+                let transfer = Transfer::abi_decode(transfer)?;
+                Ok((transfer.token, transfer.amount))
+            })
+            .collect()
     }
 
     /// Encodes this intent into calldata for [`OrchestratorContract::executeCall`].
