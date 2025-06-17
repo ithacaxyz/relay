@@ -20,9 +20,10 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![calls::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],

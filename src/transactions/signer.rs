@@ -317,7 +317,7 @@ impl Signer {
         fees: Eip1559Estimation,
     ) -> Result<(), SignerError> {
         // Set payment recipient to us if it hasn't been set
-        let payment_recipient = &mut tx.quote.ty_mut().intent.paymentRecipient;
+        let payment_recipient = &mut tx.quote.output.paymentRecipient;
         if payment_recipient.is_zero() {
             *payment_recipient = self.address();
         }

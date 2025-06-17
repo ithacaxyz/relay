@@ -4,8 +4,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
+        Account, Asset, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, IERC20, Key,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
@@ -18,7 +18,7 @@ use alloy::{
     },
     providers::DynProvider,
     rpc::types::Log,
-    sol_types::SolEvent,
+    sol_types::{SolCall, SolEvent},
     uint,
 };
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,8 @@ pub struct PrepareCallsParameters {
     /// precall.
     #[serde(default)]
     pub key: Option<CallKey>,
+    /// Required funds on the target chain.
+    pub required_funds: Vec<(Address, U256)>,
 }
 
 impl PrepareCallsParameters {
@@ -152,6 +154,43 @@ impl PrepareCallsParameters {
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
     }
+
+    /// Return a self that will be used as a funding intent
+    pub fn build_funding_intent(
+        eoa: Address,
+        chain_id: ChainId,
+        funding_asset: Asset,
+        amount: U256,
+        fee_token: Address,
+        request_key: CallKey,
+    ) -> Self {
+        // todo: escrow
+        let escrow = Address::ZERO;
+        let escrow_call = if funding_asset.is_native() {
+            Call { to: escrow, value: amount, data: Default::default() }
+        } else {
+            Call {
+                to: funding_asset.address(),
+                value: U256::ZERO,
+                data: IERC20::transferCall { to: escrow, amount }.abi_encode().into(),
+            }
+        };
+
+        PrepareCallsParameters {
+            calls: vec![escrow_call],
+            chain_id,
+            from: Some(eoa),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                revoke_keys: vec![],
+                pre_calls: vec![],
+                pre_call: false,
+            },
+            key: Some(request_key),
+            required_funds: vec![],
+        }
+    }
 }
 
 /// Capabilities for `wallet_prepareCalls` request.
@@ -212,17 +251,17 @@ pub struct PrepareCallsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PrepareCallsContext {
-    /// The [`SignedQuote`] of the prepared call bundle.
+    /// The [`SignedQuotes`] of the prepared call bundle.
     #[serde(rename = "quote")]
-    Quote(Box<SignedQuote>),
+    Quote(Box<SignedQuotes>),
     /// The [`PreCall`] of the prepared call bundle.
     #[serde(rename = "preCall")]
     PreCall(SignedCall),
 }
 
 impl PrepareCallsContext {
-    /// Initializes [`PrepareCallsContext`] with a [`SignedQuote`].
-    pub fn with_quote(quote: SignedQuote) -> Self {
+    /// Initializes [`PrepareCallsContext`] with [`SignedQuotes`].
+    pub fn with_quotes(quote: SignedQuotes) -> Self {
         Self::Quote(Box::new(quote))
     }
 
@@ -231,24 +270,24 @@ impl PrepareCallsContext {
         Self::PreCall(precall)
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote(&self) -> Option<&SignedQuote> {
+    /// Returns quotes immutable reference if it exists.
+    pub fn quote(&self) -> Option<&SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
+    /// Returns quotes mutable reference if it exists.
+    pub fn quote_mut(&mut self) -> Option<&mut SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Consumes self and returns quote if it exists.
-    pub fn take_quote(self) -> Option<SignedQuote> {
+    /// Consumes self and returns quotes if it exists.
+    pub fn take_quote(self) -> Option<SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(*signed),
             PrepareCallsContext::PreCall(_) => None,
@@ -263,15 +302,23 @@ impl PrepareCallsContext {
         }
     }
 
-    /// Calculate the eip712 digest that the user will need to sign.
-    pub async fn compute_eip712_data(
+    /// Calculate the digest that the user will need to sign.
+    ///
+    /// It will be a eip712 signing hash in a single chain intent and a merkle root in a multi chain
+    /// intent.
+    pub async fn compute_signing_digest(
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
-            PrepareCallsContext::Quote(quote) => {
-                quote.ty().intent.compute_eip712_data(orchestrator_address, provider).await
+            PrepareCallsContext::Quote(context) => {
+                let output_quote = context.ty().quotes.last().expect("should exist");
+                if let Some(root) = context.ty().multi_chain_root {
+                    Ok((root, TypedData::from_struct(&output_quote.output, None)))
+                } else {
+                    output_quote.output.compute_eip712_data(orchestrator_address, provider).await
+                }
             }
             PrepareCallsContext::PreCall(pre_call) => {
                 pre_call.compute_eip712_data(orchestrator_address, provider).await

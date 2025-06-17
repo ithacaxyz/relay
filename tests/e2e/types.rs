@@ -170,7 +170,8 @@ impl TxContext<'_> {
             return Ok(());
         };
 
-        let intent_nonce = context.quote().as_ref().unwrap().ty().intent.nonce;
+        // todo(onbjerg): this assumes a single intent
+        let intent_nonce = context.quote().as_ref().unwrap().ty().quotes[0].output.nonce;
 
         // Submit signed call
         let bundle = send_prepared_calls(env, signer, signature, context).await;
@@ -219,7 +220,7 @@ impl TxContext<'_> {
                 }
 
                 if authorization.is_some()
-                    && env.provider.get_code_at(env.eoa.address()).await?
+                    && env.provider().get_code_at(env.eoa.address()).await?
                         != [&EIP7702_DELEGATION_DESIGNATOR[..], env.delegation.as_slice()].concat()
                 {
                     return Err(eyre::eyre!("Transaction {tx_num} failed to delegate"));

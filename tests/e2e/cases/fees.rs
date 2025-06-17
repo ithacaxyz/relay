@@ -35,21 +35,22 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
 
     upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
 
-    let fee_token_decimals = IERC20::new(env.fee_token, &env.provider).decimals().call().await?;
+    let fee_token_decimals = IERC20::new(env.fee_token, env.provider()).decimals().call().await?;
 
     let fee_recipient_balance_before =
-        IERC20::new(env.fee_token, &env.provider).balanceOf(fee_recipient).call().await?;
-    let signer_balance_before = env.provider.get_balance(signer.address()).await?;
+        IERC20::new(env.fee_token, env.provider()).balanceOf(fee_recipient).call().await?;
+    let signer_balance_before = env.provider().get_balance(signer.address()).await?;
 
     // Create PreCall with the upgrade call
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: (1..rand::random_range(2..1000))
                 .map(|_| Call { to: Address::ZERO, value: U256::ZERO, data: Default::default() })
                 .collect(),
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -74,17 +75,17 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     assert!(status.status.is_confirmed(), "{status:?}");
 
     let fee_recipient_balance_after =
-        IERC20::new(env.fee_token, &env.provider).balanceOf(fee_recipient).call().await?;
-    let signer_balance_after = env.provider.get_balance(signer.address()).await?;
+        IERC20::new(env.fee_token, env.provider()).balanceOf(fee_recipient).call().await?;
+    let signer_balance_after = env.provider().get_balance(signer.address()).await?;
 
     let eth_paid = signer_balance_before - signer_balance_after;
     let fee_received = fee_recipient_balance_after - fee_recipient_balance_before;
 
     let kind = env
         .relay_endpoint
-        .get_capabilities(vec![env.chain_id])
+        .get_capabilities(vec![env.chain_id()])
         .await?
-        .chain(env.chain_id)
+        .chain(env.chain_id())
         .fees
         .tokens
         .iter()

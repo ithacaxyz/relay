@@ -114,9 +114,10 @@ pub async fn prepare_calls(
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from,
             calls: tx.calls.clone(),
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: tx.authorization_keys(),
                 revoke_keys: tx.revoke_keys(),

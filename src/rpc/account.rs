@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use rand::{Rng, distr::Alphanumeric};
 use resend_rs::{Resend, types::CreateEmailBaseOptions};
+use url::Url;
 
 use crate::{
     error::EmailError,
@@ -44,12 +45,18 @@ pub struct AccountRpc {
     relay: Relay,
     client: Resend,
     storage: RelayStorage,
+    porto_base_url: String,
 }
 
 impl AccountRpc {
     /// Create a new account RPC module.
-    pub fn new(relay: Relay, client: Resend, storage: RelayStorage) -> Self {
-        Self { relay, client, storage }
+    pub fn new(
+        relay: Relay,
+        client: Resend,
+        storage: RelayStorage,
+        porto_base_url: String,
+    ) -> Self {
+        Self { relay, client, storage, porto_base_url }
     }
 }
 
@@ -64,23 +71,21 @@ impl AccountApiServer for AccountRpc {
         }
 
         let token = generate_token(8);
+
+        let mut url = Url::parse(&format!("https://{}/email/verify", self.porto_base_url)).unwrap();
+        url.query_pairs_mut().append_pair("address", wallet_address.to_string().as_str());
+        url.query_pairs_mut().append_pair("email", email.as_str());
+        url.query_pairs_mut().append_pair("token", token.as_str());
+
         let mail = CreateEmailBaseOptions::new(
             "Porto <no-reply@porto.sh>",
             &[email.to_string()],
             "Verify email address for Porto",
         )
         .with_text(&format!(
-            r#"
-    Please verify your email address.
-
-    Use the following link to verify your email address: https://id.porto.sh/email/verify?address={wallet_address}&email={email}&token={token}
-
-    If you did not sign up for Porto, please ignore this email.
-
-    This is an automated message. Please do NOT reply to this email.
-
-    Thanks!
-    "#
+            "Click the following link to verify your email address:\n\n\
+            {url}\n\n\
+            If you did not create a Porto account, you can safely ignore this."
         ));
 
         self.client.emails.send(mail).await.map_err(|err| EmailError::InternalError(err.into()))?;

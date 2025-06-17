@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::e2e::{
     AuthKind,
@@ -18,8 +18,11 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Asset, Call, KeyType, KeyWith712Signer, TokenKind,
-        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse},
+        Asset, AssetType, Call, KeyType, KeyWith712Signer,
+        rpc::{
+            AddressOrNative, AssetFilterItem, GetAssetsParameters, Meta, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareCallsResponse,
+        },
     },
 };
 
@@ -28,7 +31,7 @@ async fn asset_info() -> eyre::Result<()> {
     // Setup environment
     let env = Environment::setup().await?;
     let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20s[1])];
-    let provider = env.provider.clone();
+    let provider = env.provider().clone();
 
     // Spawn AssetInfoService
     let service = AssetInfoService::new(10);
@@ -64,9 +67,10 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
     // create prepare_call request
     for fee_token in [env.fee_token, Address::ZERO] {
         let params = PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![], // fill in per test
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 meta: Meta { fee_payer: None, fee_token, nonce: None },
                 authorize_keys: vec![],
@@ -94,13 +98,14 @@ async fn asset_diff() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
 
     // create prepare_call request
     let params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: vec![], // fill in per test
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
             authorize_keys: vec![],
@@ -181,7 +186,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider).await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
 
     // ensure we always have the expected amount of unique tokens with URIs in our asset diffs.
     let ensure_tokens_with_uris = |resp: &PrepareCallsResponse, expected: usize| -> Vec<U256> {
@@ -193,10 +198,10 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
             .flat_map(|(_, diffs)| diffs.iter())
             .filter(move |asset| {
                 asset.address == Some(env.erc721)
-                    && asset.token_kind == Some(TokenKind::ERC721)
+                    && asset.token_kind == Some(AssetType::ERC721)
                     && asset.direction.is_incoming()
             })
-            .filter(|d| d.uri.is_some())
+            .filter(|d| d.metadata.uri.is_some())
             .map(|d| d.value)
             .collect::<HashSet<U256>>();
 
@@ -206,6 +211,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 
     // create prepare_call request with 2 mints.
     let mut params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: if std::env::var("TEST_ERC721").is_ok() {
             vec![
@@ -226,7 +232,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
                 common_calls::mint(env.erc721, env.eoa.address(), U256::from(1338u64)),
             ]
         },
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             meta: Meta { fee_token: Address::ZERO, nonce: None, fee_payer: None },
             authorize_keys: vec![],
@@ -281,6 +287,94 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
         vec![token_ids[1]],
         ensure_tokens_with_uris(&env.relay_endpoint.prepare_calls(params).await?, 1)
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_assets_with_filter() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+
+    let response = env
+        .relay_endpoint
+        .get_assets(GetAssetsParameters {
+            account: env.eoa.address(),
+            asset_filter: HashMap::from_iter([(
+                env.chain_id(),
+                vec![
+                    AssetFilterItem {
+                        address: AddressOrNative::Native,
+                        asset_type: AssetType::Native,
+                    },
+                    AssetFilterItem {
+                        address: AddressOrNative::Address(env.erc20s[5]),
+                        asset_type: AssetType::ERC20,
+                    },
+                    AssetFilterItem {
+                        address: AddressOrNative::Address(env.fee_token),
+                        asset_type: AssetType::ERC20,
+                    },
+                ],
+            )]),
+
+            asset_type_filter: Default::default(),
+            chain_filter: Default::default(),
+        })
+        .await?;
+
+    let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
+    assert!(chain_user_assets.len() == 3);
+
+    assert!(chain_user_assets[0].address == AddressOrNative::Native);
+    assert!(chain_user_assets[1].address == AddressOrNative::Address(env.erc20s[5]));
+    assert!(chain_user_assets[2].address == AddressOrNative::Address(env.fee_token));
+
+    assert!(chain_user_assets[0].asset_type == AssetType::Native);
+    assert!(chain_user_assets[1].asset_type == AssetType::ERC20);
+    assert!(chain_user_assets[2].asset_type == AssetType::ERC20);
+
+    assert!(chain_user_assets[0].balance > U256::ZERO);
+    assert!(chain_user_assets[1].balance > U256::ZERO);
+    assert!(chain_user_assets[2].balance > U256::ZERO);
+
+    assert!(chain_user_assets[0].metadata.is_none());
+    assert!(chain_user_assets[1].metadata.is_some());
+    assert!(chain_user_assets[2].metadata.is_some());
+
+    Ok(())
+}
+
+/// Ensures that querying assets without a filter returns all relay chains and fee tokens.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_assets_no_filter() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+
+    let response = env
+        .relay_endpoint
+        .get_assets(GetAssetsParameters {
+            account: env.eoa.address(),
+            asset_filter: Default::default(),
+            asset_type_filter: Default::default(),
+            chain_filter: Default::default(),
+        })
+        .await?;
+
+    // Gets the number of fee tokens in the environment chain
+    let chain_fee_tokens_num = env
+        .relay_endpoint
+        .get_capabilities(vec![env.chain_id()])
+        .await?
+        .0
+        .get(&env.chain_id())
+        .unwrap()
+        .fees
+        .tokens
+        .len();
+
+    let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
+    assert!(chain_user_assets.len() == chain_fee_tokens_num);
 
     Ok(())
 }

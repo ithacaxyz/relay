@@ -40,7 +40,7 @@ impl MockAccount {
                 capabilities: UpgradeAccountCapabilities {
                     authorize_keys: vec![key.to_authorized()],
                 },
-                chain_id: Some(env.chain_id),
+                chain_id: Some(env.chain_id()),
                 address: eoa.address(),
                 delegation: env.delegation,
             })
@@ -48,7 +48,7 @@ impl MockAccount {
             .unwrap();
 
         // Using ETH for payments
-        env.provider.anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
+        env.provider().anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
 
         env.relay_endpoint
             .upgrade_account(UpgradeAccountParameters {
@@ -64,6 +64,7 @@ impl MockAccount {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![Call {
                     to: env.erc20,
                     value: U256::ZERO,
@@ -71,7 +72,7 @@ impl MockAccount {
                         .abi_encode()
                         .into(),
                 }],
-                chain_id: env.chain_id,
+                chain_id: env.chain_id(),
                 from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
@@ -100,11 +101,12 @@ impl MockAccount {
     /// Prepares a simple transaction from the account which is ready to be sent to the transacton
     /// service.
     pub async fn prepare_tx(&self, env: &Environment) -> RelayTransaction {
-        let PrepareCallsResponse { mut context, digest, .. } = env
+        let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![],
-                chain_id: env.chain_id,
+                chain_id: env.chain_id(),
                 from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
@@ -118,7 +120,9 @@ impl MockAccount {
             .await
             .unwrap();
 
-        context.quote_mut().unwrap().ty_mut().intent.signature = Signature {
+        // todo(onbjerg): this assumes a single intent
+        let mut quote = context.take_quote().unwrap().ty().quotes[0].clone();
+        quote.output.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,
@@ -126,6 +130,6 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(context.take_quote().unwrap(), None)
+        RelayTransaction::new(quote, None)
     }
 }
