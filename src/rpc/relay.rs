@@ -33,7 +33,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, bytes, map::B256Map},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -238,8 +238,12 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
+        // create random signer for funding (if needed)
+        let funding_signer = DynSigner::from_signing_key(&B256::random().to_string()).await?;
+        let funding_address = funding_signer.address();
+
         // mocking key storage for the eoa, and the balance for the mock signer
-        let overrides = StateOverridesBuilder::with_capacity(2)
+        let overrides = StateOverridesBuilder::with_capacity(4)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
@@ -257,6 +261,15 @@ impl Relay {
                     .with_code_opt(authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
+            )
+            .append(
+                self.inner.contracts.funder.address,
+                AccountOverride::default().with_state_diff({
+                    let mut state_diff = B256Map::default();
+                    // Set storage slot 0 (funder variable) to the random signer's address
+                    state_diff.insert(B256::ZERO, B256::left_padding_from(&funding_address.as_slice()));
+                    state_diff
+                }),
             )
             .build();
 
@@ -367,16 +380,10 @@ impl Relay {
         .into();
 
         if !intent.encodedFundTransfers.is_empty() {
-            // todo: tx service could expose a way to sign simulated intents?
-            let signers = DynSigner::derive_from_mnemonic(
-                "forget sound story reveal safe minimum wasp mechanic solar predict harsh catch"
-                    .parse()
-                    .unwrap(),
-                1,
-            )?;
+            // Use the funding signer created earlier
             intent.funder = self.inner.contracts.funder.address;
             let (digest, _) = intent.compute_eip712_data(self.orchestrator(), &provider).await?;
-            let signature = signers[0].sign_payload_hash(digest).await?;
+            let signature = funding_signer.sign_payload_hash(digest).await?;
             intent.funderSignature = Signature {
                 innerSignature: signature,
                 keyHash: account_key.key_hash(),
