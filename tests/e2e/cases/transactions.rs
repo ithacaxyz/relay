@@ -71,7 +71,7 @@ async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error
 /// Asserts that transaction was confirmed.
 async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
     match wait_for_tx(events).await {
-        TransactionStatus::Confirmed(hash) => hash,
+        TransactionStatus::Confirmed(receipt) => receipt.transaction_hash,
         TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
         _ => unreachable!(),
     }

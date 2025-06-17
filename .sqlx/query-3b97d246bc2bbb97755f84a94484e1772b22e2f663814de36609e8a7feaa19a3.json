@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select chain_id, tx_hash, status as \"status: TxStatus\", error from txs where tx_id = $1",
+  "query": "select chain_id, tx_hash, status as \"status: TxStatus\", error, receipt from txs where tx_id = $1",
   "describe": {
     "columns": [
       {
@@ -34,6 +34,11 @@
         "ordinal": 3,
         "name": "error",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "receipt",
+        "type_info": "Jsonb"
       }
     ],
     "parameters": {
@@ -45,8 +50,9 @@
       false,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "3736d16e4265d8779ca6c4f6f75a93857f14bfc2b13b6f601e6abfe018af02d8"
+  "hash": "3b97d246bc2bbb97755f84a94484e1772b22e2f663814de36609e8a7feaa19a3"
 }

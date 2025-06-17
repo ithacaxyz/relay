@@ -3,6 +3,7 @@ use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{Address, B256, U256, wrap_fixed_bytes},
+    rpc::types::TransactionReceipt,
 };
 use chrono::{DateTime, Utc};
 use opentelemetry::Context;
@@ -126,7 +127,7 @@ pub enum TransactionStatus {
     /// Transaction is pending.
     Pending(B256),
     /// Transaction has been confirmed.
-    Confirmed(B256),
+    Confirmed(Box<TransactionReceipt>),
     /// Failed to broadcast the transaction.
     Failed(Arc<dyn TransactionFailureReason>),
 }
@@ -140,7 +141,8 @@ impl TransactionStatus {
     /// The transaction hash of the transaction, if any.
     pub fn tx_hash(&self) -> Option<B256> {
         match self {
-            Self::Pending(hash) | Self::Confirmed(hash) => Some(*hash),
+            Self::Pending(hash) => Some(*hash),
+            Self::Confirmed(receipt) => Some(receipt.transaction_hash),
             _ => None,
         }
     }
