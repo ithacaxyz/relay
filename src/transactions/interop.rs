@@ -84,22 +84,23 @@ struct LockLiquidityInput {
     lock_amount: U256,
 }
 
+/// Tracks liquidity of relay for interop bundles.
 #[derive(Debug, Default)]
 struct LiquidityTrackerInner {
     /// Assets that are about to be pulled from us, indexed by chain and asset address.
-    locked_liquidity: HashMap<(ChainId, Option<Address>), U256>,
+    ///
+    /// Those correspond to pending cross-chain intents that are not yet confirmed.
+    locked_liquidity: HashMap<(ChainId, Address), U256>,
     /// Liquidity amounts that are unlocked at certain block numbers.
-    pending_unlocks: HashMap<(ChainId, Option<Address>), BTreeMap<BlockNumber, U256>>,
+    ///
+    /// Those correspond to blocks when we've sent funds to users.
+    pending_unlocks: HashMap<(ChainId, Address), BTreeMap<BlockNumber, U256>>,
 }
 
 impl LiquidityTrackerInner {
     /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
-    /// balances.
-    fn available_balance(
-        &self,
-        asset: (ChainId, Option<Address>),
-        input: &LockLiquidityInput,
-    ) -> U256 {
+    /// balances and adding all of the unlocked ones.
+    fn available_balance(&self, asset: (ChainId, Address), input: &LockLiquidityInput) -> U256 {
         let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
         let unlocked = self
             .pending_unlocks
@@ -112,9 +113,10 @@ impl LiquidityTrackerInner {
         input.current_balance.saturating_add(unlocked).saturating_sub(locked)
     }
 
+    /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
     async fn try_lock_liquidity(
         &mut self,
-        assets: HashMap<(ChainId, Option<Address>), LockLiquidityInput>,
+        assets: HashMap<(ChainId, Address), LockLiquidityInput>,
     ) -> Result<(), InteropBundleError> {
         // Make sure that we have enough funds for all transfers
         if assets
@@ -132,10 +134,12 @@ impl LiquidityTrackerInner {
         Ok(())
     }
 
-    async fn unlock_liquidity(
+    /// Unlocks liquidity by adding it to the pending unlocks mapping. This should be called once
+    /// bundle is confirmed.
+    fn unlock_liquidity(
         &mut self,
         chain_id: ChainId,
-        asset: Option<Address>,
+        asset: Address,
         amount: U256,
         at: BlockNumber,
     ) {
@@ -165,10 +169,7 @@ impl LiquidityTracker {
     ) -> Result<(), InteropBundleError> {
         let inputs: HashMap<_, U256> = assets
             .into_iter()
-            .map(|(chain, asset, amount)| {
-                let asset = Some(asset).filter(|a| !a.is_zero());
-                ((chain, asset), amount)
-            })
+            .map(|(chain, asset, amount)| ((chain, asset), amount))
             .fold(HashMap::default(), |mut map, (k, v)| {
                 *map.entry(k).or_default() += v;
                 map
@@ -178,10 +179,10 @@ impl LiquidityTracker {
             .into_iter()
             .map(async |((chain, asset), amount)| {
                 let provider = &self.providers[&chain];
-                let (balance, block_number) = if let Some(token) = asset {
+                let (balance, block_number) = if !asset.is_zero() {
                     let (balance, block_number) = provider
                         .multicall()
-                        .add(IERC20::new(token, provider).balanceOf(self.funder_address))
+                        .add(IERC20::new(asset, provider).balanceOf(self.funder_address))
                         .get_block_number()
                         .aggregate()
                         .await?;
@@ -216,11 +217,13 @@ impl LiquidityTracker {
 
     /// Unlocks liquidity from an interop bundle.
     pub async fn unlock_liquidity(
-        &mut self,
-        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+        &self,
+        chain_id: ChainId,
+        asset: Address,
+        amount: U256,
         at: BlockNumber,
     ) {
-        self.inner.lock().await.unlock_liquidity(chain_id, asset, amount, at).await
+        self.inner.lock().await.unlock_liquidity(chain_id, asset, amount, at);
     }
 }
 
@@ -282,7 +285,9 @@ impl InteropServiceInner {
             .map(|mut handle| async move {
                 while let Some(status) = handle.recv().await {
                     match status {
-                        TransactionStatus::Confirmed(receipt) => return Ok(()),
+                        TransactionStatus::Confirmed(receipt) => {
+                            return Ok(receipt.block_number.unwrap_or_default());
+                        }
                         TransactionStatus::Failed(err) => return Err(err),
                         _ => continue,
                     }
@@ -294,9 +299,7 @@ impl InteropServiceInner {
             .await;
 
         // Collect results and return first error if any
-        results.into_iter().collect::<Result<Vec<_>, _>>()?;
-
-        Ok(())
+        Ok(results.into_iter().collect::<Result<Vec<_>, _>>()?)
     }
 
     #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
@@ -317,12 +320,13 @@ impl InteropServiceInner {
         self.liquidity_tracker.try_lock_liquidity(asset_transfers.clone()).await?;
 
         self.send_and_watch_transactions(&bundle.src_transactions).await?;
-        self.send_and_watch_transactions(&bundle.dst_transactions).await?;
+        let dst_block_numbers = self.send_and_watch_transactions(&bundle.dst_transactions).await?;
 
-        self.liquidity_tracker.unlock_liquidity(
-            asset_transfers,
-
-        );
+        for ((chain_id, asset, amount), block_number) in
+            asset_transfers.into_iter().zip(dst_block_numbers)
+        {
+            self.liquidity_tracker.unlock_liquidity(chain_id, asset, amount, block_number).await;
+        }
 
         Ok(())
     }
