@@ -86,23 +86,26 @@ struct LockLiquidityInput {
     lock_amount: U256,
 }
 
+/// An address on a specific chain.
+pub type ChainAddress = (ChainId, Address);
+
 /// Tracks liquidity of relay for interop bundles.
 #[derive(Debug, Default)]
 struct LiquidityTrackerInner {
     /// Assets that are about to be pulled from us, indexed by chain and asset address.
     ///
     /// Those correspond to pending cross-chain intents that are not yet confirmed.
-    locked_liquidity: HashMap<(ChainId, Address), U256>,
+    locked_liquidity: HashMap<ChainAddress, U256>,
     /// Liquidity amounts that are unlocked at certain block numbers.
     ///
     /// Those correspond to blocks when we've sent funds to users.
-    pending_unlocks: HashMap<(ChainId, Address), BTreeMap<BlockNumber, U256>>,
+    pending_unlocks: HashMap<ChainAddress, BTreeMap<BlockNumber, U256>>,
 }
 
 impl LiquidityTrackerInner {
     /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
     /// balances and adding all of the unlocked ones.
-    fn available_balance(&self, asset: (ChainId, Address), input: &LockLiquidityInput) -> U256 {
+    fn available_balance(&self, asset: ChainAddress, input: &LockLiquidityInput) -> U256 {
         let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
         let unlocked = self
             .pending_unlocks
@@ -118,7 +121,7 @@ impl LiquidityTrackerInner {
     /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
     async fn try_lock_liquidity(
         &mut self,
-        assets: HashMap<(ChainId, Address), LockLiquidityInput>,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
     ) -> Result<(), InteropBundleError> {
         // Make sure that we have enough funds for all transfers
         if assets
