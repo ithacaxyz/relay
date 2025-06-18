@@ -6,7 +6,7 @@ use alloy::{
 };
 
 use crate::{
-    config::TransactionServiceConfig,
+    config::RelayConfig,
     provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
@@ -43,7 +43,7 @@ impl Chains {
         providers: Vec<DynProvider>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
-        config: TransactionServiceConfig,
+        config: &RelayConfig,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
@@ -51,7 +51,7 @@ impl Chains {
                     provider.clone(),
                     tx_signers.clone(),
                     storage.clone(),
-                    config.clone(),
+                    config.transactions.clone(),
                 )
                 .await?;
                 tokio::spawn(service);
@@ -66,14 +66,16 @@ impl Chains {
             .await?,
         );
 
-        // Create a HashMap of transaction service handles for the interop service
+        let providers_with_chain =
+            chains.iter().map(|(chain_id, chain)| (*chain_id, chain.provider.clone())).collect();
         let tx_handles: HashMap<ChainId, TransactionServiceHandle> = chains
             .iter()
             .map(|(chain_id, chain)| (*chain_id, chain.transactions.clone()))
             .collect();
 
         // Create and spawn the interop service
-        let (interop_service, interop_handle) = InteropService::new(tx_handles);
+        let (interop_service, interop_handle) =
+            InteropService::new(providers_with_chain, tx_handles, config.funder).await?;
         tokio::spawn(interop_service);
 
         Ok(Self { chains, interop: interop_handle })

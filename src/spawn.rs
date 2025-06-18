@@ -182,9 +182,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains =
-        Chains::new(providers.clone(), signers, storage.clone(), config.transactions.clone())
-            .await?;
+    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
