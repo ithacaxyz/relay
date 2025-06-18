@@ -1,15 +1,22 @@
 use super::{
     RelayTransaction, TransactionFailureReason, TransactionServiceHandle, TransactionStatus,
 };
-use crate::{error::StorageError, types::rpc::BundleId};
-use alloy::primitives::{ChainId, map::HashMap};
-use futures_util::future::JoinAll;
+use crate::{
+    error::StorageError,
+    types::{IERC20, rpc::BundleId},
+};
+use alloy::{
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    providers::{DynProvider, MulticallError, Provider},
+};
+use futures_util::future::{JoinAll, TryJoinAll};
 use std::{
+    collections::BTreeMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument};
 
 /// Bundle of transactions for cross-chain execution.
@@ -41,9 +48,18 @@ enum InteropBundleError {
     /// Transaction failed.
     #[error("transaction failed: {0}")]
     TransactionError(Arc<dyn TransactionFailureReason>),
+    /// Not enough liquidity.
+    #[error("don't have enough liquidity for the bundle")]
+    NotEnoughLiquidity,
     /// Storage error.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// An error occurred during ABI encoding/decoding.
+    #[error(transparent)]
+    AbiError(#[from] alloy::sol_types::Error),
+    /// Multicall error.
+    #[error(transparent)]
+    MulticallError(#[from] MulticallError),
 }
 
 impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
@@ -56,6 +72,156 @@ impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
 pub enum InteropServiceMessage {
     /// Send an [`InteropBundle`].
     SendBundle(InteropBundle),
+}
+
+/// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
+struct LockLiquidityInput {
+    /// Current balance of the asset fetched from provider.
+    current_balance: U256,
+    /// Block number at which the balance was fetched.
+    balance_at: BlockNumber,
+    /// Amount of the asset to lock.
+    lock_amount: U256,
+}
+
+#[derive(Debug, Default)]
+struct LiquidityTrackerInner {
+    /// Assets that are about to be pulled from us, indexed by chain and asset address.
+    locked_liquidity: HashMap<(ChainId, Option<Address>), U256>,
+    /// Liquidity amounts that are unlocked at certain block numbers.
+    pending_unlocks: HashMap<(ChainId, Option<Address>), BTreeMap<BlockNumber, U256>>,
+}
+
+impl LiquidityTrackerInner {
+    /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
+    /// balances.
+    fn available_balance(
+        &self,
+        asset: (ChainId, Option<Address>),
+        input: &LockLiquidityInput,
+    ) -> U256 {
+        let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
+        let unlocked = self
+            .pending_unlocks
+            .get(&asset)
+            .map(|unlocks| {
+                unlocks.range(..=input.balance_at).map(|(_, amount)| *amount).sum::<U256>()
+            })
+            .unwrap_or_default();
+
+        input.current_balance.saturating_add(unlocked).saturating_sub(locked)
+    }
+
+    async fn try_lock_liquidity(
+        &mut self,
+        assets: HashMap<(ChainId, Option<Address>), LockLiquidityInput>,
+    ) -> Result<(), InteropBundleError> {
+        // Make sure that we have enough funds for all transfers
+        if assets
+            .iter()
+            .any(|(asset, input)| input.lock_amount < self.available_balance(*asset, input))
+        {
+            return Err(InteropBundleError::NotEnoughLiquidity);
+        }
+
+        // Lock liquidity
+        for (asset, input) in assets {
+            *self.locked_liquidity.entry(asset).or_default() += input.lock_amount;
+        }
+
+        Ok(())
+    }
+
+    async fn unlock_liquidity(
+        &mut self,
+        chain_id: ChainId,
+        asset: Option<Address>,
+        amount: U256,
+        at: BlockNumber,
+    ) {
+        *self.pending_unlocks.entry((chain_id, asset)).or_default().entry(at).or_default() +=
+            amount;
+    }
+}
+
+#[derive(Debug, Default)]
+struct LiquidityTracker {
+    inner: Arc<Mutex<LiquidityTrackerInner>>,
+    funder_address: Address,
+    providers: HashMap<ChainId, DynProvider>,
+}
+
+impl LiquidityTracker {
+    /// Creates a new liquidity tracker.
+    pub fn new(providers: HashMap<ChainId, DynProvider>, funder_address: Address) -> Self {
+        let inner = Arc::new(Mutex::new(Default::default()));
+        Self { inner, providers, funder_address }
+    }
+
+    /// Locks liquidity for an interop bundle.
+    pub async fn try_lock_liquidity(
+        &self,
+        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+    ) -> Result<(), InteropBundleError> {
+        let inputs: HashMap<_, U256> = assets
+            .into_iter()
+            .map(|(chain, asset, amount)| {
+                let asset = Some(asset).filter(|a| !a.is_zero());
+                ((chain, asset), amount)
+            })
+            .fold(HashMap::default(), |mut map, (k, v)| {
+                *map.entry(k).or_default() += v;
+                map
+            });
+
+        let inputs = inputs
+            .into_iter()
+            .map(async |((chain, asset), amount)| {
+                let provider = &self.providers[&chain];
+                let (balance, block_number) = if let Some(token) = asset {
+                    let (balance, block_number) = provider
+                        .multicall()
+                        .add(IERC20::new(token, provider).balanceOf(self.funder_address))
+                        .get_block_number()
+                        .aggregate()
+                        .await?;
+                    (balance, block_number.to::<u64>())
+                } else {
+                    let block_number = provider.get_block_number().await?;
+                    let balance = provider
+                        .get_balance(self.funder_address)
+                        .block_id(block_number.into())
+                        .await?;
+                    (balance, block_number)
+                };
+
+                Ok::<_, MulticallError>((
+                    (chain, asset),
+                    LockLiquidityInput {
+                        current_balance: balance,
+                        balance_at: block_number,
+                        lock_amount: amount,
+                    },
+                ))
+            })
+            .collect::<TryJoinAll<_>>()
+            .await?
+            .into_iter()
+            .collect();
+
+        self.inner.lock().await.try_lock_liquidity(inputs).await?;
+
+        Ok(())
+    }
+
+    /// Unlocks liquidity from an interop bundle.
+    pub async fn unlock_liquidity(
+        &mut self,
+        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+        at: BlockNumber,
+    ) {
+        self.inner.lock().await.unlock_liquidity(chain_id, asset, amount, at).await
+    }
 }
 
 /// Handle to communicate with the [`InteropService`].
@@ -78,18 +244,22 @@ impl InteropServiceHandle {
 #[derive(Debug)]
 struct InteropServiceInner {
     tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
+    liquidity_tracker: LiquidityTracker,
 }
 
 impl InteropServiceInner {
     /// Creates a new interop service inner state.
-    fn new(tx_service_handles: HashMap<ChainId, TransactionServiceHandle>) -> Self {
-        Self { tx_service_handles }
+    fn new(
+        tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
+        liquidity_tracker: LiquidityTracker,
+    ) -> Self {
+        Self { tx_service_handles, liquidity_tracker }
     }
 
     async fn send_and_watch_transactions(
         &self,
         transactions: &[RelayTransaction],
-    ) -> Result<(), InteropBundleError> {
+    ) -> Result<Vec<u64>, InteropBundleError> {
         let mut handles = Vec::new();
 
         for tx in transactions {
@@ -112,7 +282,7 @@ impl InteropServiceInner {
             .map(|mut handle| async move {
                 while let Some(status) = handle.recv().await {
                     match status {
-                        TransactionStatus::Confirmed(_) => return Ok(()),
+                        TransactionStatus::Confirmed(receipt) => return Ok(()),
                         TransactionStatus::Failed(err) => return Err(err),
                         _ => continue,
                     }
@@ -131,8 +301,28 @@ impl InteropServiceInner {
 
     #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
     async fn send_and_watch_bundle(&self, bundle: InteropBundle) -> Result<(), InteropBundleError> {
+        let asset_transfers = bundle
+            .dst_transactions
+            .iter()
+            .map(|tx| {
+                tx.quote.output.fund_transfers().map(|transfers| {
+                    transfers.into_iter().map(|(asset, amount)| (tx.quote.chain_id, asset, amount))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        self.liquidity_tracker.try_lock_liquidity(asset_transfers.clone()).await?;
+
         self.send_and_watch_transactions(&bundle.src_transactions).await?;
         self.send_and_watch_transactions(&bundle.dst_transactions).await?;
+
+        self.liquidity_tracker.unlock_liquidity(
+            asset_transfers,
+
+        );
 
         Ok(())
     }
@@ -147,17 +337,23 @@ pub struct InteropService {
 
 impl InteropService {
     /// Creates a new interop service.
-    pub fn new(
+    pub async fn new(
+        providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-    ) -> (Self, InteropServiceHandle) {
+        funder_address: Address,
+    ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let service =
-            Self { inner: Arc::new(InteropServiceInner::new(tx_service_handles)), command_rx };
+        let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
+
+        let service = Self {
+            inner: Arc::new(InteropServiceInner::new(tx_service_handles, liquidity_tracker)),
+            command_rx,
+        };
 
         let handle = InteropServiceHandle { command_tx };
 
-        (service, handle)
+        Ok((service, handle))
     }
 }
 
