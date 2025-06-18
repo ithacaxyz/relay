@@ -17,7 +17,7 @@ use crate::{
     transactions::InteropBundle,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
-        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, ORCHESTRATOR_NO_ERROR,
+        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -1511,14 +1511,10 @@ impl RelayApiServer for Relay {
         // note that we also assume that failure to decode a log as `IntentExecuted` means the
         // intent failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
-            receipt
-                .decoded_log::<IntentExecuted>()
-                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
+            IntentExecuted::try_from_receipt(receipt).is_none_or(|e| e.has_error())
         });
         let all_reverted = receipts.iter().all(|(_, receipt)| {
-            receipt
-                .decoded_log::<IntentExecuted>()
-                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
+            IntentExecuted::try_from_receipt(receipt).is_none_or(|e| e.has_error())
         });
 
         let status = if any_failed {

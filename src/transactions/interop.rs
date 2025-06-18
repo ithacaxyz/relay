@@ -3,11 +3,12 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    types::{IERC20, rpc::BundleId},
+    types::{IERC20, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
     providers::{DynProvider, MulticallError, Provider},
+    rpc::types::TransactionReceipt,
 };
 use futures_util::future::{JoinAll, TryJoinAll};
 use std::{
@@ -309,7 +310,7 @@ impl InteropServiceInner {
     async fn send_and_watch_transactions(
         &self,
         transactions: &[RelayTransaction],
-    ) -> Result<Vec<u64>, InteropBundleError> {
+    ) -> Result<Vec<TransactionReceipt>, InteropBundleError> {
         let mut handles = Vec::new();
 
         for tx in transactions {
@@ -332,9 +333,7 @@ impl InteropServiceInner {
             .map(|mut handle| async move {
                 while let Some(status) = handle.recv().await {
                     match status {
-                        TransactionStatus::Confirmed(receipt) => {
-                            return Ok(receipt.block_number.unwrap_or_default());
-                        }
+                        TransactionStatus::Confirmed(receipt) => return Ok(*receipt),
                         TransactionStatus::Failed(err) => return Err(err),
                         _ => continue,
                     }
@@ -366,13 +365,27 @@ impl InteropServiceInner {
 
         self.liquidity_tracker.try_lock_liquidity(asset_transfers.clone()).await?;
 
-        self.send_and_watch_transactions(&bundle.src_transactions).await?;
-        let dst_block_numbers = self.send_and_watch_transactions(&bundle.dst_transactions).await?;
+        let src_receipts = self.send_and_watch_transactions(&bundle.src_transactions).await?;
 
-        for ((chain_id, asset, amount), block_number) in
-            asset_transfers.into_iter().zip(dst_block_numbers)
-        {
-            self.liquidity_tracker.unlock_liquidity(chain_id, asset, amount, block_number).await;
+        for receipt in src_receipts {
+            let event = IntentExecuted::try_from_receipt(&receipt);
+            if event.as_ref().is_none_or(|e| e.has_error()) {
+                let reason = event
+                    .as_ref()
+                    .map(|e| e.err.to_string())
+                    .unwrap_or_else(|| "IntentExecuted event not found".to_string());
+                return Err(InteropBundleError::TransactionError(Arc::new(format!(
+                    "source intent failed: {reason}",
+                ))));
+            }
+        }
+
+        let dst_receipts = self.send_and_watch_transactions(&bundle.dst_transactions).await?;
+
+        for ((chain_id, asset, amount), receipt) in asset_transfers.into_iter().zip(dst_receipts) {
+            self.liquidity_tracker
+                .unlock_liquidity(chain_id, asset, amount, receipt.block_number.unwrap_or_default())
+                .await;
         }
 
         Ok(())
