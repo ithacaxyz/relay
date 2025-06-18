@@ -76,6 +76,7 @@ pub enum InteropServiceMessage {
 }
 
 /// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
+#[derive(Debug)]
 struct LockLiquidityInput {
     /// Current balance of the asset fetched from provider.
     current_balance: U256,
@@ -122,7 +123,7 @@ impl LiquidityTrackerInner {
         // Make sure that we have enough funds for all transfers
         if assets
             .iter()
-            .any(|(asset, input)| input.lock_amount < self.available_balance(*asset, input))
+            .any(|(asset, input)| input.lock_amount > self.available_balance(*asset, input))
         {
             return Err(InteropBundleError::NotEnoughLiquidity);
         }
