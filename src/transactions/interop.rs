@@ -15,6 +15,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument};
@@ -80,7 +81,7 @@ struct LockLiquidityInput {
     current_balance: U256,
     /// Block number at which the balance was fetched.
     balance_at: BlockNumber,
-    /// Amount of the asset to lock.
+    /// Amount of the asset we are trying to lock.
     lock_amount: U256,
 }
 
@@ -148,6 +149,7 @@ impl LiquidityTrackerInner {
     }
 }
 
+/// Wrapper around [`LiquidityTrackerInner`] that is used to track liquidity.
 #[derive(Debug, Default)]
 struct LiquidityTracker {
     inner: Arc<Mutex<LiquidityTrackerInner>>,
@@ -159,7 +161,46 @@ impl LiquidityTracker {
     /// Creates a new liquidity tracker.
     pub fn new(providers: HashMap<ChainId, DynProvider>, funder_address: Address) -> Self {
         let inner = Arc::new(Mutex::new(Default::default()));
-        Self { inner, providers, funder_address }
+        let this = Self { inner: inner.clone(), providers: providers.clone(), funder_address };
+
+        // Spawn a task that periodically cleans up the pending unlocks for older blocks.
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+
+                let result = providers
+                    .iter()
+                    .map(async |(chain, provider)| {
+                        let latest_block = provider.get_block_number().await?;
+                        let mut lock = inner.lock().await;
+                        let LiquidityTrackerInner { locked_liquidity, pending_unlocks } =
+                            &mut *lock;
+                        for (asset, unlocks) in pending_unlocks {
+                            if asset.0 == *chain {
+                                // Keep 10 blocks of pending unlocks
+                                let to_keep = unlocks.split_off(&latest_block.saturating_sub(10));
+                                let to_remove = core::mem::replace(unlocks, to_keep);
+
+                                // Remove everything else from the locked mapping
+                                for (_, unlock) in to_remove {
+                                    locked_liquidity.entry(*asset).and_modify(|amount| {
+                                        *amount = amount.saturating_sub(unlock);
+                                    });
+                                }
+                            }
+                        }
+                        eyre::Ok(())
+                    })
+                    .collect::<TryJoinAll<_>>()
+                    .await;
+
+                if let Err(e) = result {
+                    error!("liquidity tracker task failed: {:?}", e);
+                }
+            }
+        });
+
+        this
     }
 
     /// Locks liquidity for an interop bundle.
@@ -167,6 +208,7 @@ impl LiquidityTracker {
         &self,
         assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
     ) -> Result<(), InteropBundleError> {
+        // Deduplicate assets by chain and asset address
         let inputs: HashMap<_, U256> = assets
             .into_iter()
             .map(|(chain, asset, amount)| ((chain, asset), amount))
@@ -175,6 +217,7 @@ impl LiquidityTracker {
                 map
             });
 
+        // Construct inputs for liquidity tracker by fetching balances
         let inputs = inputs
             .into_iter()
             .map(async |((chain, asset), amount)| {
