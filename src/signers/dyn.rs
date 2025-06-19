@@ -6,6 +6,7 @@ use alloy::{
     network::{FullSigner, TxSigner},
     primitives::{Address, B256, Bytes, Signature},
     signers::{
+        aws::AwsSigner,
         k256::ecdsa::SigningKey,
         local::{
             PrivateKeySigner,
@@ -13,6 +14,7 @@ use alloy::{
         },
     },
 };
+use aws_config::BehaviorVersion;
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 /// Abstraction over local signer.
@@ -44,6 +46,13 @@ impl DynSigner {
     /// Load a private key.
     pub async fn from_signing_key(key: &str) -> eyre::Result<Self> {
         Ok(Self(Arc::new(PrivateKeySigner::from_str(key)?)))
+    }
+
+    /// Load a signer from AWS KMS.
+    pub async fn from_kms(key_id: &str, chain_id: Option<u64>) -> eyre::Result<Self> {
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let client = aws_sdk_kms::Client::new(&config);
+        Ok(Self(Arc::new(AwsSigner::new(client, key_id.to_string(), chain_id).await?)))
     }
 
     /// Returns the signer's Ethereum Address.
