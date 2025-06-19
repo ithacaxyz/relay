@@ -43,6 +43,15 @@ impl DynSigner {
             .collect()
     }
 
+    /// Load from a private key or from aws key.
+    pub async fn from(key: &str) -> eyre::Result<Self> {
+        if key.starts_with("arn:aws:kms:") {
+            Self::from_kms(key, None).await
+        } else {
+            Self::from_signing_key(key).await
+        }
+    }
+
     /// Load a private key.
     pub async fn from_signing_key(key: &str) -> eyre::Result<Self> {
         Ok(Self(Arc::new(PrivateKeySigner::from_str(key)?)))

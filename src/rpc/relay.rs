@@ -153,6 +153,7 @@ impl Relay {
         contracts: VersionedContracts,
         chains: Chains,
         quote_signer: DynSigner,
+        funder_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_tokens: FeeTokens,
@@ -167,6 +168,7 @@ impl Relay {
             fee_tokens,
             fee_recipient,
             quote_signer,
+            funder_signer,
             quote_config,
             price_oracle,
             storage,
@@ -410,6 +412,7 @@ impl Relay {
         // Fill combinedGas and empty dummy signature
         intent.combinedGas = U256::from(gas_estimate.intent);
         intent.signature = bytes!("");
+        intent.funderSignature =  bytes!("");
 
         // Calculate amount with updated paymentPerGas
         if !intent_kind.is_single() {
@@ -574,6 +577,22 @@ impl Relay {
 
         // Fill Intent with the user signature.
         intent.signature = signature;
+
+        // Sign fund transfers if any
+        if !intent.encodedFundTransfers.is_empty() {
+            // Set funder contract address and sign
+            let (digest, _) = intent
+                .compute_eip712_data(self.orchestrator(), &provider)
+                .await
+                .map_err(RelayError::from)?;
+            intent.funderSignature = self
+                .inner
+                .funder_signer
+                .sign_payload_hash(digest)
+                .await
+                .map_err(RelayError::from)?;
+            intent.funder = self.inner.contracts.funder.address;
+        }
 
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
@@ -1633,6 +1652,8 @@ struct RelayInner {
     fee_recipient: Address,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
+    /// The signer used to sign fund transfers.
+    funder_signer: DynSigner,
     /// Quote related configuration.
     quote_config: QuoteConfig,
     /// Price oracle.

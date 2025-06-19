@@ -308,7 +308,7 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
     .await?;
 
     // Deploy contracts on first chain
-    let contracts = get_or_deploy_contracts(provider, signers[0].address()).await?;
+    let contracts = get_or_deploy_contracts(provider, provider.default_signer_address()).await?;
 
     provider.anvil_set_balance(contracts.funder(), U256::from(1000e18)).await?;
 
@@ -465,11 +465,10 @@ impl Environment {
         let mut providers = Vec::with_capacity(config.num_chains);
 
         // Load signers.
-        let deployer = DynSigner::from_signing_key(
-            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
-        )
-        .await
-        .wrap_err("Relay signer load failed")?;
+        let deployer_priv = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
+        let deployer = DynSigner::from_signing_key(deployer_priv)
+            .await
+            .wrap_err("Relay signer load failed")?;
 
         let signers = DynSigner::derive_from_mnemonic(
             SIGNERS_MNEMONIC.parse()?,
@@ -592,6 +591,7 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
+                .with_funder_key(deployer_priv.to_string())
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[contracts.erc20_addresses(), vec![Address::ZERO]].concat())
                 .with_fee_recipient(config.fee_recipient)
