@@ -369,23 +369,8 @@ impl Relay {
         .into();
 
         if !intent.encodedFundTransfers.is_empty() {
-            // todo: tx service could expose a way to sign simulated intents?
-            let signers = DynSigner::derive_from_mnemonic(
-                "forget sound story reveal safe minimum wasp mechanic solar predict harsh catch"
-                    .parse()
-                    .unwrap(),
-                1,
-            )?;
+            // todo: the contract version is broken, and any signature will pass.
             intent.funder = self.inner.contracts.funder.address;
-            let (digest, _) = intent.compute_eip712_data(self.orchestrator(), &provider).await?;
-            let signature = signers[0].sign_payload_hash(digest).await?;
-            intent.funderSignature = Signature {
-                innerSignature: signature,
-                keyHash: account_key.key_hash(),
-                prehash: request.prehash,
-            }
-            .abi_encode_packed()
-            .into();
         }
 
         // todo: simulate with executeMultiChain if intent.is_multichain
@@ -412,7 +397,7 @@ impl Relay {
         // Fill combinedGas and empty dummy signature
         intent.combinedGas = U256::from(gas_estimate.intent);
         intent.signature = bytes!("");
-        intent.funderSignature =  bytes!("");
+        intent.funderSignature = bytes!("");
 
         // Calculate amount with updated paymentPerGas
         if !intent_kind.is_single() {

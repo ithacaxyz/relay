@@ -308,7 +308,7 @@ async fn setup_primary_chain<P: Provider + WalletProvider>(
     .await?;
 
     // Deploy contracts on first chain
-    let contracts = get_or_deploy_contracts(provider, provider.default_signer_address()).await?;
+    let contracts = get_or_deploy_contracts(provider).await?;
 
     provider.anvil_set_balance(contracts.funder(), U256::from(1000e18)).await?;
 
@@ -862,7 +862,6 @@ pub async fn mint_erc20s<P: Provider>(
 /// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
 async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     provider: &P,
-    signer: Address,
 ) -> Result<ContractAddresses, eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
@@ -875,10 +874,11 @@ async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
     )
     .await?;
 
+    let funder_eoa = provider.default_signer_address();
     let funder = deploy_contract(
         &provider,
         &contracts_path.join("SimpleFunder.sol/SimpleFunder.json"),
-        Some((signer, orchestrator, signer).abi_encode().into()),
+        Some((funder_eoa, orchestrator, funder_eoa).abi_encode().into()),
     )
     .await?;
 
