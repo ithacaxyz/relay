@@ -124,7 +124,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
     // setup funder signer
-    let funder_signer = DynSigner::from(&config.secrets.funder_key).await?;
+    let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
