@@ -21,7 +21,7 @@ use opentelemetry::Context;
 use relay::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
-    transactions::{PendingTransaction, RelayTransaction, TxId},
+    transactions::{PendingTransaction, RelayTransaction, RelayTransactionKind, TxId},
     types::{CreatableAccount, Intent, Quote, Signed, SignedCall, rpc::BundleId},
 };
 use sqlx::PgPool;
@@ -148,8 +148,10 @@ impl Fixtures {
         let quote = Signed::new_unchecked(quote, r_sig, r_b256);
         let queued_tx = RelayTransaction {
             id: TxId(r_b256),
-            quote,
-            authorization: Some(authorization),
+            kind: RelayTransactionKind::Intent {
+                quote: Box::new(quote),
+                authorization: Some(authorization),
+            },
             trace_context: Context::current(),
             received_at: Utc::now(),
         };
