@@ -664,9 +664,9 @@ impl Signer {
     /// Fetches receipt of a confirmed transaction and records metrics.
     async fn record_confirmed_metrics(&self, tx: PendingTransaction, tx_hash: B256) {
         if !tx.tx.is_intent() {
-            return
+            return;
         }
-    
+
         // Fetch receipt
         let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
         else {
