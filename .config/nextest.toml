@@ -2,7 +2,6 @@
 retries = { backoff = "exponential", count = 3, delay = "2s", jitter = true }
 slow-timeout = { period = "120s", terminate-after = 4 }
 
-# Define test groups here
 [test-groups]
 sequential-tests = { max-threads = 1, threads-required = 2 }
 
