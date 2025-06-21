@@ -365,13 +365,13 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(10)
+            .buffered(1)
             .try_collect::<Vec<_>>()
             .await?;
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
