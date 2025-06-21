@@ -1,7 +1,6 @@
 [profile.default]
 retries = { backoff = "exponential", count = 3, delay = "2s", jitter = true }
 slow-timeout = { period = "120s", terminate-after = 4 }
-test-threads = 8  # Global default: 8 tests in parallel
 
 [[profile.default.overrides]]
 filter = """
