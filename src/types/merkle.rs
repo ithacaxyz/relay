@@ -160,8 +160,8 @@ impl LazyMerkleTree {
         Ok(self.nodes[self.nodes.len() - 1])
     }
 
-    /// Generate a Merkle proof
-    pub fn proof(&mut self, index: usize) -> Result<Vec<B256>, MerkleError> {
+    /// Internal proof generation.
+    fn generate_proof_internal(&self, index: usize) -> Result<Vec<B256>, MerkleError> {
         if self.leaf_count == 0 {
             return Err(MerkleError::EmptyTree);
         }
@@ -173,8 +173,6 @@ impl LazyMerkleTree {
         if self.leaf_count == 1 {
             return Err(MerkleError::SingleLeaf);
         }
-
-        self.ensure_computed();
 
         let mut proof = Vec::with_capacity(self.height);
         let mut current_index = index;
@@ -200,6 +198,21 @@ impl LazyMerkleTree {
         }
 
         Ok(proof)
+    }
+
+    /// Get a proof for a given index without computing the tree.
+    ///
+    /// # Panics
+    /// It will panic if the tree has not been computed yet.
+    pub fn proof_immutable(&self, index: usize) -> Result<Vec<B256>, MerkleError> {
+        assert!(self.computed, "Tree must be computed before calling proof_immutable");
+        self.generate_proof_internal(index)
+    }
+
+    /// Generate a Merkle proof
+    pub fn proof(&mut self, index: usize) -> Result<Vec<B256>, MerkleError> {
+        self.ensure_computed();
+        self.generate_proof_internal(index)
     }
 
     /// Verify a Merkle proof
