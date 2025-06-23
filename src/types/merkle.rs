@@ -3,6 +3,7 @@
 //! This module provides a lazy, memory-efficient Merkle tree implementation that follows
 //! the same algorithm as the Solidity MurkyBase contract, using sorted hash pairs for consistency.
 
+use crate::error::MerkleError;
 use alloy::primitives::{B256, keccak256};
 
 /// Maximum supported tree size to prevent overflow
@@ -278,31 +279,6 @@ fn log2_ceil(x: usize) -> usize {
         0 | 1 => 0,
         _ => (x - 1).ilog2() as usize + 1,
     }
-}
-
-/// Errors that can occur during Merkle tree operations
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum MerkleError {
-    /// Cannot generate proof for empty tree
-    #[error("Cannot operate on empty tree")]
-    EmptyTree,
-    /// Leaf index out of bounds
-    #[error("Leaf index {index} out of bounds (tree has {tree_size} leaves)")]
-    IndexOutOfBounds {
-        /// The index that was requested
-        index: usize,
-        /// The actual size of the tree
-        tree_size: usize,
-    },
-    /// Cannot generate proof for single leaf tree
-    #[error("Cannot generate proof for single leaf tree")]
-    SingleLeaf,
-    /// Exceeds maximum supported size
-    #[error("Exceeds maximum supported size")]
-    TooLarge,
-    /// Tree size calculation overflow
-    #[error("Tree size calculation overflow")]
-    SizeCalculationOverflow,
 }
 
 #[cfg(test)]
