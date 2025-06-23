@@ -163,7 +163,7 @@ jobs:
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
-            --partition count:${{ matrix.shard }}/4 \
+            --partition count:${{ matrix.shard }}/2 \
             --no-fail-fast
 
   test-migrations:

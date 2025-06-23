@@ -168,7 +168,6 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
 
-
     // otherwise it will be marked as LEAK.
     drop(env);
     tokio::time::sleep(Duration::from_millis(100)).await;
