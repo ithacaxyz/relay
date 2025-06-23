@@ -369,7 +369,6 @@ impl Relay {
         .into();
 
         if !intent.encodedFundTransfers.is_empty() {
-            // todo: the contract version is broken, and any signature will pass.
             intent.funder = self.inner.contracts.funder.address;
         }
 

@@ -16,8 +16,8 @@ concurrency:
 
 jobs:
   # Build once and share artifacts with test jobs
-  build:
-    name: build
+  build-contracts:
+    name: build-contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -37,15 +37,6 @@ jobs:
           forge build lib/solady/test/utils/mocks/MockERC20.sol
           forge build lib/solady/test/utils/mocks/MockERC721.sol
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          save-if: true
-
-      - name: Build workspace
-        run: cargo build --locked --workspace --tests
-
       - name: Upload test contracts
         uses: actions/upload-artifact@v4
         with:
@@ -53,27 +44,13 @@ jobs:
           path: tests/account/out
           retention-days: 1
 
-      - name: Upload cargo target
-        uses: actions/upload-artifact@v4
-        with:
-          name: cargo-target
-          path: |
-            target/debug/
-            !target/debug/.fingerprint/
-            !target/debug/build/
-            !target/debug/deps/
-            !target/debug/incremental/
-          retention-days: 1
-
   test:
-    name: test – ${{ matrix.variant }} shard ${{ matrix.shard }}
-    needs: build
+    name: test – ${{ matrix.variant }}
+    needs: build-contracts
     strategy:
       fail-fast: false
-      max-parallel: 8
       matrix:
         variant: [local, base_sepolia, pg]
-        shard: [1, 2]
     timeout-minutes: 20
     runs-on: ubuntu-latest
 
@@ -105,19 +82,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          save-if: false  # Don't save cache in test jobs
 
       - name: Download test contracts
         uses: actions/download-artifact@v4
         with:
           name: test-contracts
           path: tests/account/out
-
-      - name: Download cargo target
-        uses: actions/download-artifact@v4
-        with:
-          name: cargo-target
-          path: target/debug
 
       - name: Set TEST_CONTRACTS environment variable
         run: echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
@@ -154,13 +124,12 @@ jobs:
             echo "TEST_FILTER=kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" >> $GITHUB_ENV
           fi
 
-      - name: Run tests – shard ${{ matrix.shard }}
+      - name: Run tests
         run: |
           cargo nextest run \
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
-            --partition count:${{ matrix.shard }}/2 \
             --no-fail-fast
 
   test-migrations:
@@ -214,7 +183,7 @@ jobs:
     name: unit success
     runs-on: ubuntu-latest
     if: always()
-    needs: [build, test, test-migrations]
+    needs: [build-contracts, test, test-migrations]
     timeout-minutes: 5
     steps:
       - name: Decide whether the needed jobs succeeded or failed
