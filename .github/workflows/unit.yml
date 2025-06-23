@@ -119,9 +119,6 @@ jobs:
           name: cargo-target
           path: target/debug
 
-      - name: Fix permissions
-        run: chmod +x target/debug/deps/*
-
       - name: Set TEST_CONTRACTS environment variable
         run: echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
 

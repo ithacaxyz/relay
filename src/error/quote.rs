@@ -39,6 +39,9 @@ pub enum QuoteError {
         /// Number of available intents.
         got: usize,
     },
+    /// Missing required funds in the request.
+    #[error("missing required funds")]
+    MissingRequiredFunds,
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -49,7 +52,8 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidQuoteSignature
             | QuoteError::UnsupportedFeeToken(..)
             | QuoteError::InvalidNumberOfIntents { .. }
-            | QuoteError::InvalidFeeAmount { .. } => invalid_params(err.to_string()),
+            | QuoteError::InvalidFeeAmount { .. }
+            | QuoteError::MissingRequiredFunds => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
                 internal_rpc(err.to_string())
             }

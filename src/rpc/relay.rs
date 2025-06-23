@@ -428,7 +428,7 @@ impl Relay {
     #[instrument(skip_all)]
     async fn send_intents(
         &self,
-        mut quotes: SignedQuotes,
+        quotes: SignedQuotes,
         capabilities: SendPreparedCallsCapabilities,
         signature: Bytes,
         key: CallKey,
@@ -462,83 +462,10 @@ impl Relay {
 
         // single chain workflow
         if quotes.ty().multi_chain_root.is_none() {
-            // send intent
-            let tx = self
-                .prepare_tx(
-                    bundle_id,
-                    // safety: we know there is 1 element
-                    quotes.ty().quotes.first().unwrap().clone(),
-                    capabilities,
-                    signature,
-                )
-                .await?;
-
-            let span = span!(
-                Level::INFO, "send tx",
-                otel.kind = ?SpanKind::Producer,
-                messaging.system = "pg",
-                messaging.destination.name = "tx",
-                messaging.operation.name = "send",
-                messaging.operation.type = "send",
-                messaging.message.id = %tx.id
-            );
-            self.inner
-                .chains
-                .get(tx.chain_id())
-                .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
-                .transactions
-                .send_transaction(tx)
-                .instrument(span)
-                .await?;
-
-            return Ok(bundle_id);
+            self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
+        } else {
+            self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
         }
-
-        // todo: parallelize
-        // todo: check all chains supported before sending intents
-        let mut intents = Intents::new(
-            quotes
-                .ty()
-                .quotes
-                .iter()
-                .map(|quote| {
-                    (
-                        quote.output.clone(),
-                        self.provider(quote.chain_id).unwrap(),
-                        quote.orchestrator,
-                    )
-                })
-                .collect(),
-        );
-
-        let mut bundle = InteropBundle {
-            id: bundle_id,
-            src_transactions: Vec::new(),
-            dst_transactions: Vec::new(),
-        };
-
-        // last quote is the output intent
-        let dst_idx = quotes.ty().quotes.len() - 1;
-
-        // todo: error handling
-        let root = intents.root().await.unwrap();
-        for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
-            let proof = intents.get_proof(idx).await.unwrap().unwrap();
-            let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
-            let tx = self
-                .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
-                .await?;
-
-            if idx == dst_idx {
-                bundle.dst_transactions.push(tx.clone());
-            } else {
-                bundle.src_transactions.push(tx.clone());
-            }
-        }
-
-        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
-
-        Ok(bundle_id)
     }
 
     #[instrument(skip_all)]
@@ -973,137 +900,8 @@ impl Relay {
 
             (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
         } else {
-            let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
-            let Some(request_key) = &request.key else {
-                return Err(IntentError::MissingKey.into());
-            };
-
-            let (asset_diffs, quotes) = if let Some((requested_asset, funds)) =
-                request.required_funds.first()
-            {
-                // Only query inventory, if funds have been requested in the target chain.
-                let asset = if requested_asset.is_zero() {
-                    AddressOrNative::Native
-                } else {
-                    AddressOrNative::Address(*requested_asset)
-                };
-
-                // todo: what about fees?
-                let Some(funding_chains) = self
-                    .get_assets(GetAssetsParameters::eoa(eoa))
-                    .await?
-                    .find_funding_chains(request.chain_id, asset, *funds)
-                else {
-                    panic!("todo error not enough funds")
-                };
-
-                if funding_chains.is_empty() {
-                    // No funding chains required to execute the intent
-                    let (asset_diffs, quote) = self
-                        .build_intent(&request, maybe_stored, calls, nonce, IntentKind::Single)
-                        .await?;
-
-                    (
-                        asset_diffs,
-                        Quotes {
-                            quotes: vec![quote],
-                            ttl: SystemTime::now()
-                                .checked_add(self.inner.quote_config.ttl)
-                                .expect("should never overflow"),
-                            multi_chain_root: None,
-                        },
-                    )
-                } else {
-                    let asset: Asset = asset.into();
-
-                    let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
-                        async |(leaf, (chain_id, amount))| {
-                            self.prepare_calls_inner(
-                                PrepareCallsParameters::build_funding_intent(
-                                    eoa,
-                                    *chain_id,
-                                    asset,
-                                    *amount,
-                                    // todo: should get the equivalent coin
-                                    request.capabilities.meta.fee_token,
-                                    request_key.clone(),
-                                ),
-                                Some(IntentKind::MultiInput(leaf)),
-                            )
-                            .await
-                        },
-                    ))
-                    .await?;
-
-                    let mut missing_funds = U256::ZERO;
-                    for (_, amount) in funding_chains.iter() {
-                        missing_funds += amount;
-                    }
-
-                    let (asset_diffs, quote) = self
-                        .build_intent(
-                            &request,
-                            maybe_stored,
-                            calls,
-                            nonce,
-                            IntentKind::MultiOutput(
-                                funding_intents.len(),
-                                vec![(*requested_asset, missing_funds)],
-                            ),
-                        )
-                        .await?;
-
-                    // todo: assetdiffs should change
-                    (
-                        asset_diffs,
-                        Quotes {
-                            quotes: funding_intents
-                                .iter()
-                                .flat_map(|resp| {
-                                    resp.context.quote().expect("should exist").ty().quotes.clone()
-                                })
-                                .chain(std::iter::once(quote))
-                                .collect(),
-                            ttl: SystemTime::now()
-                                .checked_add(self.inner.quote_config.ttl)
-                                .expect("should never overflow"),
-                            multi_chain_root: None,
-                        }
-                        .with_merkle_payload(
-                            funding_chains
-                                .iter()
-                                .chain(iter::once(&(request.chain_id, U256::ZERO)))
-                                .map(|(chain, _)| {
-                                    self.provider(*chain)
-                                        .map(|p| (p, self.inner.contracts.orchestrator.address))
-                                })
-                                .collect::<Result<Vec<_>, _>>()?,
-                        )
-                        .await?,
-                    )
-                }
-            } else {
-                let (asset_diffs, quote) = self
-                    .build_intent(
-                        &request,
-                        maybe_stored,
-                        calls,
-                        nonce,
-                        intent_kind.unwrap_or(IntentKind::Single),
-                    )
-                    .await?;
-
-                (
-                    asset_diffs,
-                    Quotes {
-                        quotes: vec![quote],
-                        ttl: SystemTime::now()
-                            .checked_add(self.inner.quote_config.ttl)
-                            .expect("should never overflow"),
-                        multi_chain_root: None,
-                    },
-                )
-            };
+            let (asset_diffs, quotes) =
+                self.build_quotes(&request, calls, nonce, maybe_stored, intent_kind).await?;
 
             let sig = self
                 .inner
@@ -1139,6 +937,318 @@ impl Relay {
         };
 
         Ok(response)
+    }
+
+    /// Build quote with optional funding chain detection
+    async fn build_quotes(
+        &self,
+        request: &PrepareCallsParameters,
+        calls: Vec<Call>,
+        nonce: U256,
+        maybe_stored: Option<CreatableAccount>,
+        intent_kind: Option<IntentKind>,
+    ) -> RpcResult<(AssetDiffs, Quotes)> {
+        // Check if funding is required
+        if let Some((requested_asset, funds)) = request.required_funds.first() {
+            self.determine_quote_strategy(
+                request,
+                *requested_asset,
+                *funds,
+                calls,
+                nonce,
+                maybe_stored,
+            )
+            .await
+        } else {
+            self.build_single_chain_quote(request, maybe_stored, calls, nonce, intent_kind)
+                .await
+                .map_err(Into::into)
+        }
+    }
+
+    /// Determine quote strategy based on asset availability across chains
+    async fn determine_quote_strategy(
+        &self,
+        request: &PrepareCallsParameters,
+        requested_asset: Address,
+        funds: U256,
+        calls: Vec<Call>,
+        nonce: U256,
+        maybe_stored: Option<CreatableAccount>,
+    ) -> RpcResult<(AssetDiffs, Quotes)> {
+        let eoa = request.from.ok_or(IntentError::MissingSender)?;
+        // Only query inventory, if funds have been requested in the target chain.
+        let asset = if requested_asset.is_zero() {
+            AddressOrNative::Native
+        } else {
+            AddressOrNative::Address(requested_asset)
+        };
+
+        // todo: what about fees?
+        let assets_response = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+
+        let Some(funding_chains) =
+            assets_response.find_funding_chains(request.chain_id, asset, funds)
+        else {
+            return Err(RelayError::InsufficientFunds {
+                required: funds,
+                chain_id: request.chain_id,
+                asset: requested_asset,
+            }
+            .into());
+        };
+
+        if funding_chains.is_empty() {
+            // No funding chains required to execute the intent
+            self.build_single_chain_quote(
+                request,
+                maybe_stored,
+                calls,
+                nonce,
+                Some(IntentKind::Single),
+            )
+            .await
+            .map_err(Into::into)
+        } else {
+            Ok(self
+                .build_multichain_quote(request, funding_chains, calls, nonce, maybe_stored)
+                .await?)
+        }
+    }
+
+    /// Build a single-chain quote
+    async fn build_single_chain_quote(
+        &self,
+        request: &PrepareCallsParameters,
+        maybe_stored: Option<CreatableAccount>,
+        calls: Vec<Call>,
+        nonce: U256,
+        intent_kind: Option<IntentKind>,
+    ) -> Result<(AssetDiffs, Quotes), RelayError> {
+        let (asset_diffs, quote) = self
+            .build_intent(
+                request,
+                maybe_stored,
+                calls,
+                nonce,
+                intent_kind.unwrap_or(IntentKind::Single),
+            )
+            .await?;
+
+        Ok((
+            asset_diffs,
+            Quotes {
+                quotes: vec![quote],
+                ttl: SystemTime::now()
+                    .checked_add(self.inner.quote_config.ttl)
+                    .expect("should never overflow"),
+                multi_chain_root: None,
+            },
+        ))
+    }
+
+    /// Build a multi-chain quote with funding from funding chains.
+    ///
+    /// 1) Create funding intents for each chain to bridge assets.
+    /// 2) Create output intent for destination chain
+    /// 3) Creates the multi chain intent merkle tree
+    /// 4) Return overall quote.
+    async fn build_multichain_quote(
+        &self,
+        request: &PrepareCallsParameters,
+        funding_chains: Vec<(u64, U256)>,
+        calls: Vec<Call>,
+        nonce: U256,
+        maybe_stored: Option<CreatableAccount>,
+    ) -> RpcResult<(AssetDiffs, Quotes)> {
+        let eoa = request.from.ok_or(IntentError::MissingSender)?;
+        let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
+        let requested_asset = request
+            .required_funds
+            .first()
+            .map(|(asset, _)| *asset)
+            .ok_or_else(|| RelayError::Quote(QuoteError::MissingRequiredFunds))?;
+
+        let asset: Asset = if requested_asset.is_zero() {
+            AddressOrNative::Native
+        } else {
+            AddressOrNative::Address(requested_asset)
+        }
+        .into();
+
+        let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
+            async |(leaf, (chain_id, amount))| {
+                self.prepare_calls_inner(
+                    PrepareCallsParameters::build_funding_intent(
+                        eoa,
+                        *chain_id,
+                        asset,
+                        *amount,
+                        // todo: should get the equivalent coin
+                        request.capabilities.meta.fee_token,
+                        request_key.clone(),
+                    ),
+                    Some(IntentKind::MultiInput(leaf)),
+                )
+                .await
+            },
+        ))
+        .await?;
+
+        let mut sourced_funds = U256::ZERO;
+        for (_, amount) in funding_chains.iter() {
+            sourced_funds += amount;
+        }
+
+        let (asset_diffs, quote) = self
+            .build_intent(
+                request,
+                maybe_stored,
+                calls,
+                nonce,
+                IntentKind::MultiOutput(
+                    funding_intents.len(),
+                    vec![(requested_asset, sourced_funds)],
+                ),
+            )
+            .await?;
+
+        // todo: assetdiffs should change
+        Ok((
+            asset_diffs,
+            Quotes {
+                quotes: funding_intents
+                    .iter()
+                    .flat_map(|resp| {
+                        resp.context.quote().expect("should exist").ty().quotes.clone()
+                    })
+                    .chain(std::iter::once(quote))
+                    .collect(),
+                ttl: SystemTime::now()
+                    .checked_add(self.inner.quote_config.ttl)
+                    .expect("should never overflow"),
+                multi_chain_root: None,
+            }
+            .with_merkle_payload(
+                funding_chains
+                    .iter()
+                    .chain(iter::once(&(request.chain_id, U256::ZERO)))
+                    .map(|(chain, _)| {
+                        self.provider(*chain)
+                            .map(|p| (p, self.inner.contracts.orchestrator.address))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .await?,
+        ))
+    }
+
+    /// Handle single-chain send intent
+    async fn send_single_chain_intent(
+        &self,
+        quotes: &SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        bundle_id: BundleId,
+    ) -> RpcResult<BundleId> {
+        // send intent
+        let tx = self
+            .prepare_tx(
+                bundle_id,
+                // safety: we know there is 1 element
+                quotes.ty().quotes.first().unwrap().clone(),
+                capabilities,
+                signature,
+            )
+            .await?;
+
+        let span = span!(
+            Level::INFO, "send tx",
+            otel.kind = ?SpanKind::Producer,
+            messaging.system = "pg",
+            messaging.destination.name = "tx",
+            messaging.operation.name = "send",
+            messaging.operation.type = "send",
+            messaging.message.id = %tx.id
+        );
+        self.inner
+            .chains
+            .get(tx.chain_id())
+            .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
+            .transactions
+            .send_transaction(tx)
+            .instrument(span)
+            .await?;
+
+        Ok(bundle_id)
+    }
+
+    /// Handle multichain send intents
+    async fn send_multichain_intents(
+        &self,
+        mut quotes: SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        bundle_id: BundleId,
+    ) -> RpcResult<BundleId> {
+        let bundle =
+            self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
+
+        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
+
+        Ok(bundle_id)
+    }
+
+    /// Creates an InteropBundle from signed quotes for multichain transactions.
+    async fn create_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+        quotes: &mut SignedQuotes,
+        capabilities: &SendPreparedCallsCapabilities,
+        signature: &Bytes,
+    ) -> Result<InteropBundle, RelayError> {
+        let mut intents = Intents::new(
+            quotes
+                .ty()
+                .quotes
+                .iter()
+                .map(|quote| {
+                    (
+                        quote.output.clone(),
+                        self.provider(quote.chain_id).unwrap(),
+                        quote.orchestrator,
+                    )
+                })
+                .collect(),
+        );
+
+        let mut bundle = InteropBundle {
+            id: bundle_id,
+            src_transactions: Vec::new(),
+            dst_transactions: Vec::new(),
+        };
+
+        // last quote is the output intent
+        let dst_idx = quotes.ty().quotes.len() - 1;
+
+        // todo: error handling
+        let root = intents.root().await.unwrap();
+        for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
+            let proof = intents.get_proof(idx).await.unwrap().unwrap();
+            let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
+            let tx = self
+                .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
+                .await
+                .map_err(|e| RelayError::InternalError(e.into()))?;
+
+            if idx == dst_idx {
+                bundle.dst_transactions.push(tx.clone());
+            } else {
+                bundle.src_transactions.push(tx.clone());
+            }
+        }
+
+        Ok(bundle)
     }
 }
 
@@ -1622,7 +1732,7 @@ impl RelayApiServer for Relay {
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner {
+pub(super) struct RelayInner {
     /// The contract addresses.
     contracts: VersionedContracts,
     /// The chains supported by the relay.
