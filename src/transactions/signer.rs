@@ -27,7 +27,7 @@ use alloy::{
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::{TransactionReceipt, TransactionRequest},
-    sol_types::{SolCall, SolEvent},
+    sol_types::SolCall,
     transports::{RpcError, TransportErrorKind},
 };
 use chrono::Utc;
@@ -674,9 +674,7 @@ impl Signer {
             return;
         }
 
-        let Some(event) =
-            receipt.logs().iter().rev().find_map(|log| IntentExecuted::decode_log(&log.inner).ok())
-        else {
+        let Some(event) = IntentExecuted::try_from_receipt(&receipt) else {
             warn!(%tx_hash, "failed to find IntentExecuted event in receipt");
             self.metrics.failed_intents.increment(1);
             return;

@@ -4,6 +4,7 @@ use alloy::{
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{
+        TransactionReceipt,
         simulate::{SimBlock, SimulatePayload},
         state::StateOverride,
     },
@@ -18,7 +19,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::P256_GAS_BUFFER,
     error::{IntentError, RelayError},
-    types::{AssetDiffs, Intent},
+    types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -330,5 +331,17 @@ impl<P: Provider> Orchestrator<P> {
             .await
             .map_err(TransportErrorKind::custom)?
             == U256::ONE)
+    }
+}
+
+impl IntentExecuted {
+    /// Attempts to decode the [`IntentExecuted`] event from the receipt.
+    pub fn try_from_receipt(receipt: &TransactionReceipt) -> Option<Self> {
+        receipt.decoded_log::<Self>().map(|e| e.data)
+    }
+
+    /// Whether the intent execution failed.
+    pub fn has_error(&self) -> bool {
+        self.err != ORCHESTRATOR_NO_ERROR
     }
 }
