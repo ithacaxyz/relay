@@ -1,4 +1,5 @@
 use crate::e2e::environment::Environment;
+use alloy::primitives::B256;
 use relay::{cli::Args, spawn::try_spawn_with_args};
 use std::{
     env::temp_dir,
@@ -43,6 +44,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 max_pending_transactions: Default::default(),
                 num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
+                funder_key: B256::random().to_string(),
                 sequencer_endpoints: Default::default(),
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),

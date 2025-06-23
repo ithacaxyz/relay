@@ -1,5 +1,3 @@
-# Runs unit tests.
-
 name: unit
 
 on:
@@ -17,25 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: test – ${{ matrix.variant }}
-    strategy:
-      matrix:
-        variant: [local, base_sepolia, pg]
-    timeout-minutes: 30
+  # Build once and share artifacts with test jobs
+  build:
+    name: build
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,7 +30,7 @@ jobs:
         with:
           version: nightly
 
-      - name: Build account
+      - name: Build test contracts
         run: |
           cd tests/account
           forge build
@@ -57,6 +41,90 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          save-if: true
+
+      - name: Build workspace
+        run: cargo build --locked --workspace --tests
+
+      - name: Upload test contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-contracts
+          path: tests/account/out
+          retention-days: 1
+
+      - name: Upload cargo target
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-target
+          path: |
+            target/debug/
+            !target/debug/.fingerprint/
+            !target/debug/build/
+            !target/debug/deps/
+            !target/debug/incremental/
+          retention-days: 1
+
+  test:
+    name: test – ${{ matrix.variant }} shard ${{ matrix.shard }}
+    needs: build
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        variant: [local, base_sepolia, pg]
+        shard: [1, 2]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+
+    services:
+      # PostgreSQL only when the pg variant is selected
+      postgres:
+        image: ${{ matrix.variant == 'pg' && 'postgres' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: false  # Don't save cache in test jobs
+
+      - name: Download test contracts
+        uses: actions/download-artifact@v4
+        with:
+          name: test-contracts
+          path: tests/account/out
+
+      - name: Download cargo target
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-target
+          path: target/debug
+
+      - name: Fix permissions
+        run: chmod +x target/debug/deps/*
+
+      - name: Set TEST_CONTRACTS environment variable
+        run: echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
+
       - uses: taiki-e/install-action@nextest
 
       - name: Set fork environment
@@ -89,13 +157,14 @@ jobs:
             echo "TEST_FILTER=kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" >> $GITHUB_ENV
           fi
 
-      - name: Run tests
+      - name: Run tests – shard ${{ matrix.shard }}
         run: |
-          TEST_CONTRACTS=tests/account/out cargo nextest run \
+          cargo nextest run \
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
-            --no-tests=warn
+            --partition count:${{ matrix.shard }}/2 \
+            --no-fail-fast
 
   test-migrations:
     runs-on: ubuntu-latest
@@ -148,8 +217,8 @@ jobs:
     name: unit success
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, test-migrations]
-    timeout-minutes: 30
+    needs: [build, test, test-migrations]
+    timeout-minutes: 5
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@release/v1

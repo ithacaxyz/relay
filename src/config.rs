@@ -175,6 +175,8 @@ pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signers_mnemonic: Mnemonic<English>,
+    /// The funder KMS key or private key
+    pub funder_key: String,
 }
 
 impl Default for SecretsConfig {
@@ -184,6 +186,8 @@ impl Default for SecretsConfig {
                 "test test test test test test test test test test test junk",
             )
             .unwrap(),
+            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
         }
     }
 }
@@ -448,6 +452,12 @@ impl RelayConfig {
     /// Sets the maximum number of pending transactions that can be handled by a single signer.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
+        self
+    }
+
+    /// Sets the funder signing key used to sign fund operations.
+    pub fn with_funder_key(mut self, funder_key: String) -> Self {
+        self.secrets.funder_key = funder_key;
         self
     }
 

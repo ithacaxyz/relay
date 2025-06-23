@@ -84,6 +84,7 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
     } else {
         let mut config = RelayConfig::load_from_file(&config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config.with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
     };
@@ -121,6 +122,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         config.transactions.num_signers,
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
+
+    // setup funder signer
+    let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
@@ -199,6 +203,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         contracts,
         chains.clone(),
         quote_signer,
+        funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
         FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
@@ -245,6 +250,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!(%addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
+    info!("Funder signer key: {}", funder_signer.address());
 
     // version and other information as a metric
     counter!(
