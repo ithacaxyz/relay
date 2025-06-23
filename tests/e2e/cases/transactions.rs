@@ -112,14 +112,14 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     .await
     .unwrap();
     // use a consistent seed
-    let rng = StdRng::seed_from_u64(KEY_SEED);
+    let mut rng = StdRng::seed_from_u64(KEY_SEED);
 
     let tx_service_handle =
         env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // setup accounts
     let num_accounts = 100;
-    let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
+    let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
             .buffered(10)
@@ -152,7 +152,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .into_iter()
         .map(|mut tx| {
             // Set invalid signature for some of the transactions
-            if rand::random_bool(0.5) {
+            if rng.random_bool(0.5) {
                 tx.quote.output.signature = Default::default();
                 invalid += 1;
             }
@@ -167,6 +167,11 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     }
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
+
+
+    // otherwise it will be marked as LEAK.
+    drop(env);
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(())
 }
