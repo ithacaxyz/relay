@@ -114,7 +114,7 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
 
     // Generate and verify proof for each intent
     for (i, leaf) in leaves.into_iter().enumerate() {
-        let proof = intents.get_proof(i).await?.expect("Should get proof for valid index");
+        let proof = intents.get_proof(i).await?;
 
         // Verify proof
         assert!(
@@ -123,9 +123,9 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
         );
     }
 
-    // Test invalid index
-    let invalid_proof = intents.get_proof(100).await?;
-    assert!(invalid_proof.is_none(), "Should return None for invalid index");
+    // Test invalid index - should return an error
+    let invalid_result = intents.get_proof(100).await;
+    assert!(invalid_result.is_err(), "Should return error for invalid index");
 
     Ok(())
 }
@@ -138,9 +138,9 @@ pub async fn test_empty_intents_batch() -> eyre::Result<()> {
     let root = intents.root().await?;
     assert_eq!(root, B256::ZERO, "Empty batch should have zero root");
 
-    // Should return None for any index
-    let proof = intents.get_proof(0).await?;
-    assert!(proof.is_none(), "Empty batch should return None for any proof index");
+    // Should return error for any index on empty batch
+    let proof_result = intents.get_proof(0).await;
+    assert!(proof_result.is_err(), "Empty batch should return error for any proof index");
 
     Ok(())
 }

@@ -19,6 +19,9 @@ pub use keys::KeysError;
 mod intent;
 pub use intent::IntentError;
 
+mod merkle;
+pub use merkle::MerkleError;
+
 mod quote;
 pub use quote::QuoteError;
 

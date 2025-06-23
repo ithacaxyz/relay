@@ -1,7 +1,10 @@
 //! Batch operations for multiple intents with merkle tree support.
 
 use super::{Intent, SignedCalls};
-use crate::types::LazyMerkleTree;
+use crate::{
+    error::{IntentError, MerkleError},
+    types::LazyMerkleTree,
+};
 use alloy::{
     primitives::{Address, B256},
     providers::DynProvider,
@@ -31,23 +34,25 @@ impl Intents {
     }
 
     /// Computes EIP-712 signing hashes for all intents.
-    pub async fn compute_leaf_hashes(&self) -> eyre::Result<Vec<B256>> {
+    pub async fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
         Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
             intent.compute_eip712_data(*orchestrator_address, provider)
         }))
-        .await?
+        .await
+        .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?
         .into_iter()
         .map(|(hash, _)| hash)
         .collect())
     }
 
     /// Gets or computes the cached tree and leaves.
-    async fn get_or_compute_tree(&mut self) -> eyre::Result<&mut LazyMerkleTree> {
+    async fn get_or_compute_tree(&mut self) -> Result<&mut LazyMerkleTree, IntentError> {
         // Check if we have a valid cache for this orchestrator
         if self.cached_tree.is_none() {
             let leaves = self.compute_leaf_hashes().await?;
             let leaves_count = leaves.len();
-            let tree = LazyMerkleTree::from_leaves(leaves, leaves_count)?;
+            let tree =
+                LazyMerkleTree::from_leaves(leaves, leaves_count).map_err(IntentError::from)?;
             self.cached_tree = Some(tree);
         }
 
@@ -63,29 +68,31 @@ impl Intents {
     /// The leaf hashes are the EIP-712 signing hashes that would be signed by users,
     /// ensuring the merkle root represents the exact intents that were authorized.
     /// The tree is cached after first computation for efficiency.
-    pub async fn root(&mut self) -> eyre::Result<B256> {
+    pub async fn root(&mut self) -> Result<B256, IntentError> {
         if self.intents.is_empty() {
             return Ok(B256::ZERO);
         }
 
         let tree = self.get_or_compute_tree().await?;
 
-        Ok(tree.root()?)
+        tree.root().map_err(IntentError::from)
     }
 
     /// Gets a merkle proof for the intent at the given index.
     ///
-    /// Returns `None` if the index is out of bounds.
+    /// Returns an error if the index is out of bounds.
     ///
     /// The proof can be used to verify that a specific intent is included in
     /// the batch without needing to know all other intents. This is useful for
     /// on-chain verification where gas costs need to be minimized.
-    pub async fn get_proof(&mut self, index: usize) -> eyre::Result<Option<Vec<B256>>> {
+    pub async fn get_proof(&mut self, index: usize) -> Result<Vec<B256>, IntentError> {
         if index >= self.intents.len() {
-            return Ok(None);
+            return Err(
+                MerkleError::IndexOutOfBounds { index, tree_size: self.intents.len() }.into()
+            );
         }
 
-        Ok(Some(self.get_or_compute_tree().await?.proof(index)?))
+        self.get_or_compute_tree().await?.proof(index).map_err(IntentError::from)
     }
 
     /// Returns the number of intents.

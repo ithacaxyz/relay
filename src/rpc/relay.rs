@@ -1230,10 +1230,9 @@ impl Relay {
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
 
-        // todo: error handling
-        let root = intents.root().await.unwrap();
+        let root = intents.root().await?;
         for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
-            let proof = intents.get_proof(idx).await.unwrap().unwrap();
+            let proof = intents.get_proof(idx).await?;
             let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
             let tx = self
                 .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
