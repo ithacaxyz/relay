@@ -60,6 +60,13 @@ impl CoinRegistry {
         std::fs::write(path, content)?;
         Ok(())
     }
+
+    /// Returns the address of a coin on a chain.
+    ///
+    /// If the coin is native, returns `None`.
+    pub fn address(&self, kind: CoinKind, chain: ChainId) -> Option<Option<Address>> {
+        self.iter().find(|(k, v)| **v == kind && k.chain == chain).map(|(k, _)| k.address)
+    }
 }
 
 impl Default for CoinRegistry {
