@@ -3,24 +3,23 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    storage::{InteropTxType, RelayStorage, StorageApi},
-    types::{IERC20, OrchestratorContract::IntentExecuted, rpc::BundleId},
+    liquidity::{LiquidityTracker, LiquidityTrackerError},
+    storage::{RelayStorage, StorageApi},
+    types::{InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
-    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MulticallError, Provider},
+    primitives::{Address, ChainId, U256, map::HashMap},
+    providers::{DynProvider, MulticallError},
     rpc::types::TransactionReceipt,
 };
-use futures_util::future::{TryJoinAll, try_join_all};
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tracing::{error, instrument};
 
 /// Asset transfer information
@@ -91,12 +90,12 @@ enum InteropBundleError {
     /// Transaction failed.
     #[error("transaction failed: {0}")]
     TransactionError(Arc<dyn TransactionFailureReason>),
+    /// Errors returned by [`LiquidityTracker`].
+    #[error(transparent)]
+    Liquidity(#[from] LiquidityTrackerError),
     /// Invalid state transition
     #[error("invalid state transition from {from:?} to {to:?}")]
     InvalidStateTransition { from: BundleStatus, to: BundleStatus },
-    /// Not enough liquidity.
-    #[error("don't have enough liquidity for the bundle")]
-    NotEnoughLiquidity,
     /// Storage error.
     #[error(transparent)]
     Storage(#[from] StorageError),
@@ -214,205 +213,6 @@ impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
 pub enum InteropServiceMessage {
     /// Send a bundle with status.
     SendBundleWithStatus(Box<BundleWithStatus>),
-}
-
-/// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
-#[derive(Debug)]
-struct LockLiquidityInput {
-    /// Current balance of the asset fetched from provider.
-    current_balance: U256,
-    /// Block number at which the balance was fetched.
-    balance_at: BlockNumber,
-    /// Amount of the asset we are trying to lock.
-    lock_amount: U256,
-}
-
-/// An address on a specific chain.
-pub type ChainAddress = (ChainId, Address);
-
-/// Tracks liquidity of relay for interop bundles.
-#[derive(Debug, Default)]
-struct LiquidityTrackerInner {
-    /// Assets that are about to be pulled from us, indexed by chain and asset address.
-    ///
-    /// Those correspond to pending cross-chain intents that are not yet confirmed.
-    locked_liquidity: HashMap<ChainAddress, U256>,
-    /// Liquidity amounts that are unlocked at certain block numbers.
-    ///
-    /// Those correspond to blocks when we've sent funds to users.
-    pending_unlocks: HashMap<ChainAddress, BTreeMap<BlockNumber, U256>>,
-}
-
-impl LiquidityTrackerInner {
-    /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
-    /// balances and adding all of the unlocked ones.
-    fn available_balance(&self, asset: ChainAddress, input: &LockLiquidityInput) -> U256 {
-        let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
-        let unlocked = self
-            .pending_unlocks
-            .get(&asset)
-            .map(|unlocks| {
-                unlocks.range(..=input.balance_at).map(|(_, amount)| *amount).sum::<U256>()
-            })
-            .unwrap_or_default();
-
-        input.current_balance.saturating_add(unlocked).saturating_sub(locked)
-    }
-
-    /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
-    async fn try_lock_liquidity(
-        &mut self,
-        assets: HashMap<ChainAddress, LockLiquidityInput>,
-    ) -> Result<(), InteropBundleError> {
-        // Make sure that we have enough funds for all transfers
-        if assets
-            .iter()
-            .any(|(asset, input)| input.lock_amount > self.available_balance(*asset, input))
-        {
-            return Err(InteropBundleError::NotEnoughLiquidity);
-        }
-
-        // Lock liquidity
-        for (asset, input) in assets {
-            *self.locked_liquidity.entry(asset).or_default() += input.lock_amount;
-        }
-
-        Ok(())
-    }
-
-    /// Unlocks liquidity by adding it to the pending unlocks mapping. This should be called once
-    /// bundle is confirmed.
-    fn unlock_liquidity(
-        &mut self,
-        chain_id: ChainId,
-        asset: Address,
-        amount: U256,
-        at: BlockNumber,
-    ) {
-        *self.pending_unlocks.entry((chain_id, asset)).or_default().entry(at).or_default() +=
-            amount;
-    }
-}
-
-/// Wrapper around [`LiquidityTrackerInner`] that is used to track liquidity.
-#[derive(Debug, Default)]
-struct LiquidityTracker {
-    inner: Arc<Mutex<LiquidityTrackerInner>>,
-    funder_address: Address,
-    providers: HashMap<ChainId, DynProvider>,
-}
-
-impl LiquidityTracker {
-    /// Creates a new liquidity tracker.
-    pub fn new(providers: HashMap<ChainId, DynProvider>, funder_address: Address) -> Self {
-        let inner = Arc::new(Mutex::new(Default::default()));
-        let this = Self { inner: inner.clone(), providers: providers.clone(), funder_address };
-
-        // Spawn a task that periodically cleans up the pending unlocks for older blocks.
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-
-                let result = providers
-                    .iter()
-                    .map(async |(chain, provider)| {
-                        let latest_block = provider.get_block_number().await?;
-                        let mut lock = inner.lock().await;
-                        let LiquidityTrackerInner { locked_liquidity, pending_unlocks } =
-                            &mut *lock;
-                        for (asset, unlocks) in pending_unlocks {
-                            if asset.0 == *chain {
-                                // Keep 10 blocks of pending unlocks
-                                let to_keep = unlocks.split_off(&latest_block.saturating_sub(10));
-                                let to_remove = core::mem::replace(unlocks, to_keep);
-
-                                // Remove everything else from the locked mapping
-                                for (_, unlock) in to_remove {
-                                    locked_liquidity.entry(*asset).and_modify(|amount| {
-                                        *amount = amount.saturating_sub(unlock);
-                                    });
-                                }
-                            }
-                        }
-                        eyre::Ok(())
-                    })
-                    .collect::<TryJoinAll<_>>()
-                    .await;
-
-                if let Err(e) = result {
-                    error!("liquidity tracker task failed: {:?}", e);
-                }
-            }
-        });
-
-        this
-    }
-
-    /// Locks liquidity for an interop bundle.
-    pub async fn try_lock_liquidity(
-        &self,
-        assets: impl IntoIterator<Item = AssetTransfer>,
-    ) -> Result<(), InteropBundleError> {
-        // Deduplicate assets by chain and asset address
-        let inputs: HashMap<_, U256> = assets
-            .into_iter()
-            .map(|transfer| ((transfer.chain_id, transfer.asset_address), transfer.amount))
-            .fold(HashMap::default(), |mut map, (k, v)| {
-                *map.entry(k).or_default() += v;
-                map
-            });
-
-        // Construct inputs for liquidity tracker by fetching balances
-        let inputs = inputs
-            .into_iter()
-            .map(async |((chain, asset), amount)| {
-                let provider = &self.providers[&chain];
-                let (balance, block_number) = if !asset.is_zero() {
-                    let (balance, block_number) = provider
-                        .multicall()
-                        .add(IERC20::new(asset, provider).balanceOf(self.funder_address))
-                        .get_block_number()
-                        .aggregate()
-                        .await?;
-                    (balance, block_number.to::<u64>())
-                } else {
-                    let block_number = provider.get_block_number().await?;
-                    let balance = provider
-                        .get_balance(self.funder_address)
-                        .block_id(block_number.into())
-                        .await?;
-                    (balance, block_number)
-                };
-
-                Ok::<_, MulticallError>((
-                    (chain, asset),
-                    LockLiquidityInput {
-                        current_balance: balance,
-                        balance_at: block_number,
-                        lock_amount: amount,
-                    },
-                ))
-            })
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .collect();
-
-        self.inner.lock().await.try_lock_liquidity(inputs).await?;
-
-        Ok(())
-    }
-
-    /// Unlocks liquidity from an interop bundle.
-    pub async fn unlock_liquidity(
-        &self,
-        chain_id: ChainId,
-        asset: Address,
-        amount: U256,
-        at: BlockNumber,
-    ) {
-        self.inner.lock().await.unlock_liquidity(chain_id, asset, amount, at);
-    }
 }
 
 /// Handle to communicate with the [`InteropService`].
@@ -855,7 +655,13 @@ impl InteropServiceInner {
         // destination transactions)
         if !bundle.status.is_destination_failures() && !bundle.status.is_destination_confirmed() {
             self.liquidity_tracker
-                .try_lock_liquidity(bundle.bundle.asset_transfers.clone())
+                .try_lock_liquidity(
+                    bundle
+                        .bundle
+                        .asset_transfers
+                        .iter()
+                        .map(|t| (t.chain_id, t.asset_address, t.amount)),
+                )
                 .await?;
         }
 
