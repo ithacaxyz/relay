@@ -1,8 +1,8 @@
-use crate::types::SignedQuote;
+use crate::types::{Quote, SignedQuote};
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
-    primitives::{Address, B256, U256, wrap_fixed_bytes},
+    primitives::{Address, B256, Bytes, ChainId, TxKind, U256, wrap_fixed_bytes},
 };
 use chrono::{DateTime, Utc};
 use opentelemetry::Context;
@@ -19,15 +19,48 @@ wrap_fixed_bytes! {
     pub struct TxId<32>;
 }
 
+/// Kind of transaction we are processing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RelayTransactionKind {
+    /// An intent we need to relay for a user.
+    Intent {
+        /// [`Intent`] to send.
+        quote: Box<SignedQuote>,
+        /// EIP-7702 [`SignedAuthorization`] to attach, if any.
+        authorization: Option<SignedAuthorization>,
+    },
+    /// An arbitrary internal relay transaction for maintenance purposes.
+    Internal {
+        /// Kind of the transaction.
+        kind: TxKind,
+        /// Input of the transaction.
+        input: Bytes,
+        /// Chain id of the transaction.
+        chain_id: ChainId,
+        /// Gas limit of the transaction.
+        gas_limit: u64,
+    },
+}
+
+impl RelayTransactionKind {
+    /// Returns the chain id of the transaction.
+    pub fn chain_id(&self) -> u64 {
+        match self {
+            Self::Intent { quote, .. } => quote.ty().chain_id,
+            Self::Internal { chain_id, .. } => *chain_id,
+        }
+    }
+}
+
 /// Transaction type used by relay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayTransaction {
     /// Id of the transaction.
     pub id: TxId,
-    /// [`Intent`] to send.
-    pub quote: SignedQuote,
-    /// EIP-7702 [`SignedAuthorization`] to attach, if any.
-    pub authorization: Option<SignedAuthorization>,
+    /// Kind of the transaction.
+    #[serde(flatten)]
+    pub kind: RelayTransactionKind,
     /// Trace context for the transaction.
     #[serde(with = "crate::serde::trace_context", default)]
     pub trace_context: Context,
@@ -40,8 +73,17 @@ impl RelayTransaction {
     pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
         Self {
             id: TxId(B256::random()),
-            quote,
-            authorization,
+            kind: RelayTransactionKind::Intent { quote: Box::new(quote), authorization },
+            trace_context: Context::current(),
+            received_at: Utc::now(),
+        }
+    }
+
+    /// Create a new [`RelayTransaction`] for an internal transaction.
+    pub fn new_internal(kind: TxKind, input: Bytes, chain_id: ChainId, gas_limit: u64) -> Self {
+        Self {
+            id: TxId(B256::random()),
+            kind: RelayTransactionKind::Internal { kind, input, chain_id, gas_limit },
             trace_context: Context::current(),
             received_at: Utc::now(),
         }
@@ -49,68 +91,106 @@ impl RelayTransaction {
 
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
-        let gas_limit = self.quote.ty().tx_gas;
-        let max_fee_per_gas = fees.max_fee_per_gas;
-        let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
+        match &self.kind {
+            RelayTransactionKind::Intent { quote, authorization } => {
+                let gas_limit = quote.ty().tx_gas;
+                let max_fee_per_gas = fees.max_fee_per_gas;
+                let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
-        let quote = self.quote.ty();
-        let mut intent = quote.intent.clone();
+                let quote = quote.ty();
+                let mut intent = quote.intent.clone();
 
-        let payment_amount = (quote.extra_payment
-            + (U256::from(gas_limit)
-                * U256::from(fees.max_fee_per_gas)
-                * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
-            .div_ceil(quote.eth_price))
-        .min(intent.totalPaymentMaxAmount);
+                let payment_amount = (quote.extra_payment
+                    + (U256::from(gas_limit)
+                        * U256::from(fees.max_fee_per_gas)
+                        * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
+                    .div_ceil(quote.eth_price))
+                .min(intent.totalPaymentMaxAmount);
 
-        intent.prePaymentAmount = payment_amount;
-        intent.totalPaymentAmount = payment_amount;
+                intent.prePaymentAmount = payment_amount;
+                intent.totalPaymentAmount = payment_amount;
 
-        let input = intent.encode_execute();
+                let input = intent.encode_execute();
 
-        if let Some(auth) = &self.authorization {
-            TxEip7702 {
-                authorization_list: vec![auth.clone()],
-                chain_id: quote.chain_id,
+                if let Some(auth) = &authorization {
+                    TxEip7702 {
+                        authorization_list: vec![auth.clone()],
+                        chain_id: quote.chain_id,
+                        nonce,
+                        to: quote.orchestrator,
+                        input,
+                        gas_limit,
+                        max_fee_per_gas,
+                        max_priority_fee_per_gas,
+                        value: U256::ZERO,
+                        access_list: Default::default(),
+                    }
+                    .into()
+                } else {
+                    TxEip1559 {
+                        chain_id: quote.chain_id,
+                        nonce,
+                        to: quote.orchestrator.into(),
+                        input,
+                        gas_limit,
+                        max_fee_per_gas,
+                        max_priority_fee_per_gas,
+                        value: U256::ZERO,
+                        access_list: Default::default(),
+                    }
+                    .into()
+                }
+            }
+            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit } => TxEip1559 {
+                chain_id: *chain_id,
                 nonce,
-                to: quote.orchestrator,
-                input,
-                gas_limit,
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
+                to: *kind,
+                input: input.clone(),
+                gas_limit: *gas_limit,
+                max_fee_per_gas: fees.max_fee_per_gas,
+                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
                 value: U256::ZERO,
                 access_list: Default::default(),
             }
-            .into()
-        } else {
-            TxEip1559 {
-                chain_id: quote.chain_id,
-                nonce,
-                to: quote.orchestrator.into(),
-                input,
-                gas_limit,
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
-                value: U256::ZERO,
-                access_list: Default::default(),
-            }
-            .into()
+            .into(),
         }
     }
 
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
-        self.quote.ty().chain_id
+        self.kind.chain_id()
     }
 
     /// Returns the maximum fee we can afford for a transaction.
     pub fn max_fee_for_transaction(&self) -> u128 {
-        self.quote.ty().native_fee_estimate.max_fee_per_gas
+        if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
+            quote.ty().native_fee_estimate.max_fee_per_gas
+        } else {
+            u128::MAX
+        }
     }
 
     /// Returns the EOA of the intent.
-    pub fn eoa(&self) -> &Address {
-        &self.quote.ty().intent.eoa
+    pub fn eoa(&self) -> Option<&Address> {
+        if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
+            Some(&quote.ty().intent.eoa)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the [`Quote`] of the transaction, if it's a [`RelayTransactionKind::Intent`].
+    pub fn quote(&self) -> Option<&Quote> {
+        if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
+            Some(quote.ty())
+        } else {
+            None
+        }
+    }
+
+    /// Whether the transaction is an intent.
+    pub fn is_intent(&self) -> bool {
+        matches!(self.kind, RelayTransactionKind::Intent { .. })
     }
 }
 
@@ -165,7 +245,7 @@ pub struct PendingTransaction {
 impl PendingTransaction {
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
-        self.tx.quote.ty().chain_id
+        self.tx.chain_id()
     }
 
     /// Returns the [`BundleId`] of the transaction.

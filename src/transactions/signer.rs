@@ -11,6 +11,7 @@ use crate::{
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
+    transactions::transaction::RelayTransactionKind,
     transport::error::TransportErrExt,
     types::{
         ORCHESTRATOR_NO_ERROR,
@@ -316,10 +317,12 @@ impl Signer {
         tx: &mut RelayTransaction,
         fees: Eip1559Estimation,
     ) -> Result<(), SignerError> {
-        // Set payment recipient to us if it hasn't been set
-        let payment_recipient = &mut tx.quote.ty_mut().intent.paymentRecipient;
-        if payment_recipient.is_zero() {
-            *payment_recipient = self.address();
+        if let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind {
+            // Set payment recipient to us if it hasn't been set
+            let payment_recipient = &mut quote.ty_mut().intent.paymentRecipient;
+            if payment_recipient.is_zero() {
+                *payment_recipient = self.address();
+            }
         }
 
         let mut request: TransactionRequest = tx.build(0, fees).into();
@@ -660,6 +663,10 @@ impl Signer {
 
     /// Fetches receipt of a confirmed transaction and records metrics.
     async fn record_confirmed_metrics(&self, tx: PendingTransaction, tx_hash: B256) {
+        if !tx.tx.is_intent() {
+            return;
+        }
+
         // Fetch receipt
         let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
         else {
