@@ -3,7 +3,7 @@ use crate::{
         LiquidityTracker,
         bridge::{Bridge, BridgeEvent, Transfer},
     },
-    types::CoinKind,
+    types::{CoinKind, CoinRegistry},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
 use futures_util::{
@@ -11,7 +11,7 @@ use futures_util::{
     future::TryJoinAll,
     stream::{SelectAll, select_all},
 };
-use std::{ops::RangeInclusive, time::Duration};
+use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
@@ -29,10 +29,18 @@ pub struct RebalanceService {
 
 impl RebalanceService {
     pub fn new(
-        assets: Vec<Asset>,
+        registry: &CoinRegistry,
         tracker: LiquidityTracker,
         bridges: impl IntoIterator<Item = Box<dyn Bridge>>,
     ) -> Self {
+        let assets = registry
+            .iter()
+            .map(|(k, v)| Asset {
+                address: k.address.unwrap_or_default(),
+                chain_id: k.chain,
+                kind: *v,
+            })
+            .collect();
         Self { assets, tracker, bridges: select_all(bridges) }
     }
 }
@@ -99,6 +107,8 @@ impl RebalanceService {
             eyre::bail!("no bridge for the given asset");
         };
 
+        println!("BRIDGING: {:?} -> {:?} ({})", from, to, amount);
+
         // Lock liquidity for the transfer.
         self.tracker
             .try_lock_liquidity(core::iter::once((from.chain_id, from.address, amount)))
@@ -153,15 +163,15 @@ impl RebalanceService {
                 U256::from((-(*min_negative.1.end())).min(*max_positive.1.start()));
 
             if rebalance_amount >= self.get_min_rebalance(&min_negative.0) {
-                return Ok(Some((min_negative.0, max_positive.0, rebalance_amount)));
+                return Ok(Some((max_positive.0, min_negative.0, rebalance_amount)));
             }
         }
 
         Ok(None)
     }
 
-    async fn into_future(mut self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+    pub async fn into_future(mut self) {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             tokio::select! {
                 // Wake up to find next rebalance.

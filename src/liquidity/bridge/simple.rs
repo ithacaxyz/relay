@@ -6,23 +6,34 @@ use std::{
 };
 
 use crate::{
-    liquidity::bridge::{Bridge, BridgeEvent, Transfer, TransferId},
+    liquidity::bridge::{
+        Bridge, BridgeEvent, Transfer, TransferId,
+        simple::Funder::{pullGasCall, withdrawTokensCall},
+    },
     signers::DynSigner,
-    types::{CoinKind, CoinRegistry, IERC20},
+    types::{CoinKind, CoinRegistry, IERC20::transferCall},
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
-    primitives::{Address, B256, ChainId, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
     rpc::types::TransactionReceipt,
+    sol,
     sol_types::SolCall,
 };
 use futures_util::Stream;
 use tokio::sync::mpsc;
 
+sol! {
+    contract Funder {
+        function withdrawTokens(address token, address recipient, uint256 amount) external;
+        function pullGas(uint256 amount) external;
+    }
+}
+
 #[derive(Debug)]
 struct SimpleBridgeInner {
-    registry: CoinRegistry,
+    registry: Arc<CoinRegistry>,
     providers: HashMap<ChainId, DynProvider>,
     signer: DynSigner,
     funder_address: Address,
@@ -30,12 +41,12 @@ struct SimpleBridgeInner {
 }
 
 impl SimpleBridgeInner {
-    async fn send_transfer(
+    async fn send_tx(
         &self,
         chain_id: ChainId,
-        address: Option<Address>,
-        amount: U256,
-        receiver: Address,
+        to: Address,
+        input: Bytes,
+        value: U256,
     ) -> eyre::Result<TransactionReceipt> {
         let Some(provider) = self.providers.get(&chain_id).cloned() else {
             eyre::bail!("provider not found for chain");
@@ -44,28 +55,16 @@ impl SimpleBridgeInner {
         let nonce = provider.get_transaction_count(self.signer.address()).await?;
         let fees = provider.estimate_eip1559_fees().await?;
 
-        let mut tx = if let Some(token_address) = address {
-            TxEip1559 {
-                chain_id,
-                nonce,
-                gas_limit: 100_000,
-                max_fee_per_gas: fees.max_fee_per_gas,
-                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                to: token_address.into(),
-                input: IERC20::transferCall { to: receiver, amount }.abi_encode().into(),
-                ..Default::default()
-            }
-        } else {
-            TxEip1559 {
-                chain_id,
-                nonce,
-                gas_limit: 100_000,
-                max_fee_per_gas: fees.max_fee_per_gas,
-                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                to: receiver.into(),
-                value: amount,
-                ..Default::default()
-            }
+        let mut tx = TxEip1559 {
+            chain_id,
+            nonce,
+            gas_limit: 100_000,
+            max_fee_per_gas: fees.max_fee_per_gas,
+            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+            to: to.into(),
+            input,
+            value,
+            ..Default::default()
         };
 
         let signature = self.signer.sign_transaction(&mut tx).await?;
@@ -79,6 +78,25 @@ impl SimpleBridgeInner {
 
         Ok(receipt)
     }
+
+    async fn send_funds(
+        &self,
+        chain_id: ChainId,
+        address: Option<Address>,
+        amount: U256,
+    ) -> eyre::Result<TransactionReceipt> {
+        if let Some(token) = address {
+            self.send_tx(
+                chain_id,
+                token,
+                transferCall { to: self.funder_address, amount }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .await
+        } else {
+            self.send_tx(chain_id, self.funder_address, Default::default(), amount).await
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -91,7 +109,7 @@ pub struct SimpleBridge {
 impl SimpleBridge {
     /// Creates a new SimpleBridge instance.
     pub fn new(
-        registry: CoinRegistry,
+        registry: Arc<CoinRegistry>,
         providers: HashMap<ChainId, DynProvider>,
         signer: DynSigner,
         funder_address: Address,
@@ -153,8 +171,14 @@ impl Bridge for SimpleBridge {
 
         let this = self.inner.clone();
         tokio::spawn(async move {
+            let input = if let Some(token) = address {
+                withdrawTokensCall { token, recipient: this.signer.address(), amount }.abi_encode()
+            } else {
+                pullGasCall { amount }.abi_encode()
+            };
+
             let Ok(receipt) =
-                this.send_transfer(from, address, amount, this.signer.address()).await
+                this.send_tx(from, this.funder_address, input.into(), U256::ZERO).await
             else {
                 let _ = this.events_tx.send(BridgeEvent::OutboundFailed(transfer));
                 return;
@@ -165,8 +189,7 @@ impl Bridge for SimpleBridge {
                 receipt.block_number.unwrap_or_default(),
             ));
 
-            let Ok(receipt) = this.send_transfer(to, address, amount, this.signer.address()).await
-            else {
+            let Ok(receipt) = this.send_funds(to, address, amount).await else {
                 let _ = this.events_tx.send(BridgeEvent::InboundFailed(transfer));
                 return;
             };

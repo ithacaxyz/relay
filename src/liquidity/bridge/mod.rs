@@ -3,6 +3,7 @@ use alloy::primitives::{Address, BlockNumber, ChainId, U256, wrap_fixed_bytes};
 use futures_util::Stream;
 
 mod simple;
+pub use simple::{Funder, SimpleBridge};
 
 wrap_fixed_bytes!(
     pub struct TransferId<32>;

@@ -67,6 +67,11 @@ impl CoinRegistry {
     pub fn address(&self, kind: CoinKind, chain: ChainId) -> Option<Option<Address>> {
         self.iter().find(|(k, v)| **v == kind && k.chain == chain).map(|(k, _)| k.address)
     }
+
+    /// Retains only the entries for which the predicate returns true.
+    pub fn retain(&mut self, f: impl Fn(&CoinRegistryKey, &CoinKind) -> bool) {
+        self.0.retain(|k, v| f(k, v));
+    }
 }
 
 impl Default for CoinRegistry {
