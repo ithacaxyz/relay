@@ -96,6 +96,9 @@ pub struct Args {
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
     pub fee_tokens: Option<Vec<Address>>,
+    /// A fee token the relay accepts.
+    #[arg(long = "interop-token", required_unless_present("config_only"), value_name = "ADDRESS")]
+    pub interop_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
@@ -176,6 +179,7 @@ impl Args {
             .with_sequencer_endpoints(self.sequencer_endpoints.clone())
             .with_public_node_endpoints(self.public_node_endpoints.clone())
             .with_fee_tokens(&self.fee_tokens.unwrap_or_default())
+            .with_interop_tokens(&self.interop_tokens.unwrap_or_default())
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
             .with_port(self.port)

@@ -206,12 +206,17 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers,
+        )
+        .await?,
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
-        registry,
     );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {

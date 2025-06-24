@@ -419,6 +419,7 @@ impl Environment {
                 .with_funder_key(deployer_priv.to_string())
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
+                .with_interop_tokens(&[contracts.erc20s[0]])
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(contracts.orchestrator))
                 .with_delegation_proxy(Some(contracts.delegation))

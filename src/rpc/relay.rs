@@ -16,9 +16,8 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::InteropBundle,
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetType, Call, CoinRegistry, CoinRegistryKey,
-        FeeTokens, GasEstimate, IERC20, IntentKind, Intents, Key, KeyHash, KeyType,
-        MULTICHAIN_NONCE_PREFIX,
+        Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
+        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -162,7 +161,6 @@ impl Relay {
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
-        coin_registry: Arc<CoinRegistry>,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -176,7 +174,6 @@ impl Relay {
             storage,
             asset_info,
             priority_fee_percentile,
-            coin_registry,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -1073,12 +1070,9 @@ impl Relay {
 
         if !self
             .inner
-            .coin_registry
-            .get(&CoinRegistryKey {
-                chain: request.chain_id,
-                address: Some(requested_asset).filter(|a| !a.is_zero()),
-            })
-            .is_some_and(|c| c.interop)
+            .fee_tokens
+            .find(request.chain_id, &requested_asset)
+            .is_some_and(|t| t.interop)
         {
             return Err(RelayError::UnsupportedAsset {
                 chain: request.chain_id,
@@ -1773,8 +1767,6 @@ pub(super) struct RelayInner {
     asset_info: AssetInfoServiceHandle,
     /// Percentile of the priority fees to use for the transactions.
     priority_fee_percentile: f64,
-    /// Coin registry.
-    coin_registry: Arc<CoinRegistry>,
 }
 
 impl Relay {
