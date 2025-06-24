@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.9", features = [
+alloy = { version = "1.0.12", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -94,7 +94,7 @@ resend-rs = { version = "0.15.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "1.0.9", features = [
+alloy = { version = "1.0.12", features = [
     "eips",
     "provider-anvil-node",
 ], default-features = false }
