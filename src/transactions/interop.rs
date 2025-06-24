@@ -220,6 +220,7 @@ pub enum InteropServiceMessage {
 pub struct InteropServiceHandle {
     command_tx: mpsc::UnboundedSender<InteropServiceMessage>,
     storage: RelayStorage,
+    liquidity_tracker: LiquidityTracker,
 }
 
 impl InteropServiceHandle {
@@ -238,6 +239,11 @@ impl InteropServiceHandle {
     /// Sends a bundle with status to the service.
     pub fn send_bundle_with_status(&self, bundle: BundleWithStatus) {
         let _ = self.command_tx.send(InteropServiceMessage::SendBundleWithStatus(Box::new(bundle)));
+    }
+
+    /// Returns a handle to the liquidity tracker.
+    pub fn liquidity_tracker(&self) -> &LiquidityTracker {
+        &self.liquidity_tracker
     }
 }
 
@@ -717,13 +723,13 @@ impl InteropService {
         let service = Self {
             inner: Arc::new(InteropServiceInner::new(
                 tx_service_handles,
-                liquidity_tracker,
+                liquidity_tracker.clone(),
                 storage.clone(),
             )),
             command_rx,
         };
 
-        let handle = InteropServiceHandle { command_tx, storage };
+        let handle = InteropServiceHandle { command_tx, storage, liquidity_tracker };
 
         for bundle in pending_bundles {
             tracing::info!(

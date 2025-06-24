@@ -59,6 +59,8 @@ pub struct RelayHandle {
     pub metrics: PrometheusHandle,
     /// Price oracle.
     pub price_oracle: PriceOracle,
+    /// Coin registry.
+    pub coin_registry: Arc<CoinRegistry>,
 }
 
 impl RelayHandle {
@@ -101,9 +103,10 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
 }
 
 /// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
-pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<RelayHandle> {
-    let registry = Arc::new(registry);
-
+pub async fn try_spawn(
+    config: RelayConfig,
+    mut registry: CoinRegistry,
+) -> eyre::Result<RelayHandle> {
     // construct db
     let storage = if let Some(ref db_url) = config.database_url {
         info!("Using PostgreSQL as storage.");
@@ -159,6 +162,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     )
     .await?;
 
+    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
+
+    registry.retain(|k, _| chains.get(k.chain).is_some());
+    let registry = Arc::new(registry);
+
     // setup metrics exporter and periodic metric collectors
     let metrics =
         metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
@@ -185,8 +193,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
         );
     }
-
-    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
@@ -284,5 +290,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage,
         metrics,
         price_oracle,
+        coin_registry: registry,
     })
 }
