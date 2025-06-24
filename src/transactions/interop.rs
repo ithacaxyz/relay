@@ -4,11 +4,11 @@ use super::{
 use crate::{
     error::StorageError,
     liquidity::{LiquidityTracker, LiquidityTrackerError},
-    types::{rpc::BundleId, OrchestratorContract::IntentExecuted, IERC20},
+    types::{rpc::BundleId, OrchestratorContract::IntentExecuted},
 };
 use alloy::{
-    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MulticallError, Provider},
+    primitives::{Address, ChainId, map::HashMap},
+    providers::{DynProvider},
     rpc::types::TransactionReceipt,
 };
 use futures_util::future::JoinAll;
@@ -76,6 +76,7 @@ pub enum InteropServiceMessage {
 #[derive(Debug, Clone)]
 pub struct InteropServiceHandle {
     command_tx: mpsc::UnboundedSender<InteropServiceMessage>,
+    liquidity_tracker: LiquidityTracker,
 }
 
 impl InteropServiceHandle {
@@ -85,6 +86,11 @@ impl InteropServiceHandle {
         bundle: InteropBundle,
     ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
         self.command_tx.send(InteropServiceMessage::SendBundle(bundle))
+    }
+
+    /// Returns a handle to the liquidity tracker.
+    pub fn liquidity_tracker(&self) -> &LiquidityTracker {
+        &self.liquidity_tracker
     }
 }
 
@@ -208,11 +214,14 @@ impl InteropService {
         let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
 
         let service = Self {
-            inner: Arc::new(InteropServiceInner::new(tx_service_handles, liquidity_tracker)),
+            inner: Arc::new(InteropServiceInner::new(
+                tx_service_handles,
+                liquidity_tracker.clone(),
+            )),
             command_rx,
         };
 
-        let handle = InteropServiceHandle { command_tx };
+        let handle = InteropServiceHandle { command_tx, liquidity_tracker };
 
         Ok((service, handle))
     }

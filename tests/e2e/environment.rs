@@ -84,6 +84,7 @@ pub struct Environment {
     pub eoa: DynSigner,
     pub orchestrator: Address,
     pub delegation: Address,
+    pub funder: Address,
     /// Minted to the eoa.
     pub fee_token: Address,
     /// Minted to the eoa.
@@ -445,6 +446,7 @@ impl Environment {
             orchestrator: contracts.orchestrator,
             delegation: contracts.delegation,
             fee_token: contracts.erc20s[1],
+            funder: contracts.funder,
             erc20: contracts.erc20s[0],
             erc20s: contracts.erc20s[2..].to_vec(),
             erc721: contracts.erc721,

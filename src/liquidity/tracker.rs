@@ -108,7 +108,7 @@ impl LiquidityTrackerInner {
 }
 
 /// Wrapper around [`LiquidityTrackerInner`] that is used to track liquidity.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LiquidityTracker {
     inner: Arc<RwLock<LiquidityTrackerInner>>,
     funder_address: Address,
