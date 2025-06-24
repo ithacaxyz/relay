@@ -206,7 +206,13 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers,
+        )
+        .await?,
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,

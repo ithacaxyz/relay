@@ -62,6 +62,14 @@ pub enum RelayError {
     /// The orchestrator is not supported.
     #[error("unsupported orchestrator {0}")]
     UnsupportedOrchestrator(Address),
+    /// The asset is not supported.
+    #[error("unsupported asset {asset} on chain {chain}")]
+    UnsupportedAsset {
+        /// The address of the asset that is not supported.
+        asset: Address,
+        /// The chain ID where the asset is not supported.
+        chain: ChainId,
+    },
     /// Insufficient funds for the requested operation.
     #[error("insufficient funds: required {required} of asset {asset} on chain {chain_id}")]
     InsufficientFunds {
@@ -136,6 +144,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
             | RelayError::InsufficientFunds { .. }
+            | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_) => internal_rpc(err.to_string()),
         }
     }

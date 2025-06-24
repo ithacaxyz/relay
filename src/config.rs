@@ -77,6 +77,8 @@ pub struct ChainConfig {
     pub sequencer_endpoints: HashMap<Chain, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
+    /// A token that is supported for interop.
+    pub interop_tokens: Vec<Address>,
     /// The fee recipient address.
     ///
     /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
@@ -249,6 +251,7 @@ impl Default for RelayConfig {
                 endpoints: vec![],
                 sequencer_endpoints: HashMap::new(),
                 fee_tokens: vec![],
+                interop_tokens: vec![],
                 fee_recipient: Address::ZERO,
             },
             quote: QuoteConfig {
@@ -330,6 +333,12 @@ impl RelayConfig {
     /// Extends the list of fee tokens that the relay accepts.
     pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
         self.chain.fee_tokens.extend_from_slice(fee_tokens);
+        self
+    }
+
+    /// Extends the list of interop tokens that the relay accepts.
+    pub fn with_interop_tokens(mut self, interop_tokens: &[Address]) -> Self {
+        self.chain.interop_tokens.extend_from_slice(interop_tokens);
         self
     }
 

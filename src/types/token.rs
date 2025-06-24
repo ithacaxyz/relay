@@ -34,12 +34,20 @@ pub struct Token {
     /// 2. **Stablecoin chain where USDC _is_ the native token**
     ///    - 1 USDC = 1 USDC ⇒   `native_rate = 1 * 10^6 = 1_000_000`
     pub native_rate: Option<U256>,
+    /// Whether this token is supported for interop.
+    pub interop: bool,
 }
 
 impl Token {
     /// Create a new instance of [`Self`].
-    pub fn new(address: Address, decimals: u8, symbol: String, kind: CoinKind) -> Self {
-        Self { address, decimals, kind, symbol, native_rate: None }
+    pub fn new(
+        address: Address,
+        decimals: u8,
+        symbol: String,
+        kind: CoinKind,
+        interop: bool,
+    ) -> Self {
+        Self { address, decimals, kind, symbol, native_rate: None, interop }
     }
 
     /// Sets a native price rate.
@@ -59,15 +67,17 @@ impl FeeTokens {
     /// Create a new [`FeeTokens`]
     pub async fn new(
         coin_registry: &CoinRegistry,
-        tokens: &[Address],
+        fee_tokens: &[Address],
+        interop_tokens: &[Address],
         providers: Vec<DynProvider>,
     ) -> Result<Self, eyre::Error> {
         // todo: this is ugly
         let futs = providers
             .iter()
-            .flat_map(|provider| tokens.iter().map(move |token| (provider, token)))
+            .flat_map(|provider| fee_tokens.iter().map(move |token| (provider, token)))
             .map(|(provider, token)| {
                 async move {
+                    let interop = interop_tokens.contains(token);
                     let chain = provider.get_chain_id().await?;
                     let ((decimals, symbol), coin_kind) = if token.is_zero() {
                         // todo: native is ETH for now
@@ -85,7 +95,10 @@ impl FeeTokens {
                         (try_join!(decimals.call(), symbol.call())?, coin_kind)
                     };
 
-                    Ok::<_, eyre::Error>((chain, Token::new(*token, decimals, symbol, coin_kind)))
+                    Ok::<_, eyre::Error>((
+                        chain,
+                        Token::new(*token, decimals, symbol, coin_kind, interop),
+                    ))
                 }
             });
         let fee_tokens = try_join_all(futs).await?;

@@ -1068,6 +1068,19 @@ impl Relay {
             .map(|(asset, _)| *asset)
             .ok_or_else(|| RelayError::Quote(QuoteError::MissingRequiredFunds))?;
 
+        if !self
+            .inner
+            .fee_tokens
+            .find(request.chain_id, &requested_asset)
+            .is_some_and(|t| t.interop)
+        {
+            return Err(RelayError::UnsupportedAsset {
+                chain: request.chain_id,
+                asset: requested_asset,
+            }
+            .into());
+        }
+
         let asset: Asset = if requested_asset.is_zero() {
             AddressOrNative::Native
         } else {
