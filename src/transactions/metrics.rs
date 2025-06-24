@@ -56,6 +56,16 @@ pub struct SignerMetrics {
     pub detected_nonce_gaps: Counter,
     /// Number of closed nonce gaps
     pub closed_nonce_gaps: Counter,
+    /// Number of internal transactions sent (for nonce gap closure)
+    pub internal_transactions_sent: Counter,
+    /// Number of internal transactions that confirmed successfully
+    pub internal_transactions_confirmed: Counter,
+    /// Number of internal transactions that failed/reverted
+    pub internal_transactions_failed: Counter,
+    /// Number of replacement transactions that confirmed successfully
+    pub replacement_transactions_confirmed: Counter,
+    /// Number of replacement transactions that failed/reverted
+    pub replacement_transactions_failed: Counter,
     /// Duration of polling the signer task, in nanoseconds.
     pub poll_duration: Histogram,
     /// Gas spent on transactions.
@@ -78,6 +88,11 @@ impl SignerMetrics {
             confirmation_time: histogram!("signer.confirmation_time", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             detected_nonce_gaps: counter!("signer.detected_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             closed_nonce_gaps: counter!("signer.closed_nonce_gaps", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            internal_transactions_sent: counter!("signer.internal_transactions_sent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            internal_transactions_confirmed: counter!("signer.internal_transactions_confirmed", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            internal_transactions_failed: counter!("signer.internal_transactions_failed", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            replacement_transactions_confirmed: counter!("signer.replacement_transactions_confirmed", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            replacement_transactions_failed: counter!("signer.replacement_transactions_failed", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             poll_duration: histogram!("signer.poll_duration", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             gas_spent: gauge!("signer.gas_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             native_spent: gauge!("signer.native_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),

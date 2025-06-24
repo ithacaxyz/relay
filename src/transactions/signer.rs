@@ -264,6 +264,11 @@ impl Signer {
             .total_wait_time
             .record(Utc::now().signed_duration_since(tx.tx.received_at).num_milliseconds() as f64);
 
+        // Track replacement transaction success if this transaction used replacements
+        if tx.sent.len() > 1 {
+            self.metrics.replacement_transactions_confirmed.increment(1);
+        }
+
         // Spawn a task to record metrics.
         let this = self.clone();
         tokio::spawn(async move { this.record_confirmed_metrics(tx, tx_hash).await });
@@ -278,6 +283,13 @@ impl Signer {
         tx: TxId,
         err: impl TransactionFailureReason + 'static,
     ) -> Result<(), SignerError> {
+        // Check if this was a replacement transaction before removing from storage
+        if let Ok(Some(pending_tx)) = self.storage.get_pending_transaction(tx).await {
+            if pending_tx.sent.len() > 1 {
+                self.metrics.replacement_transactions_failed.increment(1);
+            }
+        }
+
         // Remove transaction from storage
         self.storage.remove_queued(tx).await?;
         self.storage.remove_pending_transaction(tx).await?;
@@ -599,10 +611,14 @@ impl Signer {
 
             let tx = self.sign_transaction(tx).await?;
             self.send_transaction(&tx).await?;
+            self.metrics.internal_transactions_sent.increment(1);
+            
             // Give transaction 10 blocks to be mined.
             if self.monitor.watch_transaction(*tx.tx_hash(), self.block_time * 10).await.is_none() {
                 return Err(SignerError::TxTimeout);
             }
+            
+            self.metrics.internal_transactions_confirmed.increment(1);
 
             Ok::<_, SignerError>(())
         };
@@ -613,6 +629,10 @@ impl Signer {
             let Err(err) = try_close().await else { break };
 
             error!(%err, %nonce, "Failed to close nonce gap");
+            // If the error is TxTimeout, it means the transaction was sent but failed to confirm
+            if matches!(err, SignerError::TxTimeout) {
+                self.metrics.internal_transactions_failed.increment(1);
+            }
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await {
                 if latest_nonce > nonce {
