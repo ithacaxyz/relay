@@ -1212,13 +1212,10 @@ impl Relay {
                 .quotes
                 .iter()
                 .map(|quote| {
-                    (
-                        quote.output.clone(),
-                        self.provider(quote.chain_id).unwrap(),
-                        quote.orchestrator,
-                    )
+                    self.provider(quote.chain_id)
+                        .map(|provider| (quote.output.clone(), provider, quote.orchestrator))
                 })
-                .collect(),
+                .collect::<Result<_, _>>()?,
         );
 
         let mut bundle = InteropBundle {
@@ -1231,18 +1228,22 @@ impl Relay {
         let dst_idx = quotes.ty().quotes.len() - 1;
 
         let root = intents.root().await?;
-        for (idx, quote) in quotes.ty_mut().quotes.iter_mut().enumerate() {
-            let proof = intents.get_proof(idx).await?;
-            let merkle_sig = (proof, root, signature.clone()).abi_encode_params();
-            let tx = self
-                .prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig.into())
-                .await
-                .map_err(|e| RelayError::InternalError(e.into()))?;
+        let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
+            let proof = intents.get_proof_immutable(idx)?;
+            let merkle_sig = (proof, root, signature.clone()).abi_encode_params().into();
 
+            self.prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig)
+                .await
+                .map(|tx| (idx, tx))
+                .map_err(|e| RelayError::InternalError(e.into()))
+        });
+
+        // Separate source and destination transactions
+        for (idx, tx) in try_join_all(tx_futures).await? {
             if idx == dst_idx {
-                bundle.dst_transactions.push(tx.clone());
+                bundle.dst_transactions.push(tx);
             } else {
-                bundle.src_transactions.push(tx.clone());
+                bundle.src_transactions.push(tx);
             }
         }
 

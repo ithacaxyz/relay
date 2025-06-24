@@ -104,4 +104,24 @@ impl Intents {
     pub fn is_empty(&self) -> bool {
         self.intents.is_empty()
     }
+
+    /// Gets a merkle proof for the intent at the given index without mutating self.
+    ///
+    /// Returns an error if the index is out of bounds.
+    ///
+    /// # Panics
+    /// It will panic if the merkle tree has not been computed yet.
+    pub fn get_proof_immutable(&self, index: usize) -> Result<Vec<B256>, IntentError> {
+        if index >= self.intents.len() {
+            return Err(
+                MerkleError::IndexOutOfBounds { index, tree_size: self.intents.len() }.into()
+            );
+        }
+
+        self.cached_tree
+            .as_ref()
+            .expect("merkle tree must be computed before calling get_proof_immutable")
+            .proof_immutable(index)
+            .map_err(IntentError::from)
+    }
 }
