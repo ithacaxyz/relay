@@ -228,7 +228,7 @@ impl LiquidityTrackerInner {
         // Make sure that we have enough funds for all transfers
         if assets.iter().any(|(asset, input)| {
             let locked = self.get_total_locked_at(*asset, input.balance_at);
-            input.lock_amount + locked < input.current_balance
+            input.lock_amount + locked > input.current_balance
         }) {
             return Err(StorageError::CantLockLiquidity);
         }
