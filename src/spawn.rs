@@ -60,7 +60,7 @@ pub struct RelayHandle {
     /// Price oracle.
     pub price_oracle: PriceOracle,
     /// Coin registry.
-    pub coin_registry: Arc<CoinRegistry>,
+    pub fee_tokens: Arc<FeeTokens>,
 }
 
 impl RelayHandle {
@@ -204,6 +204,16 @@ pub async fn try_spawn(
         VersionedContracts::new(&config, providers.first().expect("should have at least one"))
             .await?;
 
+    let fee_tokens = Arc::new(
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers,
+        )
+        .await?,
+    );
+
     // todo: avoid all this darn cloning
     let relay = Relay::new(
         contracts,
@@ -212,13 +222,7 @@ pub async fn try_spawn(
         funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(
-            &registry,
-            &config.chain.fee_tokens,
-            &config.chain.interop_tokens,
-            providers,
-        )
-        .await?,
+        fee_tokens.clone(),
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
@@ -290,6 +294,6 @@ pub async fn try_spawn(
         storage,
         metrics,
         price_oracle,
-        coin_registry: registry,
+        fee_tokens,
     })
 }

@@ -6,18 +6,21 @@ use std::{
 };
 
 use crate::{
-    liquidity::bridge::{
-        Bridge, BridgeEvent, Transfer, TransferId,
-        simple::Funder::{pullGasCall, withdrawTokensCall},
+    liquidity::{
+        bridge::{
+            Bridge, BridgeEvent, Transfer, TransferId,
+            simple::Funder::{pullGasCall, withdrawTokensCall},
+        },
+        tracker::ChainAddress,
     },
     signers::DynSigner,
-    types::{CoinKind, CoinRegistry, IERC20::transferCall},
+    types::IERC20::transferCall,
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     primitives::{Address, B256, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
-    rpc::types::TransactionReceipt,
+    rpc::types::{TransactionReceipt, TransactionRequest},
     sol,
     sol_types::SolCall,
 };
@@ -33,7 +36,6 @@ sol! {
 
 #[derive(Debug)]
 struct SimpleBridgeInner {
-    registry: Arc<CoinRegistry>,
     providers: HashMap<ChainId, DynProvider>,
     signer: DynSigner,
     funder_address: Address,
@@ -55,10 +57,20 @@ impl SimpleBridgeInner {
         let nonce = provider.get_transaction_count(self.signer.address()).await?;
         let fees = provider.estimate_eip1559_fees().await?;
 
+        let gas_limit = provider
+            .estimate_gas(
+                TransactionRequest::default()
+                    .to(to)
+                    .input(input.clone().into())
+                    .value(value)
+                    .from(self.signer.address()),
+            )
+            .await?;
+
         let mut tx = TxEip1559 {
             chain_id,
             nonce,
-            gas_limit: 100_000,
+            gas_limit,
             max_fee_per_gas: fees.max_fee_per_gas,
             max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
             to: to.into(),
@@ -82,13 +94,13 @@ impl SimpleBridgeInner {
     async fn send_funds(
         &self,
         chain_id: ChainId,
-        address: Option<Address>,
+        address: Address,
         amount: U256,
     ) -> eyre::Result<TransactionReceipt> {
-        if let Some(token) = address {
+        if !address.is_zero() {
             self.send_tx(
                 chain_id,
-                token,
+                address,
                 transferCall { to: self.funder_address, amount }.abi_encode().into(),
                 U256::ZERO,
             )
@@ -99,6 +111,7 @@ impl SimpleBridgeInner {
     }
 }
 
+/// Simple bridge implementation which assumes that signer address is funded on all chains.
 #[derive(Debug)]
 pub struct SimpleBridge {
     inner: Arc<SimpleBridgeInner>,
@@ -109,14 +122,13 @@ pub struct SimpleBridge {
 impl SimpleBridge {
     /// Creates a new SimpleBridge instance.
     pub fn new(
-        registry: Arc<CoinRegistry>,
         providers: HashMap<ChainId, DynProvider>,
         signer: DynSigner,
         funder_address: Address,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let inner = SimpleBridgeInner { registry, providers, signer, funder_address, events_tx };
+        let inner = SimpleBridgeInner { providers, signer, funder_address, events_tx };
 
         Self { inner: Arc::new(inner), events_rx, transfers_in_progress: Default::default() }
     }
@@ -144,41 +156,25 @@ impl Stream for SimpleBridge {
 }
 
 impl Bridge for SimpleBridge {
-    fn supports(&self, _kind: CoinKind, _from: ChainId, _to: ChainId) -> bool {
+    fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> bool {
         true
     }
 
-    fn send(
-        &mut self,
-        kind: CoinKind,
-        amount: U256,
-        from: ChainId,
-        to: ChainId,
-    ) -> eyre::Result<()> {
-        let Some(address) = self.inner.registry.address(kind, from) else {
-            eyre::bail!("coin not found in registry");
-        };
-
-        let transfer = Transfer {
-            id: TransferId(B256::random()),
-            kind,
-            address: address.unwrap_or_default(),
-            amount,
-            from,
-            to,
-        };
+    fn send(&mut self, src: ChainAddress, dst: ChainAddress, amount: U256) -> eyre::Result<()> {
+        let transfer = Transfer { id: TransferId(B256::random()), from: src, to: dst, amount };
         self.transfers_in_progress.push(transfer);
 
         let this = self.inner.clone();
         tokio::spawn(async move {
-            let input = if let Some(token) = address {
-                withdrawTokensCall { token, recipient: this.signer.address(), amount }.abi_encode()
+            let input = if !src.1.is_zero() {
+                withdrawTokensCall { token: src.1, recipient: this.signer.address(), amount }
+                    .abi_encode()
             } else {
                 pullGasCall { amount }.abi_encode()
             };
 
             let Ok(receipt) =
-                this.send_tx(from, this.funder_address, input.into(), U256::ZERO).await
+                this.send_tx(src.0, this.funder_address, input.into(), U256::ZERO).await
             else {
                 let _ = this.events_tx.send(BridgeEvent::OutboundFailed(transfer));
                 return;
@@ -189,7 +185,7 @@ impl Bridge for SimpleBridge {
                 receipt.block_number.unwrap_or_default(),
             ));
 
-            let Ok(receipt) = this.send_funds(to, address, amount).await else {
+            let Ok(receipt) = this.send_funds(dst.0, dst.1, amount).await else {
                 let _ = this.events_tx.send(BridgeEvent::InboundFailed(transfer));
                 return;
             };

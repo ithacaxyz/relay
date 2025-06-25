@@ -103,6 +103,7 @@ pub struct Environment {
     pub signers: Vec<DynSigner>,
     /// Settlement configuration for cross-chain messaging
     pub settlement: SettlementConfig,
+    pub deployer: DynSigner,
 }
 
 impl std::fmt::Debug for Environment {
@@ -475,6 +476,7 @@ impl Environment {
             relay_handle,
             signers,
             settlement: SettlementConfig::default(),
+            deployer,
         })
     }
 
