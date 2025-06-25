@@ -156,7 +156,7 @@ impl Relay {
         funder_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
-        fee_tokens: FeeTokens,
+        fee_tokens: Arc<FeeTokens>,
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
@@ -1750,7 +1750,7 @@ pub(super) struct RelayInner {
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.
-    fee_tokens: FeeTokens,
+    fee_tokens: Arc<FeeTokens>,
     /// The fee recipient address.
     fee_recipient: Address,
     /// The signer used to sign quotes.
