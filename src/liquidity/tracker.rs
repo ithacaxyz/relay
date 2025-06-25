@@ -57,7 +57,9 @@ impl LiquidityTracker {
                     .map(async |(chain, provider)| {
                         let latest_block = provider.get_block_number().await?;
                         // Remove everything older than 10 blocks
-                        storage.remove_unlocked_entries(*chain, latest_block.saturating_sub(10)).await?;
+                        storage
+                            .remove_unlocked_entries(*chain, latest_block.saturating_sub(10))
+                            .await?;
                         eyre::Ok(())
                     })
                     .collect::<TryJoinAll<_>>()

@@ -149,7 +149,11 @@ impl StorageApi for RelayStorage {
         self.inner.get_total_locked_at(asset, at).await
     }
 
-    async fn remove_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> api::Result<()> {
+    async fn remove_unlocked_entries(
+        &self,
+        chain_id: ChainId,
+        until: BlockNumber,
+    ) -> api::Result<()> {
         self.inner.remove_unlocked_entries(chain_id, until).await
     }
 }

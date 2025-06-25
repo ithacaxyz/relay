@@ -17,7 +17,7 @@ use alloy::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
-use num_traits::cast::ToPrimitive;
+use num_bigint::BigUint;
 use sqlx::{Connection, PgPool, types::BigDecimal};
 use tracing::instrument;
 
@@ -43,6 +43,14 @@ enum TxStatus {
     Pending,
     Confirmed,
     Failed,
+}
+
+fn numeric_to_u256(value: &BigDecimal) -> U256 {
+    U256::from_be_slice(&value.round(0).into_bigint_and_scale().0.to_bytes_be().1)
+}
+
+fn u256_to_numeric(value: U256) -> BigDecimal {
+    BigDecimal::from_biguint(BigUint::from_bytes_be(value.to_be_bytes_vec().as_slice()), 0)
 }
 
 #[async_trait]
@@ -431,13 +439,7 @@ impl StorageApi for PgStorage {
             let locked = locked
                 .iter()
                 .find(|row| row.chain_id == chain as i64 && row.asset_address == asset.as_slice())
-                .map(|row| {
-                    row.amount
-                        .to_f64()
-                        .map(U256::from)
-                        .ok_or(StorageError::InternalError(eyre::eyre!("overflow")))
-                })
-                .transpose()?
+                .map(|row| numeric_to_u256(&row.amount))
                 .unwrap_or_default();
 
             let unlocked = unlocked
@@ -447,20 +449,13 @@ impl StorageApi for PgStorage {
                         && row.asset_address == asset.as_slice()
                         && row.block_number <= input.balance_at as i64
                 })
-                .map(|row| {
-                    row.amount
-                        .to_f64()
-                        .map(U256::from)
-                        .ok_or(StorageError::InternalError(eyre::eyre!("overflow")))
-                })
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
+                .map(|row| numeric_to_u256(&row.amount))
                 .sum::<U256>();
 
             if input.current_balance + unlocked >= locked + input.lock_amount {
                 sqlx::query!(
                     "update locked_liquidity set amount = $1 where chain_id = $2 and asset_address = $3",
-                    BigDecimal::try_from(f64::from(locked + input.lock_amount)).map_err(eyre::Error::from)?,
+                    u256_to_numeric(locked + input.lock_amount),
                     chain as i64,
                     asset.as_slice()
                 )
@@ -487,7 +482,7 @@ impl StorageApi for PgStorage {
             "insert into pending_unlocks (chain_id, asset_address, amount, block_number) values ($1, $2, $3, $4)",
             asset.0 as i64,
             asset.1.as_slice(),
-            BigDecimal::try_from(f64::from(amount)).map_err(eyre::Error::from)?,
+            u256_to_numeric(amount),
             at as i64,
         )
         .execute(&self.pool)
@@ -517,10 +512,8 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        let locked =
-            locked.coalesce.unwrap_or_default().to_f64().map(U256::from).unwrap_or_default();
-        let unlocked =
-            unlocked.coalesce.unwrap_or_default().to_f64().map(U256::from).unwrap_or_default();
+        let locked = numeric_to_u256(&locked.coalesce.unwrap_or_default());
+        let unlocked = numeric_to_u256(&unlocked.coalesce.unwrap_or_default());
 
         Ok(locked.saturating_sub(unlocked))
     }

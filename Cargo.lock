@@ -4781,6 +4781,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "metrics-exporter-prometheus",
+ "num-bigint",
  "num-traits",
  "opentelemetry",
  "opentelemetry-otlp",
