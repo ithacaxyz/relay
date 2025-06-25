@@ -2,7 +2,9 @@
 
 use crate::{
     error::StorageError,
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transactions::{
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId, interop::InteropBundle,
+    },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
@@ -79,4 +81,32 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
+
+    /// Updates an existing pending bundle (status and/or transactions).
+    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> Result<()>;
+
+    /// Gets all pending bundles for a specific quote_signer.
+    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<InteropBundle>>;
+
+    /// Gets a specific pending bundle by ID.
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<InteropBundle>>;
+
+    /// Deletes a pending bundle (should only be called on completion).
+    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> Result<()>;
+
+    /// Atomically update bundle and queue transactions.
+    /// This ensures consistency between bundle state and transaction queuing.
+    ///
+    /// # Arguments
+    /// * `bundle` - The bundle to update in storage
+    /// * `is_source` - If true, queue source transactions; if false, queue destination transactions
+    async fn update_bundle_and_queue_transactions(
+        &self,
+        bundle: &mut InteropBundle,
+        is_source: bool,
+    ) -> Result<()>;
+
+    /// Moves a bundle from pending_bundles to finished_bundles table.
+    /// This is called when a bundle reaches a terminal state (Done or Failed).
+    async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
 }

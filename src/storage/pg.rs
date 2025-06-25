@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use super::{StorageApi, api::Result};
 use crate::{
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transactions::{
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        interop::{InteropBundle, TxIdOrTx},
+    },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
@@ -365,5 +368,171 @@ impl StorageApi for PgStorage {
         } else {
             Err(eyre!("no connection to database").into())
         }
+    }
+
+    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> Result<()> {
+        let bundle_json = serde_json::to_value(bundle)
+            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
+
+        sqlx::query(
+            r#"
+            UPDATE pending_bundles 
+            SET status = $2, bundle_data = $3, updated_at = NOW()
+            WHERE bundle_id = $1
+            "#,
+        )
+        .bind(bundle.id.as_slice())
+        .bind(bundle.status)
+        .bind(&bundle_json)
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<InteropBundle>> {
+        let rows = sqlx::query_as::<_, (serde_json::Value,)>(
+            r#"
+            SELECT bundle_data
+            FROM pending_bundles
+            WHERE quote_signer = $1
+            ORDER BY created_at
+            "#,
+        )
+        .bind(format!("{quote_signer:?}"))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        rows.into_iter()
+            .map(|(bundle_data,)| {
+                serde_json::from_value(bundle_data)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e).into())
+            })
+            .collect()
+    }
+
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<InteropBundle>> {
+        let row = sqlx::query_as::<_, (serde_json::Value,)>(
+            r#"
+            SELECT bundle_data
+            FROM pending_bundles
+            WHERE bundle_id = $1
+            "#,
+        )
+        .bind(bundle_id.as_slice())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        match row {
+            Some((bundle_data,)) => {
+                let bundle = serde_json::from_value(bundle_data)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
+                Ok(Some(bundle))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> Result<()> {
+        sqlx::query("DELETE FROM pending_bundles WHERE bundle_id = $1")
+            .bind(bundle_id.as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn update_bundle_and_queue_transactions(
+        &self,
+        bundle: &mut InteropBundle,
+        is_source: bool,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // First, queue the appropriate transactions
+        let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
+
+        for tx_or_id in transactions.iter_mut() {
+            if let TxIdOrTx::Tx(relay_tx) = tx_or_id {
+                let relay_tx_json = serde_json::to_value(relay_tx.as_ref())
+                    .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
+
+                sqlx::query(
+                    r#"
+                    INSERT INTO queued_txs (tx_id, chain_id, tx)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (tx_id) DO NOTHING
+                    "#,
+                )
+                .bind(relay_tx.id.as_slice())
+                .bind(relay_tx.quote.chain_id as i64)
+                .bind(&relay_tx_json)
+                .execute(&mut *tx)
+                .await
+                .map_err(eyre::Error::from)?;
+
+                // Replace with ID after queueing
+                let tx_id = relay_tx.id;
+                *tx_or_id = TxIdOrTx::Id(tx_id);
+            }
+        }
+
+        // Then update or insert the bundle in storage (now with TxIds instead of full transactions)
+        let bundle_json = serde_json::to_value(&bundle)
+            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, quote_signer, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            ON CONFLICT (bundle_id) DO UPDATE
+            SET bundle_data = EXCLUDED.bundle_data, 
+                status = EXCLUDED.status, 
+                updated_at = NOW()
+            "#,
+        )
+        .bind(bundle.id.as_slice())
+        .bind(bundle.status)
+        .bind(&bundle_json)
+        .bind(format!("{:?}", bundle.quote_signer))
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // Move the bundle from pending to finished in a single transaction
+        let result = sqlx::query(
+            r#"
+            WITH moved AS (
+                DELETE FROM pending_bundles
+                WHERE bundle_id = $1
+                RETURNING bundle_id, status, bundle_data, quote_signer, created_at
+            )
+            INSERT INTO finished_bundles (bundle_id, status, bundle_data, quote_signer, created_at, finished_at)
+            SELECT bundle_id, status, bundle_data, quote_signer, created_at, NOW()
+            FROM moved
+            "#,
+        )
+        .bind(bundle_id.as_slice())
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        if result.rows_affected() == 0 {
+            return Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into());
+        }
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
     }
 }

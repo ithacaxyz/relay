@@ -13,5 +13,6 @@ mod fees;
 mod metrics;
 mod monitor;
 pub use monitor::TransactionMonitoringHandle;
-mod interop;
-pub use interop::{InteropBundle, InteropService, InteropServiceHandle};
+/// Cross-chain interop bundle processing.
+pub mod interop;
+pub use interop::{InteropService, InteropServiceHandle};

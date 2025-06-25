@@ -1,8 +1,9 @@
 use super::{
-    RelayTransaction, TransactionFailureReason, TransactionServiceHandle, TransactionStatus,
+    RelayTransaction, TransactionFailureReason, TransactionServiceHandle, TransactionStatus, TxId,
 };
 use crate::{
     error::StorageError,
+    storage::{RelayStorage, StorageApi},
     types::{IERC20, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
@@ -10,9 +11,10 @@ use alloy::{
     providers::{DynProvider, MulticallError, Provider},
     rpc::types::TransactionReceipt,
 };
-use futures_util::future::{JoinAll, TryJoinAll};
+use futures_util::future::TryJoinAll;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -21,27 +23,19 @@ use std::{
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument};
 
-/// Bundle of transactions for cross-chain execution.
-#[derive(Debug, Clone)]
+/// Persistent bundle structure that stores full transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteropBundle {
     /// Unique identifier for the bundle.
     pub id: BundleId,
-    /// Source chain transactions.
-    pub src_transactions: Vec<RelayTransaction>,
-    /// Destination chain transactions. Those can't be sent until all source chain transactions
-    /// are confirmed.
-    pub dst_transactions: Vec<RelayTransaction>,
-}
-
-impl InteropBundle {
-    /// Creates a new interop bundle.
-    pub fn new(
-        id: BundleId,
-        src_transactions: Vec<RelayTransaction>,
-        dst_transactions: Vec<RelayTransaction>,
-    ) -> Self {
-        Self { id, src_transactions, dst_transactions }
-    }
+    /// Bundle status
+    pub status: BundleStatus,
+    /// Source chain transactions (can be IDs or full transactions)
+    pub src_txs: Vec<TxIdOrTx>,
+    /// Destination chain transactions (can be IDs or full transactions)
+    pub dst_txs: Vec<TxIdOrTx>,
+    /// Quote signer address that created this bundle
+    pub quote_signer: Address,
 }
 
 /// Errors that can occur during interop bundle processing.
@@ -64,15 +58,93 @@ enum InteropBundleError {
     MulticallError(#[from] MulticallError),
 }
 
+/// Status of a pending interop bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "bundle_status", rename_all = "snake_case")]
+pub enum BundleStatus {
+    /// Initial state before any processing
+    ///
+    /// Next: `SourceQueued`
+    Init,
+    /// Source transactions are queued
+    ///
+    /// Next: `SourceConfirmed` OR `SourceFailures`
+    SourceQueued,
+    /// Source transactions are confirmed
+    ///
+    /// Next: `DestinationQueued`
+    SourceConfirmed,
+    /// Source transactions have failures
+    ///
+    /// Next: `RefundsQueued` OR `Failed`
+    SourceFailures,
+    /// Destination transactions are queued
+    ///
+    /// Next: `DestinationConfirmed` OR `DestinationFailures`
+    DestinationQueued,
+    /// Destination transactions have failures
+    ///
+    /// Next: `RefundsQueued` OR `Failed`
+    DestinationFailures,
+    /// Destination transactions are confirmed
+    ///
+    /// Next: `WithdrawalsQueued`
+    DestinationConfirmed,
+    /// Refunds are queued to be processed
+    ///
+    /// Next: `Failed`
+    RefundsQueued,
+    /// Withdrawals are queued to be processed
+    ///
+    /// Next: `Done`
+    WithdrawalsQueued,
+    /// Bundle is completely done
+    ///
+    /// Terminal state
+    Done,
+    /// Bundle has failed and cannot be recovered
+    ///
+    /// Terminal state
+    Failed,
+}
+
+/// Represents either a transaction ID or full transaction data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TxIdOrTx {
+    /// Just the transaction ID (for backwards compatibility or when tx is already stored)
+    Id(TxId),
+    /// Full transaction data (for recovery)
+    Tx(Box<RelayTransaction>),
+}
+
+impl TxIdOrTx {
+    /// Get the transaction ID regardless of variant
+    pub fn id(&self) -> TxId {
+        match self {
+            TxIdOrTx::Id(id) => *id,
+            TxIdOrTx::Tx(tx) => tx.id,
+        }
+    }
+
+    /// Try to get the full transaction if available
+    pub fn transaction(&self) -> Option<&RelayTransaction> {
+        match self {
+            TxIdOrTx::Id(_) => None,
+            TxIdOrTx::Tx(tx) => Some(tx),
+        }
+    }
+}
+
 impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
     fn from(err: Arc<dyn TransactionFailureReason>) -> Self {
         Self::TransactionError(err)
     }
 }
 
+/// Messages that can be sent to the interop service.
 #[derive(Debug)]
 pub enum InteropServiceMessage {
-    /// Send an [`InteropBundle`].
+    /// Send a [`PersistentBundle`].
     SendBundle(InteropBundle),
 }
 
@@ -295,99 +367,458 @@ impl InteropServiceHandle {
 #[derive(Debug)]
 struct InteropServiceInner {
     tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-    liquidity_tracker: LiquidityTracker,
+    _liquidity_tracker: LiquidityTracker,
+    storage: RelayStorage,
 }
 
 impl InteropServiceInner {
     /// Creates a new interop service inner state.
     fn new(
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        liquidity_tracker: LiquidityTracker,
+        _liquidity_tracker: LiquidityTracker,
+        storage: RelayStorage,
     ) -> Self {
-        Self { tx_service_handles, liquidity_tracker }
+        Self { tx_service_handles, _liquidity_tracker, storage }
     }
 
-    async fn send_and_watch_transactions(
+    /// Handle the Init status - check liquidity and queue source transactions
+    ///
+    /// Transitions to: `SourceQueued`
+    async fn on_init(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Initializing bundle");
+
+        // TODO: Check and lock liquidity
+
+        // Extract source transactions before update (since update will modify the bundle)
+        let src_transactions: Vec<RelayTransaction> = bundle
+            .src_txs
+            .iter()
+            .filter_map(|tx| match tx {
+                TxIdOrTx::Tx(tx) => Some((**tx).clone()),
+                TxIdOrTx::Id(_) => None,
+            })
+            .collect();
+
+        // Update status and queue source transactions atomically
+        bundle.status = BundleStatus::SourceQueued;
+        self.storage
+            .update_bundle_and_queue_transactions(bundle, true)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+
+        // Send the transactions
+        self.send_transactions(&src_transactions).await?;
+
+        Ok(())
+    }
+
+    /// Handle the SourceQueued status - wait for source transactions to complete
+    ///
+    /// Transitions to: `SourceConfirmed` or `SourceFailures`
+    async fn on_source_queued(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Processing source transactions");
+
+        // Process source transactions (waits for completion)
+        match self.process_source_transactions(bundle).await {
+            Ok(()) => {
+                // Update status to source confirmed
+                bundle.status = BundleStatus::SourceConfirmed;
+            }
+            Err(e) => {
+                // Update status to source failures
+                tracing::error!(bundle_id = ?bundle.id, error = ?e, "Source transactions failed");
+                bundle.status = BundleStatus::SourceFailures;
+            }
+        }
+
+        self.storage
+            .update_pending_bundle(bundle)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle the SourceConfirmed status - queue destination transactions
+    ///
+    /// Transitions to: `DestinationQueued`
+    async fn on_source_confirmed(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Processing destination transactions");
+
+        // Extract destination transactions before update.
+        let dst_transactions: Vec<RelayTransaction> = bundle
+            .dst_txs
+            .iter()
+            .filter_map(|tx| match tx {
+                TxIdOrTx::Tx(tx) => Some((**tx).clone()),
+                TxIdOrTx::Id(_) => None,
+            })
+            .collect();
+
+        // Update status and queue destination transactions atomically
+        bundle.status = BundleStatus::DestinationQueued;
+        self.storage
+            .update_bundle_and_queue_transactions(bundle, false)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+
+        // Send the transactions
+        self.send_transactions(&dst_transactions).await?;
+
+        Ok(())
+    }
+
+    /// Handle bundles with source failures
+    ///
+    /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
+    async fn on_source_failures(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::warn!(
+            bundle_id = ?bundle.id,
+            "Handling source failures - TODO: implement retry logic or manual intervention"
+        );
+
+        // TODO: Issue refunds if any of the sources transactions passed.
+        Ok(())
+    }
+
+    /// Handle the DestinationQueued status - wait for destination transactions to complete
+    ///
+    /// Transitions to: `DestinationConfirmed` or `DestinationFailures`
+    async fn on_destination_queued(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Processing destination transactions");
+
+        // Process destination transactions (waits for completion)
+        match self.process_destination_transactions(bundle).await {
+            Ok(()) => {
+                // Update status to destination confirmed
+                bundle.status = BundleStatus::DestinationConfirmed;
+            }
+            Err(e) => {
+                // Update status to destination failures
+                tracing::error!(bundle_id = ?bundle.id, error = ?e, "Destination transactions failed");
+                bundle.status = BundleStatus::DestinationFailures;
+            }
+        }
+
+        self.storage
+            .update_pending_bundle(bundle)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle bundles with destination failures
+    ///
+    /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
+    async fn on_destination_failures(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::warn!(
+            bundle_id = ?bundle.id,
+            "Handling destination failures - TODO: implement retry logic or refund mechanism"
+        );
+
+        // TODO: update bundle to RefundsQueued and process Refunds
+
+        Ok(())
+    }
+
+    /// Handle the DestinationConfirmed status - prepare for withdrawals
+    ///
+    /// Transitions to: `WithdrawalsQueued`
+    async fn on_destination_confirmed(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "All transactions confirmed, processing withdrawals");
+        // TODO: Queue withdrawal transactions
+        // For now, transition to WithdrawalsQueued state
+        bundle.status = BundleStatus::WithdrawalsQueued;
+        self.storage
+            .update_pending_bundle(bundle)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle the RefundsQueued status - process refunds
+    ///
+    /// Transitions to: `Failed`
+    async fn on_refunds_queued(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Processing refunds");
+
+        // TODO: Implement refund processing logic
+        // - Check if refunds are confirmed
+        // - If confirmed, transition to Failed or other
+        bundle.status = BundleStatus::Failed;
+        self.storage
+            .update_pending_bundle(bundle)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle the WithdrawalsQueued status - process withdrawals
+    ///
+    /// Transitions to: `Done`
+    async fn on_withdrawals_queued(
+        &self,
+        bundle: &mut InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Processing withdrawals");
+
+        // TODO: Implement withdrawal processing logic
+
+        bundle.status = BundleStatus::Done;
+        self.storage
+            .update_pending_bundle(bundle)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle the Done status - finalize the bundle
+    ///
+    /// Terminal state - moves bundle to finished_bundles table and exits
+    async fn on_done(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.id, "Bundle completed successfully");
+
+        // Move bundle to finished_bundles table
+        self.storage
+            .move_bundle_to_finished(bundle.id)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Handle the Failed status - finalize the failed bundle
+    ///
+    /// Terminal state - moves bundle to finished_bundles table and exits
+    async fn on_failed(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
+        tracing::error!(bundle_id = ?bundle.id, "Bundle is in failed state");
+
+        // Move bundle to finished_bundles table
+        self.storage
+            .move_bundle_to_finished(bundle.id)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        Ok(())
+    }
+
+    /// Check the status of transactions by their IDs.
+    async fn check_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>, InteropBundleError> {
+        let statuses = futures_util::future::try_join_all(
+            tx_ids.iter().map(|tx_id| self.storage.read_transaction_status(*tx_id)),
+        )
+        .await
+        .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+
+        Ok(statuses)
+    }
+
+    /// Send transactions that are already queued.
+    async fn send_transactions(
         &self,
         transactions: &[RelayTransaction],
-    ) -> Result<Vec<TransactionReceipt>, InteropBundleError> {
-        let mut handles = Vec::new();
-
+    ) -> Result<(), InteropBundleError> {
         for tx in transactions {
-            let handle = self
-                .tx_service_handles
+            self.tx_service_handles
                 .get(&tx.chain_id())
                 .ok_or_else(|| {
                     let err =
                         Arc::new(format!("no transaction service for chain {}", tx.chain_id()));
                     InteropBundleError::TransactionError(err)
                 })?
-                .send_transaction(tx.clone())
-                .await?;
-            handles.push(handle);
+                .send_transaction_no_queue(tx.clone());
         }
 
-        // Wait for all transactions to confirm or fail
-        let results = handles
-            .into_iter()
-            .map(|mut handle| async move {
-                while let Some(status) = handle.recv().await {
-                    match status {
-                        TransactionStatus::Confirmed(receipt) => return Ok(*receipt),
-                        TransactionStatus::Failed(err) => return Err(err),
-                        _ => continue,
-                    }
-                }
-
-                Err(Arc::new("transaction stream ended".to_string()))
-            })
-            .collect::<JoinAll<_>>()
-            .await;
-
-        // Collect results and return first error if any
-        Ok(results.into_iter().collect::<Result<Vec<_>, _>>()?)
+        Ok(())
     }
 
-    #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
-    async fn send_and_watch_bundle(&self, bundle: InteropBundle) -> Result<(), InteropBundleError> {
-        let asset_transfers = bundle
-            .dst_transactions
-            .iter()
-            .map(|tx| {
-                tx.quote().expect("should be a quote").output.fund_transfers().map(|transfers| {
-                    transfers.into_iter().map(|(asset, amount)| (tx.chain_id(), asset, amount))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+    /// Watch transactions until they complete.
+    async fn watch_transactions(
+        &self,
+        tx_ids: impl Iterator<Item = TxId>,
+    ) -> Result<
+        Vec<(TxId, Result<TransactionReceipt, Arc<dyn TransactionFailureReason>>)>,
+        InteropBundleError,
+    > {
+        let mut pending: HashSet<TxId> = tx_ids.collect();
+        let mut results = Vec::with_capacity(pending.len());
 
-        self.liquidity_tracker.try_lock_liquidity(asset_transfers.clone()).await?;
+        while !pending.is_empty() {
+            let pending_vec: Vec<TxId> = pending.iter().copied().collect();
+            let statuses = self.check_transaction_statuses(&pending_vec).await?;
 
-        let src_receipts = self.send_and_watch_transactions(&bundle.src_transactions).await?;
+            for (tx_id, status) in pending_vec.iter().zip(statuses.iter()) {
+                if let Some((_, status)) = status {
+                    match status {
+                        TransactionStatus::Confirmed(receipt) => {
+                            tracing::debug!(tx_id = ?tx_id, "Transaction confirmed");
+                            // Check for IntentExecuted event and verify no errors
+                            let event = IntentExecuted::try_from_receipt(receipt);
+                            if event.as_ref().is_none_or(|e| e.has_error()) {
+                                let reason =
+                                    event.as_ref().map(|e| e.err.to_string()).unwrap_or_else(
+                                        || "IntentExecuted event not found".to_string(),
+                                    );
+                                let err = Arc::new(format!("intent failed: {reason}"))
+                                    as Arc<dyn TransactionFailureReason>;
+                                results.push((*tx_id, Err(err)));
+                                pending.remove(tx_id);
+                            } else {
+                                results.push((*tx_id, Ok(*receipt.clone())));
+                                pending.remove(tx_id);
+                            }
+                        }
+                        TransactionStatus::Failed(err) => {
+                            tracing::warn!(tx_id = ?tx_id, "Transaction failed");
+                            results.push((*tx_id, Err(err.clone())));
+                            pending.remove(tx_id);
+                        }
+                        TransactionStatus::InFlight | TransactionStatus::Pending(_) => {
+                            tracing::trace!(tx_id = ?tx_id, "Transaction still pending");
+                        }
+                    }
+                }
+            }
 
-        for receipt in src_receipts {
-            let event = IntentExecuted::try_from_receipt(&receipt);
-            if event.as_ref().is_none_or(|e| e.has_error()) {
-                let reason = event
-                    .as_ref()
-                    .map(|e| e.err.to_string())
-                    .unwrap_or_else(|| "IntentExecuted event not found".to_string());
-                return Err(InteropBundleError::TransactionError(Arc::new(format!(
-                    "source intent failed: {reason}",
-                ))));
+            if !pending.is_empty() {
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
 
-        let dst_receipts = self.send_and_watch_transactions(&bundle.dst_transactions).await?;
+        Ok(results)
+    }
 
-        for ((chain_id, asset, amount), receipt) in asset_transfers.into_iter().zip(dst_receipts) {
-            self.liquidity_tracker
-                .unlock_liquidity(chain_id, asset, amount, receipt.block_number.unwrap_or_default())
-                .await;
+    /// Process source transactions for a bundle.
+    ///
+    /// Waits for all source transactions to complete.
+    async fn process_source_transactions(
+        &self,
+        bundle: &InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        // Wait for all transactions to complete
+        // Transactions were already queued by update_bundle_and_queue_transactions
+        let results = self.watch_transactions(bundle.src_txs.iter().map(|tx| tx.id())).await?;
+
+        // Check if any failed
+        for (tx_id, result) in results {
+            if let Err(err) = result {
+                tracing::error!(tx_id = ?tx_id, "Source transaction failed");
+                return Err(InteropBundleError::TransactionError(err));
+            }
         }
 
+        Ok(())
+    }
+
+    /// Process destination transactions for a bundle.
+    ///
+    /// Waits for all destination transactions to complete.
+    async fn process_destination_transactions(
+        &self,
+        bundle: &InteropBundle,
+    ) -> Result<(), InteropBundleError> {
+        // Wait for all transactions to complete
+        // Transactions were already queued by update_bundle_and_queue_transactions
+        let results = self.watch_transactions(bundle.dst_txs.iter().map(|tx| tx.id())).await?;
+
+        // Check if any failed
+        for (tx_id, result) in results {
+            if let Err(err) = result {
+                tracing::error!(tx_id = ?tx_id, "Destination transaction failed");
+                return Err(InteropBundleError::TransactionError(err));
+            }
+        }
+
+        // TODO: Unlock liquidity for confirmed transactions.
+
+        Ok(())
+    }
+
+    /// # Bundle State Machine
+    ///
+    /// ```text
+    ///                              Init
+    ///                               │
+    ///                               ▼
+    ///                          SourceQueued
+    ///                          ╱         ╲
+    ///                         ╱           ╲
+    ///                        ▼             ▼
+    ///                 SourceConfirmed   SourceFailures ──┐
+    ///                        │                           │
+    ///                        ▼                           │
+    ///                 DestinationQueued                  │
+    ///                    ╱         ╲                     │
+    ///                   ╱           ╲                    │
+    ///                  ▼             ▼                   │
+    ///           DestConfirmed   DestinationFailures ─────┤
+    ///                  │                                 │
+    ///                  ▼                                 │
+    ///           WithdrawalsQueued                        │
+    ///                  │                                 │
+    ///                  │                                 ▼
+    ///                  │                           RefundsQueued
+    ///                  │                                 │
+    ///                  ▼                                 ▼
+    ///                 Done                            Failed
+    /// ```
+    #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
+    async fn send_and_watch_bundle(&self, bundle: InteropBundle) -> Result<(), InteropBundleError> {
+        let mut persistent_bundle = bundle;
+
+        loop {
+            match persistent_bundle.status {
+                BundleStatus::Init => self.on_init(&mut persistent_bundle).await?,
+                BundleStatus::SourceQueued => self.on_source_queued(&mut persistent_bundle).await?,
+                BundleStatus::SourceConfirmed => {
+                    self.on_source_confirmed(&mut persistent_bundle).await?
+                }
+                BundleStatus::SourceFailures => {
+                    self.on_source_failures(&mut persistent_bundle).await?
+                }
+                BundleStatus::DestinationQueued => {
+                    self.on_destination_queued(&mut persistent_bundle).await?
+                }
+                BundleStatus::DestinationFailures => {
+                    self.on_destination_failures(&mut persistent_bundle).await?
+                }
+                BundleStatus::DestinationConfirmed => {
+                    self.on_destination_confirmed(&mut persistent_bundle).await?
+                }
+                BundleStatus::RefundsQueued => {
+                    self.on_refunds_queued(&mut persistent_bundle).await?
+                }
+                BundleStatus::WithdrawalsQueued => {
+                    self.on_withdrawals_queued(&mut persistent_bundle).await?
+                }
+                BundleStatus::Done => {
+                    self.on_done(&mut persistent_bundle).await?;
+                    break;
+                }
+                BundleStatus::Failed => {
+                    self.on_failed(&mut persistent_bundle).await?;
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -405,17 +836,36 @@ impl InteropService {
         providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
         funder_address: Address,
+        storage: RelayStorage,
+        quote_signer: Address,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
         let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
+        let pending_bundles = storage.get_pending_bundles(quote_signer).await?;
 
         let service = Self {
-            inner: Arc::new(InteropServiceInner::new(tx_service_handles, liquidity_tracker)),
+            inner: Arc::new(InteropServiceInner::new(
+                tx_service_handles,
+                liquidity_tracker,
+                storage,
+            )),
             command_rx,
         };
 
         let handle = InteropServiceHandle { command_tx };
+
+        for bundle in pending_bundles {
+            tracing::info!(
+                bundle_id = ?bundle.id,
+                status = ?bundle.status,
+                src_count = bundle.src_txs.len(),
+                dst_count = bundle.dst_txs.len(),
+                "Resume pending interop bundles from disk"
+            );
+
+            handle.send_bundle(bundle)?;
+        }
 
         Ok((service, handle))
     }

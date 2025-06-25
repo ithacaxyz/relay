@@ -51,9 +51,17 @@ impl TransactionServiceHandle {
         tx: RelayTransaction,
     ) -> Result<mpsc::UnboundedReceiver<TransactionStatus>, StorageError> {
         self.storage.write_queued_transaction(&tx).await?;
+        Ok(self.send_transaction_no_queue(tx))
+    }
+
+    /// Sends transaction to service without queuing (for pre-queued bundle transactions).
+    pub fn send_transaction_no_queue(
+        &self,
+        tx: RelayTransaction,
+    ) -> mpsc::UnboundedReceiver<TransactionStatus> {
         let (status_tx, status_rx) = mpsc::unbounded_channel();
         let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
-        Ok(status_rx)
+        status_rx
     }
 }
 

@@ -1,7 +1,7 @@
 //! A collection of providers for different chains.
 
 use alloy::{
-    primitives::{ChainId, map::HashMap},
+    primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
 
@@ -44,6 +44,7 @@ impl Chains {
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: &RelayConfig,
+        quote_signer: Address,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
@@ -74,8 +75,15 @@ impl Chains {
             .collect();
 
         // Create and spawn the interop service
-        let (interop_service, interop_handle) =
-            InteropService::new(providers_with_chain, tx_handles, config.funder).await?;
+        let (interop_service, interop_handle) = InteropService::new(
+            providers_with_chain,
+            tx_handles,
+            config.funder,
+            storage.clone(),
+            quote_signer,
+        )
+        .await?;
+
         tokio::spawn(interop_service);
 
         Ok(Self { chains, interop: interop_handle })
