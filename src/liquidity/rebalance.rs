@@ -119,7 +119,7 @@ impl RebalanceService {
         if let Err(err) =
             bridge.send((from.chain_id, from.address), (to.chain_id, to.address), amount)
         {
-            self.tracker.unlock_liquidity(from.chain_id, from.address, amount, 0).await;
+            self.tracker.unlock_liquidity((from.chain_id, from.address), amount, 0).await?;
             return Err(err);
         }
 
@@ -191,10 +191,10 @@ impl RebalanceService {
                     match event {
                         // Unlock liquidity for completed/failed transfers.
                         BridgeEvent::TransferSent(transfer, block_number) => {
-                            self.tracker.unlock_liquidity(transfer.from.0, transfer.from.1, transfer.amount, block_number).await;
+                            let _ = self.tracker.unlock_liquidity(transfer.from, transfer.amount, block_number).await;
                         }
                         BridgeEvent::OutboundFailed(transfer) => {
-                            self.tracker.unlock_liquidity(transfer.from.0, transfer.from.1, transfer.amount, 0).await;
+                            let _ = self.tracker.unlock_liquidity(transfer.from, transfer.amount, 0).await;
                         }
                         BridgeEvent::TransferCompleted(_, _) | BridgeEvent::InboundFailed(_) => {},
                     }

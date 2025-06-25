@@ -92,11 +92,13 @@ sqlx = { version = "0.8.5", features = [
     "postgres",
     "runtime-tokio",
     "macros",
+    "bigdecimal",
 ] }
 serde_yaml = "0.9.34"
 resend-rs = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
+num-traits = "0.2"
 
 [dev-dependencies]
 alloy = { version = "1.0.9", features = [
