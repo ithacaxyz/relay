@@ -4,6 +4,7 @@ use super::{
 use crate::{
     error::StorageError,
     liquidity::{LiquidityTracker, LiquidityTrackerError},
+    storage::RelayStorage,
     types::{OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
@@ -187,8 +188,12 @@ impl InteropServiceInner {
 
         for ((chain_id, asset, amount), receipt) in asset_transfers.into_iter().zip(dst_receipts) {
             self.liquidity_tracker
-                .unlock_liquidity(chain_id, asset, amount, receipt.block_number.unwrap_or_default())
-                .await;
+                .unlock_liquidity(
+                    (chain_id, asset),
+                    amount,
+                    receipt.block_number.unwrap_or_default(),
+                )
+                .await?;
         }
 
         Ok(())
@@ -208,10 +213,11 @@ impl InteropService {
         providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
         funder_address: Address,
+        storage: RelayStorage,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
+        let liquidity_tracker = LiquidityTracker::new(providers, funder_address, storage);
 
         let service = Self {
             inner: Arc::new(InteropServiceInner::new(
