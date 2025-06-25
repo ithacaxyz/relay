@@ -96,6 +96,7 @@ pub struct Environment {
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
+    pub deployer: DynSigner,
 }
 
 impl std::fmt::Debug for Environment {
@@ -453,6 +454,7 @@ impl Environment {
             relay_endpoint,
             relay_handle,
             signers,
+            deployer,
         })
     }
 

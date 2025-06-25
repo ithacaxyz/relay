@@ -3,7 +3,7 @@ use crate::{
         LiquidityTracker,
         bridge::{Bridge, BridgeEvent, Transfer},
     },
-    types::{CoinKind, CoinRegistry},
+    types::{CoinKind, FeeTokens},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
 use futures_util::{
@@ -11,7 +11,7 @@ use futures_util::{
     future::TryJoinAll,
     stream::{SelectAll, select_all},
 };
-use std::{ops::RangeInclusive, sync::Arc, time::Duration};
+use std::{ops::RangeInclusive, time::Duration};
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +21,8 @@ pub struct Asset {
     kind: CoinKind,
 }
 
+/// A service that rebalances liquidity across chains.
+#[derive(Debug)]
 pub struct RebalanceService {
     assets: Vec<Asset>,
     tracker: LiquidityTracker,
@@ -28,17 +30,20 @@ pub struct RebalanceService {
 }
 
 impl RebalanceService {
+    /// Creates a new [`RebalanceService`].
     pub fn new(
-        registry: &CoinRegistry,
+        tokens: &FeeTokens,
         tracker: LiquidityTracker,
         bridges: impl IntoIterator<Item = Box<dyn Bridge>>,
     ) -> Self {
-        let assets = registry
+        let assets = tokens
             .iter()
-            .map(|(k, v)| Asset {
-                address: k.address.unwrap_or_default(),
-                chain_id: k.chain,
-                kind: *v,
+            .flat_map(|(chain, tokens)| {
+                tokens.iter().filter(|t| t.interop).map(|t| Asset {
+                    address: t.address,
+                    chain_id: *chain,
+                    kind: t.kind,
+                })
             })
             .collect();
         Self { assets, tracker, bridges: select_all(bridges) }
@@ -82,7 +87,7 @@ impl RebalanceService {
                 let range = self.tracker.balance_range(asset.chain_id, asset.address).await?;
                 let pending_inbound = self
                     .transfers_in_progress()
-                    .filter(|t| t.address == asset.address && t.to == asset.chain_id)
+                    .filter(|t| t.to.1 == asset.address && t.to.0 == asset.chain_id)
                     .map(|t| t.amount)
                     .sum::<U256>();
 
@@ -99,15 +104,11 @@ impl RebalanceService {
     /// Initiates a cross-chain transfer through a bridge.
     async fn bridge(&mut self, from: Asset, to: Asset, amount: U256) -> eyre::Result<()> {
         // Find bridge that supports the given asset.
-        let Some(bridge) = self
-            .bridges
-            .iter_mut()
-            .find(|bridge| bridge.supports(from.kind, from.chain_id, to.chain_id))
-        else {
+        let Some(bridge) = self.bridges.iter_mut().find(|bridge| {
+            bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
+        }) else {
             eyre::bail!("no bridge for the given asset");
         };
-
-        println!("BRIDGING: {:?} -> {:?} ({})", from, to, amount);
 
         // Lock liquidity for the transfer.
         self.tracker
@@ -115,7 +116,9 @@ impl RebalanceService {
             .await?;
 
         // Send the transfer.
-        if let Err(err) = bridge.send(from.kind, amount, from.chain_id, to.chain_id) {
+        if let Err(err) =
+            bridge.send((from.chain_id, from.address), (to.chain_id, to.address), amount)
+        {
             self.tracker.unlock_liquidity(from.chain_id, from.address, amount, 0).await;
             return Err(err);
         }
@@ -170,8 +173,9 @@ impl RebalanceService {
         Ok(None)
     }
 
+    /// Runs the rebalance service.
     pub async fn into_future(mut self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             tokio::select! {
                 // Wake up to find next rebalance.
@@ -187,10 +191,10 @@ impl RebalanceService {
                     match event {
                         // Unlock liquidity for completed/failed transfers.
                         BridgeEvent::TransferSent(transfer, block_number) => {
-                            self.tracker.unlock_liquidity(transfer.from, transfer.address, transfer.amount, block_number).await;
+                            self.tracker.unlock_liquidity(transfer.from.0, transfer.from.1, transfer.amount, block_number).await;
                         }
                         BridgeEvent::OutboundFailed(transfer) => {
-                            self.tracker.unlock_liquidity(transfer.from, transfer.address, transfer.amount, 0).await;
+                            self.tracker.unlock_liquidity(transfer.from.0, transfer.from.1, transfer.amount, 0).await;
                         }
                         BridgeEvent::TransferCompleted(_, _) | BridgeEvent::InboundFailed(_) => {},
                     }

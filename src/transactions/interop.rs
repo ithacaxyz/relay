@@ -4,11 +4,11 @@ use super::{
 use crate::{
     error::StorageError,
     liquidity::{LiquidityTracker, LiquidityTrackerError},
-    types::{rpc::BundleId, OrchestratorContract::IntentExecuted},
+    types::{OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
     primitives::{Address, ChainId, map::HashMap},
-    providers::{DynProvider},
+    providers::DynProvider,
     rpc::types::TransactionReceipt,
 };
 use futures_util::future::JoinAll;
