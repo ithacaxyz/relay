@@ -1258,12 +1258,7 @@ impl Relay {
         }
 
         // Create InteropBundle
-        Ok(InteropBundle::new(
-            bundle_id,
-            src_transactions,
-            dst_transactions,
-            self.inner.quote_signer.address(),
-        )?)
+        Ok(InteropBundle::new(bundle_id, src_transactions, dst_transactions)?)
     }
 }
 

@@ -35,8 +35,6 @@ pub struct InteropBundle {
     pub src_txs: Vec<TxIdOrTx>,
     /// Destination chain transactions (can be IDs or full transactions)
     pub dst_txs: Vec<TxIdOrTx>,
-    /// Quote signer address that created this bundle
-    pub quote_signer: Address,
     /// Pre-calculated asset transfers for liquidity tracking
     pub asset_transfers: Vec<AssetTransfer>,
 }
@@ -47,7 +45,6 @@ impl InteropBundle {
         id: BundleId,
         src_transactions: Vec<RelayTransaction>,
         dst_transactions: Vec<RelayTransaction>,
-        quote_signer: Address,
     ) -> Result<Self, alloy::sol_types::Error> {
         // Calculate asset transfers from destination transactions
         let asset_transfers = dst_transactions
@@ -66,7 +63,6 @@ impl InteropBundle {
             id,
             src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
             dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
-            quote_signer,
             asset_transfers,
         })
     }
@@ -107,39 +103,39 @@ enum InteropBundleError {
 pub enum BundleStatus {
     /// Initial state before any processing
     ///
-    /// Next: `SourceQueued`
+    /// Next: [`Self::SourceQueued`]
     Init,
     /// Source transactions are queued
     ///
-    /// Next: `SourceConfirmed` OR `SourceFailures`
+    /// Next: [`Self::SourceConfirmed`] OR [`Self::SourceFailures`]
     SourceQueued,
     /// Source transactions are confirmed
     ///
-    /// Next: `DestinationQueued`
+    /// Next: [`Self::DestinationQueued`]
     SourceConfirmed,
     /// Source transactions have failures
     ///
-    /// Next: `RefundsQueued` OR `Failed`
+    /// Next: [`Self::RefundsQueued`] OR [`Self::Failed`]
     SourceFailures,
     /// Destination transactions are queued
     ///
-    /// Next: `DestinationConfirmed` OR `DestinationFailures`
+    /// Next: [`Self::DestinationConfirmed`] OR [`Self::DestinationFailures`]
     DestinationQueued,
     /// Destination transactions have failures
     ///
-    /// Next: `RefundsQueued` OR `Failed`
+    /// Next: [`Self::RefundsQueued`] OR [`Self::Failed`]
     DestinationFailures,
     /// Destination transactions are confirmed
     ///
-    /// Next: `WithdrawalsQueued`
+    /// Next: [`Self::WithdrawalsQueued`]
     DestinationConfirmed,
     /// Refunds are queued to be processed
     ///
-    /// Next: `Failed`
+    /// Next: [`Self::Failed`]
     RefundsQueued,
     /// Withdrawals are queued to be processed
     ///
-    /// Next: `Done`
+    /// Next: [`Self::Done`]
     WithdrawalsQueued,
     /// Bundle is completely done
     ///
@@ -152,12 +148,12 @@ pub enum BundleStatus {
 }
 
 impl BundleStatus {
-    /// Whether status is [`DestinationConfirmed`].
+    /// Whether status is [`Self::DestinationConfirmed`].
     pub fn is_destination_confirmed(&self) -> bool {
         matches!(self, Self::DestinationConfirmed)
     }
 
-    /// Whether status is [`DestinationFailures`].
+    /// Whether status is [`Self::DestinationFailures`].
     pub fn is_destination_failures(&self) -> bool {
         matches!(self, Self::DestinationFailures)
     }
@@ -448,7 +444,7 @@ impl InteropServiceInner {
 
     /// Handle the Init status - check liquidity and queue source transactions
     ///
-    /// Transitions to: `SourceQueued`
+    /// Transitions to: [`BundleStatus::SourceQueued`]
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Initializing bundle");
 
@@ -478,7 +474,7 @@ impl InteropServiceInner {
 
     /// Handle the SourceQueued status - wait for source transactions to complete
     ///
-    /// Transitions to: `SourceConfirmed` or `SourceFailures`
+    /// Transitions to: [`BundleStatus::SourceConfirmed`] or [`BundleStatus::SourceFailures`]
     async fn on_source_queued(
         &self,
         bundle: &mut BundleWithStatus,
@@ -507,7 +503,7 @@ impl InteropServiceInner {
 
     /// Handle the SourceConfirmed status - queue destination transactions
     ///
-    /// Transitions to: `DestinationQueued`
+    /// Transitions to: [`BundleStatus::DestinationQueued`]
     async fn on_source_confirmed(
         &self,
         bundle: &mut BundleWithStatus,
@@ -540,7 +536,8 @@ impl InteropServiceInner {
 
     /// Handle bundles with source failures
     ///
-    /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
+    /// Transitions to: [`BundleStatus::RefundsQueued`] OR [`BundleStatus::Failed`] (TODO: implement
+    /// logic)
     async fn on_source_failures(
         &self,
         bundle: &mut BundleWithStatus,
@@ -556,7 +553,8 @@ impl InteropServiceInner {
 
     /// Handle the DestinationQueued status - wait for destination transactions to complete
     ///
-    /// Transitions to: `DestinationConfirmed` or `DestinationFailures`
+    /// Transitions to: [`BundleStatus::DestinationConfirmed`] or
+    /// [`BundleStatus::DestinationFailures`]
     async fn on_destination_queued(
         &self,
         bundle: &mut BundleWithStatus,
@@ -585,7 +583,8 @@ impl InteropServiceInner {
 
     /// Handle bundles with destination failures
     ///
-    /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
+    /// Transitions to: [`BundleStatus::RefundsQueued`] OR [`BundleStatus::Failed`] (TODO: implement
+    /// logic)
     async fn on_destination_failures(
         &self,
         bundle: &mut BundleWithStatus,
@@ -602,7 +601,7 @@ impl InteropServiceInner {
 
     /// Handle the DestinationConfirmed status - prepare for withdrawals
     ///
-    /// Transitions to: `WithdrawalsQueued`
+    /// Transitions to: [`BundleStatus::WithdrawalsQueued`]
     async fn on_destination_confirmed(
         &self,
         bundle: &mut BundleWithStatus,
@@ -620,7 +619,7 @@ impl InteropServiceInner {
 
     /// Handle the RefundsQueued status - process refunds
     ///
-    /// Transitions to: `Failed`
+    /// Transitions to: [`BundleStatus::Failed`]
     async fn on_refunds_queued(
         &self,
         bundle: &mut BundleWithStatus,
@@ -640,7 +639,7 @@ impl InteropServiceInner {
 
     /// Handle the WithdrawalsQueued status - process withdrawals
     ///
-    /// Transitions to: `Done`
+    /// Transitions to: [`BundleStatus::Done`]
     async fn on_withdrawals_queued(
         &self,
         bundle: &mut BundleWithStatus,
