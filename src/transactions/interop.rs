@@ -916,12 +916,11 @@ impl InteropService {
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
         funder_address: Address,
         storage: RelayStorage,
-        quote_signer: Address,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
         let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
-        let pending_bundles = storage.get_pending_bundles(quote_signer).await?;
+        let pending_bundles = storage.get_pending_bundles().await?;
 
         let service = Self {
             inner: Arc::new(InteropServiceInner::new(

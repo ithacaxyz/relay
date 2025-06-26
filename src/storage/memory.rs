@@ -165,12 +165,11 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>> {
-        // Return all bundles for the given quote_signer
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
+        // Return all bundles
         Ok(self
             .pending_bundles
             .iter()
-            .filter(|entry| entry.value().0.quote_signer == quote_signer)
             .map(|entry| BundleWithStatus {
                 bundle: entry.value().0.clone(),
                 status: entry.value().1,

@@ -416,16 +416,14 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>> {
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
         let rows = sqlx::query_as::<_, (BundleStatus, serde_json::Value)>(
             r#"
             SELECT status, bundle_data
             FROM pending_bundles
-            WHERE quote_signer = $1
             ORDER BY created_at
             "#,
         )
-        .bind(format!("{quote_signer:?}"))
         .fetch_all(&self.pool)
         .await
         .map_err(eyre::Error::from)?;

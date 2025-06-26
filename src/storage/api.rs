@@ -97,8 +97,8 @@ pub trait StorageApi: Debug + Send + Sync {
         status: BundleStatus,
     ) -> Result<()>;
 
-    /// Gets all pending bundles for a specific quote_signer.
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>>;
+    /// Gets all pending bundles.
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>>;
 
     /// Gets a specific pending bundle by ID.
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;

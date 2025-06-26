@@ -144,11 +144,8 @@ impl StorageApi for RelayStorage {
         self.inner.update_pending_bundle_status(bundle_id, status).await
     }
 
-    async fn get_pending_bundles(
-        &self,
-        quote_signer: Address,
-    ) -> api::Result<Vec<BundleWithStatus>> {
-        self.inner.get_pending_bundles(quote_signer).await
+    async fn get_pending_bundles(&self) -> api::Result<Vec<BundleWithStatus>> {
+        self.inner.get_pending_bundles().await
     }
 
     async fn get_pending_bundle(

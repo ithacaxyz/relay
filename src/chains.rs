@@ -44,7 +44,6 @@ impl Chains {
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: &RelayConfig,
-        quote_signer: Address,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
@@ -75,14 +74,9 @@ impl Chains {
             .collect();
 
         // Create and spawn the interop service
-        let (interop_service, interop_handle) = InteropService::new(
-            providers_with_chain,
-            tx_handles,
-            config.funder,
-            storage.clone(),
-            quote_signer,
-        )
-        .await?;
+        let (interop_service, interop_handle) =
+            InteropService::new(providers_with_chain, tx_handles, config.funder, storage.clone())
+                .await?;
 
         tokio::spawn(interop_service);
 
