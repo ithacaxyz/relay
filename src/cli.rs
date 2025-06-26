@@ -61,6 +61,9 @@ pub struct Args {
         value_name = "DELEGATION"
     )]
     pub delegation_proxy: Option<Address>,
+    /// The addresses of legacy delegation proxies.
+    #[arg(long = "legacy-delegation-proxy", value_name = "ADDRESS")]
+    pub legacy_delegation_proxies: Option<Vec<Address>>,
     /// The address of the simulator
     #[arg(long = "simulator", required_unless_present("config_only"), value_name = "SIMULATOR")]
     pub simulator: Option<Address>,
@@ -175,6 +178,7 @@ impl Args {
             .with_quote_constant_rate(self.constant_rate)
             .with_orchestrator(self.orchestrator)
             .with_delegation_proxy(self.delegation_proxy)
+            .with_legacy_delegation_proxies(&self.legacy_delegation_proxies.unwrap_or_default())
             .with_simulator(self.simulator)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)

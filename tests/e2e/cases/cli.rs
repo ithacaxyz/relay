@@ -27,6 +27,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 max_connections: Default::default(),
                 orchestrator: Some(env.orchestrator),
                 delegation_proxy: Some(env.delegation),
+                legacy_delegation_proxies: Default::default(),
                 simulator: Default::default(),
                 endpoints: Some(vec![Url::from_str(&env.anvils[0].endpoint()).unwrap()]),
                 fee_recipient: Default::default(),
