@@ -1,7 +1,7 @@
 //! A collection of providers for different chains.
 
 use alloy::{
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
 
