@@ -378,6 +378,12 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the legacy delegation proxy addresses.
+    pub fn with_legacy_delegation_proxies(mut self, legacy_delegation_proxies: &[Address]) -> Self {
+        self.legacy_delegation_proxies.extend(legacy_delegation_proxies);
+        self
+    }
+
     /// Sets the simulator address.
     pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
         if let Some(simulator) = simulator {
