@@ -378,16 +378,15 @@ impl StorageApi for PgStorage {
         let bundle_data = serde_json::to_value(bundle)
             .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
-            INSERT INTO pending_bundles (bundle_id, status, bundle_data, quote_signer, created_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)
+            VALUES ($1, $2, $3, NOW())
             "#,
+            bundle.id.as_slice(),
+            status as _,
+            bundle_data,
         )
-        .bind(bundle.id.as_slice())
-        .bind(status)
-        .bind(bundle_data)
-        .bind(format!("{:?}", bundle.quote_signer))
         .execute(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
@@ -400,15 +399,15 @@ impl StorageApi for PgStorage {
         bundle_id: BundleId,
         status: BundleStatus,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE pending_bundles 
             SET status = $2, updated_at = NOW()
             WHERE bundle_id = $1
             "#,
+            bundle_id.as_slice(),
+            status as _
         )
-        .bind(bundle_id.as_slice())
-        .bind(status)
         .execute(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
@@ -417,9 +416,9 @@ impl StorageApi for PgStorage {
     }
 
     async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
-        let rows = sqlx::query_as::<_, (BundleStatus, serde_json::Value)>(
+        let rows = sqlx::query!(
             r#"
-            SELECT status, bundle_data
+            SELECT status AS "status: BundleStatus", bundle_data
             FROM pending_bundles
             ORDER BY created_at
             "#,
@@ -429,32 +428,32 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         rows.into_iter()
-            .map(|(status, bundle_data)| {
-                let bundle: InteropBundle = serde_json::from_value(bundle_data)
+            .map(|row| {
+                let bundle: InteropBundle = serde_json::from_value(row.bundle_data)
                     .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
-                Ok(BundleWithStatus { bundle, status })
+                Ok(BundleWithStatus { bundle, status: row.status })
             })
             .collect()
     }
 
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
-        let row = sqlx::query_as::<_, (BundleStatus, serde_json::Value)>(
+        let row = sqlx::query!(
             r#"
-            SELECT status, bundle_data
+            SELECT status AS "status: BundleStatus", bundle_data
             FROM pending_bundles
             WHERE bundle_id = $1
             "#,
+            bundle_id.as_slice()
         )
-        .bind(bundle_id.as_slice())
         .fetch_optional(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
 
         match row {
-            Some((status, bundle_data)) => {
-                let bundle: InteropBundle = serde_json::from_value(bundle_data)
+            Some(row) => {
+                let bundle: InteropBundle = serde_json::from_value(row.bundle_data)
                     .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
-                Ok(Some(BundleWithStatus { bundle, status }))
+                Ok(Some(BundleWithStatus { bundle, status: row.status }))
             }
             None => Ok(None),
         }
@@ -476,16 +475,16 @@ impl StorageApi for PgStorage {
                 let relay_tx_json = serde_json::to_value(relay_tx.as_ref())
                     .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
 
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     INSERT INTO queued_txs (tx_id, chain_id, tx)
                     VALUES ($1, $2, $3)
                     ON CONFLICT (tx_id) DO NOTHING
                     "#,
+                    relay_tx.id.as_slice(),
+                    relay_tx.quote.chain_id as i64,
+                    relay_tx_json
                 )
-                .bind(relay_tx.id.as_slice())
-                .bind(relay_tx.quote.chain_id as i64)
-                .bind(&relay_tx_json)
                 .execute(&mut *tx)
                 .await
                 .map_err(eyre::Error::from)?;
@@ -500,20 +499,19 @@ impl StorageApi for PgStorage {
         let bundle_json = serde_json::to_value(&bundle)
             .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
-            INSERT INTO pending_bundles (bundle_id, status, bundle_data, quote_signer, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at, updated_at)
+            VALUES ($1, $2, $3, NOW(), NOW())
             ON CONFLICT (bundle_id) DO UPDATE
             SET bundle_data = EXCLUDED.bundle_data, 
                 status = EXCLUDED.status, 
                 updated_at = NOW()
             "#,
+            bundle.id.as_slice(),
+            status as _,
+            bundle_json,
         )
-        .bind(bundle.id.as_slice())
-        .bind(status)
-        .bind(&bundle_json)
-        .bind(format!("{:?}", bundle.quote_signer))
         .execute(&mut *tx)
         .await
         .map_err(eyre::Error::from)?;
@@ -526,19 +524,19 @@ impl StorageApi for PgStorage {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
         // Move the bundle from pending to finished in a single transaction
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             WITH moved AS (
                 DELETE FROM pending_bundles
                 WHERE bundle_id = $1
-                RETURNING bundle_id, status, bundle_data, quote_signer, created_at
+                RETURNING bundle_id, status, bundle_data, created_at
             )
-            INSERT INTO finished_bundles (bundle_id, status, bundle_data, quote_signer, created_at, finished_at)
-            SELECT bundle_id, status, bundle_data, quote_signer, created_at, NOW()
+            INSERT INTO finished_bundles (bundle_id, status, bundle_data, created_at, finished_at)
+            SELECT bundle_id, status, bundle_data, created_at, NOW()
             FROM moved
             "#,
+            bundle_id.as_slice()
         )
-        .bind(bundle_id.as_slice())
         .execute(&mut *tx)
         .await
         .map_err(eyre::Error::from)?;
