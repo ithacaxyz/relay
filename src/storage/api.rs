@@ -83,6 +83,13 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
 
+    /// Stores a new pending bundle.
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()>;
+
     /// Updates an existing pending bundle's status.
     async fn update_pending_bundle_status(
         &self,

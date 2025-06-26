@@ -145,6 +145,15 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()> {
+        self.pending_bundles.insert(bundle.id, (bundle.clone(), status));
+        Ok(())
+    }
+
     async fn update_pending_bundle_status(
         &self,
         bundle_id: BundleId,

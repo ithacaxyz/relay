@@ -128,6 +128,14 @@ impl StorageApi for RelayStorage {
         self.inner.ping().await
     }
 
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.store_pending_bundle(bundle, status).await
+    }
+
     async fn update_pending_bundle_status(
         &self,
         bundle_id: BundleId,

@@ -370,6 +370,31 @@ impl StorageApi for PgStorage {
         }
     }
 
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()> {
+        let bundle_data = serde_json::to_value(bundle)
+            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, quote_signer, created_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            "#,
+        )
+        .bind(bundle.id.as_slice())
+        .bind(status)
+        .bind(bundle_data)
+        .bind(format!("{:?}", bundle.quote_signer))
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
     async fn update_pending_bundle_status(
         &self,
         bundle_id: BundleId,

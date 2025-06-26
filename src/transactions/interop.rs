@@ -23,6 +23,9 @@ use std::{
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument};
 
+/// Asset transfer information: (chain_id, asset_address, amount)
+type AssetTransfer = (ChainId, Address, U256);
+
 /// Persistent bundle structure that stores full transaction data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteropBundle {
@@ -34,6 +37,39 @@ pub struct InteropBundle {
     pub dst_txs: Vec<TxIdOrTx>,
     /// Quote signer address that created this bundle
     pub quote_signer: Address,
+    /// Pre-calculated asset transfers for liquidity tracking
+    pub asset_transfers: Vec<AssetTransfer>,
+}
+
+impl InteropBundle {
+    /// Creates a new interop bundle with pre-calculated asset transfers
+    pub fn new(
+        id: BundleId,
+        src_transactions: Vec<RelayTransaction>,
+        dst_transactions: Vec<RelayTransaction>,
+        quote_signer: Address,
+    ) -> Result<Self, alloy::sol_types::Error> {
+        // Calculate asset transfers from destination transactions
+        let asset_transfers = dst_transactions
+            .iter()
+            .map(|tx| {
+                tx.quote.output.fund_transfers().map(|transfers| {
+                    transfers.into_iter().map(|(asset, amount)| (tx.quote.chain_id, asset, amount))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        Ok(Self {
+            id,
+            src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
+            dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
+            quote_signer,
+            asset_transfers,
+        })
+    }
 }
 
 /// Bundle with its current status
@@ -115,6 +151,18 @@ pub enum BundleStatus {
     Failed,
 }
 
+impl BundleStatus {
+    /// Whether status is [`DestinationConfirmed`].
+    pub fn is_destination_confirmed(&self) -> bool {
+        matches!(self, Self::DestinationConfirmed)
+    }
+
+    /// Whether status is [`DestinationFailures`].
+    pub fn is_destination_failures(&self) -> bool {
+        matches!(self, Self::DestinationFailures)
+    }
+}
+
 /// Represents either a transaction ID or full transaction data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TxIdOrTx {
@@ -152,7 +200,7 @@ impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
 #[derive(Debug)]
 pub enum InteropServiceMessage {
     /// Send a bundle with status.
-    SendBundleWithStatus(BundleWithStatus),
+    SendBundleWithStatus(Box<BundleWithStatus>),
 }
 
 /// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
@@ -290,7 +338,7 @@ impl LiquidityTracker {
     /// Locks liquidity for an interop bundle.
     pub async fn try_lock_liquidity(
         &self,
-        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+        assets: impl IntoIterator<Item = AssetTransfer>,
     ) -> Result<(), InteropBundleError> {
         // Deduplicate assets by chain and asset address
         let inputs: HashMap<_, U256> = assets
@@ -358,24 +406,25 @@ impl LiquidityTracker {
 #[derive(Debug, Clone)]
 pub struct InteropServiceHandle {
     command_tx: mpsc::UnboundedSender<InteropServiceMessage>,
+    storage: RelayStorage,
 }
 
 impl InteropServiceHandle {
     /// Sends an interop bundle to the service.
-    pub fn send_bundle(
-        &self,
-        bundle: InteropBundle,
-    ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
-        // New bundles start with Init status
-        self.send_bundle_with_status(BundleWithStatus { bundle, status: BundleStatus::Init })
+    ///
+    /// It will also store the bundle to the storage.
+    pub async fn send_bundle(&self, bundle: InteropBundle) -> Result<(), StorageError> {
+        // Store the bundle with Init status
+        self.storage.store_pending_bundle(&bundle, BundleStatus::Init).await?;
+
+        // Send to service for processing
+        self.send_bundle_with_status(BundleWithStatus { bundle, status: BundleStatus::Init });
+        Ok(())
     }
 
     /// Sends a bundle with status to the service.
-    pub fn send_bundle_with_status(
-        &self,
-        bundle: BundleWithStatus,
-    ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
-        self.command_tx.send(InteropServiceMessage::SendBundleWithStatus(bundle))
+    pub fn send_bundle_with_status(&self, bundle: BundleWithStatus) {
+        let _ = self.command_tx.send(InteropServiceMessage::SendBundleWithStatus(Box::new(bundle)));
     }
 }
 
@@ -383,7 +432,7 @@ impl InteropServiceHandle {
 #[derive(Debug)]
 struct InteropServiceInner {
     tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-    _liquidity_tracker: LiquidityTracker,
+    liquidity_tracker: LiquidityTracker,
     storage: RelayStorage,
 }
 
@@ -391,10 +440,10 @@ impl InteropServiceInner {
     /// Creates a new interop service inner state.
     fn new(
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        _liquidity_tracker: LiquidityTracker,
+        liquidity_tracker: LiquidityTracker,
         storage: RelayStorage,
     ) -> Self {
-        Self { tx_service_handles, _liquidity_tracker, storage }
+        Self { tx_service_handles, liquidity_tracker, storage }
     }
 
     /// Handle the Init status - check liquidity and queue source transactions
@@ -402,8 +451,6 @@ impl InteropServiceInner {
     /// Transitions to: `SourceQueued`
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Initializing bundle");
-
-        // TODO: Check and lock liquidity
 
         // Extract source transactions before update (since update will modify the bundle)
         let src_transactions: Vec<RelayTransaction> = bundle
@@ -751,26 +798,38 @@ impl InteropServiceInner {
 
     /// Process destination transactions for a bundle.
     ///
-    /// Waits for all destination transactions to complete.
+    /// Waits for all destination transactions to complete and unlocks the liquidity.
     async fn process_destination_transactions(
         &self,
         bundle: &InteropBundle,
     ) -> Result<(), InteropBundleError> {
+        let mut maybe_err = Ok(());
+
         // Wait for all transactions to complete
         // Transactions were already queued by update_bundle_and_queue_transactions
         let results = self.watch_transactions(bundle.dst_txs.iter().map(|tx| tx.id())).await?;
 
-        // Check if any failed
+        // Collect receipts and check if any failed
+        let mut receipts = HashMap::with_capacity(bundle.dst_txs.len());
         for (tx_id, result) in results {
-            if let Err(err) = result {
-                tracing::error!(tx_id = ?tx_id, "Destination transaction failed");
-                return Err(InteropBundleError::TransactionError(err));
+            match result {
+                Ok(receipt) => {
+                    receipts.insert(tx_id, receipt);
+                }
+                Err(err) => {
+                    tracing::error!(tx_id = ?tx_id, ?err, "Destination transaction failed");
+                    maybe_err = Err(InteropBundleError::TransactionError(err));
+                }
             }
         }
 
-        // TODO: Unlock liquidity for confirmed transactions.
+        for ((chain_id, asset, amount), tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
+            let block = receipts.get(&tx.id()).and_then(|r| r.block_number).unwrap_or_default();
 
-        Ok(())
+            self.liquidity_tracker.unlock_liquidity(*chain_id, *asset, *amount, block).await;
+        }
+
+        maybe_err
     }
 
     /// # Bundle State Machine
@@ -804,41 +863,37 @@ impl InteropServiceInner {
     #[instrument(skip(self, bundle), fields(bundle_id = %bundle.bundle.id))]
     async fn send_and_watch_bundle_with_status(
         &self,
-        bundle: BundleWithStatus,
+        mut bundle: BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        let mut persistent_bundle = bundle;
+        // Lock liquidity before processing the bundle (skip if already has processed the
+        // destination transactions)
+        if !bundle.status.is_destination_failures() && !bundle.status.is_destination_confirmed() {
+            self.liquidity_tracker
+                .try_lock_liquidity(bundle.bundle.asset_transfers.clone())
+                .await?;
+        }
 
         loop {
-            match persistent_bundle.status {
-                BundleStatus::Init => self.on_init(&mut persistent_bundle).await?,
-                BundleStatus::SourceQueued => self.on_source_queued(&mut persistent_bundle).await?,
-                BundleStatus::SourceConfirmed => {
-                    self.on_source_confirmed(&mut persistent_bundle).await?
-                }
-                BundleStatus::SourceFailures => {
-                    self.on_source_failures(&mut persistent_bundle).await?
-                }
-                BundleStatus::DestinationQueued => {
-                    self.on_destination_queued(&mut persistent_bundle).await?
-                }
+            match bundle.status {
+                BundleStatus::Init => self.on_init(&mut bundle).await?,
+                BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,
+                BundleStatus::SourceConfirmed => self.on_source_confirmed(&mut bundle).await?,
+                BundleStatus::SourceFailures => self.on_source_failures(&mut bundle).await?,
+                BundleStatus::DestinationQueued => self.on_destination_queued(&mut bundle).await?,
                 BundleStatus::DestinationFailures => {
-                    self.on_destination_failures(&mut persistent_bundle).await?
+                    self.on_destination_failures(&mut bundle).await?
                 }
                 BundleStatus::DestinationConfirmed => {
-                    self.on_destination_confirmed(&mut persistent_bundle).await?
+                    self.on_destination_confirmed(&mut bundle).await?
                 }
-                BundleStatus::RefundsQueued => {
-                    self.on_refunds_queued(&mut persistent_bundle).await?
-                }
-                BundleStatus::WithdrawalsQueued => {
-                    self.on_withdrawals_queued(&mut persistent_bundle).await?
-                }
+                BundleStatus::RefundsQueued => self.on_refunds_queued(&mut bundle).await?,
+                BundleStatus::WithdrawalsQueued => self.on_withdrawals_queued(&mut bundle).await?,
                 BundleStatus::Done => {
-                    self.on_done(&mut persistent_bundle).await?;
+                    self.on_done(&mut bundle).await?;
                     break;
                 }
                 BundleStatus::Failed => {
-                    self.on_failed(&mut persistent_bundle).await?;
+                    self.on_failed(&mut bundle).await?;
                     break;
                 }
             }
@@ -872,12 +927,12 @@ impl InteropService {
             inner: Arc::new(InteropServiceInner::new(
                 tx_service_handles,
                 liquidity_tracker,
-                storage,
+                storage.clone(),
             )),
             command_rx,
         };
 
-        let handle = InteropServiceHandle { command_tx };
+        let handle = InteropServiceHandle { command_tx, storage };
 
         for bundle in pending_bundles {
             tracing::info!(
@@ -888,7 +943,7 @@ impl InteropService {
                 "Resume pending interop bundles from disk"
             );
 
-            handle.send_bundle_with_status(bundle)?;
+            handle.send_bundle_with_status(bundle);
         }
 
         Ok((service, handle))
@@ -904,7 +959,7 @@ impl Future for InteropService {
                 InteropServiceMessage::SendBundleWithStatus(bundle) => {
                     let inner = Arc::clone(&self.inner);
                     tokio::spawn(async move {
-                        if let Err(e) = inner.send_and_watch_bundle_with_status(bundle).await {
+                        if let Err(e) = inner.send_and_watch_bundle_with_status(*bundle).await {
                             error!("Failed to process interop bundle: {:?}", e);
                         }
                     });

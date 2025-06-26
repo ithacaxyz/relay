@@ -14,7 +14,7 @@ use crate::{
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
-    transactions::interop::{InteropBundle, TxIdOrTx},
+    transactions::interop::InteropBundle,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
@@ -1206,7 +1206,7 @@ impl Relay {
         let bundle =
             self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
 
-        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
+        self.inner.chains.interop().send_bundle(bundle).await?;
 
         Ok(bundle_id)
     }
@@ -1258,12 +1258,12 @@ impl Relay {
         }
 
         // Create InteropBundle
-        Ok(InteropBundle {
-            id: bundle_id,
-            src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
-            dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
-            quote_signer: self.inner.quote_signer.address(),
-        })
+        Ok(InteropBundle::new(
+            bundle_id,
+            src_transactions,
+            dst_transactions,
+            self.inner.quote_signer.address(),
+        )?)
     }
 }
 
