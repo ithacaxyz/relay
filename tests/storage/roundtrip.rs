@@ -12,7 +12,7 @@ use crate::e2e::SIGNERS_MNEMONIC;
 use alloy::{
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, Signature, U256, bytes},
+    primitives::{Address, B256, U256, bytes},
     rpc::types::Authorization,
 };
 use alloy_primitives::ChainId;
@@ -22,10 +22,10 @@ use relay::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{PendingTransaction, RelayTransaction, RelayTransactionKind, TxId},
-    types::{CreatableAccount, Intent, Quote, Signed, SignedCall, rpc::BundleId},
+    types::{CreatableAccount, Intent, Quote, SignedCall, rpc::BundleId},
 };
 use sqlx::PgPool;
-use std::{ops::Not, time::SystemTime};
+use std::ops::Not;
 
 async fn storage() -> eyre::Result<RelayStorage> {
     // Set up storage
@@ -100,7 +100,6 @@ impl Fixtures {
         let signer = EthereumWallet::new(signer.0);
         let r_u256 = U256::MAX;
         let r_b256 = B256::ZERO;
-        let r_sig = Signature::new(r_u256, r_u256, true);
         let r_u64 = u64::MAX;
         let r_bytes = bytes!("aaaaaaaaaa");
         let r_fee = Eip1559Estimation { max_fee_per_gas: 1, max_priority_fee_per_gas: 1 };
@@ -117,40 +116,43 @@ impl Fixtures {
             signature: r_bytes.clone(),
         };
         let account = CreatableAccount::new(r_address, pre_call, authorization.clone());
+        let intent = Intent {
+            eoa: r_address,
+            executionData: r_bytes.clone(),
+            nonce: r_u256,
+            payer: r_address,
+            paymentToken: r_address,
+            prePaymentMaxAmount: r_u256,
+            totalPaymentMaxAmount: r_u256,
+            combinedGas: r_u256,
+            encodedPreCalls: vec![r_bytes.clone()],
+            prePaymentAmount: r_u256,
+            totalPaymentAmount: r_u256,
+            paymentRecipient: r_address,
+            signature: r_bytes.clone(),
+            paymentSignature: r_bytes.clone(),
+            supportedAccountImplementation: r_address,
+            encodedFundTransfers: vec![r_bytes.clone()],
+            funder: r_address,
+            funderSignature: r_bytes.clone(),
+        };
         let quote = Quote {
             chain_id: r_u64,
-            intent: Intent {
-                eoa: r_address,
-                executionData: r_bytes.clone(),
-                nonce: r_u256,
-                payer: r_address,
-                paymentToken: r_address,
-                prePaymentMaxAmount: r_u256,
-                totalPaymentMaxAmount: r_u256,
-                combinedGas: r_u256,
-                encodedPreCalls: vec![r_bytes.clone()],
-                prePaymentAmount: r_u256,
-                totalPaymentAmount: r_u256,
-                paymentRecipient: r_address,
-                signature: r_bytes.clone(),
-                paymentSignature: r_bytes.clone(),
-                supportedAccountImplementation: r_address,
-            },
+            output: intent,
             extra_payment: r_u256,
             eth_price: r_u256,
             payment_token_decimals: 1,
             tx_gas: r_u64,
             native_fee_estimate: r_fee,
-            ttl: SystemTime::now(),
             authorization_address: Some(r_address),
             orchestrator: r_address,
+            is_multi_chain: false,
         };
-        let quote = Signed::new_unchecked(quote, r_sig, r_b256);
         let queued_tx = RelayTransaction {
             id: TxId(r_b256),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
-                authorization: Some(authorization),
+                authorization: Some(authorization.clone()),
             },
             trace_context: Context::current(),
             received_at: Utc::now(),

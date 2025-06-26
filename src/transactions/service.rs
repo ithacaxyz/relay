@@ -363,8 +363,8 @@ impl Future for TransactionService {
                             debug!(tx_id = %id, %err, "transaction failed");
                             this.metrics.failed.increment(1);
                         }
-                        TransactionStatus::Confirmed(hash) => {
-                            debug!(tx_id = %id, %hash, "transaction confirmed");
+                        TransactionStatus::Confirmed(receipt) => {
+                            debug!(tx_id = %id, %receipt.transaction_hash, "transaction confirmed");
                             this.metrics.confirmed.increment(1);
                         }
                         _ => {}
@@ -556,12 +556,8 @@ enum QueueError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Intent, Quote, SignedQuote};
-    use alloy::{
-        eips::eip1559::Eip1559Estimation,
-        primitives::{Signature, U256},
-    };
-    use std::time::SystemTime;
+    use crate::types::{Intent, Quote};
+    use alloy::{eips::eip1559::Eip1559Estimation, primitives::U256};
 
     fn create_tx(sender: Address) -> RelayTransaction {
         let quote = Quote {
@@ -574,13 +570,11 @@ mod tests {
                 max_fee_per_gas: Default::default(),
                 max_priority_fee_per_gas: Default::default(),
             },
-            ttl: SystemTime::now(),
             authorization_address: Default::default(),
             orchestrator: Default::default(),
-            intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            output: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            is_multi_chain: false,
         };
-        let sig = Signature::new(Default::default(), Default::default(), Default::default());
-        let quote = SignedQuote::new_unchecked(quote, sig, Default::default());
         RelayTransaction::new(quote, None)
     }
 

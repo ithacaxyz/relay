@@ -391,6 +391,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -417,6 +418,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -432,7 +434,8 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         .await?;
 
     // Its 0 since the upgrade account intent uses a random nonce
-    assert!(response.context.take_quote().unwrap().ty().intent.nonce == uint!(0_U256));
+    // todo(onbjerg): this assumes a single intent
+    assert!(response.context.take_quote().unwrap().ty().quotes[0].output.nonce == uint!(0_U256));
 
     Ok(())
 }
@@ -464,6 +467,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),

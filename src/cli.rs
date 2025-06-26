@@ -67,6 +67,9 @@ pub struct Args {
     /// The address of the simulator
     #[arg(long = "simulator", required_unless_present("config_only"), value_name = "SIMULATOR")]
     pub simulator: Option<Address>,
+    /// The address of the funder
+    #[arg(long = "funder", required_unless_present("config_only"), value_name = "FUNDER")]
+    pub funder: Option<Address>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -96,6 +99,9 @@ pub struct Args {
     /// A fee token the relay accepts.
     #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
     pub fee_tokens: Option<Vec<Address>>,
+    /// A fee token the relay accepts.
+    #[arg(long = "interop-token", required_unless_present("config_only"), value_name = "ADDRESS")]
+    pub interop_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
@@ -112,6 +118,14 @@ pub struct Args {
     /// The number of signers to derive from mnemonic and use to send transactions.
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
+    /// The funder signing key (hex private key or KMS ARN).
+    #[arg(
+        long = "funder-signing-key",
+        required_unless_present("config_only"),
+        value_name = "KEY",
+        env = "RELAY_FUNDER_KEY"
+    )]
+    pub funder_key: String,
     /// The RPC endpoints of the sequencers for OP rollups.
     #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub sequencer_endpoints: Vec<(Chain, Url)>,
@@ -168,6 +182,7 @@ impl Args {
             .with_sequencer_endpoints(self.sequencer_endpoints.clone())
             .with_public_node_endpoints(self.public_node_endpoints.clone())
             .with_fee_tokens(&self.fee_tokens.unwrap_or_default())
+            .with_interop_tokens(&self.interop_tokens.unwrap_or_default())
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
             .with_port(self.port)
@@ -180,6 +195,8 @@ impl Args {
             .with_delegation_proxy(self.delegation_proxy)
             .with_legacy_delegation_proxies(&self.legacy_delegation_proxies.unwrap_or_default())
             .with_simulator(self.simulator)
+            .with_funder(self.funder)
+            .with_funder_key(self.funder_key)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)

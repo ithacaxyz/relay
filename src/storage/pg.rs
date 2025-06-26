@@ -192,10 +192,21 @@ impl StorageApi for PgStorage {
         }
 
         match status {
-            TransactionStatus::Pending(tx_hash) | TransactionStatus::Confirmed(tx_hash) => {
+            TransactionStatus::Pending(tx_hash) => {
                 sqlx::query!(
                     r#"update txs set tx_hash = $1 where tx_id = $2"#,
                     tx_hash.as_slice(),
+                    tx_id.as_slice(),
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(eyre::Error::from)?;
+            }
+            TransactionStatus::Confirmed(receipt) => {
+                sqlx::query!(
+                    r#"update txs set tx_hash = $1, receipt = $2 where tx_id = $3"#,
+                    receipt.transaction_hash.as_slice(),
+                    serde_json::to_value(receipt)?,
                     tx_id.as_slice(),
                 )
                 .execute(&mut *tx)
@@ -215,17 +226,17 @@ impl StorageApi for PgStorage {
         tx: TxId,
     ) -> Result<Option<(ChainId, TransactionStatus)>> {
         let row = sqlx::query!(
-            r#"select chain_id, tx_hash, status as "status: TxStatus", error from txs where tx_id = $1"#,
+            r#"select chain_id, tx_hash, status as "status: TxStatus", error, receipt from txs where tx_id = $1"#,
             tx.as_slice()
         )
         .fetch_optional(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
 
-        Ok(row.map(|row| {
-            let tx_hash = row.tx_hash.map(|hash| B256::from_slice(&hash));
+        row.map(|row| {
+            let tx_hash = row.tx_hash.as_ref().map(|hash| B256::from_slice(hash));
 
-            (
+            Ok((
                 row.chain_id as u64,
                 match row.status {
                     TxStatus::InFlight => TransactionStatus::InFlight,
@@ -233,14 +244,17 @@ impl StorageApi for PgStorage {
                     // hash in the database
                     TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
                     // SAFETY: it should never be possible to have a confirmed transaction without a
-                    // hash in the database
-                    TxStatus::Confirmed => TransactionStatus::Confirmed(tx_hash.unwrap()),
+                    // receipt in the database
+                    TxStatus::Confirmed => TransactionStatus::Confirmed(
+                        serde_json::from_value(row.receipt.unwrap()).map_err(eyre::Error::from)?,
+                    ),
                     TxStatus::Failed => TransactionStatus::Failed(Arc::new(
                         row.error.unwrap_or_else(|| "transaction failed".to_string()),
                     )),
                 },
-            )
-        }))
+            ))
+        })
+        .transpose()
     }
 
     #[instrument(skip(self))]

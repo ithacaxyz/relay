@@ -22,13 +22,13 @@ use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, Bytes, U256, uint},
+    primitives::{Address, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionError, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
-    rpc::types::TransactionRequest,
-    sol_types::{SolCall, SolEvent},
+    rpc::types::{TransactionReceipt, TransactionRequest},
+    sol_types::SolCall,
     transports::{RpcError, TransportErrorKind},
 };
 use chrono::Utc;
@@ -252,9 +252,10 @@ impl Signer {
     async fn on_confirmed_transaction(
         &self,
         tx: PendingTransaction,
-        tx_hash: B256,
+        receipt: TransactionReceipt,
     ) -> Result<(), StorageError> {
-        self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
+        self.update_tx_status(tx.id(), TransactionStatus::Confirmed(Box::new(receipt.clone())))
+            .await?;
         self.storage.remove_pending_transaction(tx.id()).await?;
 
         self.metrics
@@ -267,7 +268,7 @@ impl Signer {
 
         // Spawn a task to record metrics.
         let this = self.clone();
-        tokio::spawn(async move { this.record_confirmed_metrics(tx, tx_hash).await });
+        tokio::spawn(async move { this.record_confirmed_metrics(tx, receipt).await });
 
         Ok(())
     }
@@ -319,7 +320,7 @@ impl Signer {
     ) -> Result<(), SignerError> {
         if let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind {
             // Set payment recipient to us if it hasn't been set
-            let payment_recipient = &mut quote.ty_mut().intent.paymentRecipient;
+            let payment_recipient = &mut quote.output.paymentRecipient;
             if payment_recipient.is_zero() {
                 *payment_recipient = self.address();
             }
@@ -392,7 +393,7 @@ impl Signer {
     async fn watch_transaction_inner(
         &self,
         tx: &mut PendingTransaction,
-    ) -> Result<B256, SignerError> {
+    ) -> Result<TransactionReceipt, SignerError> {
         let mut last_sent_at = Instant::now();
 
         loop {
@@ -406,9 +407,9 @@ impl Signer {
                 handles.push(self.monitor.watch_transaction(*sent.tx_hash(), self.block_time * 2));
             }
 
-            while let Some(tx_hash) = handles.next().await {
-                if let Some(tx_hash) = tx_hash {
-                    return Ok(tx_hash);
+            while let Some(receipt_opt) = handles.next().await {
+                if let Some(receipt) = receipt_opt {
+                    return Ok(receipt);
                 }
             }
 
@@ -447,8 +448,8 @@ impl Signer {
         // todo: set parent span to context in pendingtx
         self.metrics.pending.increment(1);
         match self.watch_transaction_inner(&mut tx).await {
-            Ok(tx_hash) => {
-                self.on_confirmed_transaction(tx, tx_hash).await?;
+            Ok(receipt) => {
+                self.on_confirmed_transaction(tx, receipt).await?;
             }
             Err(err) => {
                 error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
@@ -460,11 +461,11 @@ impl Signer {
                 // After making sure that the nonce is occupied, check if it was occupied by one of
                 // the transactions sent before.
                 for sent in &tx.sent {
-                    if let Ok(Some(sent)) =
-                        self.provider.get_transaction_by_hash(*sent.tx_hash()).await
+                    if let Ok(Some(receipt)) =
+                        self.provider.get_transaction_receipt(*sent.tx_hash()).await
                     {
-                        if sent.block_number.is_some() {
-                            self.on_confirmed_transaction(tx, *sent.inner.tx_hash()).await?;
+                        if receipt.block_number.is_some() {
+                            self.on_confirmed_transaction(tx, receipt).await?;
                             return Ok(());
                         }
                     }
@@ -662,17 +663,12 @@ impl Signer {
     }
 
     /// Fetches receipt of a confirmed transaction and records metrics.
-    async fn record_confirmed_metrics(&self, tx: PendingTransaction, tx_hash: B256) {
+    async fn record_confirmed_metrics(&self, tx: PendingTransaction, receipt: TransactionReceipt) {
         if !tx.tx.is_intent() {
             return;
         }
 
-        // Fetch receipt
-        let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
-        else {
-            warn!(%tx_hash, "failed to fetch receipt of confirmed transaction");
-            return;
-        };
+        let tx_hash = receipt.transaction_hash;
 
         self.metrics.gas_spent.increment(receipt.gas_used as f64);
         self.metrics.native_spent.increment(f64::from(
@@ -685,9 +681,7 @@ impl Signer {
             return;
         }
 
-        let Some(event) =
-            receipt.logs().iter().rev().find_map(|log| IntentExecuted::decode_log(&log.inner).ok())
-        else {
+        let Some(event) = IntentExecuted::try_from_receipt(&receipt) else {
             warn!(%tx_hash, "failed to find IntentExecuted event in receipt");
             self.metrics.failed_intents.increment(1);
             return;

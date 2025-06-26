@@ -45,6 +45,8 @@ pub struct RelayConfig {
     pub delegation_proxy: Address,
     /// Simulator address.
     pub simulator: Address,
+    /// Funder address.
+    pub funder: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -75,6 +77,8 @@ pub struct ChainConfig {
     pub sequencer_endpoints: HashMap<Chain, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
+    /// A token that is supported for interop.
+    pub interop_tokens: Vec<Address>,
     /// The fee recipient address.
     ///
     /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
@@ -173,6 +177,8 @@ pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signers_mnemonic: Mnemonic<English>,
+    /// The funder KMS key or private key
+    pub funder_key: String,
 }
 
 impl Default for SecretsConfig {
@@ -182,6 +188,8 @@ impl Default for SecretsConfig {
                 "test test test test test test test test test test test junk",
             )
             .unwrap(),
+            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
         }
     }
 }
@@ -243,6 +251,7 @@ impl Default for RelayConfig {
                 endpoints: vec![],
                 sequencer_endpoints: HashMap::new(),
                 fee_tokens: vec![],
+                interop_tokens: vec![],
                 fee_recipient: Address::ZERO,
             },
             quote: QuoteConfig {
@@ -259,6 +268,7 @@ impl Default for RelayConfig {
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
+            funder: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -323,6 +333,12 @@ impl RelayConfig {
     /// Extends the list of fee tokens that the relay accepts.
     pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
         self.chain.fee_tokens.extend_from_slice(fee_tokens);
+        self
+    }
+
+    /// Extends the list of interop tokens that the relay accepts.
+    pub fn with_interop_tokens(mut self, interop_tokens: &[Address]) -> Self {
+        self.chain.interop_tokens.extend_from_slice(interop_tokens);
         self
     }
 
@@ -392,6 +408,14 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the funder address.
+    pub fn with_funder(mut self, funder: Option<Address>) -> Self {
+        if let Some(funder) = funder {
+            self.funder = funder;
+        }
+        self
+    }
+
     /// Sets the database URL.
     pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
         self.database_url = database_url;
@@ -443,6 +467,12 @@ impl RelayConfig {
     /// Sets the maximum number of pending transactions that can be handled by a single signer.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
+        self
+    }
+
+    /// Sets the funder signing key used to sign fund operations.
+    pub fn with_funder_key(mut self, funder_key: String) -> Self {
+        self.secrets.funder_key = funder_key;
         self
     }
 

@@ -6,11 +6,13 @@ use alloy::{
 };
 
 use crate::{
-    config::TransactionServiceConfig,
+    config::RelayConfig,
     provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
-    transactions::{TransactionService, TransactionServiceHandle},
+    transactions::{
+        InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
+    },
 };
 
 /// A single supported chain.
@@ -31,6 +33,8 @@ pub struct Chain {
 pub struct Chains {
     /// The providers for each chain.
     chains: HashMap<ChainId, Chain>,
+    /// Handle to the interop service.
+    interop: InteropServiceHandle,
 }
 
 impl Chains {
@@ -39,7 +43,7 @@ impl Chains {
         providers: Vec<DynProvider>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
-        config: TransactionServiceConfig,
+        config: &RelayConfig,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
@@ -47,7 +51,7 @@ impl Chains {
                     provider.clone(),
                     tx_signers.clone(),
                     storage.clone(),
-                    config.clone(),
+                    config.transactions.clone(),
                 )
                 .await?;
                 tokio::spawn(service);
@@ -62,7 +66,19 @@ impl Chains {
             .await?,
         );
 
-        Ok(Self { chains })
+        let providers_with_chain =
+            chains.iter().map(|(chain_id, chain)| (*chain_id, chain.provider.clone())).collect();
+        let tx_handles: HashMap<ChainId, TransactionServiceHandle> = chains
+            .iter()
+            .map(|(chain_id, chain)| (*chain_id, chain.transactions.clone()))
+            .collect();
+
+        // Create and spawn the interop service
+        let (interop_service, interop_handle) =
+            InteropService::new(providers_with_chain, tx_handles, config.funder).await?;
+        tokio::spawn(interop_service);
+
+        Ok(Self { chains, interop: interop_handle })
     }
 
     /// Get a provider for a given chain ID.
@@ -74,10 +90,18 @@ impl Chains {
     pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
         self.chains.keys()
     }
+
+    /// Get the interop service handle.
+    pub fn interop(&self) -> &InteropServiceHandle {
+        &self.interop
+    }
 }
 
 impl std::fmt::Debug for Chains {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Chains").field("providers", &self.chains.keys()).finish()
+        f.debug_struct("Chains")
+            .field("providers", &self.chains.keys())
+            .field("interop", &self.interop)
+            .finish()
     }
 }

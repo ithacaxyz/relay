@@ -1,5 +1,3 @@
-# Runs unit tests.
-
 name: unit
 
 on:
@@ -17,25 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: test – ${{ matrix.variant }}
-    strategy:
-      matrix:
-        variant: [local, base_sepolia, pg]
-    timeout-minutes: 30
+  # Build once and share artifacts with test jobs
+  build-contracts:
+    name: build-contracts
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,26 +30,77 @@ jobs:
         with:
           version: nightly
 
-      - name: Build account
+      - name: Build test contracts
         run: |
           cd tests/account
           forge build
           forge build lib/solady/test/utils/mocks/MockERC20.sol
           forge build lib/solady/test/utils/mocks/MockERC721.sol
 
+      - name: Upload test contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-contracts
+          path: tests/account/out
+          retention-days: 1
+
+  test:
+    name: test – ${{ matrix.variant }}
+    needs: build-contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [local, base_sepolia, pg]
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+
+    services:
+      # PostgreSQL only when the pg variant is selected
+      postgres:
+        image: ${{ matrix.variant == 'pg' && 'postgres' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+
+      - name: Download test contracts
+        uses: actions/download-artifact@v4
+        with:
+          name: test-contracts
+          path: tests/account/out
+
+      - name: Set TEST_CONTRACTS environment variable
+        run: echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
+
       - uses: taiki-e/install-action@nextest
 
       - name: Set fork environment
         if: ${{ matrix.variant == 'base_sepolia' }}
         run: |
           echo "TEST_FORK_URL=https://base-sepolia.rpc.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ORCHESTRATOR=0xc07eab4e9dfc65eeaf14b832aee89ab015f69673" >> $GITHUB_ENV
-          echo "TEST_PROXY=0xa569e2d7b565c7f4f7ddb022e06a1c68612792e0" >> $GITHUB_ENV
-          echo "TEST_SIMULATOR=0x6ef33a0e29073918d12e060814acd103807978e3" >> $GITHUB_ENV
+          echo "TEST_ORCHESTRATOR=0x8a222a12a8613ea934c33e15f280e7a83082433b" >> $GITHUB_ENV
+          echo "TEST_PROXY=0xa600fdc16765616106cf6c7d7b2bfe8d540bc3f2" >> $GITHUB_ENV
+          echo "TEST_SIMULATOR=0x7d89b79fb112989e5bccda333b7fb64df3825ee6" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}
@@ -81,13 +116,21 @@ jobs:
             ~/.config/.foundry/cache
           key: rpc-cache-${{ hashFiles('tests/assets/rpc-cache-keyfile') }}
 
+      - name: Set test filter
+        run: |
+          if [ "${{ matrix.variant }}" = "base_sepolia" ]; then
+            echo "TEST_FILTER=(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not (test(~multichain) or test(~multi_chain))" >> $GITHUB_ENV
+          else
+            echo "TEST_FILTER=kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" >> $GITHUB_ENV
+          fi
+
       - name: Run tests
         run: |
-          TEST_CONTRACTS=tests/account/out cargo nextest run \
+          cargo nextest run \
             --locked \
             --workspace \
-            -E "kind(lib) | kind(bin) | kind(proc-macro) | kind(test)" \
-            --no-tests=warn
+            -E "$TEST_FILTER" \
+            --no-fail-fast
 
   test-migrations:
     runs-on: ubuntu-latest
@@ -140,8 +183,8 @@ jobs:
     name: unit success
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, test-migrations]
-    timeout-minutes: 30
+    needs: [build-contracts, test, test-migrations]
+    timeout-minutes: 5
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@release/v1

@@ -1,8 +1,9 @@
-use crate::types::{Quote, SignedQuote};
+use crate::types::Quote;
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{Address, B256, Bytes, ChainId, TxKind, U256, wrap_fixed_bytes},
+    rpc::types::TransactionReceipt,
 };
 use chrono::{DateTime, Utc};
 use opentelemetry::Context;
@@ -26,7 +27,7 @@ pub enum RelayTransactionKind {
     /// An intent we need to relay for a user.
     Intent {
         /// [`Intent`] to send.
-        quote: Box<SignedQuote>,
+        quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
         authorization: Option<SignedAuthorization>,
     },
@@ -47,7 +48,7 @@ impl RelayTransactionKind {
     /// Returns the chain id of the transaction.
     pub fn chain_id(&self) -> u64 {
         match self {
-            Self::Intent { quote, .. } => quote.ty().chain_id,
+            Self::Intent { quote, .. } => quote.chain_id,
             Self::Internal { chain_id, .. } => *chain_id,
         }
     }
@@ -70,7 +71,7 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(quote: SignedQuote, authorization: Option<SignedAuthorization>) -> Self {
+    pub fn new(quote: Quote, authorization: Option<SignedAuthorization>) -> Self {
         Self {
             id: TxId(B256::random()),
             kind: RelayTransactionKind::Intent { quote: Box::new(quote), authorization },
@@ -93,12 +94,11 @@ impl RelayTransaction {
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
         match &self.kind {
             RelayTransactionKind::Intent { quote, authorization } => {
-                let gas_limit = quote.ty().tx_gas;
+                let gas_limit = quote.tx_gas;
                 let max_fee_per_gas = fees.max_fee_per_gas;
                 let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
-                let quote = quote.ty();
-                let mut intent = quote.intent.clone();
+                let mut intent = quote.output.clone();
 
                 let payment_amount = (quote.extra_payment
                     + (U256::from(gas_limit)
@@ -110,7 +110,7 @@ impl RelayTransaction {
                 intent.prePaymentAmount = payment_amount;
                 intent.totalPaymentAmount = payment_amount;
 
-                let input = intent.encode_execute();
+                let input = intent.encode_execute(quote.is_multi_chain);
 
                 if let Some(auth) = &authorization {
                     TxEip7702 {
@@ -164,7 +164,7 @@ impl RelayTransaction {
     /// Returns the maximum fee we can afford for a transaction.
     pub fn max_fee_for_transaction(&self) -> u128 {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
-            quote.ty().native_fee_estimate.max_fee_per_gas
+            quote.native_fee_estimate.max_fee_per_gas
         } else {
             u128::MAX
         }
@@ -173,7 +173,7 @@ impl RelayTransaction {
     /// Returns the EOA of the intent.
     pub fn eoa(&self) -> Option<&Address> {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
-            Some(&quote.ty().intent.eoa)
+            Some(&quote.output.eoa)
         } else {
             None
         }
@@ -181,11 +181,7 @@ impl RelayTransaction {
 
     /// Returns the [`Quote`] of the transaction, if it's a [`RelayTransactionKind::Intent`].
     pub fn quote(&self) -> Option<&Quote> {
-        if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
-            Some(quote.ty())
-        } else {
-            None
-        }
+        if let RelayTransactionKind::Intent { quote, .. } = &self.kind { Some(quote) } else { None }
     }
 
     /// Whether the transaction is an intent.
@@ -194,6 +190,7 @@ impl RelayTransaction {
     }
 }
 
+/// Error occurred while processing a transaction.
 pub trait TransactionFailureReason: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 impl<T> TransactionFailureReason for T where T: std::fmt::Display + std::fmt::Debug + Send + Sync {}
 
@@ -206,7 +203,7 @@ pub enum TransactionStatus {
     /// Transaction is pending.
     Pending(B256),
     /// Transaction has been confirmed.
-    Confirmed(B256),
+    Confirmed(Box<TransactionReceipt>),
     /// Failed to broadcast the transaction.
     Failed(Arc<dyn TransactionFailureReason>),
 }
@@ -220,7 +217,8 @@ impl TransactionStatus {
     /// The transaction hash of the transaction, if any.
     pub fn tx_hash(&self) -> Option<B256> {
         match self {
-            Self::Pending(hash) | Self::Confirmed(hash) => Some(*hash),
+            Self::Pending(hash) => Some(*hash),
+            Self::Confirmed(receipt) => Some(receipt.transaction_hash),
             _ => None,
         }
     }

@@ -71,7 +71,7 @@ async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error
 /// Asserts that transaction was confirmed.
 async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
     match wait_for_tx(events).await {
-        TransactionStatus::Confirmed(hash) => hash,
+        TransactionStatus::Confirmed(receipt) => receipt.transaction_hash,
         TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
         _ => unreachable!(),
     }
@@ -112,14 +112,14 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     .await
     .unwrap();
     // use a consistent seed
-    let rng = StdRng::seed_from_u64(KEY_SEED);
+    let mut rng = StdRng::seed_from_u64(KEY_SEED);
 
     let tx_service_handle =
         env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // setup accounts
     let num_accounts = 100;
-    let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
+    let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
             .buffered(10)
@@ -152,11 +152,11 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .into_iter()
         .map(|mut tx| {
             // Set invalid signature for some of the transactions
-            if rand::random_bool(0.5) {
+            if rng.random_bool(0.5) {
                 let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
                     unreachable!()
                 };
-                quote.ty_mut().intent.signature = Default::default();
+                quote.output.signature = Default::default();
                 invalid += 1;
             }
 
@@ -170,6 +170,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     }
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
+
+    // otherwise it will be marked as LEAK.
+    drop(env);
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(())
 }
