@@ -45,26 +45,24 @@ impl InteropBundle {
         id: BundleId,
         src_transactions: Vec<RelayTransaction>,
         dst_transactions: Vec<RelayTransaction>,
-    ) -> Result<Self, alloy::sol_types::Error> {
+    ) -> Self {
         // Calculate asset transfers from destination transactions
-        let asset_transfers = dst_transactions
+        let asset_transfers: Vec<_> = dst_transactions
             .iter()
-            .map(|tx| {
-                tx.quote.output.fund_transfers().map(|transfers| {
+            .filter_map(|tx| {
+                tx.quote.output.fund_transfers().ok().map(|transfers| {
                     transfers.into_iter().map(|(asset, amount)| (tx.quote.chain_id, asset, amount))
                 })
             })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
             .flatten()
-            .collect::<Vec<_>>();
+            .collect();
 
-        Ok(Self {
+        Self {
             id,
             src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
             dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
             asset_transfers,
-        })
+        }
     }
 }
 

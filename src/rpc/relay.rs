@@ -1258,7 +1258,7 @@ impl Relay {
         }
 
         // Create InteropBundle
-        Ok(InteropBundle::new(bundle_id, src_transactions, dst_transactions)?)
+        Ok(InteropBundle::new(bundle_id, src_transactions, dst_transactions))
     }
 }
 
