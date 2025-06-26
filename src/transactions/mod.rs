@@ -6,7 +6,8 @@ mod signer;
 pub use signer::*;
 mod transaction;
 pub use transaction::{
-    PendingTransaction, RelayTransaction, TransactionFailureReason, TransactionStatus, TxId,
+    PendingTransaction, RelayTransaction, RelayTransactionKind, TransactionFailureReason,
+    TransactionStatus, TxId,
 };
 mod fees;
 mod metrics;

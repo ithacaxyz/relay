@@ -354,8 +354,8 @@ impl InteropServiceInner {
             .dst_transactions
             .iter()
             .map(|tx| {
-                tx.quote.output.fund_transfers().map(|transfers| {
-                    transfers.into_iter().map(|(asset, amount)| (tx.quote.chain_id, asset, amount))
+                tx.quote().expect("should be a quote").output.fund_transfers().map(|transfers| {
+                    transfers.into_iter().map(|(asset, amount)| (tx.chain_id(), asset, amount))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?

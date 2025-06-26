@@ -470,20 +470,26 @@ impl TxQueue {
 
     /// Pushes a transaction to the queue. Returns false on error.
     fn push_transaction(&mut self, tx: RelayTransaction) -> Result<(), QueueError> {
-        if self.count_queued(tx.eoa()) >= self.max_queued_per_eoa {
+        let Some(eoa) = tx.eoa() else {
+            // fast path: internal transactions are never blocked
+            self.ready.push_back(tx);
+            return Ok(());
+        };
+
+        if self.count_queued(eoa) >= self.max_queued_per_eoa {
             return Err(QueueError::CapacityOverflow);
         }
 
         // if we have a pending transaction for this eoa, next transaction is blocked.
-        if self.eoa_to_pending.get(tx.eoa()).is_some_and(|p| !p.is_empty()) {
-            self.blocked.entry(*tx.eoa()).or_default().push_back(tx);
-        } else if self.ready_per_eoa.get(tx.eoa()).copied().unwrap_or_default() == 0 {
+        if self.eoa_to_pending.get(eoa).is_some_and(|p| !p.is_empty()) {
+            self.blocked.entry(*eoa).or_default().push_back(tx);
+        } else if self.ready_per_eoa.get(eoa).copied().unwrap_or_default() == 0 {
             // if there are no pending or ready transactions, push to ready queue
-            *self.ready_per_eoa.entry(*tx.eoa()).or_default() += 1;
+            *self.ready_per_eoa.entry(*eoa).or_default() += 1;
             self.ready.push_back(tx);
         } else {
             // otherwise, push to blocked queue
-            self.blocked.entry(*tx.eoa()).or_default().push_back(tx);
+            self.blocked.entry(*eoa).or_default().push_back(tx);
         }
 
         Ok(())
@@ -496,20 +502,24 @@ impl TxQueue {
 
     /// Invoked when a pending transaction is sent.
     fn on_sent_transaction(&mut self, tx: &RelayTransaction) {
-        self.eoa_to_pending.entry(*tx.eoa()).or_default().insert(tx.id);
-        self.pending_to_eoa.insert(tx.id, *tx.eoa());
+        let Some(eoa) = tx.eoa() else { return };
+        self.eoa_to_pending.entry(*eoa).or_default().insert(tx.id);
+        self.pending_to_eoa.insert(tx.id, *eoa);
     }
 
     /// Returns the next transaction from the ready queue. Assumes that it will be sent immediately
     /// and accounts for it.
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
-            if let Some(ready) = self.ready_per_eoa.get_mut(tx.eoa()) {
-                *ready -= 1;
-                if *ready == 0 {
-                    self.ready_per_eoa.remove(tx.eoa());
+            if let Some(eoa) = tx.eoa() {
+                if let Some(ready) = self.ready_per_eoa.get_mut(eoa) {
+                    *ready -= 1;
+                    if *ready == 0 {
+                        self.ready_per_eoa.remove(eoa);
+                    }
                 }
             }
+
             self.on_sent_transaction(tx)
         })
     }
@@ -526,7 +536,7 @@ impl TxQueue {
         // promote blocked, if any
         let Some(blocked) = self.blocked.get_mut(&eoa) else { return };
         if let Some(tx) = blocked.pop_front() {
-            *self.ready_per_eoa.entry(*tx.eoa()).or_default() += 1;
+            *self.ready_per_eoa.entry(eoa).or_default() += 1;
             self.ready.push_back(tx);
         };
         if blocked.is_empty() {

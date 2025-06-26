@@ -19,7 +19,7 @@ use relay::{
     config::TransactionServiceConfig,
     signers::DynSigner,
     storage::StorageApi,
-    transactions::{TransactionService, TransactionStatus},
+    transactions::{RelayTransactionKind, TransactionService, TransactionStatus},
     types::rpc::BundleId,
 };
 use std::{collections::HashSet, time::Duration};
@@ -153,7 +153,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .map(|mut tx| {
             // Set invalid signature for some of the transactions
             if rng.random_bool(0.5) {
-                tx.quote.output.signature = Default::default();
+                let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
+                    unreachable!()
+                };
+                quote.output.signature = Default::default();
                 invalid += 1;
             }
 
@@ -311,7 +314,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     // drop the transaction to make sure it's not mined
     env.drop_transaction(hash_0).await.unwrap();
 
-    let max_fee = tx_0.quote.native_fee_estimate.max_fee_per_gas;
+    let max_fee = tx_0.quote().unwrap().native_fee_estimate.max_fee_per_gas;
 
     // set next block base fee to a high value to make it look like tx is underpriced
     env.provider().anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
@@ -323,8 +326,8 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // we should see the fee increase and account for it
     assert!(
-        tx_1.quote.native_fee_estimate.max_fee_per_gas
-            > tx_0.quote.native_fee_estimate.max_fee_per_gas
+        tx_1.quote().unwrap().native_fee_estimate.max_fee_per_gas
+            > tx_0.quote().unwrap().native_fee_estimate.max_fee_per_gas
     );
 
     // enable block mining
