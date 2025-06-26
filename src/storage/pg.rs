@@ -17,7 +17,6 @@ use alloy::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
-use num_bigint::BigUint;
 use sqlx::{Connection, PgPool, types::BigDecimal};
 use tracing::instrument;
 
@@ -46,11 +45,11 @@ enum TxStatus {
 }
 
 fn numeric_to_u256(value: &BigDecimal) -> U256 {
-    U256::from_be_slice(&value.round(0).into_bigint_and_scale().0.to_bytes_be().1)
+    value.round(0).into_bigint_and_scale().0.try_into().unwrap()
 }
 
 fn u256_to_numeric(value: U256) -> BigDecimal {
-    BigDecimal::from_biguint(BigUint::from_bytes_be(value.to_be_bytes_vec().as_slice()), 0)
+    BigDecimal::from_biguint(value.into(), 0)
 }
 
 #[async_trait]

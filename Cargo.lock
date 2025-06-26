@@ -4791,6 +4791,7 @@ dependencies = [
  "rand 0.9.1",
  "reqwest",
  "resend-rs",
+ "ruint",
  "schnellru",
  "semver 1.0.26",
  "serde",
