@@ -1,7 +1,7 @@
 //! Relay storage
 
 mod api;
-pub use crate::transactions::interop::{BundleStatus, InteropBundle, TxIdOrTx};
+pub use crate::transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx};
 pub use api::StorageApi;
 
 mod memory;
@@ -128,28 +128,35 @@ impl StorageApi for RelayStorage {
         self.inner.ping().await
     }
 
-    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> api::Result<()> {
-        self.inner.update_pending_bundle(bundle).await
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.update_pending_bundle_status(bundle_id, status).await
     }
 
-    async fn get_pending_bundles(&self, quote_signer: Address) -> api::Result<Vec<InteropBundle>> {
+    async fn get_pending_bundles(
+        &self,
+        quote_signer: Address,
+    ) -> api::Result<Vec<BundleWithStatus>> {
         self.inner.get_pending_bundles(quote_signer).await
     }
 
-    async fn get_pending_bundle(&self, bundle_id: BundleId) -> api::Result<Option<InteropBundle>> {
+    async fn get_pending_bundle(
+        &self,
+        bundle_id: BundleId,
+    ) -> api::Result<Option<BundleWithStatus>> {
         self.inner.get_pending_bundle(bundle_id).await
-    }
-
-    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> api::Result<()> {
-        self.inner.delete_pending_bundle(bundle_id).await
     }
 
     async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &mut InteropBundle,
+        status: BundleStatus,
         is_source: bool,
     ) -> api::Result<()> {
-        self.inner.update_bundle_and_queue_transactions(bundle, is_source).await
+        self.inner.update_bundle_and_queue_transactions(bundle, status, is_source).await
     }
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> api::Result<()> {

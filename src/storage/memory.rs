@@ -4,7 +4,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{InteropBundle, TxIdOrTx},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -25,8 +25,8 @@ pub struct InMemoryStorage {
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
-    pending_bundles: DashMap<BundleId, InteropBundle>,
-    finished_bundles: DashMap<BundleId, InteropBundle>,
+    pending_bundles: DashMap<BundleId, (InteropBundle, BundleStatus)>,
+    finished_bundles: DashMap<BundleId, (InteropBundle, BundleStatus)>,
 }
 
 #[async_trait]
@@ -145,37 +145,45 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> Result<()> {
-        self.pending_bundles.insert(bundle.id, bundle.clone());
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()> {
+        if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
+            entry.1 = status;
+        }
         Ok(())
     }
 
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<InteropBundle>> {
+    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>> {
         // Return all bundles for the given quote_signer
         Ok(self
             .pending_bundles
             .iter()
-            .filter(|entry| entry.value().quote_signer == quote_signer)
-            .map(|entry| entry.value().clone())
+            .filter(|entry| entry.value().0.quote_signer == quote_signer)
+            .map(|entry| BundleWithStatus {
+                bundle: entry.value().0.clone(),
+                status: entry.value().1,
+            })
             .collect())
     }
 
-    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<InteropBundle>> {
-        Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
-    }
-
-    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> Result<()> {
-        self.pending_bundles.remove(&bundle_id);
-        Ok(())
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
+        Ok(self.pending_bundles.get(&bundle_id).map(|entry| BundleWithStatus {
+            bundle: entry.value().0.clone(),
+            status: entry.value().1,
+        }))
     }
 
     async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &mut InteropBundle,
+        status: BundleStatus,
         is_source: bool,
     ) -> Result<()> {
         // Update or insert the bundle in storage
-        self.pending_bundles.insert(bundle.id, bundle.clone());
+        self.pending_bundles.insert(bundle.id, (bundle.clone(), status));
 
         // Queue the appropriate transactions
         let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
@@ -191,8 +199,8 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()> {
-        if let Some((_, bundle)) = self.pending_bundles.remove(&bundle_id) {
-            self.finished_bundles.insert(bundle_id, bundle);
+        if let Some((_, bundle_with_status)) = self.pending_bundles.remove(&bundle_id) {
+            self.finished_bundles.insert(bundle_id, bundle_with_status);
             Ok(())
         } else {
             Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into())

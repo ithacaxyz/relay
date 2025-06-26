@@ -3,7 +3,8 @@
 use crate::{
     error::StorageError,
     transactions::{
-        PendingTransaction, RelayTransaction, TransactionStatus, TxId, interop::InteropBundle,
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -82,27 +83,30 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
 
-    /// Updates an existing pending bundle (status and/or transactions).
-    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> Result<()>;
+    /// Updates an existing pending bundle's status.
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()>;
 
     /// Gets all pending bundles for a specific quote_signer.
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<InteropBundle>>;
+    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>>;
 
     /// Gets a specific pending bundle by ID.
-    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<InteropBundle>>;
-
-    /// Deletes a pending bundle (should only be called on completion).
-    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> Result<()>;
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;
 
     /// Atomically update bundle and queue transactions.
     /// This ensures consistency between bundle state and transaction queuing.
     ///
     /// # Arguments
     /// * `bundle` - The bundle to update in storage
+    /// * `status` - The new status for the bundle
     /// * `is_source` - If true, queue source transactions; if false, queue destination transactions
     async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &mut InteropBundle,
+        status: BundleStatus,
         is_source: bool,
     ) -> Result<()>;
 

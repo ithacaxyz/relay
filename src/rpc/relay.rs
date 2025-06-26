@@ -14,7 +14,7 @@ use crate::{
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
-    transactions::interop::{BundleStatus, InteropBundle, TxIdOrTx},
+    transactions::interop::{InteropBundle, TxIdOrTx},
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
@@ -1203,10 +1203,10 @@ impl Relay {
         signature: Bytes,
         bundle_id: BundleId,
     ) -> RpcResult<BundleId> {
-        let persistent_bundle =
+        let bundle =
             self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
 
-        self.inner.chains.interop().send_bundle(persistent_bundle).map_err(RelayError::internal)?;
+        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
 
         Ok(bundle_id)
     }
@@ -1257,10 +1257,9 @@ impl Relay {
             }
         }
 
-        // Create PersistentBundle directly with Init status
+        // Create InteropBundle
         Ok(InteropBundle {
             id: bundle_id,
-            status: BundleStatus::Init,
             src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
             dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
             quote_signer: self.inner.quote_signer.address(),

@@ -7,7 +7,7 @@ CREATE TYPE bundle_status AS ENUM (
     'source_queued',
     'source_confirmed',
     'source_failures',
-    'destination_pending',
+    'destination_queued',
     'destination_failures',
     'destination_confirmed',
     'refunds_queued',

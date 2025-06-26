@@ -6,7 +6,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{InteropBundle, TxIdOrTx},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -370,20 +370,20 @@ impl StorageApi for PgStorage {
         }
     }
 
-    async fn update_pending_bundle(&self, bundle: &InteropBundle) -> Result<()> {
-        let bundle_json = serde_json::to_value(bundle)
-            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
-
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE pending_bundles 
-            SET status = $2, bundle_data = $3, updated_at = NOW()
+            SET status = $2, updated_at = NOW()
             WHERE bundle_id = $1
             "#,
         )
-        .bind(bundle.id.as_slice())
-        .bind(bundle.status)
-        .bind(&bundle_json)
+        .bind(bundle_id.as_slice())
+        .bind(status)
         .execute(&self.pool)
         .await
         .map_err(eyre::Error::from)?;
@@ -391,10 +391,10 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
-    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<InteropBundle>> {
-        let rows = sqlx::query_as::<_, (serde_json::Value,)>(
+    async fn get_pending_bundles(&self, quote_signer: Address) -> Result<Vec<BundleWithStatus>> {
+        let rows = sqlx::query_as::<_, (BundleStatus, serde_json::Value)>(
             r#"
-            SELECT bundle_data
+            SELECT status, bundle_data
             FROM pending_bundles
             WHERE quote_signer = $1
             ORDER BY created_at
@@ -406,17 +406,18 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         rows.into_iter()
-            .map(|(bundle_data,)| {
-                serde_json::from_value(bundle_data)
-                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e).into())
+            .map(|(status, bundle_data)| {
+                let bundle: InteropBundle = serde_json::from_value(bundle_data)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
+                Ok(BundleWithStatus { bundle, status })
             })
             .collect()
     }
 
-    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<InteropBundle>> {
-        let row = sqlx::query_as::<_, (serde_json::Value,)>(
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
+        let row = sqlx::query_as::<_, (BundleStatus, serde_json::Value)>(
             r#"
-            SELECT bundle_data
+            SELECT status, bundle_data
             FROM pending_bundles
             WHERE bundle_id = $1
             "#,
@@ -427,28 +428,19 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         match row {
-            Some((bundle_data,)) => {
-                let bundle = serde_json::from_value(bundle_data)
+            Some((status, bundle_data)) => {
+                let bundle: InteropBundle = serde_json::from_value(bundle_data)
                     .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
-                Ok(Some(bundle))
+                Ok(Some(BundleWithStatus { bundle, status }))
             }
             None => Ok(None),
         }
     }
 
-    async fn delete_pending_bundle(&self, bundle_id: BundleId) -> Result<()> {
-        sqlx::query("DELETE FROM pending_bundles WHERE bundle_id = $1")
-            .bind(bundle_id.as_slice())
-            .execute(&self.pool)
-            .await
-            .map_err(eyre::Error::from)?;
-
-        Ok(())
-    }
-
     async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &mut InteropBundle,
+        status: BundleStatus,
         is_source: bool,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
@@ -496,7 +488,7 @@ impl StorageApi for PgStorage {
             "#,
         )
         .bind(bundle.id.as_slice())
-        .bind(bundle.status)
+        .bind(status)
         .bind(&bundle_json)
         .bind(format!("{:?}", bundle.quote_signer))
         .execute(&mut *tx)

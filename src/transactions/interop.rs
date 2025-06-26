@@ -28,14 +28,21 @@ use tracing::{error, instrument};
 pub struct InteropBundle {
     /// Unique identifier for the bundle.
     pub id: BundleId,
-    /// Bundle status
-    pub status: BundleStatus,
     /// Source chain transactions (can be IDs or full transactions)
     pub src_txs: Vec<TxIdOrTx>,
     /// Destination chain transactions (can be IDs or full transactions)
     pub dst_txs: Vec<TxIdOrTx>,
     /// Quote signer address that created this bundle
     pub quote_signer: Address,
+}
+
+/// Bundle with its current status
+#[derive(Debug, Clone)]
+pub struct BundleWithStatus {
+    /// The interop bundle containing transaction data
+    pub bundle: InteropBundle,
+    /// Current status of the bundle in the processing pipeline
+    pub status: BundleStatus,
 }
 
 /// Errors that can occur during interop bundle processing.
@@ -144,8 +151,8 @@ impl From<Arc<dyn TransactionFailureReason>> for InteropBundleError {
 /// Messages that can be sent to the interop service.
 #[derive(Debug)]
 pub enum InteropServiceMessage {
-    /// Send a [`PersistentBundle`].
-    SendBundle(InteropBundle),
+    /// Send a bundle with status.
+    SendBundleWithStatus(BundleWithStatus),
 }
 
 /// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
@@ -359,7 +366,16 @@ impl InteropServiceHandle {
         &self,
         bundle: InteropBundle,
     ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
-        self.command_tx.send(InteropServiceMessage::SendBundle(bundle))
+        // New bundles start with Init status
+        self.send_bundle_with_status(BundleWithStatus { bundle, status: BundleStatus::Init })
+    }
+
+    /// Sends a bundle with status to the service.
+    pub fn send_bundle_with_status(
+        &self,
+        bundle: BundleWithStatus,
+    ) -> Result<(), mpsc::error::SendError<InteropServiceMessage>> {
+        self.command_tx.send(InteropServiceMessage::SendBundleWithStatus(bundle))
     }
 }
 
@@ -384,13 +400,14 @@ impl InteropServiceInner {
     /// Handle the Init status - check liquidity and queue source transactions
     ///
     /// Transitions to: `SourceQueued`
-    async fn on_init(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Initializing bundle");
+    async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Initializing bundle");
 
         // TODO: Check and lock liquidity
 
         // Extract source transactions before update (since update will modify the bundle)
         let src_transactions: Vec<RelayTransaction> = bundle
+            .bundle
             .src_txs
             .iter()
             .filter_map(|tx| match tx {
@@ -402,7 +419,7 @@ impl InteropServiceInner {
         // Update status and queue source transactions atomically
         bundle.status = BundleStatus::SourceQueued;
         self.storage
-            .update_bundle_and_queue_transactions(bundle, true)
+            .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, true)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
 
@@ -415,24 +432,27 @@ impl InteropServiceInner {
     /// Handle the SourceQueued status - wait for source transactions to complete
     ///
     /// Transitions to: `SourceConfirmed` or `SourceFailures`
-    async fn on_source_queued(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Processing source transactions");
+    async fn on_source_queued(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing source transactions");
 
         // Process source transactions (waits for completion)
-        match self.process_source_transactions(bundle).await {
+        match self.process_source_transactions(&bundle.bundle).await {
             Ok(()) => {
                 // Update status to source confirmed
                 bundle.status = BundleStatus::SourceConfirmed;
             }
             Err(e) => {
                 // Update status to source failures
-                tracing::error!(bundle_id = ?bundle.id, error = ?e, "Source transactions failed");
+                tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Source transactions failed");
                 bundle.status = BundleStatus::SourceFailures;
             }
         }
 
         self.storage
-            .update_pending_bundle(bundle)
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -443,12 +463,13 @@ impl InteropServiceInner {
     /// Transitions to: `DestinationQueued`
     async fn on_source_confirmed(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Processing destination transactions");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
         // Extract destination transactions before update.
         let dst_transactions: Vec<RelayTransaction> = bundle
+            .bundle
             .dst_txs
             .iter()
             .filter_map(|tx| match tx {
@@ -460,7 +481,7 @@ impl InteropServiceInner {
         // Update status and queue destination transactions atomically
         bundle.status = BundleStatus::DestinationQueued;
         self.storage
-            .update_bundle_and_queue_transactions(bundle, false)
+            .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, false)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
 
@@ -475,10 +496,10 @@ impl InteropServiceInner {
     /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
     async fn on_source_failures(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         tracing::warn!(
-            bundle_id = ?bundle.id,
+            bundle_id = ?bundle.bundle.id,
             "Handling source failures - TODO: implement retry logic or manual intervention"
         );
 
@@ -491,25 +512,25 @@ impl InteropServiceInner {
     /// Transitions to: `DestinationConfirmed` or `DestinationFailures`
     async fn on_destination_queued(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Processing destination transactions");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
         // Process destination transactions (waits for completion)
-        match self.process_destination_transactions(bundle).await {
+        match self.process_destination_transactions(&bundle.bundle).await {
             Ok(()) => {
                 // Update status to destination confirmed
                 bundle.status = BundleStatus::DestinationConfirmed;
             }
             Err(e) => {
                 // Update status to destination failures
-                tracing::error!(bundle_id = ?bundle.id, error = ?e, "Destination transactions failed");
+                tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Destination transactions failed");
                 bundle.status = BundleStatus::DestinationFailures;
             }
         }
 
         self.storage
-            .update_pending_bundle(bundle)
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -520,10 +541,10 @@ impl InteropServiceInner {
     /// Transitions to: `RefundsQueued` OR `Failed` (TODO: implement logic)
     async fn on_destination_failures(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         tracing::warn!(
-            bundle_id = ?bundle.id,
+            bundle_id = ?bundle.bundle.id,
             "Handling destination failures - TODO: implement retry logic or refund mechanism"
         );
 
@@ -537,14 +558,14 @@ impl InteropServiceInner {
     /// Transitions to: `WithdrawalsQueued`
     async fn on_destination_confirmed(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "All transactions confirmed, processing withdrawals");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing withdrawals");
         // TODO: Queue withdrawal transactions
         // For now, transition to WithdrawalsQueued state
         bundle.status = BundleStatus::WithdrawalsQueued;
         self.storage
-            .update_pending_bundle(bundle)
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -555,16 +576,16 @@ impl InteropServiceInner {
     /// Transitions to: `Failed`
     async fn on_refunds_queued(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Processing refunds");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing refunds");
 
         // TODO: Implement refund processing logic
         // - Check if refunds are confirmed
         // - If confirmed, transition to Failed or other
         bundle.status = BundleStatus::Failed;
         self.storage
-            .update_pending_bundle(bundle)
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -575,15 +596,15 @@ impl InteropServiceInner {
     /// Transitions to: `Done`
     async fn on_withdrawals_queued(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Processing withdrawals");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing withdrawals");
 
         // TODO: Implement withdrawal processing logic
 
         bundle.status = BundleStatus::Done;
         self.storage
-            .update_pending_bundle(bundle)
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -592,12 +613,12 @@ impl InteropServiceInner {
     /// Handle the Done status - finalize the bundle
     ///
     /// Terminal state - moves bundle to finished_bundles table and exits
-    async fn on_done(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.id, "Bundle completed successfully");
+    async fn on_done(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Bundle completed successfully");
 
         // Move bundle to finished_bundles table
         self.storage
-            .move_bundle_to_finished(bundle.id)
+            .move_bundle_to_finished(bundle.bundle.id)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -606,12 +627,12 @@ impl InteropServiceInner {
     /// Handle the Failed status - finalize the failed bundle
     ///
     /// Terminal state - moves bundle to finished_bundles table and exits
-    async fn on_failed(&self, bundle: &mut InteropBundle) -> Result<(), InteropBundleError> {
-        tracing::error!(bundle_id = ?bundle.id, "Bundle is in failed state");
+    async fn on_failed(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
+        tracing::error!(bundle_id = ?bundle.bundle.id, "Bundle is in failed state");
 
         // Move bundle to finished_bundles table
         self.storage
-            .move_bundle_to_finished(bundle.id)
+            .move_bundle_to_finished(bundle.bundle.id)
             .await
             .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
@@ -780,8 +801,11 @@ impl InteropServiceInner {
     ///                  ▼                                 ▼
     ///                 Done                            Failed
     /// ```
-    #[instrument(skip(self, bundle), fields(bundle_id = %bundle.id))]
-    async fn send_and_watch_bundle(&self, bundle: InteropBundle) -> Result<(), InteropBundleError> {
+    #[instrument(skip(self, bundle), fields(bundle_id = %bundle.bundle.id))]
+    async fn send_and_watch_bundle_with_status(
+        &self,
+        bundle: BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
         let mut persistent_bundle = bundle;
 
         loop {
@@ -857,14 +881,14 @@ impl InteropService {
 
         for bundle in pending_bundles {
             tracing::info!(
-                bundle_id = ?bundle.id,
+                bundle_id = ?bundle.bundle.id,
                 status = ?bundle.status,
-                src_count = bundle.src_txs.len(),
-                dst_count = bundle.dst_txs.len(),
+                src_count = bundle.bundle.src_txs.len(),
+                dst_count = bundle.bundle.dst_txs.len(),
                 "Resume pending interop bundles from disk"
             );
 
-            handle.send_bundle(bundle)?;
+            handle.send_bundle_with_status(bundle)?;
         }
 
         Ok((service, handle))
@@ -877,10 +901,10 @@ impl Future for InteropService {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         while let Poll::Ready(Some(command)) = self.command_rx.poll_recv(cx) {
             match command {
-                InteropServiceMessage::SendBundle(bundle) => {
+                InteropServiceMessage::SendBundleWithStatus(bundle) => {
                     let inner = Arc::clone(&self.inner);
                     tokio::spawn(async move {
-                        if let Err(e) = inner.send_and_watch_bundle(bundle).await {
+                        if let Err(e) = inner.send_and_watch_bundle_with_status(bundle).await {
                             error!("Failed to process interop bundle: {:?}", e);
                         }
                     });
