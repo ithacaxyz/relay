@@ -463,8 +463,7 @@ impl InteropServiceInner {
         bundle.status = BundleStatus::SourceQueued;
         self.storage
             .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, true)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+            .await?;
 
         // Send the transactions
         self.send_transactions(&src_transactions).await?;
@@ -494,10 +493,7 @@ impl InteropServiceInner {
             }
         }
 
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -525,8 +521,7 @@ impl InteropServiceInner {
         bundle.status = BundleStatus::DestinationQueued;
         self.storage
             .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, false)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+            .await?;
 
         // Send the transactions
         self.send_transactions(&dst_transactions).await?;
@@ -548,10 +543,7 @@ impl InteropServiceInner {
         );
         // TODO: Issue refunds if any of the sources transactions passed.
         bundle.status = BundleStatus::Failed;
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -578,10 +570,7 @@ impl InteropServiceInner {
             }
         }
 
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -600,10 +589,7 @@ impl InteropServiceInner {
 
         // TODO: update bundle to RefundsQueued and process Refunds
         bundle.status = BundleStatus::Failed;
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
 
         Ok(())
     }
@@ -619,10 +605,7 @@ impl InteropServiceInner {
         // TODO: Queue withdrawal transactions
         // For now, transition to WithdrawalsQueued state
         bundle.status = BundleStatus::WithdrawalsQueued;
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -639,10 +622,7 @@ impl InteropServiceInner {
         // - Check if refunds are confirmed
         // - If confirmed, transition to Failed or other
         bundle.status = BundleStatus::Failed;
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -658,10 +638,7 @@ impl InteropServiceInner {
         // TODO: Implement withdrawal processing logic
 
         bundle.status = BundleStatus::Done;
-        self.storage
-            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
         Ok(())
     }
 
@@ -672,10 +649,7 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Bundle completed successfully");
 
         // Move bundle to finished_bundles table
-        self.storage
-            .move_bundle_to_finished(bundle.bundle.id)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.move_bundle_to_finished(bundle.bundle.id).await?;
         Ok(())
     }
 
@@ -686,10 +660,7 @@ impl InteropServiceInner {
         tracing::error!(bundle_id = ?bundle.bundle.id, "Bundle is in failed state");
 
         // Move bundle to finished_bundles table
-        self.storage
-            .move_bundle_to_finished(bundle.bundle.id)
-            .await
-            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        self.storage.move_bundle_to_finished(bundle.bundle.id).await?;
         Ok(())
     }
 
@@ -701,8 +672,7 @@ impl InteropServiceInner {
         let statuses = futures_util::future::try_join_all(
             tx_ids.iter().map(|tx_id| self.storage.read_transaction_status(*tx_id)),
         )
-        .await
-        .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
+        .await?;
 
         Ok(statuses)
     }
