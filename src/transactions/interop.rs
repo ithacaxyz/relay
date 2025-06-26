@@ -58,9 +58,9 @@ impl InteropBundle {
         let asset_transfers: Vec<_> = dst_transactions
             .iter()
             .filter_map(|tx| {
-                tx.quote.output.fund_transfers().ok().map(|transfers| {
+                tx.quote()?.output.fund_transfers().ok().map(|transfers| {
                     transfers.into_iter().map(|(asset, amount)| AssetTransfer {
-                        chain_id: tx.quote.chain_id,
+                        chain_id: tx.chain_id(),
                         asset_address: asset,
                         amount,
                     })
@@ -814,7 +814,9 @@ impl InteropServiceInner {
         for (transfer, tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
             let block = receipts.get(&tx.id()).and_then(|r| r.block_number).unwrap_or_default();
 
-            self.liquidity_tracker.unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block).await;
+            self.liquidity_tracker
+                .unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block)
+                .await;
         }
 
         maybe_err

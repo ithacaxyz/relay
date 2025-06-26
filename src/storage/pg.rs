@@ -482,7 +482,7 @@ impl StorageApi for PgStorage {
                     ON CONFLICT (tx_id) DO NOTHING
                     "#,
                     relay_tx.id.as_slice(),
-                    relay_tx.quote.chain_id as i64,
+                    relay_tx.chain_id() as i64,
                     relay_tx_json
                 )
                 .execute(&mut *tx)

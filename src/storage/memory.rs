@@ -150,10 +150,7 @@ impl StorageApi for InMemoryStorage {
         bundle: &InteropBundle,
         status: BundleStatus,
     ) -> Result<()> {
-        self.pending_bundles.insert(bundle.id, BundleWithStatus {
-            bundle: bundle.clone(),
-            status,
-        });
+        self.pending_bundles.insert(bundle.id, BundleWithStatus { bundle: bundle.clone(), status });
         Ok(())
     }
 
@@ -170,11 +167,7 @@ impl StorageApi for InMemoryStorage {
 
     async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
         // Return all bundles
-        Ok(self
-            .pending_bundles
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect())
+        Ok(self.pending_bundles.iter().map(|entry| entry.value().clone()).collect())
     }
 
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
@@ -192,9 +185,9 @@ impl StorageApi for InMemoryStorage {
 
         for tx_or_id in transactions.iter_mut() {
             if let TxIdOrTx::Tx(tx) = tx_or_id {
-                let chain_id = tx.quote.chain_id;
+                let chain_id = tx.chain_id();
                 self.queued_transactions.entry(chain_id).or_default().push((**tx).clone());
-                
+
                 // Replace with ID after queueing
                 let tx_id = tx.id;
                 *tx_or_id = TxIdOrTx::Id(tx_id);
@@ -202,10 +195,7 @@ impl StorageApi for InMemoryStorage {
         }
 
         // Update the bundle in storage with just tx id
-        self.pending_bundles.insert(bundle.id, BundleWithStatus {
-            bundle: bundle.clone(),
-            status,
-        });
+        self.pending_bundles.insert(bundle.id, BundleWithStatus { bundle: bundle.clone(), status });
 
         Ok(())
     }
