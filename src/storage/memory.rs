@@ -14,10 +14,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, HashMap};
 use tokio::sync::RwLock;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
@@ -30,7 +27,7 @@ pub struct InMemoryStorage {
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
-    liquidity: Arc<RwLock<LiquidityTrackerInner>>,
+    liquidity: RwLock<LiquidityTrackerInner>,
 }
 
 #[async_trait]
@@ -171,12 +168,11 @@ impl StorageApi for InMemoryStorage {
         Ok(self.liquidity.read().await.get_total_locked_at(asset, at))
     }
 
-    async fn remove_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
         let mut lock = self.liquidity.write().await;
         let LiquidityTrackerInner { locked_liquidity, pending_unlocks } = &mut *lock;
         for (asset, unlocks) in pending_unlocks {
             if asset.0 == chain_id {
-                // Keep 10 blocks of pending unlocks
                 let to_keep = unlocks.split_off(&until);
                 let to_remove = core::mem::replace(unlocks, to_keep);
 
@@ -227,7 +223,7 @@ impl LiquidityTrackerInner {
     ) -> Result<()> {
         // Make sure that we have enough funds for all transfers
         if assets.iter().any(|(asset, input)| {
-            let locked = self.get_total_locked_at(*asset, input.balance_at);
+            let locked = self.get_total_locked_at(*asset, input.block_number);
             input.lock_amount + locked > input.current_balance
         }) {
             return Err(StorageError::CantLockLiquidity);

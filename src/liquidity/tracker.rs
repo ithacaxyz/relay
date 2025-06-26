@@ -58,7 +58,7 @@ impl LiquidityTracker {
                         let latest_block = provider.get_block_number().await?;
                         // Remove everything older than 10 blocks
                         storage
-                            .remove_unlocked_entries(*chain, latest_block.saturating_sub(10))
+                            .prune_unlocked_entries(*chain, latest_block.saturating_sub(10))
                             .await?;
                         eyre::Ok(())
                     })
@@ -139,7 +139,7 @@ impl LiquidityTracker {
                     (chain, asset),
                     LockLiquidityInput {
                         current_balance: balance,
-                        balance_at: block_number,
+                        block_number,
                         lock_amount: amount,
                     },
                 ))

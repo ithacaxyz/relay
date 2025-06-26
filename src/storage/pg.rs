@@ -325,6 +325,7 @@ impl StorageApi for PgStorage {
             .collect::<std::result::Result<_, _>>()?)
     }
 
+    #[instrument(skip_all)]
     async fn verified_email_exists(&self, email: &str) -> Result<bool> {
         let exists = sqlx::query!(
             "select * from emails where email = $1 and verified_at is not null",
@@ -338,6 +339,7 @@ impl StorageApi for PgStorage {
         Ok(exists)
     }
 
+    #[instrument(skip_all)]
     async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
         sqlx::query!(
             "insert into emails (address, email, token) values ($1, $2, $3) on conflict(address, email) do update set token = $3",
@@ -357,6 +359,7 @@ impl StorageApi for PgStorage {
     /// Should remove any other verified emails for the same account address.
     ///
     /// Returns true if the email was verified successfully.
+    #[instrument(skip_all)]
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
         let affected = sqlx::query!(
             "update emails set verified_at = now() where address = $1 and email = $2 and token = $3",
@@ -371,6 +374,7 @@ impl StorageApi for PgStorage {
         Ok(affected.rows_affected() > 0)
     }
 
+    #[instrument(skip_all)]
     async fn ping(&self) -> Result<()> {
         if let Some(mut connection) = self.pool.try_acquire() {
             connection.ping().await.map_err(eyre::Error::from).map_err(Into::into)
@@ -379,6 +383,7 @@ impl StorageApi for PgStorage {
         }
     }
 
+    #[instrument(skip_all)]
     async fn try_lock_liquidity(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
@@ -447,7 +452,7 @@ impl StorageApi for PgStorage {
                 .filter(|row| {
                     row.chain_id == chain as i64
                         && row.asset_address == asset.as_slice()
-                        && row.block_number <= input.balance_at as i64
+                        && row.block_number <= input.block_number as i64
                 })
                 .map(|row| numeric_to_u256(&row.amount))
                 .sum::<U256>();
@@ -472,6 +477,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn unlock_liquidity(
         &self,
         asset: ChainAddress,
@@ -492,6 +498,7 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> Result<U256> {
         let locked = sqlx::query!(
             "select coalesce(sum(amount), 0) from locked_liquidity where chain_id = $1 and asset_address = $2",
@@ -518,7 +525,8 @@ impl StorageApi for PgStorage {
         Ok(locked.saturating_sub(unlocked))
     }
 
-    async fn remove_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
+    #[instrument(skip_all)]
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
         let rows = sqlx::query!(

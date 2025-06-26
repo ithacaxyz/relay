@@ -23,7 +23,7 @@ pub struct LockLiquidityInput {
     /// Current balance of the asset fetched from provider.
     pub current_balance: U256,
     /// Block number at which the balance was fetched.
-    pub balance_at: BlockNumber,
+    pub block_number: BlockNumber,
     /// Amount of the asset we are trying to lock.
     pub lock_amount: U256,
 }
@@ -110,7 +110,7 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets total locked liquidity for the given asset.
     async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> Result<U256>;
 
-    /// Removes unlocked entries up until the given block number and subtracts them from the total
-    /// locked amount.
-    async fn remove_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()>;
+    /// Removes unlocked entries up until the given block number (inclusive), including it and
+    /// subtracts them from the total locked amount.
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()>;
 }
