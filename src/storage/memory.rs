@@ -187,21 +187,25 @@ impl StorageApi for InMemoryStorage {
         status: BundleStatus,
         is_source: bool,
     ) -> Result<()> {
-        // Update or insert the bundle in storage
+        // Queue the appropriate transactions
+        let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
+
+        for tx_or_id in transactions.iter_mut() {
+            if let TxIdOrTx::Tx(tx) = tx_or_id {
+                let chain_id = tx.quote.chain_id;
+                self.queued_transactions.entry(chain_id).or_default().push((**tx).clone());
+                
+                // Replace with ID after queueing
+                let tx_id = tx.id;
+                *tx_or_id = TxIdOrTx::Id(tx_id);
+            }
+        }
+
+        // Update the bundle in storage with just tx id
         self.pending_bundles.insert(bundle.id, BundleWithStatus {
             bundle: bundle.clone(),
             status,
         });
-
-        // Queue the appropriate transactions
-        let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
-
-        for tx_or_id in transactions {
-            if let TxIdOrTx::Tx(tx) = tx_or_id {
-                let chain_id = tx.quote.chain_id;
-                self.queued_transactions.entry(chain_id).or_default().push((**tx).clone());
-            }
-        }
 
         Ok(())
     }
