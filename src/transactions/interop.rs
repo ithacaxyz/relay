@@ -546,8 +546,12 @@ impl InteropServiceInner {
             bundle_id = ?bundle.bundle.id,
             "Handling source failures - TODO: implement retry logic or manual intervention"
         );
-
         // TODO: Issue refunds if any of the sources transactions passed.
+        bundle.status = BundleStatus::Failed;
+        self.storage
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
         Ok(())
     }
 
@@ -595,6 +599,11 @@ impl InteropServiceInner {
         );
 
         // TODO: update bundle to RefundsQueued and process Refunds
+        bundle.status = BundleStatus::Failed;
+        self.storage
+            .update_pending_bundle_status(bundle.bundle.id, bundle.status)
+            .await
+            .map_err(|e| InteropBundleError::TransactionError(Arc::new(e.to_string())))?;
 
         Ok(())
     }
