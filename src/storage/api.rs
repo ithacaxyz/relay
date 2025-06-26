@@ -107,8 +107,9 @@ pub trait StorageApi: Debug + Send + Sync {
     /// This ensures consistency between bundle state and transaction queuing.
     ///
     /// # Arguments
-    /// * `bundle` - The mutable bundle to update in storage. The selected transactions (`src_txs` if 
-    ///   `is_source=true`, `dst_txs` if `is_source=false`) will be queued and replaced with their [`TxId`]
+    /// * `bundle` - The mutable bundle to update in storage. The selected transactions (`src_txs`
+    ///   if `is_source=true`, `dst_txs` if `is_source=false`) will be queued and replaced with
+    ///   their [`TxId`]
     /// * `status` - The new status for the bundle
     /// * `is_source` - If true, queue source transactions; if false, queue destination transactions
     async fn update_bundle_and_queue_transactions(

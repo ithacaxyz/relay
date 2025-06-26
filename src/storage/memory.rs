@@ -25,8 +25,8 @@ pub struct InMemoryStorage {
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
-    pending_bundles: DashMap<BundleId, (InteropBundle, BundleStatus)>,
-    finished_bundles: DashMap<BundleId, (InteropBundle, BundleStatus)>,
+    pending_bundles: DashMap<BundleId, BundleWithStatus>,
+    finished_bundles: DashMap<BundleId, BundleWithStatus>,
 }
 
 #[async_trait]
@@ -150,7 +150,10 @@ impl StorageApi for InMemoryStorage {
         bundle: &InteropBundle,
         status: BundleStatus,
     ) -> Result<()> {
-        self.pending_bundles.insert(bundle.id, (bundle.clone(), status));
+        self.pending_bundles.insert(bundle.id, BundleWithStatus {
+            bundle: bundle.clone(),
+            status,
+        });
         Ok(())
     }
 
@@ -160,7 +163,7 @@ impl StorageApi for InMemoryStorage {
         status: BundleStatus,
     ) -> Result<()> {
         if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
-            entry.1 = status;
+            entry.status = status;
         }
         Ok(())
     }
@@ -170,18 +173,12 @@ impl StorageApi for InMemoryStorage {
         Ok(self
             .pending_bundles
             .iter()
-            .map(|entry| BundleWithStatus {
-                bundle: entry.value().0.clone(),
-                status: entry.value().1,
-            })
+            .map(|entry| entry.value().clone())
             .collect())
     }
 
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
-        Ok(self.pending_bundles.get(&bundle_id).map(|entry| BundleWithStatus {
-            bundle: entry.value().0.clone(),
-            status: entry.value().1,
-        }))
+        Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
     }
 
     async fn update_bundle_and_queue_transactions(
@@ -191,7 +188,10 @@ impl StorageApi for InMemoryStorage {
         is_source: bool,
     ) -> Result<()> {
         // Update or insert the bundle in storage
-        self.pending_bundles.insert(bundle.id, (bundle.clone(), status));
+        self.pending_bundles.insert(bundle.id, BundleWithStatus {
+            bundle: bundle.clone(),
+            status,
+        });
 
         // Queue the appropriate transactions
         let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
