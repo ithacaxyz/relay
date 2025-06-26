@@ -23,8 +23,16 @@ use std::{
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, instrument};
 
-/// Asset transfer information: (chain_id, asset_address, amount)
-type AssetTransfer = (ChainId, Address, U256);
+/// Asset transfer information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetTransfer {
+    /// The chain ID where the asset transfer occurs
+    pub chain_id: ChainId,
+    /// The address of the asset being transferred (0x0 for native token)
+    pub asset_address: Address,
+    /// The amount of the asset to transfer
+    pub amount: U256,
+}
 
 /// Persistent bundle structure that stores full transaction data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +59,11 @@ impl InteropBundle {
             .iter()
             .filter_map(|tx| {
                 tx.quote.output.fund_transfers().ok().map(|transfers| {
-                    transfers.into_iter().map(|(asset, amount)| (tx.quote.chain_id, asset, amount))
+                    transfers.into_iter().map(|(asset, amount)| AssetTransfer {
+                        chain_id: tx.quote.chain_id,
+                        asset_address: asset,
+                        amount,
+                    })
                 })
             })
             .flatten()
@@ -337,7 +349,7 @@ impl LiquidityTracker {
         // Deduplicate assets by chain and asset address
         let inputs: HashMap<_, U256> = assets
             .into_iter()
-            .map(|(chain, asset, amount)| ((chain, asset), amount))
+            .map(|transfer| ((transfer.chain_id, transfer.asset_address), transfer.amount))
             .fold(HashMap::default(), |mut map, (k, v)| {
                 *map.entry(k).or_default() += v;
                 map
@@ -799,10 +811,10 @@ impl InteropServiceInner {
             }
         }
 
-        for ((chain_id, asset, amount), tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
+        for (transfer, tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
             let block = receipts.get(&tx.id()).and_then(|r| r.block_number).unwrap_or_default();
 
-            self.liquidity_tracker.unlock_liquidity(*chain_id, *asset, *amount, block).await;
+            self.liquidity_tracker.unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block).await;
         }
 
         maybe_err
