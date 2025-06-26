@@ -27,14 +27,31 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::{broadcast, mpsc, oneshot},
+    task::JoinSet,
+};
 use tracing::{debug, error};
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
     /// Message to send a transaction and receive events about the status of the transaction.
-    SendTransaction(RelayTransaction, mpsc::UnboundedSender<TransactionStatus>),
+    SendTransaction(RelayTransaction, broadcast::Sender<TransactionStatus>),
+    /// Subscribe to status updates for a specific transaction.
+    Subscribe(TxId, oneshot::Sender<Option<broadcast::Receiver<TransactionStatus>>>),
+}
+
+/// Errors that may occur when interacting with the [`TransactionService`].
+#[derive(Debug, thiserror::Error)]
+pub enum TransactionServiceError {
+    /// Error occurred while interacting with storage.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+
+    /// Failed to wait for transaction.
+    #[error("failed to wait for transaction")]
+    FailedToWaitForTransaction,
 }
 
 /// Handle to communicate with the [`TransactionService`].
@@ -49,11 +66,40 @@ impl TransactionServiceHandle {
     pub async fn send_transaction(
         &self,
         tx: RelayTransaction,
-    ) -> Result<mpsc::UnboundedReceiver<TransactionStatus>, StorageError> {
+    ) -> Result<broadcast::Receiver<TransactionStatus>, StorageError> {
         self.storage.write_queued_transaction(&tx).await?;
-        let (status_tx, status_rx) = mpsc::unbounded_channel();
+        let (status_tx, status_rx) = broadcast::channel(100);
         let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
         Ok(status_rx)
+    }
+
+    /// Waits for a transaction to be confirmed or failed.
+    pub async fn wait_for_tx(
+        &self,
+        tx_id: TxId,
+    ) -> Result<TransactionStatus, TransactionServiceError> {
+        // Firstly attempt to get the stream of status updates.
+        let (status_tx, status_rx) = oneshot::channel();
+        let _ = self.command_tx.send(TransactionServiceMessage::Subscribe(tx_id, status_tx));
+        let status_rx = status_rx.await.ok().flatten();
+
+        // Now check the status in storage
+        if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await? {
+            if status.is_final() {
+                return Ok(status.clone());
+            }
+        }
+
+        // If transaction is not yet in final state, we should wait for a final status event.
+        if let Some(mut events) = status_rx {
+            while let Ok(status) = events.recv().await {
+                if status.is_final() {
+                    return Ok(status);
+                }
+            }
+        }
+
+        Err(TransactionServiceError::FailedToWaitForTransaction)
     }
 }
 
@@ -86,7 +132,7 @@ pub struct TransactionService {
     ///
     /// This keeps a holistic view of all active transactions.
     // TODO: should we even maintain this here or directly wire it in the signer.
-    subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
+    subscriptions: HashMap<TxId, broadcast::Sender<TransactionStatus>>,
     /// Metrics of the service.
     metrics: Arc<TransactionServiceMetrics>,
     /// Queue of transactions waiting for signers capacity.
@@ -198,6 +244,7 @@ impl TransactionService {
         // insert loaded transactions
         for tx in loaded_transactions {
             self.queue.on_sent_transaction(&tx.tx);
+            self.subscriptions.insert(tx.tx.id, broadcast::channel(100).0);
         }
 
         Ok(())
@@ -308,7 +355,7 @@ impl TransactionService {
     fn send_transaction(
         &mut self,
         tx: RelayTransaction,
-        status_tx: mpsc::UnboundedSender<TransactionStatus>,
+        status_tx: broadcast::Sender<TransactionStatus>,
     ) {
         debug_assert!(
             !self.subscriptions.contains_key(&tx.id),
@@ -394,6 +441,10 @@ impl Future for TransactionService {
                 match action {
                     TransactionServiceMessage::SendTransaction(tx, status_tx) => {
                         this.send_transaction(tx, status_tx);
+                    }
+                    TransactionServiceMessage::Subscribe(tx_id, status_tx) => {
+                        let _ =
+                            status_tx.send(this.subscriptions.get(&tx_id).map(|s| s.subscribe()));
                     }
                 }
             } else {
