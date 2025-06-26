@@ -48,33 +48,30 @@ pub struct InteropBundle {
 }
 
 impl InteropBundle {
-    /// Creates a new interop bundle with pre-calculated asset transfers
-    pub fn new(
-        id: BundleId,
-        src_transactions: Vec<RelayTransaction>,
-        dst_transactions: Vec<RelayTransaction>,
-    ) -> Self {
-        // Calculate asset transfers from destination transactions
-        let asset_transfers: Vec<_> = dst_transactions
-            .iter()
-            .filter_map(|tx| {
-                tx.quote()?.output.fund_transfers().ok().map(|transfers| {
-                    transfers.into_iter().map(|(asset, amount)| AssetTransfer {
-                        chain_id: tx.chain_id(),
-                        asset_address: asset,
-                        amount,
-                    })
-                })
-            })
-            .flatten()
-            .collect();
+    /// Creates a new empty interop bundle with the given ID
+    pub fn new(id: BundleId) -> Self {
+        Self { id, src_txs: Vec::new(), dst_txs: Vec::new(), asset_transfers: Vec::new() }
+    }
 
-        Self {
-            id,
-            src_txs: src_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
-            dst_txs: dst_transactions.into_iter().map(|tx| TxIdOrTx::Tx(Box::new(tx))).collect(),
-            asset_transfers,
+    /// Appends a source transaction to the bundle
+    pub fn append_src(&mut self, tx: RelayTransaction) {
+        self.src_txs.push(TxIdOrTx::Tx(Box::new(tx)));
+    }
+
+    /// Appends a destination transaction to the bundle and updates asset transfers
+    pub fn append_dst(&mut self, tx: RelayTransaction) {
+        // Calculate asset transfers for this transaction
+        if let Some(transfers) = tx.quote().and_then(|q| q.output.fund_transfers().ok()) {
+            for (asset, amount) in transfers {
+                self.asset_transfers.push(AssetTransfer {
+                    chain_id: tx.chain_id(),
+                    asset_address: asset,
+                    amount,
+                });
+            }
         }
+
+        self.dst_txs.push(TxIdOrTx::Tx(Box::new(tx)));
     }
 }
 

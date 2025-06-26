@@ -1231,8 +1231,8 @@ impl Relay {
                 .collect::<Result<_, _>>()?,
         );
 
-        let mut src_transactions = Vec::new();
-        let mut dst_transactions = Vec::new();
+        // Create InteropBundle
+        let mut bundle = InteropBundle::new(bundle_id);
 
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
@@ -1248,17 +1248,16 @@ impl Relay {
                 .map_err(|e| RelayError::InternalError(e.into()))
         });
 
-        // Separate source and destination transactions
+        // Append transactions directly to bundle
         for (idx, tx) in try_join_all(tx_futures).await? {
             if idx == dst_idx {
-                dst_transactions.push(tx);
+                bundle.append_dst(tx);
             } else {
-                src_transactions.push(tx);
+                bundle.append_src(tx);
             }
         }
 
-        // Create InteropBundle
-        Ok(InteropBundle::new(bundle_id, src_transactions, dst_transactions))
+        Ok(bundle)
     }
 }
 
