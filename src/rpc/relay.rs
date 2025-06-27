@@ -915,7 +915,7 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), &provider)
+            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
