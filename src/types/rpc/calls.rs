@@ -308,7 +308,7 @@ impl PrepareCallsContext {
     /// intent.
     pub async fn compute_signing_digest(
         &self,
-        orchestrator_address: Address,
+        maybe_stored: Option<&CreatableAccount>,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
@@ -317,10 +317,22 @@ impl PrepareCallsContext {
                 if let Some(root) = context.ty().multi_chain_root {
                     Ok((root, TypedData::from_struct(&output_quote.output, None)))
                 } else {
-                    output_quote.output.compute_eip712_data(orchestrator_address, provider).await
+                    output_quote
+                        .output
+                        .compute_eip712_data(output_quote.orchestrator, provider)
+                        .await
                 }
             }
             PrepareCallsContext::PreCall(pre_call) => {
+                // fetch orchestrator address from the account
+                let orchestrator_address = Account::new(pre_call.eoa, provider)
+                    .with_delegation_override_opt(
+                        maybe_stored.map(|acc| &acc.signed_authorization.address),
+                    )
+                    .get_orchestrator()
+                    .await
+                    .map_err(RelayError::from)?;
+
                 pre_call.compute_eip712_data(orchestrator_address, provider).await
             }
         }
