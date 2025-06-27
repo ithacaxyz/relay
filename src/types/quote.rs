@@ -38,7 +38,7 @@ impl Quotes {
     /// Sets the merkle payload to every quote.
     pub async fn with_merkle_payload(
         mut self,
-        providers: Vec<(DynProvider, Address)>,
+        providers: Vec<DynProvider>,
     ) -> Result<Self, RelayError> {
         if self.quotes.len() != providers.len() {
             return Err(QuoteError::InvalidNumberOfIntents {
@@ -52,9 +52,7 @@ impl Quotes {
             self.quotes
                 .iter()
                 .zip(providers)
-                .map(|(quote, (provider, orchestrator))| {
-                    (quote.output.clone(), provider, orchestrator)
-                })
+                .map(|(quote, provider)| (quote.output.clone(), provider, quote.orchestrator))
                 .collect(),
         );
 

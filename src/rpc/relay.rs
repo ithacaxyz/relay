@@ -796,7 +796,7 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: IntentKind,
@@ -899,8 +899,9 @@ impl Relay {
 
             (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
         } else {
-            let (asset_diffs, quotes) =
-                self.build_quotes(&request, calls, nonce, maybe_stored, intent_kind).await?;
+            let (asset_diffs, quotes) = self
+                .build_quotes(&request, calls, nonce, maybe_stored.as_ref(), intent_kind)
+                .await?;
 
             let sig = self
                 .inner
@@ -914,7 +915,7 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(self.orchestrator(), &provider)
+            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -944,7 +945,7 @@ impl Relay {
         request: &PrepareCallsParameters,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         intent_kind: Option<IntentKind>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         // Check if funding is required
@@ -973,7 +974,7 @@ impl Relay {
         funds: U256,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         // Only query inventory, if funds have been requested in the target chain.
@@ -1019,7 +1020,7 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: Option<IntentKind>,
@@ -1058,7 +1059,7 @@ impl Relay {
         funding_chains: Vec<(u64, U256)>,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
@@ -1145,10 +1146,7 @@ impl Relay {
                 funding_chains
                     .iter()
                     .chain(iter::once(&(request.chain_id, U256::ZERO)))
-                    .map(|(chain, _)| {
-                        self.provider(*chain)
-                            .map(|p| (p, self.inner.contracts.orchestrator.address))
-                    })
+                    .map(|(chain, _)| self.provider(*chain))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .await?,
