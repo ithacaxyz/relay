@@ -872,9 +872,20 @@ impl RelayApiServer for Relay {
             (asset_diff, PrepareCallsContext::with_quote(quote))
         };
 
+        let orchestrator_address = match &context {
+            PrepareCallsContext::Quote(quote) => quote.ty().orchestrator,
+            PrepareCallsContext::PreCall(pre_call) => Account::new(pre_call.eoa, &provider)
+                .with_delegation_override_opt(
+                    maybe_stored.as_ref().map(|acc| &acc.signed_authorization.address),
+                )
+                .get_orchestrator()
+                .await
+                .map_err(RelayError::from)?,
+        };
+
         // Calculate the eip712 digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_eip712_data(self.orchestrator(), &provider)
+            .compute_eip712_data(orchestrator_address, &provider)
             .await
             .map_err(RelayError::from)?;
 

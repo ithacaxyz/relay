@@ -261,6 +261,11 @@ impl<P: Provider> Account<P> {
         self
     }
 
+    /// Sets a 7702 delegation override on this account.
+    pub fn with_delegation_override_opt(self, address: Option<&Address>) -> Self {
+        if let Some(address) = address { self.with_delegation_override(address) } else { self }
+    }
+
     /// Sets overrides for all calls on this account.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
