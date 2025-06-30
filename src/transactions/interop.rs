@@ -331,7 +331,7 @@ impl InteropServiceInner {
         let results = handles
             .into_iter()
             .map(|mut handle| async move {
-                while let Some(status) = handle.recv().await {
+                while let Ok(status) = handle.recv().await {
                     match status {
                         TransactionStatus::Confirmed(receipt) => return Ok(*receipt),
                         TransactionStatus::Failed(err) => return Err(err),
