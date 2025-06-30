@@ -617,8 +617,12 @@ impl InteropServiceInner {
             let block = receipts.get(&tx.id).and_then(|r| r.block_number).unwrap_or_default();
 
             self.liquidity_tracker
-                .unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block)
-                .await;
+                .unlock_liquidity(
+                    (transfer.chain_id, transfer.asset_address),
+                    transfer.amount,
+                    block,
+                )
+                .await?;
         }
 
         maybe_err
@@ -717,7 +721,7 @@ impl InteropService {
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
+        let liquidity_tracker = LiquidityTracker::new(providers, funder_address, storage.clone());
         let pending_bundles = storage.get_pending_bundles().await?;
 
         let service = Self {
@@ -870,8 +874,11 @@ mod tests {
         let tx_handles: HashMap<ChainId, TransactionServiceHandle> = HashMap::default();
         let funder = Address::default();
 
-        let inner =
-            InteropServiceInner::new(tx_handles, LiquidityTracker::new(providers, funder), storage);
+        let inner = InteropServiceInner::new(
+            tx_handles,
+            LiquidityTracker::new(providers, funder, storage.clone()),
+            storage,
+        );
 
         let bundle_id = BundleId::random();
         let bundle = InteropBundle::new(bundle_id);

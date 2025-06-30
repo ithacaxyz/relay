@@ -2,6 +2,7 @@
 
 use crate::{
     error::StorageError,
+    liquidity::ChainAddress,
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
@@ -10,13 +11,25 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, ChainId},
+    primitives::{Address, BlockNumber, ChainId, U256},
 };
 use async_trait::async_trait;
-use std::fmt::Debug;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt::Debug};
 
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
+
+/// Input for [`StorageApi::try_lock_liquidity`].
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LockLiquidityInput {
+    /// Current balance of the asset fetched from provider.
+    pub current_balance: U256,
+    /// Block number at which the balance was fetched.
+    pub block_number: BlockNumber,
+    /// Amount of the asset we are trying to lock.
+    pub lock_amount: U256,
+}
 
 /// Storage API.
 #[async_trait]
@@ -119,4 +132,25 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Moves a bundle from pending_bundles to finished_bundles table.
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
+
+    /// Attempts to lock liquidity for the given assets.
+    async fn try_lock_liquidity(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+    ) -> Result<()>;
+
+    /// Unlocks liquidity for the given asset.
+    async fn unlock_liquidity(
+        &self,
+        asset: ChainAddress,
+        amount: U256,
+        at: BlockNumber,
+    ) -> Result<()>;
+
+    /// Gets total locked liquidity for the given asset.
+    async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> Result<U256>;
+
+    /// Removes unlocked entries up until the given block number (inclusive), including it and
+    /// subtracts them from the total locked amount.
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()>;
 }

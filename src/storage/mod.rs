@@ -5,12 +5,14 @@ pub use crate::{
     transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
     types::InteropTxType,
 };
-pub use api::StorageApi;
+use alloy::primitives::{BlockNumber, U256};
+pub use api::{LockLiquidityInput, StorageApi};
 
 mod memory;
 mod pg;
 
 use crate::{
+    liquidity::ChainAddress,
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -20,7 +22,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// Relay storage interface.
 #[derive(Debug, Clone)]
@@ -164,5 +166,33 @@ impl StorageApi for RelayStorage {
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> api::Result<()> {
         self.inner.move_bundle_to_finished(bundle_id).await
+    }
+
+    async fn try_lock_liquidity(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+    ) -> api::Result<()> {
+        self.inner.try_lock_liquidity(assets).await
+    }
+
+    async fn unlock_liquidity(
+        &self,
+        asset: ChainAddress,
+        amount: U256,
+        at: BlockNumber,
+    ) -> api::Result<()> {
+        self.inner.unlock_liquidity(asset, amount, at).await
+    }
+
+    async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> api::Result<U256> {
+        self.inner.get_total_locked_at(asset, at).await
+    }
+
+    async fn prune_unlocked_entries(
+        &self,
+        chain_id: ChainId,
+        until: BlockNumber,
+    ) -> api::Result<()> {
+        self.inner.prune_unlocked_entries(chain_id, until).await
     }
 }
