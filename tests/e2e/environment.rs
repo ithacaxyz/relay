@@ -1,6 +1,7 @@
 //! Relay end-to-end test constants
 
 use super::*;
+use crate::e2e::layerzero::LayerZeroConfig;
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
@@ -95,6 +96,8 @@ pub struct Environment {
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
+    /// LayerZero configuration
+    pub layerzero: Option<LayerZeroConfig>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -451,6 +454,7 @@ impl Environment {
             relay_endpoint,
             relay_handle,
             signers,
+            layerzero: None,
         })
     }
 
@@ -661,6 +665,27 @@ impl Environment {
     pub async fn freeze_basefee(&self) {
         self.freeze_basefee_on_chain(0).await
     }
+
+    /// Extracts RPC URLs for all chains in the environment.
+    ///
+    /// Returns a vector of RPC URLs in the same order as the chains are indexed.
+    /// For local anvil instances, returns their endpoint URLs.
+    /// For external anvil instances, returns the TEST_EXTERNAL_ANVIL environment variable value.
+    pub fn get_rpc_urls(&self) -> eyre::Result<Vec<String>> {
+        let mut urls = Vec::with_capacity(self.anvils.len());
+
+        for anvil in &self.anvils {
+            let url = if let Some(anvil_instance) = anvil {
+                anvil_instance.endpoint_url().to_string()
+            } else {
+                std::env::var("TEST_EXTERNAL_ANVIL")
+                    .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?
+            };
+            urls.push(url);
+        }
+
+        Ok(urls)
+    }
 }
 
 /// Mint ERC20s into the addresses.
@@ -859,7 +884,7 @@ async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre
     deploy_contract(provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None).await
 }
 
-async fn deploy_contract<P: Provider>(
+pub async fn deploy_contract<P: Provider>(
     provider: &P,
     artifact_path: &Path,
     args: Option<Bytes>,

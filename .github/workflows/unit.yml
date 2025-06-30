@@ -36,12 +36,25 @@ jobs:
           forge build
           forge build lib/solady/test/utils/mocks/MockERC20.sol
           forge build lib/solady/test/utils/mocks/MockERC721.sol
+          
+      - name: Build LayerZero test contracts
+        run: |
+          cd tests/e2e/layerzero/contracts
+          chmod +x build.sh
+          ./build.sh
 
-      - name: Upload test contracts
+      - name: Upload account contracts
         uses: actions/upload-artifact@v4
         with:
-          name: test-contracts
+          name: account-contracts
           path: tests/account/out
+          retention-days: 1
+          
+      - name: Upload LayerZero contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: layerzero-contracts
+          path: tests/e2e/layerzero/contracts/out
           retention-days: 1
 
   test:
@@ -83,14 +96,22 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Download test contracts
+      - name: Download account contracts
         uses: actions/download-artifact@v4
         with:
-          name: test-contracts
+          name: account-contracts
           path: tests/account/out
+          
+      - name: Download LayerZero contracts
+        uses: actions/download-artifact@v4
+        with:
+          name: layerzero-contracts
+          path: tests/e2e/layerzero/contracts/out
 
       - name: Set TEST_CONTRACTS environment variable
-        run: echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
+        run: |
+          echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
+          echo "LAYERZERO_CONTRACTS=${{ github.workspace }}/tests/e2e/layerzero/contracts/out" >> $GITHUB_ENV
 
       - uses: taiki-e/install-action@nextest
 

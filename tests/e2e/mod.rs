@@ -13,6 +13,8 @@ pub use constants::*;
 mod environment;
 use environment::*;
 
+mod layerzero;
+
 mod eoa;
 
 mod types;
