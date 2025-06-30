@@ -13,7 +13,6 @@
 use super::{
     LayerZeroEnvironment, OptionsBuilder,
     interfaces::IMockEscrow,
-    quote_layerzero_fee,
     utils::{compute_guid, create_origin, deliver_layerzero_message},
 };
 use crate::e2e::{
@@ -163,18 +162,12 @@ async fn prepare_layerzero_transaction<P: Provider + AnvilApi<Ethereum>>(
     // Build options and quote fee
     let options = OptionsBuilder::new().add_executor_lz_receive_option(EXECUTOR_GAS, 0).build();
 
-    let fee = quote_layerzero_fee(
-        provider,
-        ctx.escrow1,
-        ctx.dst_eid,
-        ctx.token,
-        ctx.amount,
-        ctx.bob,
-        options.clone(),
-    )
-    .await?;
+    let fee = IMockEscrow::new(ctx.escrow1, provider)
+        .quoteLayerZeroFee(ctx.dst_eid, ctx.token, ctx.amount, ctx.bob, options.clone())
+        .call()
+        .await?;
 
-    Ok((fee, options))
+    Ok((fee.nativeFee, options))
 }
 
 /// Approves token spending for the escrow contract

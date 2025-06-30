@@ -15,7 +15,7 @@ pub use setup::{LayerZeroConfig, LayerZeroEnvironment};
 pub use utils::address_to_bytes32;
 
 use alloy::{
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes},
     providers::Provider,
 };
 use eyre::Result;
@@ -95,42 +95,6 @@ pub async fn wire_escrows<P1: Provider, P2: Provider>(
     esc2.setPeer(eid1, peer1).send().await?.watch().await?;
 
     Ok(())
-}
-
-/// Quotes the LayerZero fee for a cross-chain transfer
-///
-/// This function queries the escrow contract to determine the required fee
-/// for sending a cross-chain message. The fee covers gas costs on the
-/// destination chain and LayerZero protocol fees.
-///
-/// # Arguments
-/// * `provider` - Provider to interact with the escrow contract
-/// * `escrow` - Address of the escrow contract
-/// * `dst_eid` - Destination chain endpoint ID
-/// * `token` - Token to be transferred
-/// * `amount` - Amount of tokens to transfer
-/// * `recipient` - Recipient address on destination chain
-/// * `options` - LayerZero message options (gas limits, etc.)
-///
-/// # Returns
-/// The native token fee required to send the message
-pub async fn quote_layerzero_fee<P: Provider>(
-    provider: &P,
-    escrow: Address,
-    dst_eid: u32,
-    token: Address,
-    amount: U256,
-    recipient: Address,
-    options: Bytes,
-) -> Result<U256> {
-    let escrow_contract = IMockEscrow::new(escrow, provider);
-
-    let fee = escrow_contract
-        .quoteLayerZeroFee(dst_eid, token, amount, recipient, options)
-        .call()
-        .await?;
-
-    Ok(fee.nativeFee)
 }
 
 #[cfg(test)]

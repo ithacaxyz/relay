@@ -216,8 +216,6 @@ async fn deploy_layerzero_contracts<P: Provider>(
     .wrap_err("Failed to deploy EndpointV2Mock")?;
 
     // Deploy minimal send/receive library for the endpoint
-
-    // Deploy the MinimalSendReceiveLib
     let lib = deploy_contract(
         provider,
         &contracts_path.join("MinimalSendReceiveLib.sol/MinimalSendReceiveLib.json"),

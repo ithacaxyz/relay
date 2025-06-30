@@ -9,6 +9,7 @@ use alloy::{
     network::Ethereum,
     primitives::{Address, B256, Bytes, U256, keccak256},
     providers::{Provider, ext::AnvilApi},
+    uint,
 };
 use eyre::Result;
 
@@ -16,9 +17,7 @@ use eyre::Result;
 pub const EXECUTOR_ADDRESS: Address = Address::new([3u8; 20]);
 
 /// Default amount to fund accounts for gas (1 ETH)
-pub fn default_fund_amount() -> U256 {
-    U256::from(1_000_000_000_000_000_000u128)
-}
+const DEFAULT_FUND_AMOUNT: U256 = uint!(1_000_000_000_000_000_000_U256);
 
 /// Converts an address to a 32-byte representation
 ///
@@ -81,7 +80,7 @@ pub async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
             .verify(origin.clone(), dst_escrow, payload_hash)
             .from(receive_lib)
             .into_transaction_request(),
-        Some(default_fund_amount()),
+        Some(DEFAULT_FUND_AMOUNT),
     )
     .await
 }
@@ -101,7 +100,7 @@ pub async fn execute_lz_receive<P: Provider + AnvilApi<Ethereum>>(
             .lzReceive(origin.clone(), dst_escrow, guid, message, Bytes::new())
             .from(EXECUTOR_ADDRESS)
             .into_transaction_request(),
-        Some(default_fund_amount()),
+        Some(DEFAULT_FUND_AMOUNT),
     )
     .await
 }

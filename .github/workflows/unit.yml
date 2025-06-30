@@ -43,18 +43,13 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
-      - name: Upload account contracts
+      - name: Upload contracts
         uses: actions/upload-artifact@v4
         with:
-          name: account-contracts
-          path: tests/account/out
-          retention-days: 1
-          
-      - name: Upload LayerZero contracts
-        uses: actions/upload-artifact@v4
-        with:
-          name: layerzero-contracts
-          path: tests/e2e/layerzero/contracts/out
+          name: contracts
+          path: |
+            tests/account/out
+            tests/e2e/layerzero/contracts/out
           retention-days: 1
 
   test:
@@ -96,17 +91,13 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Download account contracts
+      - name: Download contracts
         uses: actions/download-artifact@v4
         with:
-          name: account-contracts
-          path: tests/account/out
-          
-      - name: Download LayerZero contracts
-        uses: actions/download-artifact@v4
-        with:
-          name: layerzero-contracts
-          path: tests/e2e/layerzero/contracts/out
+          name: contracts
+          path: | 
+            tests/account/out
+            tests/e2e/layerzero/contracts/out
 
       - name: Set TEST_CONTRACTS environment variable
         run: |
