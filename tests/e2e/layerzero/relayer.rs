@@ -12,63 +12,23 @@
 //! - **Message Delivery**: Executes lzReceive on destination endpoints
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
+use super::{
+    interfaces::{IEndpointV2Mock, Packet},
+    utils::{bytes32_to_address, create_origin, deliver_layerzero_message},
+};
 use alloy::{
-    network::Ethereum,
-    primitives::{Address, B256, Bytes, U256, keccak256},
-    providers::{Provider, ProviderBuilder, ext::AnvilApi},
+    primitives::{Address, B256, Bytes},
+    providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     rpc::types::{Filter, Log},
-    sol,
     sol_types::SolEvent,
 };
 use eyre::Result;
 use std::{collections::HashSet, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-sol! {
-    #[sol(rpc)]
-    interface IEndpointV2Mock {
-        struct Origin {
-            uint32 srcEid;
-            bytes32 sender;
-            uint64 nonce;
-        }
-
-        event PacketSent(bytes encodedPayload, bytes options, address sendLibrary);
-
-        function verify(Origin calldata origin, address receiver, bytes32 payloadHash) external;
-        function lzReceive(
-            Origin calldata origin,
-            address receiver,
-            bytes32 guid,
-            bytes calldata message,
-            bytes calldata extraData
-        ) external payable;
-
-        function registerLibrary(address _lib) external;
-        function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
-        function setDefaultReceiveLibrary(uint32 _eid, address _newLib, uint256 _timeout) external;
-    }
-
-    #[sol(rpc)]
-    interface IMessageLibManager {
-        function defaultReceiveLibrary(uint32 _eid) external view returns (address);
-    }
-}
-
-sol! {
-    struct Packet {
-        uint64 nonce;
-        uint32 srcEid;
-        address sender;
-        uint32 dstEid;
-        bytes32 receiver;
-        bytes32 guid;
-        bytes message;
-    }
-}
-
 #[derive(Clone)]
 pub struct ChainEndpoint {
+    /// Index matching Environment.providers position
     pub chain_index: usize,
     pub endpoint: Address,
     pub eid: u32,
@@ -76,13 +36,22 @@ pub struct ChainEndpoint {
 
 pub struct LayerZeroRelayer {
     endpoints: Vec<ChainEndpoint>,
-    rpc_urls: Vec<String>,
+    providers: Vec<DynProvider>,
     delivered_guids: Arc<Mutex<HashSet<B256>>>,
 }
 
 impl LayerZeroRelayer {
-    pub fn new(endpoints: Vec<ChainEndpoint>, rpc_urls: Vec<String>) -> Self {
-        Self { endpoints, rpc_urls, delivered_guids: Arc::new(Mutex::new(HashSet::new())) }
+    pub async fn new(endpoints: Vec<ChainEndpoint>, rpc_urls: Vec<String>) -> Result<Self> {
+        // Build WebSocket providers that can handle both subscriptions and regular calls
+        // Note: Provider order must match chain_index in endpoints
+        let mut providers = Vec::new();
+        for url in &rpc_urls {
+            let ws_url = url.replace("http://", "ws://").replace("https://", "wss://");
+            let provider = ProviderBuilder::new().connect_ws(WsConnect::new(ws_url)).await?;
+            providers.push(provider.erased());
+        }
+
+        Ok(Self { endpoints, providers, delivered_guids: Arc::new(Mutex::new(HashSet::new())) })
     }
 
     /// Starts monitoring tasks for all configured chains
@@ -112,7 +81,7 @@ impl LayerZeroRelayer {
     /// Subscribes to the endpoint's PacketSent events and processes
     /// each one by delivering it to the appropriate destination.
     async fn monitor_chain(&self, chain_endpoint: ChainEndpoint) -> Result<()> {
-        let provider = self.create_provider_no_wallet(chain_endpoint.chain_index).await?;
+        let provider = &self.providers[chain_endpoint.chain_index];
 
         let filter = Filter::new()
             .address(chain_endpoint.endpoint)
@@ -121,7 +90,7 @@ impl LayerZeroRelayer {
         let mut stream = provider.subscribe_logs(&filter).await?;
 
         while let Ok(log) = stream.recv().await {
-            if let Err(e) = self.handle_packet_sent(log, &chain_endpoint).await {
+            if let Err(e) = self.handle_packet_sent(log).await {
                 eprintln!(
                     "Error handling PacketSent event on chain {}: {e:?}",
                     chain_endpoint.chain_index
@@ -133,7 +102,7 @@ impl LayerZeroRelayer {
     }
 
     /// Handles a PacketSent event by decoding and delivering the message
-    async fn handle_packet_sent(&self, log: Log, source_endpoint: &ChainEndpoint) -> Result<()> {
+    async fn handle_packet_sent(&self, log: Log) -> Result<()> {
         let event = IEndpointV2Mock::PacketSent::decode_log(&log.inner)?;
         let packet = self.decode_packet(&event.encodedPayload)?;
 
@@ -148,7 +117,7 @@ impl LayerZeroRelayer {
             .find(|e| e.eid == packet.dstEid)
             .ok_or_else(|| eyre::eyre!("Unknown destination eid: {}", packet.dstEid))?;
 
-        self.deliver_message(source_endpoint, dst_endpoint, packet, event.options.clone()).await
+        self.deliver_message(dst_endpoint, packet).await
     }
 
     /// Marks a GUID as delivered, returns true if it's new
@@ -158,114 +127,17 @@ impl LayerZeroRelayer {
     }
 
     /// Delivers a message to the destination chain
-    async fn deliver_message(
-        &self,
-        _src_endpoint: &ChainEndpoint,
-        dst_endpoint: &ChainEndpoint,
-        packet: Packet,
-        _options: Bytes,
-    ) -> Result<()> {
-        let origin = self.create_origin(&packet);
-        let receiver = self.extract_receiver_address(&packet.receiver)?;
-        let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();
-        let payload_hash = keccak256(&payload);
-
-        let provider = self.create_provider_no_wallet(dst_endpoint.chain_index).await?;
-
-        // Verify the message
-        self.verify_message(
-            &provider,
+    async fn deliver_message(&self, dst_endpoint: &ChainEndpoint, packet: Packet) -> Result<()> {
+        deliver_layerzero_message(
+            &self.providers[dst_endpoint.chain_index],
             dst_endpoint.endpoint,
-            &origin,
-            receiver,
-            payload_hash,
             packet.srcEid,
-        )
-        .await?;
-
-        // Execute lzReceive
-        self.execute_lz_receive(
-            &provider,
-            dst_endpoint.endpoint,
-            &origin,
-            receiver,
+            &create_origin(packet.srcEid, packet.sender, packet.nonce),
+            bytes32_to_address(&packet.receiver),
             packet.guid,
             packet.message,
         )
         .await
-    }
-
-    /// Creates an origin struct from a packet
-    fn create_origin(&self, packet: &Packet) -> IEndpointV2Mock::Origin {
-        IEndpointV2Mock::Origin {
-            srcEid: packet.srcEid,
-            sender: B256::from_slice(&[&[0u8; 12], packet.sender.as_slice()].concat()),
-            nonce: packet.nonce,
-        }
-    }
-
-    /// Extracts the receiver address from a 32-byte receiver field
-    fn extract_receiver_address(&self, receiver: &B256) -> Result<Address> {
-        Ok(Address::from_slice(&receiver[12..]))
-    }
-
-    /// Verifies a message using the receive library
-    async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
-        &self,
-        provider: &P,
-        endpoint_addr: Address,
-        origin: &IEndpointV2Mock::Origin,
-        receiver: Address,
-        payload_hash: B256,
-        src_eid: u32,
-    ) -> Result<()> {
-        let lib_manager = IMessageLibManager::new(endpoint_addr, provider);
-        let receive_lib = lib_manager.defaultReceiveLibrary(src_eid).call().await?;
-
-        // Fund and impersonate receive library
-        provider.anvil_set_balance(receive_lib, U256::from(1e18)).await?;
-        provider.anvil_impersonate_account(receive_lib).await?;
-
-        let endpoint = IEndpointV2Mock::new(endpoint_addr, provider);
-        endpoint
-            .verify(origin.clone(), receiver, payload_hash)
-            .from(receive_lib)
-            .send()
-            .await?
-            .watch()
-            .await?;
-
-        provider.anvil_stop_impersonating_account(receive_lib).await?;
-        Ok(())
-    }
-
-    /// Executes the lzReceive function
-    async fn execute_lz_receive<P: Provider + AnvilApi<Ethereum>>(
-        &self,
-        provider: &P,
-        endpoint_addr: Address,
-        origin: &IEndpointV2Mock::Origin,
-        receiver: Address,
-        guid: B256,
-        message: Bytes,
-    ) -> Result<()> {
-        const EXECUTOR_ADDRESS: Address = Address::new([3u8; 20]);
-
-        // Fund and impersonate executor
-        provider.anvil_set_balance(EXECUTOR_ADDRESS, U256::from(1e18)).await?;
-        provider.anvil_impersonate_account(EXECUTOR_ADDRESS).await?;
-
-        let endpoint = IEndpointV2Mock::new(endpoint_addr, provider);
-        endpoint
-            .lzReceive(origin.clone(), receiver, guid, message, Bytes::new())
-            .from(EXECUTOR_ADDRESS)
-            .send()
-            .await?
-            .watch()
-            .await?;
-
-        provider.anvil_stop_impersonating_account(EXECUTOR_ADDRESS).await?;
-        Ok(())
     }
 
     /// Decodes a LayerZero packet from encoded bytes
@@ -301,34 +173,12 @@ impl LayerZeroRelayer {
         Ok(Packet {
             nonce: u64::from_be_bytes(data[OFFSETS.nonce..OFFSETS.src_eid].try_into()?),
             srcEid: u32::from_be_bytes(data[OFFSETS.src_eid..OFFSETS.sender].try_into()?),
-            sender: self.extract_sender_address(&data[OFFSETS.sender..OFFSETS.dst_eid])?,
+            sender: bytes32_to_address(&B256::from_slice(&data[OFFSETS.sender..OFFSETS.dst_eid])),
             dstEid: u32::from_be_bytes(data[OFFSETS.dst_eid..OFFSETS.receiver].try_into()?),
             receiver: B256::from_slice(&data[OFFSETS.receiver..OFFSETS.guid]),
             guid: B256::from_slice(&data[OFFSETS.guid..OFFSETS.message]),
             message: Bytes::from(data[OFFSETS.message..].to_vec()),
         })
-    }
-
-    /// Extracts sender address from 32-byte field (last 20 bytes)
-    fn extract_sender_address(&self, data: &[u8]) -> Result<Address> {
-        let sender_bytes32 = B256::from_slice(data);
-        Ok(Address::from_slice(&sender_bytes32[12..]))
-    }
-
-    /// Creates a provider without wallet for the specified chain
-    async fn create_provider_no_wallet(
-        &self,
-        chain_index: usize,
-    ) -> Result<impl Provider + AnvilApi<Ethereum>> {
-        let rpc_url = self
-            .rpc_urls
-            .get(chain_index)
-            .ok_or_else(|| eyre::eyre!("No RPC URL for chain index {}", chain_index))?;
-
-        // Convert to WebSocket URL for subscription support
-        let ws_url = rpc_url.replace("http://", "ws://").replace("https://", "wss://");
-
-        Ok(ProviderBuilder::new().connect(&ws_url).await?)
     }
 }
 

@@ -326,8 +326,7 @@ impl Environment {
         let mut providers = Vec::with_capacity(config.num_chains);
 
         // Load signers.
-        let deployer_priv = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-        let deployer = DynSigner::from_signing_key(deployer_priv)
+        let deployer = DynSigner::from_signing_key(&DEPLOYER_PRIVATE_KEY.to_string())
             .await
             .wrap_err("Relay signer load failed")?;
 
@@ -419,7 +418,7 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_funder_key(deployer_priv.to_string())
+                .with_funder_key(DEPLOYER_PRIVATE_KEY.to_string())
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
                 .with_interop_tokens(&[contracts.erc20s[0]])

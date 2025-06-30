@@ -11,12 +11,14 @@
 //!   delivers cross-chain messages
 
 use super::{
-    IMockEscrow, OptionsBuilder, quote_layerzero_fee,
-    utils::{compute_guid, create_origin, execute_lz_receive, verify_message},
+    LayerZeroEnvironment, OptionsBuilder,
+    interfaces::IMockEscrow,
+    quote_layerzero_fee,
+    utils::{compute_guid, create_origin, deliver_layerzero_message},
 };
 use crate::e2e::{
     environment::{Environment, mint_erc20s},
-    layerzero::{LayerZeroEnvironment, create_providers_for_escrow_wiring},
+    send_impersonated_tx,
 };
 use alloy::{
     network::Ethereum,
@@ -41,30 +43,30 @@ use tokio::time::{Duration, sleep};
 #[tokio::test]
 async fn test_multichain_layerzero_escrow_with_automatic_delivery() -> Result<()> {
     let env = Environment::setup_multi_chain_with_layerzero(2).await?;
-    let test_context = setup_test_context(&env).await?;
+    let ctx = setup_test_context(&env).await?;
 
     // Start LayerZero relayer using the new integrated method
     let _relayer_handles = env.start_layerzero_relayer().await?;
 
     // Setup tokens and balances
-    setup_test_balances(&env, &test_context).await?;
+    setup_test_balances(&env, &ctx).await?;
 
     // Check Bob's balance is zero
-    let token_contract2 = IERC20::new(test_context.token, env.provider_for(1));
-    let bob_balance = token_contract2.balanceOf(test_context.bob).call().await?;
+    let token_contract2 = IERC20::new(ctx.token, env.provider_for(1));
+    let bob_balance = token_contract2.balanceOf(ctx.bob).call().await?;
     assert_eq!(bob_balance, U256::ZERO, "Bob should have zero balance before delivery");
 
     // Execute token lock
-    let (fee, options) = prepare_layerzero_transaction(env.provider(), &test_context).await?;
-    execute_token_lock(env.provider(), &test_context, fee, options).await?;
+    let (fee, options) = prepare_layerzero_transaction(env.provider(), &ctx).await?;
+    execute_token_lock(env.provider(), &ctx, fee, options).await?;
 
     // Wait for automatic delivery (relayer may deliver immediately)
-    wait_for_automatic_delivery(env.provider_for(1), &test_context).await?;
+    wait_for_automatic_delivery(env.provider_for(1), &ctx).await?;
 
     // Check Bob received the tokens on chain 2
-    let token_contract2 = IERC20::new(test_context.token, env.provider_for(1));
-    let bob_balance = token_contract2.balanceOf(test_context.bob).call().await?;
-    assert_eq!(bob_balance, test_context.amount, "Bob should have received the tokens");
+    let token_contract2 = IERC20::new(ctx.token, env.provider_for(1));
+    let bob_balance = token_contract2.balanceOf(ctx.bob).call().await?;
+    assert_eq!(bob_balance, ctx.amount, "Bob should have received the tokens");
 
     Ok(())
 }
@@ -73,75 +75,25 @@ async fn test_multichain_layerzero_escrow_with_automatic_delivery() -> Result<()
 #[tokio::test]
 async fn test_multichain_layerzero_escrow_with_manual_delivery() -> Result<()> {
     let env = Environment::setup_multi_chain_with_layerzero(2).await?;
-    let test_context = setup_test_context(&env).await?;
+    let ctx = setup_test_context(&env).await?;
 
     // Setup tokens and balances
-    setup_test_balances(&env, &test_context).await?;
+    setup_test_balances(&env, &ctx).await?;
 
     // Execute token lock
-    let (fee, options) = prepare_layerzero_transaction(env.provider(), &test_context).await?;
-    execute_token_lock(env.provider(), &test_context, fee, options).await?;
+    let (fee, options) = prepare_layerzero_transaction(env.provider(), &ctx).await?;
+    execute_token_lock(env.provider(), &ctx, fee, options).await?;
 
     // Verify initial state
-    verify_lock_state(env.provider(), env.provider_for(1), &test_context).await?;
+    verify_lock_state(env.provider(), env.provider_for(1), &ctx).await?;
 
     // Deliver message and verify final state
-    deliver_and_verify_message(&env, &test_context).await?;
+    deliver_and_verify_message(&env, &ctx).await?;
 
     Ok(())
 }
 
-/// Message delivery parameters
-struct MessageDeliveryParams<'a> {
-    env: &'a Environment,
-    chain_index: usize,
-    src_eid: u32,
-    dst_eid: u32,
-    src_escrow: Address,
-    dst_escrow: Address,
-    dst_endpoint: Address,
-    nonce: u64,
-    message: Bytes,
-}
-
-/// Manually delivers a LayerZero message from source to destination
-async fn deliver_layerzero_message(params: MessageDeliveryParams<'_>) -> Result<()> {
-    let origin = create_origin(params.src_eid, params.src_escrow, params.nonce);
-    let guid = compute_guid(
-        params.nonce,
-        params.src_eid,
-        params.src_escrow,
-        params.dst_eid,
-        params.dst_escrow,
-    );
-
-    let payload = [guid.as_slice(), params.message.as_ref()].concat();
-    let payload_hash = alloy::primitives::keccak256(&payload);
-
-    let provider = params.env.provider_for(params.chain_index);
-
-    // Verify the message
-    verify_message(
-        &provider,
-        params.dst_endpoint,
-        params.src_eid,
-        &origin,
-        params.dst_escrow,
-        payload_hash,
-    )
-    .await?;
-
-    // Deliver the message
-    execute_lz_receive(
-        &provider,
-        params.dst_endpoint,
-        &origin,
-        params.dst_escrow,
-        guid,
-        params.message,
-    )
-    .await
-}
+// Test helper functions and types
 
 /// Test constants
 mod test_constants {
@@ -156,15 +108,15 @@ use test_constants::*;
 
 /// Test context containing addresses and configuration
 struct TestContext {
-    alice: Address,
-    bob: Address,
-    token: Address,
-    amount: U256,
-    escrow1: Address,
-    escrow2: Address,
-    endpoint2: Address,
-    src_eid: u32,
-    dst_eid: u32,
+    pub alice: Address,
+    pub bob: Address,
+    pub token: Address,
+    pub amount: U256,
+    pub escrow1: Address,
+    pub escrow2: Address,
+    pub endpoint2: Address,
+    pub src_eid: u32,
+    pub dst_eid: u32,
 }
 
 /// Sets up test context with addresses and providers
@@ -190,16 +142,12 @@ async fn setup_test_context(env: &Environment) -> Result<TestContext> {
 /// - Ensures Bob starts with no tokens
 /// - Verifies initial balances are correct
 async fn setup_test_balances(env: &Environment, ctx: &TestContext) -> Result<()> {
-    // Get providers from environment
-    let deployer = env.signers[0].clone();
-    let (provider1, provider2) = create_providers_for_escrow_wiring(env, 0, 1, &deployer).await?;
-
     // Mint tokens to Alice and escrow2
-    mint_erc20s(&[ctx.token], &[ctx.alice], &provider1).await?;
-    mint_erc20s(&[ctx.token], &[ctx.escrow2], &provider2).await?;
+    mint_erc20s(&[ctx.token], &[ctx.alice], env.provider_for(0)).await?;
+    mint_erc20s(&[ctx.token], &[ctx.escrow2], env.provider_for(1)).await?;
 
     // Fund Alice with ETH
-    provider1.anvil_set_balance(ctx.alice, U256::from(ALICE_BALANCE)).await?;
+    env.provider_for(0).anvil_set_balance(ctx.alice, U256::from(ALICE_BALANCE)).await?;
 
     Ok(())
 }
@@ -237,19 +185,15 @@ async fn approve_token_spending<P: Provider + AnvilApi<Ethereum>>(
     spender: Address,
     amount: U256,
 ) -> Result<()> {
-    provider.anvil_impersonate_account(owner).await?;
-
-    let token_contract = IERC20::new(token, provider);
-    // Build the transaction request
-    let tx_request = token_contract.approve(spender, amount).from(owner).into_transaction_request();
-
-    // Send as impersonated transaction
-    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
-
-    // Wait for the transaction to be mined
-    provider.get_transaction_receipt(tx_hash).await?;
-    provider.anvil_stop_impersonating_account(owner).await?;
-    Ok(())
+    send_impersonated_tx(
+        provider,
+        IERC20::new(token, provider)
+            .approve(spender, amount)
+            .from(owner)
+            .into_transaction_request(),
+        None,
+    )
+    .await
 }
 
 /// Executes the token lock transaction
@@ -259,24 +203,16 @@ async fn execute_token_lock<P: Provider + AnvilApi<Ethereum>>(
     fee: U256,
     options: Bytes,
 ) -> Result<()> {
-    let escrow = IMockEscrow::new(ctx.escrow1, provider);
-
-    provider.anvil_impersonate_account(ctx.alice).await?;
-
-    let tx_request = escrow
-        .lockTokens(ctx.token, ctx.amount, ctx.dst_eid, ctx.bob, options)
-        .from(ctx.alice)
-        .value(fee)
-        .into_transaction_request();
-
-    // Send as impersonated transaction
-    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
-
-    // Wait for the transaction to be mined
-    provider.get_transaction_receipt(tx_hash).await?;
-    provider.anvil_stop_impersonating_account(ctx.alice).await?;
-
-    Ok(())
+    send_impersonated_tx(
+        provider,
+        IMockEscrow::new(ctx.escrow1, provider)
+            .lockTokens(ctx.token, ctx.amount, ctx.dst_eid, ctx.bob, options)
+            .from(ctx.alice)
+            .value(fee)
+            .into_transaction_request(),
+        None,
+    )
+    .await
 }
 
 /// Verifies the lock state after token lock
@@ -305,22 +241,25 @@ async fn deliver_and_verify_message(env: &Environment, ctx: &TestContext) -> Res
     let transfer_data =
         SolValue::abi_encode(&(ctx.token, ctx.alice, ctx.bob, ctx.amount, ctx.src_eid));
 
+    // Prepare message delivery
+    let origin = create_origin(ctx.src_eid, ctx.escrow1, 1);
+    let guid = compute_guid(1, ctx.src_eid, ctx.escrow1, ctx.dst_eid, ctx.escrow2);
+    let provider = env.provider_for(1);
+
     // Deliver the message
-    deliver_layerzero_message(MessageDeliveryParams {
-        env,
-        chain_index: 1,
-        src_eid: ctx.src_eid,
-        dst_eid: ctx.dst_eid,
-        src_escrow: ctx.escrow1,
-        dst_escrow: ctx.escrow2,
-        dst_endpoint: ctx.endpoint2,
-        nonce: 1,
-        message: transfer_data.into(),
-    })
+    deliver_layerzero_message(
+        provider,
+        ctx.endpoint2,
+        ctx.src_eid,
+        &origin,
+        ctx.escrow2,
+        guid,
+        transfer_data.into(),
+    )
     .await?;
 
     // Verify Bob received the tokens
-    let token_contract2 = IERC20::new(ctx.token, env.provider_for(1));
+    let token_contract2 = IERC20::new(ctx.token, provider);
     let bob_balance = token_contract2.balanceOf(ctx.bob).call().await?;
     assert_eq!(bob_balance, ctx.amount, "Bob should have received the tokens");
 

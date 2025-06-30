@@ -3,7 +3,8 @@
 //! This module provides shared utilities used across LayerZero tests,
 //! including provider creation, address conversion, and message handling.
 
-use super::relayer::{IEndpointV2Mock, IMessageLibManager};
+use super::interfaces::{IEndpointV2Mock, IMessageLibManager};
+use crate::e2e::send_impersonated_tx;
 use alloy::{
     network::Ethereum,
     primitives::{Address, B256, Bytes, U256, keccak256},
@@ -24,6 +25,13 @@ pub fn default_fund_amount() -> U256 {
 /// LayerZero uses 32-byte addresses, so we pad Ethereum addresses with zeros.
 pub fn address_to_bytes32(addr: Address) -> B256 {
     B256::from_slice(&[&[0u8; 12], addr.as_slice()].concat())
+}
+
+/// Extracts an address from a 32-byte representation
+///
+/// LayerZero uses 32-byte addresses, this extracts the last 20 bytes as an Ethereum address.
+pub fn bytes32_to_address(bytes32: &B256) -> Address {
+    Address::from_slice(&bytes32[12..])
 }
 
 /// Creates an origin struct for LayerZero messages
@@ -62,28 +70,20 @@ pub async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
     dst_escrow: Address,
     payload_hash: B256,
 ) -> Result<()> {
-    let lib_manager = IMessageLibManager::new(dst_endpoint, provider);
-    let receive_lib = lib_manager.defaultReceiveLibrary(src_eid).call().await?;
+    let receive_lib = IMessageLibManager::new(dst_endpoint, provider)
+        .defaultReceiveLibrary(src_eid)
+        .call()
+        .await?;
 
-    // Fund and impersonate the receive library
-    provider.anvil_set_balance(receive_lib, default_fund_amount()).await?;
-    provider.anvil_impersonate_account(receive_lib).await?;
-
-    let endpoint = IEndpointV2Mock::new(dst_endpoint, provider);
-
-    // Build the transaction request
-    let tx_request = endpoint
-        .verify(origin.clone(), dst_escrow, payload_hash)
-        .from(receive_lib)
-        .into_transaction_request();
-
-    // Send as impersonated transaction
-    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
-
-    // Wait for the transaction to be mined
-    provider.get_transaction_receipt(tx_hash).await?;
-    provider.anvil_stop_impersonating_account(receive_lib).await?;
-    Ok(())
+    send_impersonated_tx(
+        provider,
+        IEndpointV2Mock::new(dst_endpoint, provider)
+            .verify(origin.clone(), dst_escrow, payload_hash)
+            .from(receive_lib)
+            .into_transaction_request(),
+        Some(default_fund_amount()),
+    )
+    .await
 }
 
 /// Executes the lzReceive function on the endpoint
@@ -95,23 +95,39 @@ pub async fn execute_lz_receive<P: Provider + AnvilApi<Ethereum>>(
     guid: B256,
     message: Bytes,
 ) -> Result<()> {
-    // Fund the executor
-    provider.anvil_set_balance(EXECUTOR_ADDRESS, default_fund_amount()).await?;
-    provider.anvil_impersonate_account(EXECUTOR_ADDRESS).await?;
+    send_impersonated_tx(
+        provider,
+        IEndpointV2Mock::new(dst_endpoint, provider)
+            .lzReceive(origin.clone(), dst_escrow, guid, message, Bytes::new())
+            .from(EXECUTOR_ADDRESS)
+            .into_transaction_request(),
+        Some(default_fund_amount()),
+    )
+    .await
+}
 
-    let endpoint = IEndpointV2Mock::new(dst_endpoint, provider);
+/// Delivers a LayerZero message from source to destination
+///
+/// This is the core message delivery function that:
+/// 1. Prepares the message payload
+/// 2. Verifies the message on destination
+/// 3. Executes the lzReceive function
+pub async fn deliver_layerzero_message<P: Provider + AnvilApi<Ethereum>>(
+    provider: &P,
+    dst_endpoint: Address,
+    src_eid: u32,
+    origin: &IEndpointV2Mock::Origin,
+    receiver: Address,
+    guid: B256,
+    message: Bytes,
+) -> Result<()> {
+    // Prepare payload and hash
+    let payload = [guid.as_slice(), message.as_ref()].concat();
+    let payload_hash = keccak256(&payload);
 
-    // Build the transaction request
-    let tx_request = endpoint
-        .lzReceive(origin.clone(), dst_escrow, guid, message, Bytes::new())
-        .from(EXECUTOR_ADDRESS)
-        .into_transaction_request();
+    // Verify the message
+    verify_message(provider, dst_endpoint, src_eid, origin, receiver, payload_hash).await?;
 
-    // Send as impersonated transaction
-    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
-
-    // Wait for the transaction to be mined
-    provider.get_transaction_receipt(tx_hash).await?;
-    provider.anvil_stop_impersonating_account(EXECUTOR_ADDRESS).await?;
-    Ok(())
+    // Execute lzReceive
+    execute_lz_receive(provider, dst_endpoint, origin, receiver, guid, message).await
 }

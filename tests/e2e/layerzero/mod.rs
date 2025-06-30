@@ -4,50 +4,21 @@
 //! including escrow contracts and message relaying functionality.
 
 pub mod escrow;
+pub mod interfaces;
 pub mod relayer;
 pub mod setup;
 pub mod utils;
 
-pub use setup::{LayerZeroConfig, LayerZeroEnvironment, create_providers_for_escrow_wiring};
+// Re-export commonly used items
+pub use interfaces::IMockEscrow;
+pub use setup::{LayerZeroConfig, LayerZeroEnvironment};
 pub use utils::address_to_bytes32;
 
 use alloy::{
     primitives::{Address, Bytes, U256},
-    providers::{Provider, WalletProvider},
-    sol,
+    providers::Provider,
 };
 use eyre::Result;
-
-sol! {
-    /// LayerZero Escrow V2 contract interface
-    ///
-    /// This interface defines the escrow contract that locks tokens on one chain
-    /// and releases them on another chain via LayerZero messaging.
-    #[sol(rpc)]
-    interface IMockEscrow {
-        struct MessagingFee {
-            uint256 nativeFee;
-            uint256 lzTokenFee;
-        }
-
-        function setPeer(uint32 eid, bytes32 peer) external;
-        function lockTokens(
-            address token,
-            uint256 amount,
-            uint32 dstEid,
-            address recipient,
-            bytes calldata options
-        ) external payable;
-        function quoteLayerZeroFee(
-            uint32 dstEid,
-            address token,
-            uint256 amount,
-            address recipient,
-            bytes calldata options
-        ) external view returns (MessagingFee memory fee);
-        function lockedBalances(address token, address user) external view returns (uint256);
-    }
-}
 
 /// Builder for LayerZero message options
 ///
@@ -104,7 +75,7 @@ impl OptionsBuilder {
 /// * `escrow2` - Address of escrow contract on chain 2
 /// * `eid1` - Endpoint ID of chain 1
 /// * `eid2` - Endpoint ID of chain 2
-pub async fn wire_escrows<P1: Provider + WalletProvider, P2: Provider + WalletProvider>(
+pub async fn wire_escrows<P1: Provider, P2: Provider>(
     provider1: &P1,
     provider2: &P2,
     escrow1: Address,

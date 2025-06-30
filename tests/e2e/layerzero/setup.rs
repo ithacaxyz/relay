@@ -4,36 +4,50 @@
 //! including multi-chain deployment, endpoint configuration, and relayer integration.
 
 use super::{
-    relayer::{ChainEndpoint, IEndpointV2Mock, LayerZeroRelayer},
+    interfaces::IEndpointV2Mock,
+    relayer::{ChainEndpoint, LayerZeroRelayer},
     wire_escrows,
 };
-use crate::e2e::environment::{Environment, deploy_contract};
+use crate::e2e::{
+    constants::DEPLOYER_ADDRESS,
+    environment::{Environment, deploy_contract},
+};
 use alloy::{
-    network::EthereumWallet,
     primitives::{Address, U256},
-    providers::{Provider, ProviderBuilder, WalletProvider, ext::AnvilApi},
-    rpc::client::ClientBuilder,
+    providers::{Provider, ext::AnvilApi},
     sol_types::SolValue,
 };
 use eyre::{Result, WrapErr};
 use futures_util::future::try_join_all;
-use relay::{signers::DynSigner, spawn::RETRY_LAYER};
 use std::{
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use tokio::task::JoinHandle;
 
 /// LayerZero configuration for cross-chain communication
+///
+/// Note: All vectors follow the same indexing as Environment.providers
+/// i.e., endpoints[0] corresponds to the endpoint on chain 0 (env.providers[0])
 #[derive(Debug, Clone)]
 pub struct LayerZeroConfig {
-    /// Endpoint addresses for each chain
+    /// Endpoint addresses for each chain (indexed by chain)
     pub endpoints: Vec<Address>,
-    /// Escrow addresses for each chain
+    /// Escrow addresses for each chain (indexed by chain)
     pub escrows: Vec<Address>,
-    /// Chain EIDs (Endpoint IDs)
+    /// Chain EIDs (Endpoint IDs) for each chain (indexed by chain)
     pub eids: Vec<u32>,
+}
+
+/// Result of deploying LayerZero contracts on a single chain
+#[derive(Debug, Clone)]
+pub struct LayerZeroDeployment {
+    /// EndpointV2Mock contract address
+    pub endpoint: Address,
+    /// MockEscrow contract address
+    pub escrow: Address,
+    /// MinimalSendReceiveLib contract address
+    pub library: Address,
 }
 
 /// Extension trait for Environment to add LayerZero functionality
@@ -67,12 +81,6 @@ impl LayerZeroEnvironment for Environment {
         // Set up base multi-chain environment
         let mut env = Self::setup_multi_chain(num_chains).await?;
 
-        // Get the deployer signer to create providers with the correct signer
-        let deployer_priv = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-        let deployer = DynSigner::from_signing_key(deployer_priv)
-            .await
-            .wrap_err("Deployer signer load failed")?;
-
         // Deploy LayerZero contracts on all chains
         let layerzero_deployments =
             try_join_all(env.providers.iter().enumerate().map(|(index, provider)| {
@@ -90,18 +98,14 @@ impl LayerZeroEnvironment for Environment {
             }))
             .await?;
 
-        // Extract addresses
-        let endpoints: Vec<Address> = layerzero_deployments.iter().map(|d| d.0).collect();
-        let escrows: Vec<Address> = layerzero_deployments.iter().map(|d| d.1).collect();
-        let libs: Vec<Address> = layerzero_deployments.iter().map(|d| d.2).collect();
         let eids: Vec<u32> = (0..num_chains).map(|i| 101 + i as u32).collect();
 
         // Configure all endpoint libraries now that we have all EIDs
-        for i in 0..num_chains {
+        for (i, deployment) in layerzero_deployments.iter().enumerate() {
             configure_endpoint_libraries_for_all_chains(
                 &env.providers[i],
-                endpoints[i],
-                libs[i],
+                deployment.endpoint,
+                deployment.library,
                 eids[i],
                 &eids,
             )
@@ -111,16 +115,17 @@ impl LayerZeroEnvironment for Environment {
         // Wire endpoints and escrows between all chain pairs
         for i in 0..num_chains {
             for j in (i + 1)..num_chains {
-                // Wire endpoints - not required for manual delivery tests
-                // The mock endpoints don't require explicit wiring
-
                 // Wire escrows between chains
-                let (provider1, provider2) =
-                    create_providers_for_escrow_wiring(&env, i, j, &deployer).await?;
-
-                wire_escrows(&provider1, &provider2, escrows[i], escrows[j], eids[i], eids[j])
-                    .await
-                    .wrap_err(format!("Failed to wire escrows between chains {i} and {j}"))?;
+                wire_escrows(
+                    &env.providers[i],
+                    &env.providers[j],
+                    layerzero_deployments[i].escrow,
+                    layerzero_deployments[j].escrow,
+                    eids[i],
+                    eids[j],
+                )
+                .await
+                .wrap_err(format!("Failed to wire escrows between chains {i} and {j}"))?;
             }
         }
 
@@ -131,9 +136,9 @@ impl LayerZeroEnvironment for Environment {
             }
         }
 
-        // Note: Escrows are funded during actual cross-chain operations as needed
-
-        // Store LayerZero config
+        // Store LayerZero config - extract addresses for storage
+        let endpoints: Vec<Address> = layerzero_deployments.iter().map(|d| d.endpoint).collect();
+        let escrows: Vec<Address> = layerzero_deployments.iter().map(|d| d.escrow).collect();
         env.set_layerzero_config(LayerZeroConfig { endpoints, escrows, eids });
 
         Ok(env)
@@ -158,6 +163,7 @@ impl LayerZeroEnvironment for Environment {
         let lz_config = self.layerzero_config();
 
         // Build ChainEndpoint structs from LayerZero config
+        // Note: chain_index matches Environment.providers index
         let endpoints: Vec<ChainEndpoint> = (0..self.num_chains())
             .map(|i| ChainEndpoint {
                 chain_index: i,
@@ -166,11 +172,8 @@ impl LayerZeroEnvironment for Environment {
             })
             .collect();
 
-        // Get RPC URLs for all chains
-        let rpc_urls = self.get_rpc_urls()?;
-
         // Create and start the relayer
-        let relayer = Arc::new(LayerZeroRelayer::new(endpoints, rpc_urls));
+        let relayer = Arc::new(LayerZeroRelayer::new(endpoints, self.get_rpc_urls()?).await?);
         let handles = relayer.start().await?;
 
         // Allow time for subscription setup
@@ -201,15 +204,13 @@ async fn deploy_layerzero_contracts<P: Provider>(
     provider: &P,
     contracts_path: &Path,
     eid: u32,
-) -> Result<(Address, Address, Address)> {
+) -> Result<LayerZeroDeployment> {
     // Deploy EndpointV2Mock with the EID and owner
-    const DEPLOYER_ADDRESS: &str = "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720";
-    let deployer_address = Address::from_str(DEPLOYER_ADDRESS).unwrap();
 
     let endpoint = deploy_contract(
         provider,
         &contracts_path.join("EndpointV2Mock.sol/EndpointV2Mock.json"),
-        Some(SolValue::abi_encode(&(eid, deployer_address)).into()),
+        Some(SolValue::abi_encode(&(eid, DEPLOYER_ADDRESS)).into()),
     )
     .await
     .wrap_err("Failed to deploy EndpointV2Mock")?;
@@ -229,48 +230,12 @@ async fn deploy_layerzero_contracts<P: Provider>(
     let escrow = deploy_contract(
         provider,
         &contracts_path.join("MockEscrow.sol/MockEscrow.json"),
-        Some(SolValue::abi_encode(&(endpoint, deployer_address)).into()),
+        Some(SolValue::abi_encode(&(endpoint, DEPLOYER_ADDRESS)).into()),
     )
     .await?;
 
-    // Return endpoint, escrow, and library addresses
-    Ok((endpoint, escrow, lib))
-}
-
-/// Creates providers with deployer wallet for escrow wiring
-pub async fn create_providers_for_escrow_wiring(
-    env: &Environment,
-    chain1_index: usize,
-    chain2_index: usize,
-    deployer: &DynSigner,
-) -> Result<(impl Provider + WalletProvider, impl Provider + WalletProvider)> {
-    let endpoint1 = if let Some(anvil) = &env.anvils[chain1_index] {
-        anvil.endpoint_url().to_string()
-    } else {
-        std::env::var("TEST_EXTERNAL_ANVIL")
-            .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?
-    };
-
-    let endpoint2 = if let Some(anvil) = &env.anvils[chain2_index] {
-        anvil.endpoint_url().to_string()
-    } else {
-        std::env::var("TEST_EXTERNAL_ANVIL")
-            .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?
-    };
-
-    let client1 =
-        ClientBuilder::default().layer(RETRY_LAYER.clone()).connect(endpoint1.as_str()).await?;
-    let provider1 = ProviderBuilder::new()
-        .wallet(EthereumWallet::from(deployer.0.clone()))
-        .connect_client(client1);
-
-    let client2 =
-        ClientBuilder::default().layer(RETRY_LAYER.clone()).connect(endpoint2.as_str()).await?;
-    let provider2 = ProviderBuilder::new()
-        .wallet(EthereumWallet::from(deployer.0.clone()))
-        .connect_client(client2);
-
-    Ok((provider1, provider2))
+    // Return deployment result
+    Ok(LayerZeroDeployment { endpoint, escrow, library: lib })
 }
 
 /// Configures endpoint libraries for LayerZero for all chains
