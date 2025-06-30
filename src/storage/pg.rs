@@ -1,20 +1,23 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::{StorageApi, api::Result};
 use crate::{
+    error::StorageError,
+    liquidity::ChainAddress,
+    storage::api::LockLiquidityInput,
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, B256, ChainId},
+    primitives::{Address, B256, BlockNumber, ChainId, U256},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
-use sqlx::{Connection, PgPool};
+use sqlx::{Connection, PgPool, types::BigDecimal};
 use tracing::instrument;
 
 /// PostgreSQL storage implementation.
@@ -39,6 +42,14 @@ enum TxStatus {
     Pending,
     Confirmed,
     Failed,
+}
+
+fn numeric_to_u256(value: &BigDecimal) -> U256 {
+    value.round(0).into_bigint_and_scale().0.try_into().unwrap()
+}
+
+fn u256_to_numeric(value: U256) -> BigDecimal {
+    BigDecimal::from_biguint(value.into(), 0)
 }
 
 #[async_trait]
@@ -313,6 +324,7 @@ impl StorageApi for PgStorage {
             .collect::<std::result::Result<_, _>>()?)
     }
 
+    #[instrument(skip_all)]
     async fn verified_email_exists(&self, email: &str) -> Result<bool> {
         let exists = sqlx::query!(
             "select * from emails where email = $1 and verified_at is not null",
@@ -326,6 +338,7 @@ impl StorageApi for PgStorage {
         Ok(exists)
     }
 
+    #[instrument(skip_all)]
     async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
         sqlx::query!(
             "insert into emails (address, email, token) values ($1, $2, $3) on conflict(address, email) do update set token = $3",
@@ -345,6 +358,7 @@ impl StorageApi for PgStorage {
     /// Should remove any other verified emails for the same account address.
     ///
     /// Returns true if the email was verified successfully.
+    #[instrument(skip_all)]
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
         let affected = sqlx::query!(
             "update emails set verified_at = now() where address = $1 and email = $2 and token = $3",
@@ -359,11 +373,184 @@ impl StorageApi for PgStorage {
         Ok(affected.rows_affected() > 0)
     }
 
+    #[instrument(skip_all)]
     async fn ping(&self) -> Result<()> {
         if let Some(mut connection) = self.pool.try_acquire() {
             connection.ping().await.map_err(eyre::Error::from).map_err(Into::into)
         } else {
             Err(eyre!("no connection to database").into())
         }
+    }
+
+    #[instrument(skip_all)]
+    async fn try_lock_liquidity(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        let (chain_ids, asset_addresses): (Vec<_>, Vec<_>) = assets
+            .iter()
+            .map(|((chain, asset), _)| (*chain as i64, asset.as_slice().to_vec()))
+            .unzip();
+
+        let locked = sqlx::query!(
+            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[]))",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // create rows that don't exist
+        for ((chain, asset), _) in assets.iter().filter(|((chain, asset), _)| {
+            !locked
+                .iter()
+                .any(|row| row.chain_id == *chain as i64 && row.asset_address == asset.as_slice())
+        }) {
+            sqlx::query!(
+                "insert into locked_liquidity (chain_id, asset_address, amount) values ($1, $2, $3) on conflict do nothing",
+                *chain as i64,
+                asset.as_slice(),
+                BigDecimal::default(),
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
+        // select all locked assets for update
+        let locked = sqlx::query!(
+            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // select all unlocked assets
+        let unlocked = sqlx::query!(
+            "select * from pending_unlocks where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut *tx)
+        .await.map_err(eyre::Error::from)?;
+
+        for ((chain, asset), input) in assets {
+            let locked = locked
+                .iter()
+                .find(|row| row.chain_id == chain as i64 && row.asset_address == asset.as_slice())
+                .map(|row| numeric_to_u256(&row.amount))
+                .unwrap_or_default();
+
+            let unlocked = unlocked
+                .iter()
+                .filter(|row| {
+                    row.chain_id == chain as i64
+                        && row.asset_address == asset.as_slice()
+                        && row.block_number <= input.block_number as i64
+                })
+                .map(|row| numeric_to_u256(&row.amount))
+                .sum::<U256>();
+
+            if input.current_balance + unlocked >= locked + input.lock_amount {
+                sqlx::query!(
+                    "update locked_liquidity set amount = $1 where chain_id = $2 and asset_address = $3",
+                    u256_to_numeric(locked + input.lock_amount),
+                    chain as i64,
+                    asset.as_slice()
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(eyre::Error::from)?;
+            } else {
+                return Err(StorageError::CantLockLiquidity);
+            }
+        }
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn unlock_liquidity(
+        &self,
+        asset: ChainAddress,
+        amount: U256,
+        at: BlockNumber,
+    ) -> Result<()> {
+        sqlx::query!(
+            "insert into pending_unlocks (chain_id, asset_address, amount, block_number) values ($1, $2, $3, $4)",
+            asset.0 as i64,
+            asset.1.as_slice(),
+            u256_to_numeric(amount),
+            at as i64,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> Result<U256> {
+        let locked = sqlx::query!(
+            "select coalesce(sum(amount), 0) from locked_liquidity where chain_id = $1 and asset_address = $2",
+            asset.0 as i64,
+            asset.1.as_slice(),
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let unlocked = sqlx::query!(
+            "select coalesce(sum(amount), 0) from pending_unlocks where chain_id = $1 and asset_address = $2 and block_number <= $3",
+            asset.0 as i64,
+            asset.1.as_slice(),
+            at as i64,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let locked = numeric_to_u256(&locked.coalesce.unwrap_or_default());
+        let unlocked = numeric_to_u256(&unlocked.coalesce.unwrap_or_default());
+
+        Ok(locked.saturating_sub(unlocked))
+    }
+
+    #[instrument(skip_all)]
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        let rows = sqlx::query!(
+            "delete from pending_unlocks where chain_id = $1 and block_number <= $2 returning *",
+            chain_id as i64,
+            until as i64,
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        for row in rows {
+            sqlx::query!(
+                "update locked_liquidity set amount = amount - $1 where chain_id = $2 and asset_address = $3",
+                row.amount,
+                chain_id as i64,
+                row.asset_address.as_slice(),
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
+        Ok(())
     }
 }

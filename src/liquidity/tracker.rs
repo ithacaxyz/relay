@@ -1,11 +1,14 @@
-use crate::types::IERC20;
+use crate::{
+    error::StorageError,
+    storage::{LockLiquidityInput, RelayStorage, StorageApi},
+    types::IERC20,
+};
 use alloy::{
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
     providers::{DynProvider, MulticallError, Provider},
 };
 use futures_util::future::TryJoinAll;
-use std::{collections::BTreeMap, ops::RangeInclusive, sync::Arc, time::Duration};
-use tokio::sync::RwLock;
+use std::{ops::RangeInclusive, time::Duration};
 use tracing::error;
 
 /// An address on a specific chain.
@@ -21,105 +24,28 @@ pub enum LiquidityTrackerError {
     /// Not enough liquidity for locking.
     #[error("not enough liqudiity")]
     NotEnoughLiquidity,
-}
 
-/// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
-#[derive(Debug)]
-struct LockLiquidityInput {
-    /// Current balance of the asset fetched from provider.
-    current_balance: U256,
-    /// Block number at which the balance was fetched.
-    balance_at: BlockNumber,
-    /// Amount of the asset we are trying to lock.
-    lock_amount: U256,
-}
-
-/// Tracks liquidity of relay for interop bundles.
-#[derive(Debug, Default)]
-struct LiquidityTrackerInner {
-    /// Assets that are about to be pulled from us, indexed by chain and asset address.
-    ///
-    /// Those correspond to pending cross-chain intents that are not yet confirmed.
-    locked_liquidity: HashMap<ChainAddress, U256>,
-    /// Liquidity amounts that are unlocked at certain block numbers.
-    ///
-    /// Those correspond to blocks when we've sent funds to users.
-    pending_unlocks: HashMap<ChainAddress, BTreeMap<BlockNumber, U256>>,
-}
-
-impl LiquidityTrackerInner {
-    /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
-    /// balances and adding all of the unlocked ones.
-    fn available_balance(
-        &self,
-        asset: ChainAddress,
-        current_balance: U256,
-        at: BlockNumber,
-    ) -> U256 {
-        let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
-        let unlocked = self
-            .pending_unlocks
-            .get(&asset)
-            .map(|unlocks| unlocks.range(..=at).map(|(_, amount)| *amount).sum::<U256>())
-            .unwrap_or_default();
-
-        current_balance.saturating_add(unlocked).saturating_sub(locked)
-    }
-
-    /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
-    async fn try_lock_liquidity(
-        &mut self,
-        assets: HashMap<ChainAddress, LockLiquidityInput>,
-    ) -> Result<(), LiquidityTrackerError> {
-        // Make sure that we have enough funds for all transfers
-        if assets.iter().any(|(asset, input)| {
-            input.lock_amount
-                > self.available_balance(*asset, input.current_balance, input.balance_at)
-        }) {
-            return Err(LiquidityTrackerError::NotEnoughLiquidity);
-        }
-
-        // Lock liquidity
-        for (asset, input) in assets {
-            *self.locked_liquidity.entry(asset).or_default() += input.lock_amount;
-        }
-
-        Ok(())
-    }
-
-    /// Unlocks liquidity by adding it to the pending unlocks mapping. This should be called once
-    /// bundle is confirmed.
-    fn unlock_liquidity(
-        &mut self,
-        chain_id: ChainId,
-        asset: Address,
-        amount: U256,
-        at: Option<BlockNumber>,
-    ) {
-        if let Some(at) = at {
-            *self.pending_unlocks.entry((chain_id, asset)).or_default().entry(at).or_default() +=
-                amount;
-        } else {
-            self.locked_liquidity
-                .entry((chain_id, asset))
-                .and_modify(|locked| *locked = locked.saturating_sub(amount));
-        }
-    }
+    /// Storage error.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
 }
 
 /// Wrapper around [`LiquidityTrackerInner`] that is used to track liquidity.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LiquidityTracker {
-    inner: Arc<RwLock<LiquidityTrackerInner>>,
     funder_address: Address,
     providers: HashMap<ChainId, DynProvider>,
+    storage: RelayStorage,
 }
 
 impl LiquidityTracker {
     /// Creates a new liquidity tracker.
-    pub fn new(providers: HashMap<ChainId, DynProvider>, funder_address: Address) -> Self {
-        let inner = Arc::new(RwLock::new(Default::default()));
-        let this = Self { inner: inner.clone(), providers: providers.clone(), funder_address };
+    pub fn new(
+        providers: HashMap<ChainId, DynProvider>,
+        funder_address: Address,
+        storage: RelayStorage,
+    ) -> Self {
+        let this = Self { providers: providers.clone(), funder_address, storage: storage.clone() };
 
         // Spawn a task that periodically cleans up the pending unlocks for older blocks.
         tokio::spawn(async move {
@@ -130,23 +56,10 @@ impl LiquidityTracker {
                     .iter()
                     .map(async |(chain, provider)| {
                         let latest_block = provider.get_block_number().await?;
-                        let mut lock = inner.write().await;
-                        let LiquidityTrackerInner { locked_liquidity, pending_unlocks } =
-                            &mut *lock;
-                        for (asset, unlocks) in pending_unlocks {
-                            if asset.0 == *chain {
-                                // Keep 10 blocks of pending unlocks
-                                let to_keep = unlocks.split_off(&latest_block.saturating_sub(10));
-                                let to_remove = core::mem::replace(unlocks, to_keep);
-
-                                // Remove everything else from the locked mapping
-                                for (_, unlock) in to_remove {
-                                    locked_liquidity.entry(*asset).and_modify(|amount| {
-                                        *amount = amount.saturating_sub(unlock);
-                                    });
-                                }
-                            }
-                        }
+                        // Remove everything older than 10 blocks
+                        storage
+                            .prune_unlocked_entries(*chain, latest_block.saturating_sub(10))
+                            .await?;
                         eyre::Ok(())
                     })
                     .collect::<TryJoinAll<_>>()
@@ -197,8 +110,9 @@ impl LiquidityTracker {
         asset: Address,
     ) -> Result<RangeInclusive<U256>, LiquidityTrackerError> {
         let (max_balance, block_number) = self.get_balance_with_block(chain_id, asset).await?;
-        let min_balance =
-            self.inner.read().await.available_balance((chain_id, asset), max_balance, block_number);
+        let total_locked =
+            self.storage.get_total_locked_at((chain_id, asset), block_number).await?;
+        let min_balance = max_balance.saturating_sub(total_locked);
         Ok(min_balance..=max_balance)
     }
 
@@ -225,7 +139,7 @@ impl LiquidityTracker {
                     (chain, asset),
                     LockLiquidityInput {
                         current_balance: balance,
-                        balance_at: block_number,
+                        block_number,
                         lock_amount: amount,
                     },
                 ))
@@ -235,7 +149,7 @@ impl LiquidityTracker {
             .into_iter()
             .collect();
 
-        self.inner.write().await.try_lock_liquidity(inputs).await?;
+        self.storage.try_lock_liquidity(inputs).await?;
 
         Ok(())
     }
@@ -243,11 +157,11 @@ impl LiquidityTracker {
     /// Unlocks liquidity from an interop bundle.
     pub async fn unlock_liquidity(
         &self,
-        chain_id: ChainId,
-        asset: Address,
+        asset: ChainAddress,
         amount: U256,
-        at: impl Into<Option<BlockNumber>>,
-    ) {
-        self.inner.write().await.unlock_liquidity(chain_id, asset, amount, at.into());
+        at: BlockNumber,
+    ) -> Result<(), LiquidityTrackerError> {
+        self.storage.unlock_liquidity(asset, amount, at).await?;
+        Ok(())
     }
 }
