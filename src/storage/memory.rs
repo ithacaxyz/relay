@@ -204,7 +204,7 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn update_transfer_data(
+    async fn update_transfer_bridge_data(
         &self,
         transfer_id: TransferId,
         data: &serde_json::Value,
@@ -212,6 +212,17 @@ impl StorageApi for InMemoryStorage {
         if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
             transfer_data.1 = Some(data.clone());
             Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(transfer_data.1.clone())
         } else {
             Err(eyre::eyre!("transfer not found").into())
         }
@@ -250,6 +261,14 @@ impl StorageApi for InMemoryStorage {
         self.unlock_liquidity(transfer.from, transfer.amount, block).await?;
 
         Ok(())
+    }
+
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(Some(transfer_data.2))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {

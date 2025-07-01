@@ -168,12 +168,19 @@ impl StorageApi for RelayStorage {
         self.inner.lock_liquidity_for_bridge(transfer, input).await
     }
 
-    async fn update_transfer_data(
+    async fn update_transfer_bridge_data(
         &self,
         transfer_id: TransferId,
         data: &serde_json::Value,
     ) -> api::Result<()> {
-        self.inner.update_transfer_data(transfer_id, data).await
+        self.inner.update_transfer_bridge_data(transfer_id, data).await
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> api::Result<Option<serde_json::Value>> {
+        self.inner.get_transfer_bridge_data(transfer_id).await
     }
 
     async fn update_transfer_state(
@@ -190,6 +197,13 @@ impl StorageApi for RelayStorage {
         state: TransferState,
     ) -> api::Result<()> {
         self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state).await
+    }
+
+    async fn get_transfer_state(
+        &self,
+        transfer_id: TransferId,
+    ) -> api::Result<Option<TransferState>> {
+        self.inner.get_transfer_state(transfer_id).await
     }
 
     async fn load_pending_transfers(&self) -> api::Result<Vec<Transfer>> {

@@ -191,7 +191,7 @@ impl RebalanceService {
             else {
                 return Err(eyre::eyre!(
                     "found pending transfer for unknown bridge {}",
-                    transfer.bridge_id  
+                    transfer.bridge_id
                 ));
             };
 

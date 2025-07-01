@@ -236,6 +236,12 @@ enum BridgeTransferStatus {
     InboundFailed,
 }
 
+struct BridgeTransferRow {
+    status: BridgeTransferStatus,
+    outbound_block_number: Option<i64>,
+    inbound_block_number: Option<i64>,
+}
+
 fn numeric_to_u256(value: &BigDecimal) -> U256 {
     value.round(0).into_bigint_and_scale().0.try_into().unwrap()
 }
@@ -680,7 +686,7 @@ impl StorageApi for PgStorage {
     }
 
     /// Updates a bridge-specific data for a transfer.
-    async fn update_transfer_data(
+    async fn update_transfer_bridge_data(
         &self,
         transfer_id: TransferId,
         data: &serde_json::Value,
@@ -695,6 +701,21 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query!(
+            "select bridge_data from bridge_transfers where transfer_id = $1",
+            transfer_id.as_slice(),
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(row.and_then(|r| r.bridge_data))
     }
 
     async fn update_transfer_state(
@@ -729,6 +750,37 @@ impl StorageApi for PgStorage {
         tx.commit().await.map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+        let row = sqlx::query_as!(
+            BridgeTransferRow,
+            "select status as \"status: BridgeTransferStatus\", outbound_block_number, inbound_block_number from bridge_transfers where transfer_id = $1",
+            transfer_id.as_slice(),
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let state = match row.status {
+            BridgeTransferStatus::Pending => TransferState::Pending,
+            BridgeTransferStatus::Sent => {
+                let block_number = row.outbound_block_number.unwrap_or(0) as u64;
+                TransferState::Sent(block_number)
+            }
+            BridgeTransferStatus::OutboundFailed => TransferState::OutboundFailed,
+            BridgeTransferStatus::Completed => {
+                let block_number = row.inbound_block_number.unwrap_or(0) as u64;
+                TransferState::Completed(block_number)
+            }
+            BridgeTransferStatus::InboundFailed => TransferState::InboundFailed,
+        };
+
+        Ok(Some(state))
     }
 
     async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {

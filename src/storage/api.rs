@@ -126,11 +126,17 @@ pub trait StorageApi: Debug + Send + Sync {
     ) -> Result<()>;
 
     /// Updates a bridge-specific data for a transfer.
-    async fn update_transfer_data(
+    async fn update_transfer_bridge_data(
         &self,
         transfer_id: TransferId,
         data: &serde_json::Value,
     ) -> Result<()>;
+
+    /// Gets bridge-specific data for a transfer.
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>>;
 
     /// Updates transfer state.
     async fn update_transfer_state(
@@ -148,6 +154,9 @@ pub trait StorageApi: Debug + Send + Sync {
         transfer_id: TransferId,
         state: TransferState,
     ) -> Result<()>;
+
+    /// Gets the current state of a bridge transfer.
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>>;
 
     /// Loads all pending transfers from storage.
     ///
