@@ -1,6 +1,7 @@
 //! Relay end-to-end test constants
 
 use super::*;
+use crate::e2e::layerzero::LayerZeroConfig;
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
@@ -95,6 +96,8 @@ pub struct Environment {
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
+    /// Settlement configuration for cross-chain messaging
+    pub settlement: SettlementConfig,
 }
 
 impl std::fmt::Debug for Environment {
@@ -110,6 +113,13 @@ impl std::fmt::Debug for Environment {
             .field("relay_endpoint", &self.relay_endpoint)
             .finish()
     }
+}
+
+/// Settlement configuration for cross-chain messaging
+#[derive(Debug, Clone, Default)]
+pub struct SettlementConfig {
+    /// LayerZero configuration
+    pub layerzero: Option<LayerZeroConfig>,
 }
 
 /// Set up anvil instances based on configuration
@@ -323,8 +333,7 @@ impl Environment {
         let mut providers = Vec::with_capacity(config.num_chains);
 
         // Load signers.
-        let deployer_priv = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-        let deployer = DynSigner::from_signing_key(deployer_priv)
+        let deployer = DynSigner::from_signing_key(&DEPLOYER_PRIVATE_KEY.to_string())
             .await
             .wrap_err("Relay signer load failed")?;
 
@@ -416,7 +425,7 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_funder_key(deployer_priv.to_string())
+                .with_funder_key(DEPLOYER_PRIVATE_KEY.to_string())
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
                 .with_interop_tokens(&[contracts.erc20s[0]])
@@ -451,6 +460,7 @@ impl Environment {
             relay_endpoint,
             relay_handle,
             signers,
+            settlement: SettlementConfig::default(),
         })
     }
 
@@ -661,6 +671,27 @@ impl Environment {
     pub async fn freeze_basefee(&self) {
         self.freeze_basefee_on_chain(0).await
     }
+
+    /// Extracts RPC URLs for all chains in the environment.
+    ///
+    /// Returns a vector of RPC URLs in the same order as the chains are indexed.
+    /// For local anvil instances, returns their endpoint URLs.
+    /// For external anvil instances, returns the TEST_EXTERNAL_ANVIL environment variable value.
+    pub fn get_rpc_urls(&self) -> eyre::Result<Vec<String>> {
+        let mut urls = Vec::with_capacity(self.anvils.len());
+
+        for anvil in &self.anvils {
+            let url = if let Some(anvil_instance) = anvil {
+                anvil_instance.endpoint_url().to_string()
+            } else {
+                std::env::var("TEST_EXTERNAL_ANVIL")
+                    .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?
+            };
+            urls.push(url);
+        }
+
+        Ok(urls)
+    }
 }
 
 /// Mint ERC20s into the addresses.
@@ -859,7 +890,7 @@ async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre
     deploy_contract(provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None).await
 }
 
-async fn deploy_contract<P: Provider>(
+pub async fn deploy_contract<P: Provider>(
     provider: &P,
     artifact_path: &Path,
     args: Option<Bytes>,

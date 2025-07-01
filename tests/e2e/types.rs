@@ -296,6 +296,8 @@ alloy::sol! {
         }
         function mint(address a, uint256 val) external;
         function transfer(address recipient, uint256 amount);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function balanceOf(address account) external view returns (uint256);
     }
 }
 

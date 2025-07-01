@@ -4773,6 +4773,7 @@ dependencies = [
  "opentelemetry-stdout",
  "opentelemetry_sdk",
  "p256",
+ "parking_lot",
  "rand 0.9.1",
  "reqwest",
  "resend-rs",
