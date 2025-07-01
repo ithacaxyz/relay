@@ -195,8 +195,9 @@ impl StorageApi for RelayStorage {
         &self,
         transfer_id: TransferId,
         state: TransferState,
+        at: BlockNumber,
     ) -> api::Result<()> {
-        self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state).await
+        self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state, at).await
     }
 
     async fn get_transfer_state(

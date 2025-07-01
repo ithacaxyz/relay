@@ -736,6 +736,7 @@ impl StorageApi for PgStorage {
         &self,
         transfer_id: TransferId,
         state: TransferState,
+        at: BlockNumber,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
@@ -744,8 +745,7 @@ impl StorageApi for PgStorage {
         };
 
         self.update_transfer_state_with(transfer_id, state, &mut tx).await?;
-        let block = if let TransferState::Sent(block) = state { block } else { 0 };
-        self.unlock_liquidity_with(transfer.from, transfer.amount, block, &mut *tx).await?;
+        self.unlock_liquidity_with(transfer.from, transfer.amount, at, &mut *tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
 

@@ -245,6 +245,7 @@ impl StorageApi for InMemoryStorage {
         &self,
         transfer_id: TransferId,
         state: TransferState,
+        at: BlockNumber,
     ) -> Result<()> {
         let transfer = self
             .transfers
@@ -257,8 +258,7 @@ impl StorageApi for InMemoryStorage {
         self.update_transfer_state(transfer_id, state).await?;
 
         // Unlock liquidity
-        let block = if let TransferState::Sent(block) = state { block } else { 0 };
-        self.unlock_liquidity(transfer.from, transfer.amount, block).await?;
+        self.unlock_liquidity(transfer.from, transfer.amount, at).await?;
 
         Ok(())
     }

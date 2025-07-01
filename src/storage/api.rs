@@ -153,6 +153,7 @@ pub trait StorageApi: Debug + Send + Sync {
         &self,
         transfer_id: TransferId,
         state: TransferState,
+        at: BlockNumber,
     ) -> Result<()>;
 
     /// Gets the current state of a bridge transfer.
