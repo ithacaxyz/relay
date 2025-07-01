@@ -181,6 +181,7 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
     if let Ok(fork_url) = &fork_url {
         args.extend(["--fork-url", fork_url]);
         args.extend(["--fork-block-number", &fork_block_number]);
+        args.extend(["--no-storage-caching"]);
     }
     let block_time = config.block_time.map(|t| t.to_string());
     if let Some(block_time) = &block_time {
