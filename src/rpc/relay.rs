@@ -411,7 +411,7 @@ impl Relay {
         let quote = Quote {
             chain_id: request.chain_id,
             payment_token_decimals: token.decimals,
-            output: intent,
+            intent,
             extra_payment,
             eth_price,
             tx_gas: gas_estimate.tx,
@@ -481,7 +481,7 @@ impl Relay {
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         let authorization_address = quote.authorization_address;
-        let intent = &mut quote.output;
+        let intent = &mut quote.intent;
 
         // Fill Intent with the fee payment signature (if exists).
         intent.paymentSignature = capabilities.fee_signature.clone();
@@ -538,7 +538,7 @@ impl Relay {
             }
 
             let expected_nonce =
-                provider.get_transaction_count(quote.output.eoa).await.map_err(RelayError::from)?;
+                provider.get_transaction_count(quote.intent.eoa).await.map_err(RelayError::from)?;
 
             if expected_nonce != auth.nonce {
                 return Err(AuthError::AuthItemInvalidNonce {
@@ -548,15 +548,15 @@ impl Relay {
                 .into());
             }
         } else {
-            let account = Account::new(quote.output.eoa, provider);
+            let account = Account::new(quote.intent.eoa, provider);
             // todo: same as above
             if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.output.eoa).into());
+                return Err(AuthError::EoaNotDelegated(quote.intent.eoa).into());
             }
         }
 
         // set our payment recipient
-        quote.output.paymentRecipient = self.inner.fee_recipient;
+        quote.intent.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote.clone(), authorization.clone());
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
@@ -1224,7 +1224,7 @@ impl Relay {
                 .iter()
                 .map(|quote| {
                     self.provider(quote.chain_id)
-                        .map(|provider| (quote.output.clone(), provider, quote.orchestrator))
+                        .map(|provider| (quote.intent.clone(), provider, quote.orchestrator))
                 })
                 .collect::<Result<_, _>>()?,
         );
