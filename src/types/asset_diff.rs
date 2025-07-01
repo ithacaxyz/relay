@@ -136,12 +136,8 @@ impl From<Option<Address>> for Asset {
 pub struct AssetWithInfo {
     /// Asset.
     pub asset: Asset,
-    /// Name.
-    pub name: Option<String>,
-    /// Symbol.
-    pub symbol: Option<String>,
-    /// Decimals.
-    pub decimals: Option<u8>,
+    /// Asset metadata.
+    pub metadata: AssetMetadata,
 }
 
 /// Builds a collapsed diff for both fungible & non-fungible tokens into [`AssetDiff`].
@@ -256,12 +252,7 @@ impl AssetDiffBuilder {
                 account_diffs.push(AssetDiff {
                     token_kind: asset.is_native().not().then_some(AssetType::ERC20),
                     address: asset.is_native().not().then(|| asset.address()),
-                    metadata: AssetMetadata {
-                        name: info.name.clone(),
-                        symbol: info.symbol.clone(),
-                        decimals: info.decimals,
-                        uri: None,
-                    },
+                    metadata: info.metadata.clone(),
                     value,
                     direction,
                 });
@@ -280,12 +271,7 @@ impl AssetDiffBuilder {
                 account_diffs.push(AssetDiff {
                     token_kind: asset.is_native().not().then_some(AssetType::ERC721),
                     address: asset.is_native().not().then(|| asset.address()),
-                    metadata: AssetMetadata {
-                        name: info.name.clone(),
-                        symbol: info.symbol.clone(),
-                        uri,
-                        decimals: info.decimals,
-                    },
+                    metadata: AssetMetadata { uri, ..info.metadata.clone() },
                     value: id,
                     direction,
                 });
