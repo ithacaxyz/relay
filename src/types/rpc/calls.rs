@@ -17,7 +17,7 @@ use alloy::{
         wrap_fixed_bytes,
     },
     providers::DynProvider,
-    rpc::types::Log,
+    rpc::types::{Log, state::StateOverride},
     sol_types::{SolCall, SolEvent},
     uint,
 };
@@ -69,6 +69,11 @@ pub struct PrepareCallsParameters {
     pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
+    /// State overrides for simulating the call bundle.
+    ///
+    /// This will only be applied to the intent on the output chain in multichain intents.
+    #[serde(default)]
+    pub state_overrides: StateOverride,
     /// Key that will be used to sign the call bundle. It can only be None, if we are handling a
     /// precall.
     #[serde(default)]
@@ -187,6 +192,7 @@ impl PrepareCallsParameters {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
             key: Some(request_key),
             required_funds: vec![],
         }
