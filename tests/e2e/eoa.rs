@@ -122,7 +122,7 @@ impl MockAccount {
 
         // todo(onbjerg): this assumes a single intent
         let mut quote = context.take_quote().unwrap().ty().quotes[0].clone();
-        quote.output.signature = Signature {
+        quote.intent.signature = Signature {
             innerSignature: self.key.sign_payload_hash(digest).await.unwrap(),
             keyHash: self.key.key_hash(),
             prehash: false,

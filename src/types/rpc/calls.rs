@@ -316,10 +316,10 @@ impl PrepareCallsContext {
             PrepareCallsContext::Quote(context) => {
                 let output_quote = context.ty().quotes.last().expect("should exist");
                 if let Some(root) = context.ty().multi_chain_root {
-                    Ok((root, TypedData::from_struct(&output_quote.output, None)))
+                    Ok((root, TypedData::from_struct(&output_quote.intent, None)))
                 } else {
                     output_quote
-                        .output
+                        .intent
                         .compute_eip712_data(output_quote.orchestrator, provider)
                         .await
                 }

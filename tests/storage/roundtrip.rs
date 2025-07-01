@@ -138,7 +138,7 @@ impl Fixtures {
         };
         let quote = Quote {
             chain_id: r_u64,
-            output: intent,
+            intent,
             extra_payment: r_u256,
             eth_price: r_u256,
             payment_token_decimals: 1,

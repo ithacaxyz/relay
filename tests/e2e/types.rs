@@ -171,7 +171,7 @@ impl TxContext<'_> {
         };
 
         // todo(onbjerg): this assumes a single intent
-        let intent_nonce = context.quote().as_ref().unwrap().ty().quotes[0].output.nonce;
+        let intent_nonce = context.quote().as_ref().unwrap().ty().quotes[0].intent.nonce;
 
         // Submit signed call
         let bundle = send_prepared_calls(env, signer, signature, context).await;

@@ -116,7 +116,7 @@ impl StressAccount {
             // intent does not have the same nonce and otherwise retry a bit later.
             // todo(onbjerg): this only works for single chain intents right now
             for quote in context.quote().unwrap().ty().quotes.iter() {
-                let nonce = quote.output.nonce;
+                let nonce = quote.intent.nonce;
                 if previous_nonce == Some(nonce) {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
