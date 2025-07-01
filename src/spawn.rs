@@ -84,6 +84,7 @@ pub async fn try_spawn_with_args<P: AsRef<Path>>(
     } else {
         let mut config = RelayConfig::load_from_file(&config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config.with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
     };
@@ -121,6 +122,9 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         config.transactions.num_signers,
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
+
+    // setup funder signer
+    let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
@@ -182,9 +186,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains =
-        Chains::new(providers.clone(), signers, storage.clone(), config.transactions.clone())
-            .await?;
+    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
@@ -201,9 +203,16 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         contracts,
         chains.clone(),
         quote_signer,
+        funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers,
+        )
+        .await?,
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
@@ -247,6 +256,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!(%addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
+    info!("Funder signer key: {}", funder_signer.address());
 
     // version and other information as a metric
     counter!(
@@ -255,6 +265,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         "orchestrator" => config.orchestrator.to_string(),
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
+        "funder" => config.funder.to_string(),
         "fee_recipient" => config.chain.fee_recipient.to_string()
     )
     .absolute(1);

@@ -47,6 +47,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     env.provider().anvil_set_code(another_impl, expected_impl_code).await?;
 
     let params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: vec![],
         chain_id: env.chain_id(),
@@ -57,13 +58,15 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             pre_calls: vec![],
             pre_call: false,
         },
+        state_overrides: Default::default(),
         key: Some(admin_key.to_call_key()),
     };
 
     let good_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
 
+    // todo(onbjerg): this assumes a single intent
     assert!(
-        good_quote.context.quote().unwrap().ty().intent.supportedAccountImplementation
+        good_quote.context.quote().unwrap().ty().quotes[0].intent.supportedAccountImplementation
             == caps.chain(env.chain_id()).contracts.delegation_implementation.address
     );
 
@@ -192,7 +195,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
         assert!(
             env.relay_endpoint
-                .prepare_calls(params)
+                .prepare_calls(params.clone())
                 .await
                 .is_err_and(|err| err.to_string().contains("invalid delegation 0x"))
         );
@@ -222,10 +225,14 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         )
         .await;
 
+        let fresh_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
+        let fresh_signed_payload = admin_key.sign_payload_hash(fresh_quote.digest).await?;
+
         assert!(
             await_calls_status(
                 &env,
-                send_prepared_calls(&env, &admin_key, signed_payload, good_quote.context).await?
+                send_prepared_calls(&env, &admin_key, fresh_signed_payload, fresh_quote.context)
+                    .await?
             )
             .await?
             .status
@@ -265,6 +272,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![Call {
                 to: env.eoa.address(),
@@ -287,6 +295,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: true,
             },
+            state_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
@@ -304,6 +313,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -314,6 +324,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 pre_calls: vec![precall],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;

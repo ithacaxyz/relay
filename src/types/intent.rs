@@ -22,7 +22,7 @@ pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
 pub const MULTICHAIN_NONCE_PREFIX_U192: U192 = uint!(0xc1d0_U192);
 
 sol! {
-    /// A struct to hold the intenteration fields.
+    /// A struct to hold the intent fields.
     ///
     /// Since L2s already include calldata compression with savings forwarded to users,
     /// we don't need to be too concerned about calldata overhead.
@@ -92,9 +92,15 @@ sol! {
         /// The `encodedPreCalls` are included in the EIP712 signature, which enables execution order
         /// to be enforced on-the-fly even if the nonces are from different sequences.
         bytes[] encodedPreCalls;
+        /// Only relevant for multi chain intents.
+        bytes[] encodedFundTransfers;
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
+        /// The funder address.
+        address funder;
+        /// The funder signature.
+        bytes funderSignature;
         /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
         uint256 prePaymentAmount;
         /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
@@ -138,6 +144,14 @@ sol! {
         /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
         bytes signature;
     }
+
+    /// A struct to fund an account on an output chain from a multi chain intent.
+    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Transfer {
+        address token;
+        uint256 amount;
+    }
 }
 
 /// A partial [`Intent`] used for fee estimation.
@@ -159,6 +173,25 @@ pub struct PartialIntent {
     /// Optional array of encoded PreCalls that will be verified and executed before the
     /// verification of the overall Intent.
     pub pre_calls: Vec<SignedCall>,
+    /// Funds required in the destination chain.
+    pub fund_transfers: Vec<(Address, U256)>,
+}
+
+/// Context for fee estimation that groups execution-related parameters.
+#[derive(Debug, Clone)]
+pub struct FeeEstimationContext {
+    /// The token to use for fee payment.
+    pub fee_token: Address,
+    /// Optional authorization address for EIP-7702 delegation.
+    pub authorization_address: Option<Address>,
+    /// The account key used for signing.
+    pub account_key: Key,
+    /// Whether to override key slots in state.
+    pub key_slot_override: bool,
+    /// The kind of intent being estimated.
+    pub intent_kind: IntentKind,
+    /// State overrides for simulation.
+    pub state_overrides: alloy::rpc::types::state::StateOverride,
 }
 
 mod eip712 {
@@ -178,6 +211,7 @@ mod eip712 {
             uint256 totalPaymentMaxAmount;
             uint256 combinedGas;
             bytes[] encodedPreCalls;
+            bytes[] encodedFundTransfers;
         }
 
         #[derive(serde::Serialize)]
@@ -223,6 +257,9 @@ impl Intent {
             hasher.finalize()
         };
         hasher.update(pre_calls_hash);
+        for transfer in &self.encodedFundTransfers {
+            hasher.update(transfer);
+        }
         hasher.update(self.supportedAccountImplementation);
         hasher.finalize()
     }
@@ -237,11 +274,25 @@ impl Intent {
         Ok(all_keys)
     }
 
+    /// Returns all fund transfers in the intent.
+    pub fn fund_transfers(&self) -> Result<Vec<(Address, U256)>, alloy::sol_types::Error> {
+        self.encodedFundTransfers
+            .iter()
+            .map(|transfer| {
+                let transfer = Transfer::abi_decode(transfer)?;
+                Ok((transfer.token, transfer.amount))
+            })
+            .collect()
+    }
+
     /// Encodes this intent into calldata for [`OrchestratorContract::executeCall`].
-    pub fn encode_execute(&self) -> Bytes {
-        OrchestratorContract::executeCall { encodedIntent: self.abi_encode().into() }
-            .abi_encode()
-            .into()
+    pub fn encode_execute(&self, is_multi_chain: bool) -> Bytes {
+        OrchestratorContract::executeCall {
+            isMultiChain: is_multi_chain,
+            encodedIntent: self.abi_encode().into(),
+        }
+        .abi_encode()
+        .into()
     }
 }
 
@@ -394,6 +445,7 @@ impl SignedCalls for Intent {
             totalPaymentMaxAmount: self.totalPaymentMaxAmount,
             combinedGas: self.combinedGas,
             encodedPreCalls: self.encodedPreCalls.clone(),
+            encodedFundTransfers: self.encodedFundTransfers.clone(),
         })
     }
 
@@ -409,6 +461,54 @@ impl SignedCalls for Intent {
     /// `executionData`.
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         Ok(self.authorized_keys_from_execution_data()?.chain(self.pre_authorized_keys()?).collect())
+    }
+}
+
+/// Kind of intent to be simulated and created.
+#[derive(Debug, Clone)]
+pub enum IntentKind {
+    /// Single chain intent.
+    Single,
+    /// Output of a multi chain intent. usize is the leaf nth.
+    MultiOutput(usize, Vec<(Address, U256)>),
+    /// Input of a multi chain intent. usize is the leaf nth.
+    MultiInput(usize),
+}
+
+impl IntentKind {
+    /// Returns `true` if this is [`IntentKind::Single`].
+    pub fn is_single(&self) -> bool {
+        matches!(self, IntentKind::Single)
+    }
+
+    /// Returns `true` if this is [`IntentKind::MultiOutput`].
+    pub fn is_multi_output(&self) -> bool {
+        matches!(self, IntentKind::MultiOutput(_, _))
+    }
+
+    /// Returns `true` if this is [`IntentKind::MultiInput`].
+    pub fn is_multi_input(&self) -> bool {
+        matches!(self, IntentKind::MultiInput(_))
+    }
+
+    /// Returns the nth leaf if dealing with a multi chain intent.
+    ///
+    /// # Panics
+    /// It will panic if self is of the single intent variant.
+    pub fn leaf_nth(&self) -> usize {
+        match self {
+            IntentKind::Single => panic!("Only multi chain intents have a leaf number."),
+            IntentKind::MultiOutput(leaf, _) => *leaf,
+            IntentKind::MultiInput(leaf) => *leaf,
+        }
+    }
+
+    /// Returns the nth leaf if dealing with a multi chain intent.
+    pub fn fund_transfers(&self) -> Vec<(Address, U256)> {
+        match self {
+            IntentKind::MultiOutput(_, fund_transfers) => fund_transfers.clone(),
+            _ => vec![],
+        }
     }
 }
 
@@ -458,6 +558,9 @@ mod tests {
             signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedAccountImplementation: Address::ZERO,
+            encodedFundTransfers: vec![bytes!("")],
+            funder: Address::ZERO,
+            funderSignature: bytes!(""),
         };
 
         // Single chain op
@@ -470,7 +573,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0xf01dc07e291c10c12b17663c47e8a7fdb5bc3086c63797e6f1b5036b3a8ec44e")
+            b256!("0xd3073c2ed4e4c122d0895e4f5e5574297f66bb503e3646955e39148b549089c2")
         );
 
         // Multichain op
@@ -483,7 +586,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0x36daf70a6807bd30c5369892c1640275fb6be91d1fdb3385b2b39695fd37e1c1")
+            b256!("0x41f244fe031bac7f3f54dc45bd3edc3ad3a56a41bcdb67d00f9bf573b983f065")
         );
     }
 
@@ -507,10 +610,13 @@ mod tests {
             signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedAccountImplementation: Address::ZERO,
+            encodedFundTransfers: vec![bytes!("")],
+            funder: Address::ZERO,
+            funderSignature: bytes!(""),
         };
 
         let expected_digest =
-            b256!("0x05f4e091959d48416120aa08ee1b39421c9935412568878c0e48f23033b055f3");
+            b256!("0xecbc5b73c5bd49aef761c86e80940db8362ce5712512f2fff70485f64a973c83");
         assert_eq!(
             intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
@@ -532,14 +638,14 @@ mod tests {
         assert_eq!(
             intent.signature,
             bytes!(
-                "0x53bb2d85711417ea08f129fe6f1472a228294501d9e5b94f5165f6986316a8e64205c4e7305fc5a4ab9d6101e579932bb8ac293174fc9c0861153b830afe01f01c"
+                "0xd3d5e107ac80ce0578e9669b4b04423349c9395ec2aafc9d2d0340965704ca7368f9c9859548d39cb39d9374bb1c29b38f7df7df711211e5d3401802a291dd0b1b"
             )
         );
 
         assert_eq!(
             Bytes::from(intent.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a19600000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c00000000000000000000000000000000000000000000000000000000009896800000000000000000000000000000000000000000000000000000000000000340000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000036000000000000000000000000000000000000000000000000000000000000003e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f39500000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004153bb2d85711417ea08f129fe6f1472a228294501d9e5b94f5165f6986316a8e64205c4e7305fc5a4ab9d6101e579932bb8ac293174fc9c0861153b830afe01f01c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044000000000000000000000000000000000000000000000000000000000000004c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041d3d5e107ac80ce0578e9669b4b04423349c9395ec2aafc9d2d0340965704ca7368f9c9859548d39cb39d9374bb1c29b38f7df7df711211e5d3401802a291dd0b1b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )
         );
     }

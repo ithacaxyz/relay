@@ -1,0 +1,10 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+broadcast/
+
+# Forge lib dependencies
+lib/
+src/EndpointV2Mock.sol

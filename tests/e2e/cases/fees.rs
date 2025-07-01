@@ -6,6 +6,7 @@ use crate::e2e::{
 };
 use alloy::providers::Provider;
 use alloy_primitives::{Address, U256};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
@@ -42,11 +43,14 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     let signer_balance_before = env.provider().get_balance(signer.address()).await?;
 
     // Create PreCall with the upgrade call
+    let mut rng = StdRng::seed_from_u64(1337);
+    let num_calls = rng.random_range(2..100);
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
-            calls: (1..rand::random_range(2..1000))
+            calls: (1..num_calls)
                 .map(|_| Call { to: Address::ZERO, value: U256::ZERO, data: Default::default() })
                 .collect(),
             chain_id: env.chain_id(),
@@ -57,6 +61,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;

@@ -1,4 +1,5 @@
 use crate::e2e::environment::Environment;
+use alloy::primitives::B256;
 use relay::{cli::Args, spawn::try_spawn_with_args};
 use std::{
     env::temp_dir,
@@ -27,19 +28,25 @@ async fn respawn_cli() -> eyre::Result<()> {
                 max_connections: Default::default(),
                 orchestrator: Some(env.orchestrator),
                 delegation_proxy: Some(env.delegation),
+                legacy_delegation_proxies: Default::default(),
                 simulator: Default::default(),
-                endpoints: Some(vec![Url::from_str(&env.anvils[0].endpoint()).unwrap()]),
+                funder: Default::default(),
+                endpoints: Some(vec![
+                    Url::from_str(&env.anvils[0].as_ref().unwrap().endpoint()).unwrap(),
+                ]),
                 fee_recipient: Default::default(),
                 quote_ttl: Default::default(),
                 rate_ttl: Default::default(),
                 constant_rate: Default::default(),
                 fee_tokens: Default::default(),
+                interop_tokens: Default::default(),
                 intent_gas_buffer: Default::default(),
                 tx_gas_buffer: Default::default(),
                 database_url: Default::default(),
                 max_pending_transactions: Default::default(),
                 num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
+                funder_key: B256::random().to_string(),
                 sequencer_endpoints: Default::default(),
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),

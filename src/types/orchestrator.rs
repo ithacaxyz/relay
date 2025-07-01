@@ -4,6 +4,7 @@ use alloy::{
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{
+        TransactionReceipt,
         simulate::{SimBlock, SimulatePayload},
         state::StateOverride,
     },
@@ -18,7 +19,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::P256_GAS_BUFFER,
     error::{IntentError, RelayError},
-    types::{AssetDiffs, Intent},
+    types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -117,7 +118,7 @@ sol! {
         /// `encodedIntent` is given by `abi.encode(intent)`, where `intent` is a struct of type `Intent`.
         /// If sufficient gas is provided, returns an error selector that is non-zero
         /// if there is an error during the payment, verification, and call execution.
-        function execute(bytes calldata encodedIntent)
+        function execute(bool isMultiChain, bytes calldata encodedIntent)
             public
             payable
             virtual
@@ -283,10 +284,10 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].
-    pub async fn execute(&self, intent: &Intent) -> Result<(), RelayError> {
+    pub async fn execute(&self, is_multi_chain: bool, intent: &Intent) -> Result<(), RelayError> {
         let ret = self
             .orchestrator
-            .execute(intent.abi_encode().into())
+            .execute(is_multi_chain, intent.abi_encode().into())
             .call()
             .overrides(self.overrides.clone())
             .await
@@ -330,5 +331,17 @@ impl<P: Provider> Orchestrator<P> {
             .await
             .map_err(TransportErrorKind::custom)?
             == U256::ONE)
+    }
+}
+
+impl IntentExecuted {
+    /// Attempts to decode the [`IntentExecuted`] event from the receipt.
+    pub fn try_from_receipt(receipt: &TransactionReceipt) -> Option<Self> {
+        receipt.decoded_log::<Self>().map(|e| e.data)
+    }
+
+    /// Whether the intent execution failed.
+    pub fn has_error(&self) -> bool {
+        self.err != ORCHESTRATOR_NO_ERROR
     }
 }

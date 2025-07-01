@@ -1,15 +1,66 @@
 //! Quote types.
 
-use crate::types::{Intent, Signed};
+use crate::{
+    error::{QuoteError, RelayError},
+    types::{Intent, Intents, Signed},
+};
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
-    providers::utils::Eip1559Estimation,
+    providers::{DynProvider, utils::Eip1559Estimation},
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// A relay-signed [`Quote`].
-pub type SignedQuote = Signed<Quote>;
+/// A relay-signed [`Quotes`].
+pub type SignedQuotes = Signed<Quotes>;
+
+/// A set of quotes from the relay with a set of intents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quotes {
+    /// A quote for each intent.
+    ///
+    /// For a single-chain workflow, this will have exactly one item, the output intent.
+    ///
+    /// For a multi-chain workflow, this will have multiple items, where the last one is the output
+    /// intent.
+    pub quotes: Vec<Quote>,
+    /// The time at which this estimate expires.
+    ///
+    /// This is a UNIX timestamp in seconds.
+    #[serde(with = "crate::serde::timestamp")]
+    pub ttl: SystemTime,
+    /// Merkle root if it's a multichain
+    pub multi_chain_root: Option<B256>,
+}
+
+impl Quotes {
+    /// Sets the merkle payload to every quote.
+    pub async fn with_merkle_payload(
+        mut self,
+        providers: Vec<DynProvider>,
+    ) -> Result<Self, RelayError> {
+        if self.quotes.len() != providers.len() {
+            return Err(QuoteError::InvalidNumberOfIntents {
+                expected: providers.len(),
+                got: self.quotes.len(),
+            }
+            .into());
+        }
+
+        let mut intents = Intents::new(
+            self.quotes
+                .iter()
+                .zip(providers)
+                .map(|(quote, provider)| (quote.intent.clone(), provider, quote.orchestrator))
+                .collect(),
+        );
+
+        self.multi_chain_root = Some(intents.root().await?);
+
+        Ok(self)
+    }
+}
 
 /// A quote from a relay for a given [`Intent`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,26 +81,17 @@ pub struct Quote {
     pub tx_gas: u64,
     /// The fee estimate for the action in the destination chains native token.
     pub native_fee_estimate: Eip1559Estimation,
-    /// The time at which this estimate expires.
-    ///
-    /// This is a UNIX timestamp in seconds.
-    #[serde(with = "crate::serde::timestamp")]
-    pub ttl: SystemTime,
     /// An optional unsigned authorization item.
     ///
     /// The account in `intent.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
+    /// Whether it's part of a multi chain intent
+    pub is_multi_chain: bool,
 }
 
 impl Quote {
-    /// Add a signature turning the quote into a [`SignedQuote`].
-    pub fn into_signed(self, signature: Signature) -> SignedQuote {
-        let digest = self.digest();
-        SignedQuote::new_unchecked(self, signature, digest)
-    }
-
     /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
@@ -58,6 +100,24 @@ impl Quote {
             hasher.update(address);
         }
         hasher.update(self.intent.digest());
+        hasher.update(self.orchestrator);
+        hasher.finalize()
+    }
+}
+
+impl Quotes {
+    /// Add a signature turning the quotes into a [`SignedQuotes`].
+    pub fn into_signed(self, signature: Signature) -> SignedQuotes {
+        let digest = self.digest();
+        SignedQuotes::new_unchecked(self, signature, digest)
+    }
+
+    /// Compute a digest of the quotes for signing.
+    pub fn digest(&self) -> B256 {
+        let mut hasher = Keccak256::new();
+        for quote in &self.quotes {
+            hasher.update(quote.digest());
+        }
         hasher.update(
             self.ttl
                 .duration_since(UNIX_EPOCH)
@@ -65,12 +125,14 @@ impl Quote {
                 .as_secs()
                 .to_be_bytes(),
         );
-        hasher.update(self.orchestrator);
+        if let Some(root) = self.multi_chain_root {
+            hasher.update(root);
+        }
         hasher.finalize()
     }
 }
 
-impl Sealable for Quote {
+impl Sealable for Quotes {
     fn hash_slow(&self) -> B256 {
         self.digest()
     }

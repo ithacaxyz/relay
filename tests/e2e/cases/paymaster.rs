@@ -43,6 +43,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
         let PrepareCallsResponse { mut context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![],
                 chain_id: env.chain_id(),
                 from: Some(eoa.address),
@@ -53,13 +54,15 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
                     pre_call: false,
                     revoke_keys: vec![],
                 },
+                state_overrides: Default::default(),
                 key: Some(eoa.key.to_call_key()),
             })
             .await
             .unwrap();
 
         // Ensure the payer on Intent is as expected
-        assert_eq!(context.quote_mut().unwrap().ty().intent.payer, paymaster.address);
+        // todo(onbjerg): this assumes a single intent
+        assert_eq!(context.quote_mut().unwrap().ty().quotes[0].intent.payer, paymaster.address);
 
         let bundle_id = env
             .relay_endpoint

@@ -1,4 +1,4 @@
-use super::{internal_rpc, invalid_params, rpc_err};
+use super::{MerkleError, internal_rpc, invalid_params, rpc_err};
 use crate::{
     error::ContractErrors,
     types::{IthacaAccount::IthacaAccountErrors, OrchestratorContract::OrchestratorContractErrors},
@@ -47,6 +47,9 @@ pub enum IntentError {
         /// The address recovered item.
         got: Option<Address>,
     },
+    /// Merkle tree operation error.
+    #[error(transparent)]
+    Merkle(#[from] MerkleError),
 }
 
 impl IntentError {
@@ -67,6 +70,7 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             | IntentError::UnallowedPreCall
             | IntentError::InvalidPreCallRecovery { .. }
             | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
+            IntentError::Merkle(_) => internal_rpc(err.to_string()),
             IntentError::IntentRevert(err) => err.into(),
         }
     }

@@ -2,8 +2,8 @@
 mod account;
 pub use account::*;
 
-mod action;
-pub use action::*;
+mod asset;
+pub use asset::*;
 
 mod asset_diff;
 pub use asset_diff::*;
@@ -29,6 +29,9 @@ pub use key::*;
 
 mod intent;
 pub use intent::*;
+
+mod intents;
+pub use intents::*;
 
 mod onramp;
 pub use onramp::*;
@@ -58,3 +61,6 @@ pub use storage::*;
 
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;
+
+mod merkle;
+pub use merkle::*;

@@ -13,14 +13,21 @@ pub use constants::*;
 mod environment;
 use environment::*;
 
+mod layerzero;
+
 mod eoa;
 
 mod types;
 pub use types::*;
 
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::{
+    network::Ethereum,
+    primitives::{Address, B256, Bytes, U256},
+    providers::{Provider, ext::AnvilApi},
+    rpc::types::TransactionRequest,
+};
 use eyre::{Context, Result};
-use futures_util::future::try_join_all;
+use futures_util::{future::try_join_all, try_join};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -114,6 +121,7 @@ pub async fn prepare_calls(
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from,
             calls: tx.calls.clone(),
             chain_id: env.chain_id(),
@@ -128,6 +136,7 @@ pub async fn prepare_calls(
                 pre_calls,
                 pre_call,
             },
+            state_overrides: Default::default(),
             key: Some(signer.to_call_key()),
         })
         .await;
@@ -167,4 +176,38 @@ pub async fn send_prepared_calls(
         .map(|bundle| bundle.id);
 
     response.map_err(Into::into)
+}
+
+/// Executes a transaction request as an impersonated account
+pub async fn send_impersonated_tx<P: Provider + AnvilApi<Ethereum>>(
+    provider: &P,
+    tx_request: TransactionRequest,
+    fund_amount: Option<U256>,
+) -> Result<()> {
+    // Extract from address
+    let from = tx_request
+        .from
+        .ok_or_else(|| eyre::eyre!("Transaction request must have 'from' field set"))?;
+
+    // Fund the account (if needed) and impersonate
+    let fund_future = async {
+        if let Some(amount) = fund_amount {
+            return provider.anvil_set_balance(from, amount).await;
+        }
+        Ok(())
+    };
+    let impersonate_future = provider.anvil_impersonate_account(from);
+
+    try_join!(fund_future, impersonate_future)?;
+
+    // By using anvil_send_impersonated_transaction, we can use WalletProviders
+    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
+
+    // Get receipt and stop impersonation
+    let receipt_future = provider.get_transaction_receipt(tx_hash);
+    let stop_impersonate_future = provider.anvil_stop_impersonating_account(from);
+
+    try_join!(receipt_future, stop_impersonate_future)?;
+
+    Ok(())
 }
