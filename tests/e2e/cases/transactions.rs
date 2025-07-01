@@ -387,7 +387,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let handles = futures_util::stream::iter(
         transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx)),
     )
-    .buffered(10)
+    .buffered(num_accounts)
     .try_collect::<Vec<_>>()
     .await?;
 
