@@ -59,10 +59,8 @@ impl LayerZeroRelayer {
     pub async fn start(self: Arc<Self>) -> Result<Vec<JoinHandle<Result<()>>>> {
         let mut handles = Vec::with_capacity(self.endpoints.len());
 
-        for endpoint in &self.endpoints {
+        for endpoint in self.endpoints.iter().cloned() {
             let relayer = self.clone();
-            let endpoint = endpoint.clone();
-
             let chain_index = endpoint.chain_index;
             let handle = tokio::spawn(async move {
                 if let Err(e) = relayer.monitor_chain(endpoint).await {
