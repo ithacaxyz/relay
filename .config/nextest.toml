@@ -14,3 +14,4 @@ filter = """
 """
 test-group = "sequential-tests"
 threads-required = 2
+slow-timeout = { period = "300s" }
