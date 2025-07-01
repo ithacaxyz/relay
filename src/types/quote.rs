@@ -38,7 +38,7 @@ impl Quotes {
     /// Sets the merkle payload to every quote.
     pub async fn with_merkle_payload(
         mut self,
-        providers: Vec<(DynProvider, Address)>,
+        providers: Vec<DynProvider>,
     ) -> Result<Self, RelayError> {
         if self.quotes.len() != providers.len() {
             return Err(QuoteError::InvalidNumberOfIntents {
@@ -52,9 +52,7 @@ impl Quotes {
             self.quotes
                 .iter()
                 .zip(providers)
-                .map(|(quote, (provider, orchestrator))| {
-                    (quote.output.clone(), provider, orchestrator)
-                })
+                .map(|(quote, provider)| (quote.intent.clone(), provider, quote.orchestrator))
                 .collect(),
         );
 
@@ -70,8 +68,8 @@ impl Quotes {
 pub struct Quote {
     /// Chain id.
     pub chain_id: ChainId,
-    /// Output intent.
-    pub output: Intent,
+    /// Intent.
+    pub intent: Intent,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
     /// Price of the ETH in the [`Intent::paymentToken`] in wei.
@@ -101,7 +99,7 @@ impl Quote {
         if let Some(address) = self.authorization_address {
             hasher.update(address);
         }
-        hasher.update(self.output.digest());
+        hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
         hasher.finalize()
     }

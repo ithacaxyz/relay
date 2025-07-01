@@ -61,7 +61,7 @@ impl InteropBundle {
     /// Appends a destination transaction to the bundle and updates asset transfers
     pub fn append_dst(&mut self, tx: RelayTransaction) {
         // Calculate asset transfers for this transaction
-        if let Some(transfers) = tx.quote().and_then(|q| q.output.fund_transfers().ok()) {
+        if let Some(transfers) = tx.quote().and_then(|q| q.intent.fund_transfers().ok()) {
             for (asset, amount) in transfers {
                 self.asset_transfers.push(AssetTransfer {
                     chain_id: tx.chain_id(),

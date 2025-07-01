@@ -23,7 +23,7 @@ use relay::{
     types::rpc::BundleId,
 };
 use std::{collections::HashSet, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 /// A Seed used to derive random accounts from
 const KEY_SEED: u64 = 1337;
@@ -35,8 +35,8 @@ fn pinned_test_fork_block_number() -> Option<i64> {
 }
 
 /// Waits for a final transaction status.
-async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> TransactionStatus {
-    while let Some(status) = events.recv().await {
+async fn wait_for_tx(mut events: broadcast::Receiver<TransactionStatus>) -> TransactionStatus {
+    while let Ok(status) = events.recv().await {
         if status.is_final() {
             return status;
         }
@@ -45,8 +45,8 @@ async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> 
     panic!("Transaction did not complete");
 }
 
-async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
-    while let Some(status) = events.recv().await {
+async fn wait_for_tx_hash(events: &mut broadcast::Receiver<TransactionStatus>) -> B256 {
+    while let Ok(status) = events.recv().await {
         match status {
             TransactionStatus::Pending(hash) => return hash,
             TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
@@ -58,7 +58,7 @@ async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus
 }
 
 /// Asserts that transaction was confirmed.
-async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error: &str) {
+async fn assert_failed(events: broadcast::Receiver<TransactionStatus>, error: &str) {
     match wait_for_tx(events).await {
         TransactionStatus::Failed(err) => {
             assert!(err.to_string().contains(error), "tx failed with different error: {err}");
@@ -69,7 +69,7 @@ async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error
 }
 
 /// Asserts that transaction was confirmed.
-async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
+async fn assert_confirmed(events: broadcast::Receiver<TransactionStatus>) -> B256 {
     match wait_for_tx(events).await {
         TransactionStatus::Confirmed(receipt) => receipt.transaction_hash,
         TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
@@ -156,7 +156,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
                 let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
                     unreachable!()
                 };
-                quote.output.signature = Default::default();
+                quote.intent.signature = Default::default();
                 invalid += 1;
             }
 

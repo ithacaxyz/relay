@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.12", features = [
+alloy = { version = "1.0.16", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -99,7 +99,7 @@ resend-rs = { version = "0.15.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-alloy = { version = "1.0.12", features = [
+alloy = { version = "1.0.16", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
@@ -108,6 +108,7 @@ alloy-primitives = { version = "1.2.1", features = ["rand"] }
 derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
+parking_lot = "0.12"
 semver = "1.0.26"
 strum = "0.27"
 strum_macros = "0.27"

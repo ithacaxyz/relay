@@ -40,7 +40,7 @@ use alloy::{
     },
     rpc::types::{
         Authorization,
-        state::{AccountOverride, StateOverridesBuilder},
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
@@ -215,6 +215,7 @@ impl Relay {
     }
 
     #[instrument(skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn estimate_fee(
         &self,
         request: PartialAction,
@@ -223,6 +224,7 @@ impl Relay {
         account_key: Key,
         key_slot_override: bool,
         intent_kind: IntentKind,
+        state_overrides: StateOverride,
     ) -> Result<(AssetDiffs, Quote), RelayError> {
         let chain = self
             .inner
@@ -260,6 +262,7 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
+            .extend(state_overrides)
             .build();
 
         let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
@@ -411,7 +414,7 @@ impl Relay {
         let quote = Quote {
             chain_id: request.chain_id,
             payment_token_decimals: token.decimals,
-            output: intent,
+            intent,
             extra_payment,
             eth_price,
             tx_gas: gas_estimate.tx,
@@ -481,7 +484,7 @@ impl Relay {
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
         let authorization_address = quote.authorization_address;
-        let intent = &mut quote.output;
+        let intent = &mut quote.intent;
 
         // Fill Intent with the fee payment signature (if exists).
         intent.paymentSignature = capabilities.fee_signature.clone();
@@ -538,7 +541,7 @@ impl Relay {
             }
 
             let expected_nonce =
-                provider.get_transaction_count(quote.output.eoa).await.map_err(RelayError::from)?;
+                provider.get_transaction_count(quote.intent.eoa).await.map_err(RelayError::from)?;
 
             if expected_nonce != auth.nonce {
                 return Err(AuthError::AuthItemInvalidNonce {
@@ -548,15 +551,15 @@ impl Relay {
                 .into());
             }
         } else {
-            let account = Account::new(quote.output.eoa, provider);
+            let account = Account::new(quote.intent.eoa, provider);
             // todo: same as above
             if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.output.eoa).into());
+                return Err(AuthError::EoaNotDelegated(quote.intent.eoa).into());
             }
         }
 
         // set our payment recipient
-        quote.output.paymentRecipient = self.inner.fee_recipient;
+        quote.intent.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote.clone(), authorization.clone());
         self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
@@ -786,6 +789,7 @@ impl Relay {
             mock_key.key().clone(),
             true,
             IntentKind::Single,
+            Default::default(),
         )
         .await?;
 
@@ -796,7 +800,7 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: IntentKind,
@@ -814,6 +818,12 @@ impl Relay {
             .await?
         else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
+        };
+
+        // We only apply client-supplied state overrides on intents on the destination chain
+        let overrides = match intent_kind {
+            IntentKind::Single | IntentKind::MultiOutput(_, _) => request.state_overrides.clone(),
+            _ => Default::default(),
         };
 
         // Call estimateFee to give us a quote with a complete intent that the user can sign
@@ -842,6 +852,7 @@ impl Relay {
                 key,
                 false,
                 intent_kind,
+                overrides,
             )
             .await
             .inspect_err(|err| {
@@ -899,8 +910,9 @@ impl Relay {
 
             (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
         } else {
-            let (asset_diffs, quotes) =
-                self.build_quotes(&request, calls, nonce, maybe_stored, intent_kind).await?;
+            let (asset_diffs, quotes) = self
+                .build_quotes(&request, calls, nonce, maybe_stored.as_ref(), intent_kind)
+                .await?;
 
             let sig = self
                 .inner
@@ -914,7 +926,7 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(self.orchestrator(), &provider)
+            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -944,7 +956,7 @@ impl Relay {
         request: &PrepareCallsParameters,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         intent_kind: Option<IntentKind>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         // Check if funding is required
@@ -973,7 +985,7 @@ impl Relay {
         funds: U256,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         // Only query inventory, if funds have been requested in the target chain.
@@ -1019,7 +1031,7 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: Option<IntentKind>,
@@ -1058,7 +1070,7 @@ impl Relay {
         funding_chains: Vec<(u64, U256)>,
         calls: Vec<Call>,
         nonce: U256,
-        maybe_stored: Option<CreatableAccount>,
+        maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
@@ -1145,10 +1157,7 @@ impl Relay {
                 funding_chains
                     .iter()
                     .chain(iter::once(&(request.chain_id, U256::ZERO)))
-                    .map(|(chain, _)| {
-                        self.provider(*chain)
-                            .map(|p| (p, self.inner.contracts.orchestrator.address))
-                    })
+                    .map(|(chain, _)| self.provider(*chain))
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .await?,
@@ -1226,7 +1235,7 @@ impl Relay {
                 .iter()
                 .map(|quote| {
                     self.provider(quote.chain_id)
-                        .map(|provider| (quote.output.clone(), provider, quote.orchestrator))
+                        .map(|provider| (quote.intent.clone(), provider, quote.orchestrator))
                 })
                 .collect::<Result<_, _>>()?,
         );
