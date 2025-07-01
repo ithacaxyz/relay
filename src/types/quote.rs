@@ -68,7 +68,7 @@ impl Quotes {
 pub struct Quote {
     /// Chain id.
     pub chain_id: ChainId,
-    /// Output intent.
+    /// Intent.
     pub intent: Intent,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
