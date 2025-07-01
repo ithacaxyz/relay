@@ -381,7 +381,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = futures_util::stream::iter(
@@ -543,7 +543,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         let account = MockAccount::new(&env).await.unwrap();
         account.prepare_tx(&env).await
     }))
-    .buffered(10)
+    .buffered(5)
     .collect::<Vec<_>>()
     .await;
     let handles = transactions
