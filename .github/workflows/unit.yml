@@ -95,9 +95,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contracts
-          path: | 
-            tests/account/out
-            tests/e2e/layerzero/contracts/out
+          path: tests
 
       - name: Set TEST_CONTRACTS environment variable
         run: |
