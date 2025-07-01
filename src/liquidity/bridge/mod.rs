@@ -4,7 +4,7 @@ use crate::liquidity::tracker::ChainAddress;
 use alloy::primitives::{BlockNumber, U256, wrap_fixed_bytes};
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Debug};
+use std::{borrow::Cow, fmt::Debug, pin::Pin};
 
 mod simple;
 pub use simple::{Funder, SimpleBridge};
@@ -66,5 +66,5 @@ pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
     /// `data` and determine the current state of the transfer.
     ///
     /// The spawned task is responsinble for updating the `data` in storage.
-    fn advance(&mut self, transfer: Transfer);
+    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }

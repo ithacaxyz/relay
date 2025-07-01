@@ -127,7 +127,7 @@ impl RebalanceService {
         self.tracker.try_lock_liquidity_for_bridge(&transfer).await?;
 
         // Send the transfer.
-        bridge.advance(transfer.clone());
+        tokio::spawn(bridge.process(transfer.clone()));
 
         self.transfers_in_progress.push(transfer);
 
@@ -196,7 +196,7 @@ impl RebalanceService {
             };
 
             // Delegate the transfer to the bridge
-            bridge.advance(transfer.clone());
+            tokio::spawn(bridge.process(transfer.clone()));
             self.transfers_in_progress.push(transfer);
         }
 

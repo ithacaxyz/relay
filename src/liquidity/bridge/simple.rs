@@ -294,12 +294,12 @@ impl Bridge for SimpleBridge {
         true
     }
 
-    fn advance(&mut self, transfer: Transfer) {
+    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let this = self.inner.clone();
-        tokio::spawn(async move {
+        Box::pin(async move {
             if let Err(e) = this.advance_transfer(transfer).await {
-                tracing::error!("Failed to advance transfer: {}", e);
+                error!("Failed to advance transfer: {}", e);
             }
-        });
+        })
     }
 }
