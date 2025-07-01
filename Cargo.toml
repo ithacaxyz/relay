@@ -172,3 +172,6 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 # unnameable-types = "warn"
 # unreachable_pub = "warn"
 unused_must_use = "deny"
+
+[workspace]
+members = ["tools/*"]
