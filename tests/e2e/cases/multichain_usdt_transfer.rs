@@ -78,6 +78,7 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
             key: Some(key.to_call_key()),
             required_funds: vec![(env.erc20, total_transfer_amount)],
         })

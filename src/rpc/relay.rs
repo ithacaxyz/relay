@@ -40,7 +40,7 @@ use alloy::{
     },
     rpc::types::{
         Authorization,
-        state::{AccountOverride, StateOverridesBuilder},
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
@@ -215,6 +215,7 @@ impl Relay {
     }
 
     #[instrument(skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn estimate_fee(
         &self,
         request: PartialAction,
@@ -223,6 +224,7 @@ impl Relay {
         account_key: Key,
         key_slot_override: bool,
         intent_kind: IntentKind,
+        state_overrides: StateOverride,
     ) -> Result<(AssetDiffs, Quote), RelayError> {
         let chain = self
             .inner
@@ -260,6 +262,7 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
+            .extend(state_overrides)
             .build();
 
         let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
@@ -786,6 +789,7 @@ impl Relay {
             mock_key.key().clone(),
             true,
             IntentKind::Single,
+            Default::default(),
         )
         .await?;
 
@@ -816,6 +820,12 @@ impl Relay {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
         };
 
+        // We only apply client-supplied state overrides on intents on the destination chain
+        let overrides = match intent_kind {
+            IntentKind::Single | IntentKind::MultiOutput(_, _) => request.state_overrides.clone(),
+            _ => Default::default(),
+        };
+
         // Call estimateFee to give us a quote with a complete intent that the user can sign
         let (asset_diff, quote) = self
             .estimate_fee(
@@ -842,6 +852,7 @@ impl Relay {
                 key,
                 false,
                 intent_kind,
+                overrides,
             )
             .await
             .inspect_err(|err| {
