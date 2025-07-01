@@ -177,6 +177,23 @@ pub struct PartialIntent {
     pub fund_transfers: Vec<(Address, U256)>,
 }
 
+/// Context for fee estimation that groups execution-related parameters.
+#[derive(Debug, Clone)]
+pub struct FeeEstimationContext {
+    /// The token to use for fee payment.
+    pub fee_token: Address,
+    /// Optional authorization address for EIP-7702 delegation.
+    pub authorization_address: Option<Address>,
+    /// The account key used for signing.
+    pub account_key: Key,
+    /// Whether to override key slots in state.
+    pub key_slot_override: bool,
+    /// The kind of intent being estimated.
+    pub intent_kind: IntentKind,
+    /// State overrides for simulation.
+    pub state_overrides: alloy::rpc::types::state::StateOverride,
+}
+
 mod eip712 {
     use crate::types::Call;
     use alloy::sol;
@@ -448,7 +465,7 @@ impl SignedCalls for Intent {
 }
 
 /// Kind of intent to be simulated and created.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IntentKind {
     /// Single chain intent.
     Single,
