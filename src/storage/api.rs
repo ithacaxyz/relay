@@ -2,17 +2,20 @@
 
 use crate::{
     error::StorageError,
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256},
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
@@ -113,4 +116,37 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Removes unlocked entries up until the given block number (inclusive), including it and
     /// subtracts them from the total locked amount.
     async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()>;
+
+    /// Atomically locks liquidity for a bridge transfer and creates an entry for the transfer in
+    /// the database.
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        bridge_id: &str,
+        input: LockLiquidityInput,
+    ) -> Result<()>;
+
+    /// Updates a bridge-specific data for a transfer.
+    async fn update_transfer_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> Result<()>;
+
+    /// Updates transfer state.
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()>;
+
+    /// Updates transfer state and unlocks liquidity for it.
+    ///
+    /// This is essentially a helper to call `update_transfer_state` and `unlock_liquidity`
+    /// atomically.
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()>;
 }

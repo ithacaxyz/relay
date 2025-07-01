@@ -3,7 +3,8 @@
 use crate::liquidity::tracker::ChainAddress;
 use alloy::primitives::{BlockNumber, U256, wrap_fixed_bytes};
 use futures_util::Stream;
-use std::fmt::Debug;
+use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt::Debug};
 
 mod simple;
 pub use simple::{Funder, SimpleBridge};
@@ -13,11 +14,22 @@ wrap_fixed_bytes!(
     pub struct TransferId<32>;
 );
 
-/// A cross-chain transfer.
+/// States of a [`Transfer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferState {
+    Sent(BlockNumber),
+    OutboundFailed,
+    Completed(BlockNumber),
+    InboundFailed,
+}
+
+/// A cross-chain transfer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transfer {
     /// Unique identifier of the transfer.
     pub id: TransferId,
+    /// Bridge that is handling the transfer.
+    pub bridge_id: Cow<'static, str>,
     /// Source asset.
     pub from: ChainAddress,
     /// Destination asset.
@@ -30,24 +42,21 @@ pub struct Transfer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeEvent {
     /// Emitted when funds are pulled from the source chain.
-    TransferSent(Transfer, BlockNumber),
-    /// Emitted when we've failed to pull funds from the source chain.
-    OutboundFailed(Transfer),
-    /// Emitted when funds were successfully bridged to the destination chain.
-    TransferCompleted(Transfer, BlockNumber),
-    /// Worst case — we've pulled funds from the source chain but were not able to deliver them.
-    InboundFailed(Transfer),
+    TransferState(TransferId, TransferState),
 }
 
 /// An abstraction over a bridge that is able to accept bridging requests and driving them to
 /// completion.
 pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
+    /// Unique identifier of the bridge.
+    fn id(&self) -> &'static str;
+
     /// Returns true if the bridge supports the given [`CoinKind`] on the given [`ChainId`].
     fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool;
 
-    /// Initiates a cross-chain transfer. This is expected to spawn a new task
-    fn send(&mut self, src: ChainAddress, dst: ChainAddress, amount: U256) -> eyre::Result<()>;
-
-    /// Returns a list of transfers that are in progress.
-    fn transfers_in_progress(&self) -> &[Transfer];
+    /// Initiates a cross-chain transfer. This is expected to spawn a new task that would parse
+    /// `data` and determine the current state of the transfer.
+    ///
+    /// The spawned task is responsinble for updating the `data` in storage.
+    fn advance(&mut self, transfer: Transfer);
 }

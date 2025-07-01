@@ -8,17 +8,20 @@ mod memory;
 mod pg;
 
 use crate::{
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, ChainId},
+    primitives::{Address, ChainId, map::HashMap},
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 /// Relay storage interface.
 #[derive(Debug, Clone)]
@@ -155,5 +158,38 @@ impl StorageApi for RelayStorage {
         until: BlockNumber,
     ) -> api::Result<()> {
         self.inner.prune_unlocked_entries(chain_id, until).await
+    }
+
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        bridge_id: &str,
+        input: LockLiquidityInput,
+    ) -> api::Result<()> {
+        self.inner.lock_liquidity_for_bridge(transfer, bridge_id, input).await
+    }
+
+    async fn update_transfer_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_data(transfer_id, data).await
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_state(transfer_id, state).await
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state).await
     }
 }

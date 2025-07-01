@@ -8,7 +8,7 @@ use std::{
 use crate::{
     liquidity::{
         bridge::{
-            Bridge, BridgeEvent, Transfer, TransferId,
+            Bridge, BridgeEvent, Transfer, TransferState,
             simple::Funder::{pullGasCall, withdrawTokensCall},
         },
         tracker::ChainAddress,
@@ -18,7 +18,7 @@ use crate::{
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
-    primitives::{Address, B256, Bytes, ChainId, U256},
+    primitives::{Address, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest},
     sol,
@@ -116,7 +116,6 @@ impl SimpleBridgeInner {
 pub struct SimpleBridge {
     inner: Arc<SimpleBridgeInner>,
     events_rx: mpsc::UnboundedReceiver<BridgeEvent>,
-    transfers_in_progress: Vec<Transfer>,
 }
 
 impl SimpleBridge {
@@ -130,7 +129,7 @@ impl SimpleBridge {
 
         let inner = SimpleBridgeInner { providers, signer, funder_address, events_tx };
 
-        Self { inner: Arc::new(inner), events_rx, transfers_in_progress: Default::default() }
+        Self { inner: Arc::new(inner), events_rx }
     }
 }
 
@@ -138,68 +137,59 @@ impl Stream for SimpleBridge {
     type Item = BridgeEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.events_rx.poll_recv(cx).map(|item| {
-            if let Some(event) = &item {
-                match event {
-                    BridgeEvent::TransferSent(_, _) => {}
-                    BridgeEvent::InboundFailed(transfer)
-                    | BridgeEvent::OutboundFailed(transfer)
-                    | BridgeEvent::TransferCompleted(transfer, _) => {
-                        self.transfers_in_progress.retain(|t| t.id != transfer.id);
-                    }
-                }
-            }
-
-            item
-        })
+        self.events_rx.poll_recv(cx)
     }
 }
 
 impl Bridge for SimpleBridge {
+    fn id(&self) -> &'static str {
+        "simple"
+    }
+
     fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> bool {
         true
     }
 
-    fn send(&mut self, src: ChainAddress, dst: ChainAddress, amount: U256) -> eyre::Result<()> {
-        let transfer = Transfer { id: TransferId(B256::random()), from: src, to: dst, amount };
-        self.transfers_in_progress.push(transfer);
-
+    fn advance(&mut self, transfer: Transfer) {
         let this = self.inner.clone();
         tokio::spawn(async move {
-            let input = if !src.1.is_zero() {
-                withdrawTokensCall { token: src.1, recipient: this.signer.address(), amount }
-                    .abi_encode()
+            let input = if !transfer.from.1.is_zero() {
+                withdrawTokensCall {
+                    token: transfer.from.1,
+                    recipient: this.signer.address(),
+                    amount: transfer.amount,
+                }
+                .abi_encode()
             } else {
-                pullGasCall { amount }.abi_encode()
+                pullGasCall { amount: transfer.amount }.abi_encode()
             };
 
             let Ok(receipt) =
-                this.send_tx(src.0, this.funder_address, input.into(), U256::ZERO).await
+                this.send_tx(transfer.from.0, this.funder_address, input.into(), U256::ZERO).await
             else {
-                let _ = this.events_tx.send(BridgeEvent::OutboundFailed(transfer));
+                let _ = this
+                    .events_tx
+                    .send(BridgeEvent::TransferState(transfer.id, TransferState::OutboundFailed));
                 return;
             };
 
-            let _ = this.events_tx.send(BridgeEvent::TransferSent(
-                transfer,
-                receipt.block_number.unwrap_or_default(),
+            let _ = this.events_tx.send(BridgeEvent::TransferState(
+                transfer.id,
+                TransferState::Sent(receipt.block_number.unwrap_or_default()),
             ));
 
-            let Ok(receipt) = this.send_funds(dst.0, dst.1, amount).await else {
-                let _ = this.events_tx.send(BridgeEvent::InboundFailed(transfer));
+            let Ok(receipt) = this.send_funds(transfer.to.0, transfer.to.1, transfer.amount).await
+            else {
+                let _ = this
+                    .events_tx
+                    .send(BridgeEvent::TransferState(transfer.id, TransferState::InboundFailed));
                 return;
             };
 
-            let _ = this.events_tx.send(BridgeEvent::TransferCompleted(
-                transfer,
-                receipt.block_number.unwrap_or_default(),
+            let _ = this.events_tx.send(BridgeEvent::TransferState(
+                transfer.id,
+                TransferState::Completed(receipt.block_number.unwrap_or_default()),
             ));
         });
-
-        Ok(())
-    }
-
-    fn transfers_in_progress(&self) -> &[Transfer] {
-        &self.transfers_in_progress
     }
 }

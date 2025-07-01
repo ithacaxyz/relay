@@ -10,11 +10,11 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256},
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use tokio::sync::RwLock;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
