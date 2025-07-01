@@ -42,8 +42,8 @@ async fn asset_info() -> eyre::Result<()> {
 
     assert_eq!(assets.len(), 3);
     for (_, asset) in assets {
-        assert!(asset.decimals.is_some());
-        assert!(asset.symbol.is_some());
+        assert!(asset.metadata.decimals.is_some());
+        assert!(asset.metadata.symbol.is_some());
     }
 
     Ok(())
