@@ -59,12 +59,10 @@ pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
     /// Unique identifier of the bridge.
     fn id(&self) -> &'static str;
 
-    /// Returns true if the bridge supports the given [`CoinKind`] on the given [`ChainId`].
+    /// Returns true if the bridge supports bridging the given assets.
     fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool;
 
-    /// Initiates a cross-chain transfer. This is expected to spawn a new task that would parse
-    /// `data` and determine the current state of the transfer.
-    ///
-    /// The spawned task is responsinble for updating the `data` in storage.
+    /// Triggers processing of the given transfer. The bridge is expected to return a future that
+    /// would advance the transfer progress based on internally saved `bridge_data` in storage.`
     fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }

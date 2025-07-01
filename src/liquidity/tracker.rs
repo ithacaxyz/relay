@@ -109,12 +109,12 @@ impl LiquidityTracker {
         &self,
         chain_id: ChainId,
         asset: Address,
-    ) -> Result<(RangeInclusive<U256>, BlockNumber), LiquidityTrackerError> {
+    ) -> Result<RangeInclusive<U256>, LiquidityTrackerError> {
         let (max_balance, block_number) = self.get_balance_with_block(chain_id, asset).await?;
         let total_locked =
             self.storage.get_total_locked_at((chain_id, asset), block_number).await?;
         let min_balance = max_balance.saturating_sub(total_locked);
-        Ok((min_balance..=max_balance, block_number))
+        Ok(min_balance..=max_balance)
     }
 
     async fn prepare_lock_inputs(

@@ -1,6 +1,6 @@
 use crate::{
     liquidity::{
-        ChainAddress, LiquidityTracker,
+        LiquidityTracker,
         bridge::{Bridge, BridgeEvent, Transfer, TransferId, TransferState},
     },
     storage::{RelayStorage, StorageApi},
@@ -12,7 +12,7 @@ use futures_util::{
     future::TryJoinAll,
     stream::{SelectAll, select_all},
 };
-use std::{collections::BTreeMap, ops::RangeInclusive, time::Duration};
+use std::{ops::RangeInclusive, time::Duration};
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
@@ -30,7 +30,6 @@ pub struct RebalanceService {
     tracker: LiquidityTracker,
     bridges: SelectAll<Box<dyn Bridge>>,
     transfers_in_progress: HashMap<TransferId, Transfer>,
-    completed_transfers: HashMap<ChainAddress, BTreeMap<u64, Vec<Transfer>>>,
 }
 
 impl RebalanceService {
@@ -56,7 +55,6 @@ impl RebalanceService {
             tracker,
             bridges: select_all(bridges),
             transfers_in_progress: Default::default(),
-            completed_transfers: Default::default(),
         }
     }
 }
@@ -90,21 +88,12 @@ impl RebalanceService {
             .assets
             .iter()
             .map(async |asset| {
-                let (range, block_number) =
-                    self.tracker.balance_range(asset.chain_id, asset.address).await?;
+                let range = self.tracker.balance_range(asset.chain_id, asset.address).await?;
                 let pending_inbound = self
                     .transfers_in_progress
                     .values()
                     .filter(|t| t.to.1 == asset.address && t.to.0 == asset.chain_id)
                     .map(|t| t.amount)
-                    .chain(
-                        self.completed_transfers
-                            .get(&(asset.chain_id, asset.address))
-                            .iter()
-                            .flat_map(|m| {
-                                m.range(block_number + 1..).flat_map(|(_, t)| t).map(|t| t.amount)
-                            }),
-                    )
                     .sum::<U256>();
 
                 let range = (*range.start())..=(range.end() + pending_inbound);
@@ -241,11 +230,9 @@ impl RebalanceService {
                                         let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state, 0).await;
                                         self.transfers_in_progress.remove(&transfer_id);
                                     }
-                                    TransferState::Completed(block_number) => {
+                                    TransferState::Completed(_) => {
                                         let _ = self.storage.update_transfer_state(transfer_id, state).await;
-                                        if let Some(transfer) = self.transfers_in_progress.remove(&transfer_id) {
-                                            self.completed_transfers.entry(transfer.to).or_default().entry(block_number).or_default().push(transfer);
-                                        }
+                                        self.transfers_in_progress.remove(&transfer_id);
                                     }
                                     TransferState::InboundFailed => {
                                         let _ = self.storage.update_transfer_state(transfer_id, state).await;
