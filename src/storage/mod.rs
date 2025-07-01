@@ -191,4 +191,8 @@ impl StorageApi for RelayStorage {
     ) -> api::Result<()> {
         self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state).await
     }
+
+    async fn load_pending_transfers(&self) -> api::Result<Vec<Transfer>> {
+        self.inner.load_pending_transfers().await
+    }
 }

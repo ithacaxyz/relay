@@ -251,6 +251,23 @@ impl StorageApi for InMemoryStorage {
 
         Ok(())
     }
+
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+        let mut transfers = Vec::new();
+
+        for entry in self.transfers.iter() {
+            let (transfer, _, state) = entry.value();
+            match state {
+                TransferState::Pending | TransferState::Sent(_) => {
+                    transfers.push(transfer.clone());
+                }
+                _ => {}
+            }
+        }
+
+        transfers.sort_by_key(|t| t.id);
+        Ok(transfers)
+    }
 }
 
 /// An In-memory liquidity tracker.

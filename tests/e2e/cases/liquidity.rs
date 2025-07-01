@@ -47,7 +47,7 @@ async fn test_liquidity_management() -> Result<()> {
     let funder_balance_1 = IERC20::new(token, provider_1).balanceOf(env.funder).call().await?;
     let eoa_balance_1 = IERC20::new(token, provider_1).balanceOf(env.eoa.address()).call().await?;
 
-    tokio::spawn(rebalance_service.into_future());
+    tokio::spawn(rebalance_service.into_future().await?);
 
     // Create a key for signing
     let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();

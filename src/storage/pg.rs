@@ -730,4 +730,25 @@ impl StorageApi for PgStorage {
 
         Ok(())
     }
+
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+        let rows = sqlx::query!(
+            r#"
+            select transfer_data 
+            from bridge_transfers 
+            where status IN ('pending', 'sent')
+            ORDER BY transfer_id
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut transfers = Vec::new();
+        for row in rows {
+            transfers.push(serde_json::from_value(row.transfer_data)?);
+        }
+
+        Ok(transfers)
+    }
 }

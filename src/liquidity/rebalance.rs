@@ -182,37 +182,58 @@ impl RebalanceService {
     }
 
     /// Runs the rebalance service.
-    pub async fn into_future(mut self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            tokio::select! {
-                // Wake up to find next rebalance.
-                _ = interval.tick() => {
-                    if let Ok(Some((from, to, amount))) = self.find_next_rebalance().await {
-                        if let Err(err) = self.bridge(from, to, amount).await {
-                            warn!("failed to bridge: {}", err);
+    pub async fn into_future(mut self) -> eyre::Result<impl Future<Output = ()>> {
+        // Recover pending transfers from storage
+        for transfer in self.storage.load_pending_transfers().await? {
+            // Find the bridge that handles this transfer
+            let Some(bridge) =
+                self.bridges.iter_mut().find(|bridge| bridge.id() == transfer.bridge_id.as_ref())
+            else {
+                return Err(eyre::eyre!(
+                    "found pending transfer for unknown bridge {}",
+                    transfer.bridge_id  
+                ));
+            };
+
+            // Delegate the transfer to the bridge
+            bridge.advance(transfer.clone());
+            self.transfers_in_progress.push(transfer);
+        }
+
+        let fut = async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    // Wake up to find next rebalance.
+                    _ = interval.tick() => {
+                        if let Ok(Some((from, to, amount))) = self.find_next_rebalance().await {
+                            if let Err(err) = self.bridge(from, to, amount).await {
+                                warn!("failed to bridge: {}", err);
+                            }
                         }
                     }
-                }
-                // Handle bridge events.
-                Some(event) = self.bridges.next() => {
-                    match event {
-                        // Unlock liquidity for completed/failed transfers.
-                        BridgeEvent::TransferState(transfer_id, state) => {
-                            match state {
-                                // Once source transfer is completed (the one we've locked liquidity for),
-                                // we need to atomically update the state and unlock liquidity.
-                                TransferState::Sent(_) | TransferState::OutboundFailed => {
-                                    let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state).await;
-                                }
-                                _ => {
-                                    let _ = self.storage.update_transfer_state(transfer_id, state).await;
-                                }
-                            };
+                    // Handle bridge events.
+                    Some(event) = self.bridges.next() => {
+                        match event {
+                            // Unlock liquidity for completed/failed transfers.
+                            BridgeEvent::TransferState(transfer_id, state) => {
+                                match state {
+                                    // Once source transfer is completed (the one we've locked liquidity for),
+                                    // we need to atomically update the state and unlock liquidity.
+                                    TransferState::Sent(_) | TransferState::OutboundFailed => {
+                                        let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state).await;
+                                    }
+                                    _ => {
+                                        let _ = self.storage.update_transfer_state(transfer_id, state).await;
+                                    }
+                                };
+                            }
                         }
                     }
                 }
             }
-        }
+        };
+
+        Ok(fut)
     }
 }

@@ -148,4 +148,11 @@ pub trait StorageApi: Debug + Send + Sync {
         transfer_id: TransferId,
         state: TransferState,
     ) -> Result<()>;
+
+    /// Loads all pending transfers from storage.
+    ///
+    /// This returns transfers in states that require monitoring:
+    /// - Pending: Initial state, waiting to be sent
+    /// - Sent: Outbound transaction sent, monitoring for completion
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>>;
 }
