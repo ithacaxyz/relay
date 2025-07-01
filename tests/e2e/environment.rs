@@ -96,8 +96,8 @@ pub struct Environment {
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
-    /// LayerZero configuration
-    pub layerzero: Option<LayerZeroConfig>,
+    /// Settlement configuration for cross-chain messaging
+    pub settlement: SettlementConfig,
 }
 
 impl std::fmt::Debug for Environment {
@@ -113,6 +113,13 @@ impl std::fmt::Debug for Environment {
             .field("relay_endpoint", &self.relay_endpoint)
             .finish()
     }
+}
+
+/// Settlement configuration for cross-chain messaging
+#[derive(Debug, Clone, Default)]
+pub struct SettlementConfig {
+    /// LayerZero configuration
+    pub layerzero: Option<LayerZeroConfig>,
 }
 
 /// Set up anvil instances based on configuration
@@ -453,7 +460,7 @@ impl Environment {
             relay_endpoint,
             relay_handle,
             signers,
-            layerzero: None,
+            settlement: SettlementConfig::default(),
         })
     }
 

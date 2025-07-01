@@ -19,6 +19,7 @@ use alloy::{
     providers::Provider,
 };
 use eyre::Result;
+use futures_util::try_join;
 
 /// Builder for LayerZero message options
 ///
@@ -90,9 +91,17 @@ pub async fn wire_escrows<P1: Provider, P2: Provider>(
     let peer1 = address_to_bytes32(escrow1);
     let peer2 = address_to_bytes32(escrow2);
 
-    // Set peers bidirectionally
-    esc1.setPeer(eid2, peer2).send().await?.watch().await?;
-    esc2.setPeer(eid1, peer1).send().await?.watch().await?;
+    // Set peers bidirectionally in parallel
+    try_join!(
+        async {
+            let tx = esc1.setPeer(eid2, peer2).send().await.map_err(eyre::Error::from)?;
+            tx.watch().await.map_err(eyre::Error::from)
+        },
+        async {
+            let tx = esc2.setPeer(eid1, peer1).send().await.map_err(eyre::Error::from)?;
+            tx.watch().await.map_err(eyre::Error::from)
+        }
+    )?;
 
     Ok(())
 }

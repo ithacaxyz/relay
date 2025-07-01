@@ -26,6 +26,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use eyre::Result;
+use futures_util::try_join;
 use relay::types::IERC20;
 use tokio::time::{Duration, sleep};
 
@@ -120,7 +121,9 @@ struct TestContext {
 
 /// Sets up test context with addresses and providers
 async fn setup_test_context(env: &Environment) -> Result<TestContext> {
-    let lz_config = env.layerzero_config();
+    let lz_config = env.settlement.layerzero.as_ref().expect(
+        "LayerZero not configured. Use setup_multi_chain_with_layerzero() to enable LayerZero.",
+    );
 
     Ok(TestContext {
         alice: Address::from(ALICE_ADDRESS),
@@ -141,12 +144,20 @@ async fn setup_test_context(env: &Environment) -> Result<TestContext> {
 /// - Ensures Bob starts with no tokens
 /// - Verifies initial balances are correct
 async fn setup_test_balances(env: &Environment, ctx: &TestContext) -> Result<()> {
-    // Mint tokens to Alice and escrow2
-    mint_erc20s(&[ctx.token], &[ctx.alice], env.provider_for(0)).await?;
-    mint_erc20s(&[ctx.token], &[ctx.escrow2], env.provider_for(1)).await?;
+    let token = [ctx.token];
+    let alice = [ctx.alice];
+    let escrow2 = [ctx.escrow2];
 
-    // Fund Alice with ETH
-    env.provider_for(0).anvil_set_balance(ctx.alice, U256::from(ALICE_BALANCE)).await?;
+    try_join!(
+        mint_erc20s(&token, &alice, env.provider_for(0)),
+        mint_erc20s(&token, &escrow2, env.provider_for(1)),
+        async {
+            env.provider_for(0)
+                .anvil_set_balance(ctx.alice, U256::from(ALICE_BALANCE))
+                .await
+                .map_err(Into::into)
+        }
+    )?;
 
     Ok(())
 }
@@ -215,14 +226,15 @@ async fn verify_lock_state<P1: Provider, P2: Provider>(
     ctx: &TestContext,
 ) -> Result<()> {
     let escrow = IMockEscrow::new(ctx.escrow1, provider1);
-
-    // Check locked balance
-    let locked_balance = escrow.lockedBalances(ctx.token, ctx.alice).call().await?;
-    assert_eq!(locked_balance, ctx.amount, "Incorrect locked balance");
-
-    // Check Bob's balance is zero
     let token_contract2 = IERC20::new(ctx.token, provider2);
-    let bob_balance = token_contract2.balanceOf(ctx.bob).call().await?;
+
+    // Check locked balance and Bob's balance
+    let (locked_balance, bob_balance) =
+        try_join!(async { escrow.lockedBalances(ctx.token, ctx.alice).call().await }, async {
+            token_contract2.balanceOf(ctx.bob).call().await
+        })?;
+
+    assert_eq!(locked_balance, ctx.amount, "Incorrect locked balance");
     assert_eq!(bob_balance, U256::ZERO, "Bob should have zero balance before delivery");
 
     Ok(())

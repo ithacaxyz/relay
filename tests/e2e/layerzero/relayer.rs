@@ -23,8 +23,9 @@ use alloy::{
     sol_types::SolEvent,
 };
 use eyre::Result;
+use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 #[derive(Clone)]
 pub struct ChainEndpoint {
@@ -44,12 +45,12 @@ impl LayerZeroRelayer {
     pub async fn new(endpoints: Vec<ChainEndpoint>, rpc_urls: Vec<String>) -> Result<Self> {
         // Build WebSocket providers that can handle both subscriptions and regular calls
         // Note: Provider order must match chain_index in endpoints
-        let mut providers = Vec::new();
-        for url in &rpc_urls {
+        let providers = futures_util::future::try_join_all(rpc_urls.iter().map(async |url| {
             let ws_url = url.replace("http://", "ws://").replace("https://", "wss://");
             let provider = ProviderBuilder::new().connect_ws(WsConnect::new(ws_url)).await?;
-            providers.push(provider.erased());
-        }
+            Ok::<_, eyre::Error>(provider.erased())
+        }))
+        .await?;
 
         Ok(Self { endpoints, providers, delivered_guids: Arc::new(Mutex::new(HashSet::new())) })
     }
@@ -107,7 +108,7 @@ impl LayerZeroRelayer {
         let packet = self.decode_packet(&event.encodedPayload)?;
 
         // Check if already delivered
-        if !self.mark_as_delivered(packet.guid).await {
+        if !self.mark_as_delivered(packet.guid) {
             return Ok(());
         }
 
@@ -121,8 +122,8 @@ impl LayerZeroRelayer {
     }
 
     /// Marks a GUID as delivered, returns true if it's new
-    async fn mark_as_delivered(&self, guid: B256) -> bool {
-        let mut delivered = self.delivered_guids.lock().await;
+    fn mark_as_delivered(&self, guid: B256) -> bool {
+        let mut delivered = self.delivered_guids.lock();
         delivered.insert(guid)
     }
 

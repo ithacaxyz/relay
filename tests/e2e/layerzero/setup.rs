@@ -18,7 +18,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use eyre::{Result, WrapErr};
-use futures_util::future::try_join_all;
+use futures_util::{future::try_join_all, try_join};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -60,9 +60,6 @@ pub trait LayerZeroEnvironment {
 
     /// Get LayerZero configuration.
     fn layerzero_config(&self) -> &LayerZeroConfig;
-
-    /// Store LayerZero configuration.
-    fn set_layerzero_config(&mut self, config: LayerZeroConfig);
 }
 
 impl LayerZeroEnvironment for Environment {
@@ -101,7 +98,7 @@ impl LayerZeroEnvironment for Environment {
         let eids: Vec<u32> = (0..num_chains).map(|i| 101 + i as u32).collect();
 
         // Configure all endpoint libraries now that we have all EIDs
-        for (i, deployment) in layerzero_deployments.iter().enumerate() {
+        try_join_all(layerzero_deployments.iter().enumerate().map(async |(i, deployment)| {
             configure_endpoint_libraries_for_all_chains(
                 &env.providers[i],
                 deployment.endpoint,
@@ -109,13 +106,14 @@ impl LayerZeroEnvironment for Environment {
                 eids[i],
                 &eids,
             )
-            .await?;
-        }
+            .await
+            .wrap_err(format!("Failed to configure endpoint libraries for chain {i}"))
+        }))
+        .await?;
 
         // Wire endpoints and escrows between all chain pairs
-        for i in 0..num_chains {
-            for j in (i + 1)..num_chains {
-                // Wire escrows between chains
+        try_join_all((0..num_chains).flat_map(|i| ((i + 1)..num_chains).map(move |j| (i, j))).map(
+            async |(i, j)| {
                 wire_escrows(
                     &env.providers[i],
                     &env.providers[j],
@@ -125,21 +123,23 @@ impl LayerZeroEnvironment for Environment {
                     eids[j],
                 )
                 .await
-                .wrap_err(format!("Failed to wire escrows between chains {i} and {j}"))?;
-            }
-        }
+                .wrap_err(format!("Failed to wire escrows between chains {i} and {j}"))
+            },
+        ))
+        .await?;
 
         // Mine blocks to ensure all wiring transactions are included
-        for i in 0..num_chains {
-            if let Some(_anvil) = &env.anvils[i] {
-                env.providers[i].anvil_mine(Some(1), None).await?;
-            }
-        }
+        try_join_all(
+            (0..num_chains)
+                .filter(|&i| env.anvils[i].is_some())
+                .map(async |i| env.providers[i].anvil_mine(Some(1), None).await),
+        )
+        .await?;
 
         // Store LayerZero config - extract addresses for storage
         let endpoints: Vec<Address> = layerzero_deployments.iter().map(|d| d.endpoint).collect();
         let escrows: Vec<Address> = layerzero_deployments.iter().map(|d| d.escrow).collect();
-        env.set_layerzero_config(LayerZeroConfig { endpoints, escrows, eids });
+        env.settlement.layerzero = Some(LayerZeroConfig { endpoints, escrows, eids });
 
         Ok(env)
     }
@@ -188,14 +188,9 @@ impl LayerZeroEnvironment for Environment {
     ///
     /// This method panics if LayerZero was not configured during setup.
     fn layerzero_config(&self) -> &LayerZeroConfig {
-        self.layerzero
+        self.settlement.layerzero
             .as_ref()
             .expect("LayerZero not configured. Use setup_multi_chain_with_layerzero() to enable LayerZero support.")
-    }
-
-    /// Store LayerZero configuration.
-    fn set_layerzero_config(&mut self, config: LayerZeroConfig) {
-        self.layerzero = Some(config);
     }
 }
 
@@ -250,23 +245,28 @@ async fn configure_endpoint_libraries_for_all_chains<P: Provider>(
     endpoint_contract.registerLibrary(lib).send().await?.get_receipt().await?;
 
     // Set default libraries for all other chains
-    for &dst_eid in all_eids {
-        if dst_eid != current_eid {
-            endpoint_contract
-                .setDefaultSendLibrary(dst_eid, lib)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-
-            endpoint_contract
-                .setDefaultReceiveLibrary(dst_eid, lib, U256::ZERO)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-        }
-    }
+    try_join_all(all_eids.iter().filter(|&&eid| eid != current_eid).map(async |&dst_eid| {
+        try_join!(
+            async {
+                let tx = endpoint_contract
+                    .setDefaultSendLibrary(dst_eid, lib)
+                    .send()
+                    .await
+                    .map_err(eyre::Error::from)?;
+                tx.get_receipt().await.map_err(eyre::Error::from)
+            },
+            async {
+                let tx = endpoint_contract
+                    .setDefaultReceiveLibrary(dst_eid, lib, U256::ZERO)
+                    .send()
+                    .await
+                    .map_err(eyre::Error::from)?;
+                tx.get_receipt().await.map_err(eyre::Error::from)
+            }
+        )?;
+        Ok::<_, eyre::Error>(())
+    }))
+    .await?;
 
     Ok(())
 }
