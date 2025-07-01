@@ -124,7 +124,7 @@ impl RebalanceService {
         };
 
         // Lock liquidity and save transfer in database.
-        self.tracker.try_lock_liquidity_for_bridge(&transfer, bridge.id()).await?;
+        self.tracker.try_lock_liquidity_for_bridge(&transfer).await?;
 
         // Send the transfer.
         bridge.advance(transfer.clone());

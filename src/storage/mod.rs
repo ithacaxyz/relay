@@ -163,10 +163,9 @@ impl StorageApi for RelayStorage {
     async fn lock_liquidity_for_bridge(
         &self,
         transfer: &Transfer,
-        bridge_id: &str,
         input: LockLiquidityInput,
     ) -> api::Result<()> {
-        self.inner.lock_liquidity_for_bridge(transfer, bridge_id, input).await
+        self.inner.lock_liquidity_for_bridge(transfer, input).await
     }
 
     async fn update_transfer_data(

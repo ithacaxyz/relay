@@ -122,7 +122,6 @@ pub trait StorageApi: Debug + Send + Sync {
     async fn lock_liquidity_for_bridge(
         &self,
         transfer: &Transfer,
-        bridge_id: &str,
         input: LockLiquidityInput,
     ) -> Result<()>;
 

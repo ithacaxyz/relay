@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update bridge_transfers set bridge_data = $1 where transfer_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fc3c067a17f06d37801c3497a57806f5070b746758cca9ae08978dc8527853d1"
+}

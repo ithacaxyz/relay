@@ -166,7 +166,6 @@ impl LiquidityTracker {
     pub async fn try_lock_liquidity_for_bridge(
         &self,
         transfer: &Transfer,
-        bridge_id: &'static str,
     ) -> Result<(), LiquidityTrackerError> {
         let input = self
             .prepare_lock_inputs(core::iter::once((
@@ -178,7 +177,7 @@ impl LiquidityTracker {
             .remove(&transfer.from)
             .unwrap();
 
-        self.storage.lock_liquidity_for_bridge(transfer, bridge_id, input).await?;
+        self.storage.lock_liquidity_for_bridge(transfer, input).await?;
 
         Ok(())
     }

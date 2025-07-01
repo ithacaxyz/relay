@@ -131,6 +131,7 @@ impl PgStorage {
         tx: &mut sqlx::Transaction<'static, Postgres>,
     ) -> Result<()> {
         let status = match state {
+            TransferState::Pending => BridgeTransferStatus::Pending,
             TransferState::Sent(_) => BridgeTransferStatus::Sent,
             TransferState::OutboundFailed => BridgeTransferStatus::OutboundFailed,
             TransferState::Completed(_) => BridgeTransferStatus::Completed,
@@ -659,16 +660,14 @@ impl StorageApi for PgStorage {
     async fn lock_liquidity_for_bridge(
         &self,
         transfer: &Transfer,
-        bridge_id: &str,
         input: LockLiquidityInput,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
         self.try_lock_liquidity_with(HashMap::from_iter([(transfer.from, input)]), &mut tx).await?;
         sqlx::query!(
-            "insert into bridge_transfers (transfer_id, bridge_id, transfer_data) values ($1, $2, $3)",
+            "insert into bridge_transfers (transfer_id, transfer_data) values ($1, $2)",
             transfer.id.as_slice(),
-            bridge_id.as_bytes(),
             serde_json::to_value(transfer)?,
         )
         .execute(&mut *tx)

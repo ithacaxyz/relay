@@ -2,7 +2,6 @@ create type bridge_transfer_status as enum ('pending', 'sent', 'outbound_failed'
 
 create table if not exists bridge_transfers (
     transfer_id bytea not null unique,
-    bridge_id bytea not null,
     transfer_data jsonb not null,
     bridge_data jsonb,
     outbound_block_number bigint,

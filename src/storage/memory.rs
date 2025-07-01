@@ -3,7 +3,10 @@
 use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     storage::api::LockLiquidityInput,
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
@@ -28,6 +31,7 @@ pub struct InMemoryStorage {
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
     liquidity: RwLock<LiquidityTrackerInner>,
+    transfers: DashMap<TransferId, (Transfer, Option<serde_json::Value>, TransferState)>,
 }
 
 #[async_trait]
@@ -184,6 +188,66 @@ impl StorageApi for InMemoryStorage {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        // First try to lock the liquidity
+        self.try_lock_liquidity(HashMap::from_iter([(transfer.from, input)])).await?;
+        self.transfers.insert(transfer.id, (transfer.clone(), None, TransferState::Pending));
+
+        Ok(())
+    }
+
+    async fn update_transfer_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.1 = Some(data.clone());
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.2 = state;
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()> {
+        let transfer = self
+            .transfers
+            .get(&transfer_id)
+            .ok_or_else(|| eyre::eyre!("transfer not found"))?
+            .0
+            .clone();
+
+        // Update the state
+        self.update_transfer_state(transfer_id, state).await?;
+
+        // Unlock liquidity
+        let block = if let TransferState::Sent(block) = state { block } else { 0 };
+        self.unlock_liquidity(transfer.from, transfer.amount, block).await?;
 
         Ok(())
     }

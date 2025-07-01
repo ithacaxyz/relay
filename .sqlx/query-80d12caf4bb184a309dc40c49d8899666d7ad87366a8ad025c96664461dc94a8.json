@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update bridge_transfers set status = $1 where transfer_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "bridge_transfer_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "sent",
+                "outbound_failed",
+                "completed",
+                "inbound_failed"
+              ]
+            }
+          }
+        },
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "80d12caf4bb184a309dc40c49d8899666d7ad87366a8ad025c96664461dc94a8"
+}

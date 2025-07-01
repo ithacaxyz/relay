@@ -15,11 +15,19 @@ wrap_fixed_bytes!(
 );
 
 /// States of a [`Transfer`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
 pub enum TransferState {
+    /// Initial state.
+    #[default]
+    Pending,
+    /// Initial transaction for the transfer has been sent. Once this state is reached, liquidity
+    /// should be unlocked as it's already pulled on-chain.
     Sent(BlockNumber),
+    /// Outbound transfer failed.
     OutboundFailed,
+    /// Transfer completed and funds have been delivered to the destination chain.
     Completed(BlockNumber),
+    /// Inbound transfer failed.
     InboundFailed,
 }
 
