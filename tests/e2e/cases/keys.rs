@@ -182,6 +182,7 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
             key: Some(call_key),
         })
         .await?;

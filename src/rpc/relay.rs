@@ -39,7 +39,7 @@ use alloy::{
     },
     rpc::types::{
         Authorization, TransactionReceipt,
-        state::{AccountOverride, StateOverridesBuilder},
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
@@ -208,6 +208,7 @@ impl Relay {
     }
 
     #[instrument(skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn estimate_fee(
         &self,
         request: PartialAction,
@@ -215,6 +216,7 @@ impl Relay {
         authorization_address: Option<Address>,
         account_key: Key,
         key_slot_override: bool,
+        state_overrides: StateOverride,
     ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
         let chain = self
             .inner
@@ -251,6 +253,7 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
+            .extend(state_overrides)
             .build();
 
         let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
@@ -702,6 +705,7 @@ impl Relay {
             Some(account.signed_authorization.address),
             mock_key.key().clone(),
             true,
+            Default::default(),
         )
         .await?;
 
@@ -860,6 +864,7 @@ impl RelayApiServer for Relay {
                     maybe_stored.as_ref().map(|acc| acc.signed_authorization.address),
                     key,
                     false,
+                    request.state_overrides,
                 )
                 .await
                 .inspect_err(|err| {
