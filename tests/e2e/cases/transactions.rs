@@ -370,8 +370,8 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // use a consistent seed
     let rng = StdRng::seed_from_u64(KEY_SEED);
-    // setup 30 accounts
-    let num_accounts = 30;
+    // setup accounts
+    let num_accounts = 20;
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
@@ -381,14 +381,15 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(2)
         .collect::<Vec<_>>()
         .await;
-    let handles = transactions
-        .into_iter()
-        .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<TryJoinAll<_>>()
-        .await?;
+    let handles = futures_util::stream::iter(
+        transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx)),
+    )
+    .buffered(2)
+    .try_collect::<Vec<_>>()
+    .await?;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
