@@ -122,7 +122,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(10)
+            .buffered(1)
             .try_collect::<Vec<_>>()
             .await?;
     // wait a bit to make sure all tasks see the tx confirmation
@@ -131,7 +131,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
@@ -146,7 +146,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
     // send `num_accounts` more transactions some of which are failing
-    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
     let mut invalid = 0;
     let handles = transactions
         .into_iter()
