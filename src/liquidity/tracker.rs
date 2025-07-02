@@ -1,5 +1,6 @@
 use crate::{
     error::StorageError,
+    liquidity::bridge::Transfer,
     storage::{LockLiquidityInput, RelayStorage, StorageApi},
     types::IERC20,
 };
@@ -116,11 +117,10 @@ impl LiquidityTracker {
         Ok(min_balance..=max_balance)
     }
 
-    /// Locks liquidity for an interop bundle.
-    pub async fn try_lock_liquidity(
+    async fn prepare_lock_inputs(
         &self,
         assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
-    ) -> Result<(), LiquidityTrackerError> {
+    ) -> Result<HashMap<ChainAddress, LockLiquidityInput>, LiquidityTrackerError> {
         // Deduplicate assets by chain and asset address
         let inputs: HashMap<_, U256> = assets
             .into_iter()
@@ -149,7 +149,35 @@ impl LiquidityTracker {
             .into_iter()
             .collect();
 
-        self.storage.try_lock_liquidity(inputs).await?;
+        Ok(inputs)
+    }
+
+    /// Locks liquidity for an interop bundle.
+    pub async fn try_lock_liquidity(
+        &self,
+        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+    ) -> Result<(), LiquidityTrackerError> {
+        self.storage.try_lock_liquidity(self.prepare_lock_inputs(assets).await?).await?;
+
+        Ok(())
+    }
+
+    /// Locks liquidity for an interop bundle.
+    pub async fn try_lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+    ) -> Result<(), LiquidityTrackerError> {
+        let input = self
+            .prepare_lock_inputs(core::iter::once((
+                transfer.from.0,
+                transfer.from.1,
+                transfer.amount,
+            )))
+            .await?
+            .remove(&transfer.from)
+            .unwrap();
+
+        self.storage.lock_liquidity_for_bridge(transfer, input).await?;
 
         Ok(())
     }
@@ -163,5 +191,10 @@ impl LiquidityTracker {
     ) -> Result<(), LiquidityTrackerError> {
         self.storage.unlock_liquidity(asset, amount, at).await?;
         Ok(())
+    }
+
+    /// Returns reference to underlying [`RelayStorage`].
+    pub fn storage(&self) -> &RelayStorage {
+        &self.storage
     }
 }

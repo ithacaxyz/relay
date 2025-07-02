@@ -2,7 +2,10 @@
 
 use crate::{
     error::StorageError,
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
@@ -11,11 +14,11 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256},
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
@@ -153,4 +156,53 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Removes unlocked entries up until the given block number (inclusive), including it and
     /// subtracts them from the total locked amount.
     async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()>;
+
+    /// Atomically locks liquidity for a bridge transfer and creates an entry for the transfer in
+    /// the database.
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        input: LockLiquidityInput,
+    ) -> Result<()>;
+
+    /// Updates a bridge-specific data for a transfer.
+    async fn update_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> Result<()>;
+
+    /// Gets bridge-specific data for a transfer.
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>>;
+
+    /// Updates transfer state.
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()>;
+
+    /// Updates transfer state and unlocks liquidity for it.
+    ///
+    /// This is essentially a helper to call `update_transfer_state` and `unlock_liquidity`
+    /// atomically.
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+        at: BlockNumber,
+    ) -> Result<()>;
+
+    /// Gets the current state of a bridge transfer.
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>>;
+
+    /// Loads all pending transfers from storage.
+    ///
+    /// This returns transfers in states that require monitoring:
+    /// - Pending: Initial state, waiting to be sent
+    /// - Sent: Outbound transaction sent, monitoring for completion
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>>;
 }

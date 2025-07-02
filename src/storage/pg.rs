@@ -1,11 +1,12 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use std::{collections::HashMap, sync::Arc};
-
 use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
     error::StorageError,
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     storage::api::LockLiquidityInput,
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -15,11 +16,13 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, B256, BlockNumber, ChainId, U256},
+    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, types::BigDecimal};
+use eyre::eyre;
+use sqlx::{PgPool, Postgres, types::BigDecimal};
+use std::sync::Arc;
 use tracing::instrument;
 
 /// PostgreSQL storage implementation.
@@ -89,6 +92,184 @@ impl PgStorage {
 
         Ok(())
     }
+
+    async fn try_lock_liquidity_with(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+        tx: &mut sqlx::Transaction<'static, Postgres>,
+    ) -> Result<()> {
+        let (chain_ids, asset_addresses): (Vec<_>, Vec<_>) = assets
+            .iter()
+            .map(|((chain, asset), _)| (*chain as i64, asset.as_slice().to_vec()))
+            .unzip();
+
+        let locked = sqlx::query!(
+            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[]))",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // create rows that don't exist
+        for ((chain, asset), _) in assets.iter().filter(|((chain, asset), _)| {
+            !locked
+                .iter()
+                .any(|row| row.chain_id == *chain as i64 && row.asset_address == asset.as_slice())
+        }) {
+            sqlx::query!(
+                "insert into locked_liquidity (chain_id, asset_address, amount) values ($1, $2, $3) on conflict do nothing",
+                *chain as i64,
+                asset.as_slice(),
+                BigDecimal::default(),
+            )
+            .execute(&mut **tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
+        // select all locked assets for update
+        let locked = sqlx::query!(
+            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // select all unlocked assets
+        let unlocked = sqlx::query!(
+            "select * from pending_unlocks where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
+            &chain_ids,
+            &asset_addresses
+        )
+        .fetch_all(&mut **tx)
+        .await.map_err(eyre::Error::from)?;
+
+        for ((chain, asset), input) in assets {
+            let locked = locked
+                .iter()
+                .find(|row| row.chain_id == chain as i64 && row.asset_address == asset.as_slice())
+                .map(|row| numeric_to_u256(&row.amount))
+                .unwrap_or_default();
+
+            let unlocked = unlocked
+                .iter()
+                .filter(|row| {
+                    row.chain_id == chain as i64
+                        && row.asset_address == asset.as_slice()
+                        && row.block_number <= input.block_number as i64
+                })
+                .map(|row| numeric_to_u256(&row.amount))
+                .sum::<U256>();
+
+            if input.current_balance + unlocked >= locked + input.lock_amount {
+                sqlx::query!(
+                    "update locked_liquidity set amount = $1 where chain_id = $2 and asset_address = $3",
+                    u256_to_numeric(locked + input.lock_amount),
+                    chain as i64,
+                    asset.as_slice()
+                )
+                .execute(&mut **tx)
+                .await
+                .map_err(eyre::Error::from)?;
+            } else {
+                return Err(StorageError::CantLockLiquidity);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn update_transfer_state_with(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+        tx: &mut sqlx::Transaction<'static, Postgres>,
+    ) -> Result<()> {
+        let status = match state {
+            TransferState::Pending => BridgeTransferStatus::Pending,
+            TransferState::Sent(_) => BridgeTransferStatus::Sent,
+            TransferState::OutboundFailed => BridgeTransferStatus::OutboundFailed,
+            TransferState::Completed(_) => BridgeTransferStatus::Completed,
+            TransferState::InboundFailed => BridgeTransferStatus::InboundFailed,
+        };
+
+        sqlx::query!(
+            "update bridge_transfers set status = $1 where transfer_id = $2",
+            status as BridgeTransferStatus,
+            transfer_id.as_slice(),
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        if let TransferState::Sent(block_number) = state {
+            sqlx::query!(
+                "update bridge_transfers set outbound_block_number = $1 where transfer_id = $2",
+                block_number as i64,
+                transfer_id.as_slice(),
+            )
+            .execute(&mut **tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
+        if let TransferState::Completed(block_number) = state {
+            sqlx::query!(
+                "update bridge_transfers set inbound_block_number = $1 where transfer_id = $2",
+                block_number as i64,
+                transfer_id.as_slice(),
+            )
+            .execute(&mut **tx)
+            .await
+            .map_err(eyre::Error::from)?;
+        }
+
+        Ok(())
+    }
+
+    async fn unlock_liquidity_with(
+        &self,
+        asset: ChainAddress,
+        amount: U256,
+        at: BlockNumber,
+        executor: impl sqlx::Executor<'_, Database = Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            "insert into pending_unlocks (chain_id, asset_address, amount, block_number) values ($1, $2, $3, $4)",
+            asset.0 as i64,
+            asset.1.as_slice(),
+            u256_to_numeric(amount),
+            at as i64,
+        )
+        .execute(executor)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn load_transfer_with(
+        &self,
+        transfer_id: TransferId,
+        executor: impl sqlx::Executor<'_, Database = Postgres>,
+    ) -> Result<Option<Transfer>> {
+        let Some(row) = sqlx::query!(
+            "select transfer_data from bridge_transfers where transfer_id = $1",
+            transfer_id.as_slice()
+        )
+        .fetch_optional(executor)
+        .await
+        .map_err(eyre::Error::from)?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(serde_json::from_value(row.transfer_data)?))
+    }
 }
 
 /// This is a wrapper around [`TransactionStatus`] since `sqlx` does not support enums with
@@ -100,6 +281,24 @@ enum TxStatus {
     Pending,
     Confirmed,
     Failed,
+}
+
+/// This is a wrapper around [`TransferState`] since `sqlx` does not support enums with
+/// associated data.
+#[derive(Debug, sqlx::Type)]
+#[sqlx(type_name = "bridge_transfer_status", rename_all = "snake_case")]
+enum BridgeTransferStatus {
+    Pending,
+    Sent,
+    OutboundFailed,
+    Completed,
+    InboundFailed,
+}
+
+struct BridgeTransferRow {
+    status: BridgeTransferStatus,
+    outbound_block_number: Option<i64>,
+    inbound_block_number: Option<i64>,
 }
 
 fn numeric_to_u256(value: &BigDecimal) -> U256 {
@@ -566,87 +765,7 @@ impl StorageApi for PgStorage {
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
-        let (chain_ids, asset_addresses): (Vec<_>, Vec<_>) = assets
-            .iter()
-            .map(|((chain, asset), _)| (*chain as i64, asset.as_slice().to_vec()))
-            .unzip();
-
-        let locked = sqlx::query!(
-            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[]))",
-            &chain_ids,
-            &asset_addresses
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(eyre::Error::from)?;
-
-        // create rows that don't exist
-        for ((chain, asset), _) in assets.iter().filter(|((chain, asset), _)| {
-            !locked
-                .iter()
-                .any(|row| row.chain_id == *chain as i64 && row.asset_address == asset.as_slice())
-        }) {
-            sqlx::query!(
-                "insert into locked_liquidity (chain_id, asset_address, amount) values ($1, $2, $3) on conflict do nothing",
-                *chain as i64,
-                asset.as_slice(),
-                BigDecimal::default(),
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(eyre::Error::from)?;
-        }
-
-        // select all locked assets for update
-        let locked = sqlx::query!(
-            "select * from locked_liquidity where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
-            &chain_ids,
-            &asset_addresses
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(eyre::Error::from)?;
-
-        // select all unlocked assets
-        let unlocked = sqlx::query!(
-            "select * from pending_unlocks where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
-            &chain_ids,
-            &asset_addresses
-        )
-        .fetch_all(&mut *tx)
-        .await.map_err(eyre::Error::from)?;
-
-        for ((chain, asset), input) in assets {
-            let locked = locked
-                .iter()
-                .find(|row| row.chain_id == chain as i64 && row.asset_address == asset.as_slice())
-                .map(|row| numeric_to_u256(&row.amount))
-                .unwrap_or_default();
-
-            let unlocked = unlocked
-                .iter()
-                .filter(|row| {
-                    row.chain_id == chain as i64
-                        && row.asset_address == asset.as_slice()
-                        && row.block_number <= input.block_number as i64
-                })
-                .map(|row| numeric_to_u256(&row.amount))
-                .sum::<U256>();
-
-            if input.current_balance + unlocked >= locked + input.lock_amount {
-                sqlx::query!(
-                    "update locked_liquidity set amount = $1 where chain_id = $2 and asset_address = $3",
-                    u256_to_numeric(locked + input.lock_amount),
-                    chain as i64,
-                    asset.as_slice()
-                )
-                .execute(&mut *tx)
-                .await
-                .map_err(eyre::Error::from)?;
-            } else {
-                return Err(StorageError::CantLockLiquidity);
-            }
-        }
+        self.try_lock_liquidity_with(assets, &mut tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
 
@@ -660,17 +779,7 @@ impl StorageApi for PgStorage {
         amount: U256,
         at: BlockNumber,
     ) -> Result<()> {
-        sqlx::query!(
-            "insert into pending_unlocks (chain_id, asset_address, amount, block_number) values ($1, $2, $3, $4)",
-            asset.0 as i64,
-            asset.1.as_slice(),
-            u256_to_numeric(amount),
-            at as i64,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
+        self.unlock_liquidity_with(asset, amount, at, &self.pool).await?;
         Ok(())
     }
 
@@ -729,5 +838,147 @@ impl StorageApi for PgStorage {
         tx.commit().await.map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        self.try_lock_liquidity_with(HashMap::from_iter([(transfer.from, input)]), &mut tx).await?;
+        sqlx::query!(
+            "insert into bridge_transfers (transfer_id, transfer_data) values ($1, $2)",
+            transfer.id.as_slice(),
+            serde_json::to_value(transfer)?,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    /// Updates a bridge-specific data for a transfer.
+    async fn update_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query!(
+            "update bridge_transfers set bridge_data = $1 where transfer_id = $2",
+            data,
+            transfer_id.as_slice(),
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query!(
+            "select bridge_data from bridge_transfers where transfer_id = $1",
+            transfer_id.as_slice(),
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(row.and_then(|r| r.bridge_data))
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        self.update_transfer_state_with(transfer_id, state, &mut tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+        at: BlockNumber,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        let Some(transfer) = self.load_transfer_with(transfer_id, &mut *tx).await? else {
+            return Err(eyre!("transfer not found").into());
+        };
+
+        self.update_transfer_state_with(transfer_id, state, &mut tx).await?;
+        self.unlock_liquidity_with(transfer.from, transfer.amount, at, &mut *tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+        let row = sqlx::query_as!(
+            BridgeTransferRow,
+            "select status as \"status: BridgeTransferStatus\", outbound_block_number, inbound_block_number from bridge_transfers where transfer_id = $1",
+            transfer_id.as_slice(),
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let state = match row.status {
+            BridgeTransferStatus::Pending => TransferState::Pending,
+            BridgeTransferStatus::Sent => {
+                let block_number = row.outbound_block_number.unwrap_or(0) as u64;
+                TransferState::Sent(block_number)
+            }
+            BridgeTransferStatus::OutboundFailed => TransferState::OutboundFailed,
+            BridgeTransferStatus::Completed => {
+                let block_number = row.inbound_block_number.unwrap_or(0) as u64;
+                TransferState::Completed(block_number)
+            }
+            BridgeTransferStatus::InboundFailed => TransferState::InboundFailed,
+        };
+
+        Ok(Some(state))
+    }
+
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+        let rows = sqlx::query!(
+            r#"
+            select transfer_data 
+            from bridge_transfers 
+            where status IN ('pending', 'sent')
+            ORDER BY transfer_id
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut transfers = Vec::new();
+        for row in rows {
+            transfers.push(serde_json::from_value(row.transfer_data)?);
+        }
+
+        Ok(transfers)
     }
 }

@@ -3,7 +3,8 @@
 use crate::liquidity::tracker::ChainAddress;
 use alloy::primitives::{BlockNumber, U256, wrap_fixed_bytes};
 use futures_util::Stream;
-use std::fmt::Debug;
+use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt::Debug, pin::Pin};
 
 mod simple;
 pub use simple::{Funder, SimpleBridge};
@@ -13,11 +14,30 @@ wrap_fixed_bytes!(
     pub struct TransferId<32>;
 );
 
+/// States of a [`Transfer`].
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
+pub enum TransferState {
+    /// Initial state.
+    #[default]
+    Pending,
+    /// Initial transaction for the transfer has been sent. Once this state is reached, liquidity
+    /// should be unlocked as it's already pulled on-chain.
+    Sent(BlockNumber),
+    /// Outbound transfer failed.
+    OutboundFailed,
+    /// Transfer completed and funds have been delivered to the destination chain.
+    Completed(BlockNumber),
+    /// Inbound transfer failed.
+    InboundFailed,
+}
+
 /// A cross-chain transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transfer {
     /// Unique identifier of the transfer.
     pub id: TransferId,
+    /// Bridge that is handling the transfer.
+    pub bridge_id: Cow<'static, str>,
     /// Source asset.
     pub from: ChainAddress,
     /// Destination asset.
@@ -30,24 +50,19 @@ pub struct Transfer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeEvent {
     /// Emitted when funds are pulled from the source chain.
-    TransferSent(Transfer, BlockNumber),
-    /// Emitted when we've failed to pull funds from the source chain.
-    OutboundFailed(Transfer),
-    /// Emitted when funds were successfully bridged to the destination chain.
-    TransferCompleted(Transfer, BlockNumber),
-    /// Worst case — we've pulled funds from the source chain but were not able to deliver them.
-    InboundFailed(Transfer),
+    TransferState(TransferId, TransferState),
 }
 
 /// An abstraction over a bridge that is able to accept bridging requests and driving them to
 /// completion.
 pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
-    /// Returns true if the bridge supports the given [`CoinKind`] on the given [`ChainId`].
+    /// Unique identifier of the bridge.
+    fn id(&self) -> &'static str;
+
+    /// Returns true if the bridge supports bridging the given assets.
     fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool;
 
-    /// Initiates a cross-chain transfer. This is expected to spawn a new task
-    fn send(&mut self, src: ChainAddress, dst: ChainAddress, amount: U256) -> eyre::Result<()>;
-
-    /// Returns a list of transfers that are in progress.
-    fn transfers_in_progress(&self) -> &[Transfer];
+    /// Triggers processing of the given transfer. The bridge is expected to return a future that
+    /// would advance the transfer progress based on internally saved `bridge_data` in storage.`
+    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }

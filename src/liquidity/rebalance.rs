@@ -1,8 +1,9 @@
 use crate::{
     liquidity::{
         LiquidityTracker,
-        bridge::{Bridge, BridgeEvent, Transfer},
+        bridge::{Bridge, BridgeEvent, Transfer, TransferId, TransferState},
     },
+    storage::{RelayStorage, StorageApi},
     types::{CoinKind, FeeTokens},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
@@ -25,8 +26,10 @@ pub struct Asset {
 #[derive(Debug)]
 pub struct RebalanceService {
     assets: Vec<Asset>,
+    storage: RelayStorage,
     tracker: LiquidityTracker,
     bridges: SelectAll<Box<dyn Bridge>>,
+    transfers_in_progress: HashMap<TransferId, Transfer>,
 }
 
 impl RebalanceService {
@@ -46,7 +49,13 @@ impl RebalanceService {
                 })
             })
             .collect();
-        Self { assets, tracker, bridges: select_all(bridges) }
+        Self {
+            assets,
+            storage: tracker.storage().clone(),
+            tracker,
+            bridges: select_all(bridges),
+            transfers_in_progress: Default::default(),
+        }
     }
 }
 
@@ -62,11 +71,6 @@ impl RebalanceService {
     /// Returns minimum amount for rebalancing to be performed.
     fn get_min_rebalance(&self, asset: &Asset) -> U256 {
         self.get_threshold(asset) / uint!(10_U256)
-    }
-
-    /// Returns iterator over all transfers in progress across all bridges.
-    fn transfers_in_progress(&self) -> impl Iterator<Item = &Transfer> {
-        self.bridges.iter().flat_map(|bridge| bridge.transfers_in_progress())
     }
 
     /// Gets balance ranges for all assets.
@@ -86,7 +90,8 @@ impl RebalanceService {
             .map(async |asset| {
                 let range = self.tracker.balance_range(asset.chain_id, asset.address).await?;
                 let pending_inbound = self
-                    .transfers_in_progress()
+                    .transfers_in_progress
+                    .values()
                     .filter(|t| t.to.1 == asset.address && t.to.0 == asset.chain_id)
                     .map(|t| t.amount)
                     .sum::<U256>();
@@ -110,18 +115,21 @@ impl RebalanceService {
             eyre::bail!("no bridge for the given asset");
         };
 
-        // Lock liquidity for the transfer.
-        self.tracker
-            .try_lock_liquidity(core::iter::once((from.chain_id, from.address, amount)))
-            .await?;
+        let transfer = Transfer {
+            id: TransferId::random(),
+            bridge_id: bridge.id().into(),
+            from: (from.chain_id, from.address),
+            to: (to.chain_id, to.address),
+            amount,
+        };
+
+        // Lock liquidity and save transfer in database.
+        self.tracker.try_lock_liquidity_for_bridge(&transfer).await?;
 
         // Send the transfer.
-        if let Err(err) =
-            bridge.send((from.chain_id, from.address), (to.chain_id, to.address), amount)
-        {
-            self.tracker.unlock_liquidity((from.chain_id, from.address), amount, 0).await?;
-            return Err(err);
-        }
+        tokio::spawn(bridge.process(transfer.clone()));
+
+        self.transfers_in_progress.insert(transfer.id, transfer);
 
         Ok(())
     }
@@ -174,32 +182,70 @@ impl RebalanceService {
     }
 
     /// Runs the rebalance service.
-    pub async fn into_future(mut self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            tokio::select! {
-                // Wake up to find next rebalance.
-                _ = interval.tick() => {
-                    if let Ok(Some((from, to, amount))) = self.find_next_rebalance().await {
-                        if let Err(err) = self.bridge(from, to, amount).await {
-                            warn!("failed to bridge: {}", err);
+    pub async fn into_future(mut self) -> eyre::Result<impl Future<Output = ()>> {
+        // Recover pending transfers from storage
+        for transfer in self.storage.load_pending_transfers().await? {
+            // Find the bridge that handles this transfer
+            let Some(bridge) =
+                self.bridges.iter_mut().find(|bridge| bridge.id() == transfer.bridge_id.as_ref())
+            else {
+                return Err(eyre::eyre!(
+                    "found pending transfer for unknown bridge {}",
+                    transfer.bridge_id
+                ));
+            };
+
+            // Delegate the transfer to the bridge
+            tokio::spawn(bridge.process(transfer.clone()));
+            self.transfers_in_progress.insert(transfer.id, transfer);
+        }
+
+        let fut = async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    // Wake up to find next rebalance.
+                    _ = interval.tick() => {
+                        if let Ok(Some((from, to, amount))) = self.find_next_rebalance().await {
+                            if let Err(err) = self.bridge(from, to, amount).await {
+                                warn!("failed to bridge: {}", err);
+                            }
                         }
                     }
-                }
-                // Handle bridge events.
-                Some(event) = self.bridges.next() => {
-                    match event {
-                        // Unlock liquidity for completed/failed transfers.
-                        BridgeEvent::TransferSent(transfer, block_number) => {
-                            let _ = self.tracker.unlock_liquidity(transfer.from, transfer.amount, block_number).await;
+                    // Handle bridge events.
+                    Some(event) = self.bridges.next() => {
+                        match event {
+                            // Unlock liquidity for completed/failed transfers.
+                            BridgeEvent::TransferState(transfer_id, state) => {
+                                match state {
+                                    TransferState::Pending => {
+                                        // Do nothing.
+                                    }
+                                    // Once source transfer (the one we've locked liquidity for) is completed or failed,
+                                    // we need to atomically update the state and unlock liquidity.
+                                    TransferState::Sent(block_number) => {
+                                        let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state, block_number).await;
+                                    }
+                                    TransferState::OutboundFailed => {
+                                        let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state, 0).await;
+                                        self.transfers_in_progress.remove(&transfer_id);
+                                    }
+                                    TransferState::Completed(_) => {
+                                        let _ = self.storage.update_transfer_state(transfer_id, state).await;
+                                        self.transfers_in_progress.remove(&transfer_id);
+                                    }
+                                    TransferState::InboundFailed => {
+                                        let _ = self.storage.update_transfer_state(transfer_id, state).await;
+                                        self.transfers_in_progress.remove(&transfer_id);
+                                    }
+                                };
+                            }
                         }
-                        BridgeEvent::OutboundFailed(transfer) => {
-                            let _ = self.tracker.unlock_liquidity(transfer.from, transfer.amount, 0).await;
-                        }
-                        BridgeEvent::TransferCompleted(_, _) | BridgeEvent::InboundFailed(_) => {},
                     }
                 }
             }
-        }
+        };
+
+        Ok(fut)
     }
 }

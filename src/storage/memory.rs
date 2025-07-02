@@ -3,7 +3,10 @@
 use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
     error::StorageError,
-    liquidity::ChainAddress,
+    liquidity::{
+        ChainAddress,
+        bridge::{Transfer, TransferId, TransferState},
+    },
     storage::api::LockLiquidityInput,
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -13,11 +16,11 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256},
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use tokio::sync::RwLock;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
@@ -33,6 +36,7 @@ pub struct InMemoryStorage {
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
     liquidity: RwLock<LiquidityTrackerInner>,
+    transfers: DashMap<TransferId, (Transfer, Option<serde_json::Value>, TransferState)>,
 }
 
 #[async_trait]
@@ -251,6 +255,102 @@ impl StorageApi for InMemoryStorage {
         }
 
         Ok(())
+    }
+
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &Transfer,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        // First try to lock the liquidity
+        self.try_lock_liquidity(HashMap::from_iter([(transfer.from, input)])).await?;
+        self.transfers.insert(transfer.id, (transfer.clone(), None, TransferState::Pending));
+
+        Ok(())
+    }
+
+    async fn update_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+        data: &serde_json::Value,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.1 = Some(data.clone());
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: TransferId,
+    ) -> Result<Option<serde_json::Value>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(transfer_data.1.clone())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.2 = state;
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: TransferId,
+        state: TransferState,
+        at: BlockNumber,
+    ) -> Result<()> {
+        let transfer = self
+            .transfers
+            .get(&transfer_id)
+            .ok_or_else(|| eyre::eyre!("transfer not found"))?
+            .0
+            .clone();
+
+        // Update the state
+        self.update_transfer_state(transfer_id, state).await?;
+
+        // Unlock liquidity
+        self.unlock_liquidity(transfer.from, transfer.amount, at).await?;
+
+        Ok(())
+    }
+
+    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(Some(transfer_data.2))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+        let mut transfers = Vec::new();
+
+        for entry in self.transfers.iter() {
+            let (transfer, _, state) = entry.value();
+            match state {
+                TransferState::Pending | TransferState::Sent(_) => {
+                    transfers.push(transfer.clone());
+                }
+                _ => {}
+            }
+        }
+
+        transfers.sort_by_key(|t| t.id);
+        Ok(transfers)
     }
 }
 
