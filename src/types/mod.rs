@@ -33,6 +33,9 @@ pub use intent::*;
 mod intents;
 pub use intents::*;
 
+mod interop;
+pub use interop::*;
+
 mod onramp;
 pub use onramp::*;
 

@@ -68,9 +68,17 @@ impl TransactionServiceHandle {
         tx: RelayTransaction,
     ) -> Result<broadcast::Receiver<TransactionStatus>, StorageError> {
         self.storage.write_queued_transaction(&tx).await?;
+        Ok(self.send_transaction_no_queue(tx))
+    }
+
+    /// Sends transaction to service without queuing (for pre-queued bundle transactions).
+    pub fn send_transaction_no_queue(
+        &self,
+        tx: RelayTransaction,
+    ) -> broadcast::Receiver<TransactionStatus> {
         let (status_tx, status_rx) = broadcast::channel(100);
         let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
-        Ok(status_rx)
+        status_rx
     }
 
     /// Waits for a transaction to be confirmed or failed.

@@ -2,8 +2,11 @@
 
 use crate::{
     error::StorageError,
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    transactions::{
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
+    },
+    types::{CreatableAccount, InteropTxType, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -79,4 +82,41 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
+
+    /// Stores a new pending bundle.
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()>;
+
+    /// Updates an existing pending bundle's status.
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()>;
+
+    /// Gets all pending bundles.
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>>;
+
+    /// Gets a specific pending bundle by ID.
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;
+
+    /// Atomically update bundle status and queue transactions.
+    ///
+    /// # Arguments
+    /// * `bundle` - The bundle containing transactions to queue
+    /// * `status` - The new status for the bundle
+    /// * `tx_type` - Specifies whether to queue source or destination transactions
+    async fn queue_bundle_transactions(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+        tx_type: InteropTxType,
+    ) -> Result<()>;
+
+    /// Moves a bundle from pending_bundles to finished_bundles table.
+    /// This is called when a bundle reaches a terminal state (Done or Failed).
+    async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
 }

@@ -1,8 +1,11 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transactions::{
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
+    },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
@@ -22,6 +25,8 @@ pub struct InMemoryStorage {
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
+    pending_bundles: DashMap<BundleId, BundleWithStatus>,
+    finished_bundles: DashMap<BundleId, BundleWithStatus>,
 }
 
 #[async_trait]
@@ -138,5 +143,66 @@ impl StorageApi for InMemoryStorage {
 
     async fn ping(&self) -> Result<()> {
         Ok(())
+    }
+
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()> {
+        self.pending_bundles.insert(bundle.id, BundleWithStatus { bundle: bundle.clone(), status });
+        Ok(())
+    }
+
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()> {
+        if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
+            entry.status = status;
+        }
+        Ok(())
+    }
+
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
+        // Return all bundles
+        Ok(self.pending_bundles.iter().map(|entry| entry.value().clone()).collect())
+    }
+
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
+        Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
+    }
+
+    async fn queue_bundle_transactions(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+        tx_type: InteropTxType,
+    ) -> Result<()> {
+        // Queue the appropriate transactions
+        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
+
+        for tx in transactions {
+            let chain_id = tx.chain_id();
+            self.queued_transactions.entry(chain_id).or_default().push(tx.clone());
+        }
+
+        // Update bundle status
+        self.pending_bundles
+            .get_mut(&bundle.id)
+            .ok_or_else(|| eyre::eyre!("Bundle disappeared during update"))?
+            .status = status;
+
+        Ok(())
+    }
+
+    async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()> {
+        if let Some((_, bundle_with_status)) = self.pending_bundles.remove(&bundle_id) {
+            self.finished_bundles.insert(bundle_id, bundle_with_status);
+            Ok(())
+        } else {
+            Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into())
+        }
     }
 }
