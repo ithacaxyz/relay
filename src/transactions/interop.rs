@@ -58,10 +58,8 @@ impl InteropBundle {
         self.src_txs.push(tx);
     }
 
-    /// Appends a destination transaction to the bundle and updates asset transfers.
-    /// 
-    /// Extracts fund transfers from the transaction's quote intent and adds them 
-    /// to the bundle's asset_transfers vector for liquidity tracking.
+    /// Appends a destination transaction to the bundle and extracts the asset fund transfers from
+    /// the transaction's quote intent for liquidity tracking.
     pub fn append_dst(&mut self, tx: RelayTransaction) {
         // Calculate asset transfers for this transaction
         if let Some(transfers) = tx.quote().and_then(|q| q.intent.fund_transfers().ok()) {
