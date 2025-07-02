@@ -700,8 +700,7 @@ impl InteropServiceInner {
         &self,
         bundle: &InteropBundle,
     ) -> Result<(), InteropBundleError> {
-        // Wait for all transactions to complete
-        // Transactions were already queued by queue_bundle_transactions
+        // Wait for transactions queued by `queue_bundle_transactions`
         let results = self.watch_transactions(bundle.src_txs.iter()).await?;
 
         // Check if any failed
@@ -724,8 +723,7 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         let mut maybe_err = Ok(());
 
-        // Wait for all transactions to complete
-        // Transactions were already queued by queue_bundle_transactions
+        // Wait for transactions queued by `queue_bundle_transactions
         let results = self.watch_transactions(bundle.dst_txs.iter()).await?;
 
         // Collect receipts and check if any failed
