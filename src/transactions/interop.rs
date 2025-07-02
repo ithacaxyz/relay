@@ -459,6 +459,11 @@ impl InteropServiceInner {
     }
 
     /// Helper to update bundle status in storage and locally
+    #[instrument(skip(self, bundle), fields(
+        bundle_id = %bundle.bundle.id,
+        from = ?bundle.status,
+        to = ?new_status
+    ))]
     async fn update_bundle_status(
         &self,
         bundle: &mut BundleWithStatus,
@@ -910,7 +915,7 @@ impl InteropService {
                 status = ?bundle.status,
                 src_count = bundle.bundle.src_txs.len(),
                 dst_count = bundle.bundle.dst_txs.len(),
-                "Resume pending interop bundles from disk"
+                "Resume pending interop bundle from disk"
             );
 
             handle.send_bundle_with_status(bundle);
@@ -927,10 +932,11 @@ impl Future for InteropService {
         while let Poll::Ready(Some(command)) = self.command_rx.poll_recv(cx) {
             match command {
                 InteropServiceMessage::SendBundleWithStatus(bundle) => {
+                    let bundle_id = bundle.bundle.id;
                     let inner = Arc::clone(&self.inner);
                     tokio::spawn(async move {
                         if let Err(e) = inner.send_and_watch_bundle_with_status(*bundle).await {
-                            error!("Failed to process interop bundle: {:?}", e);
+                            error!(bundle_id = %bundle_id, error = ?e, "Failed to process interop bundle");
                         }
                     });
                 }
