@@ -9,6 +9,9 @@ use std::{borrow::Cow, fmt::Debug, pin::Pin};
 mod simple;
 pub use simple::SimpleBridge;
 
+mod binance;
+pub use binance::BinanceBridge;
+
 wrap_fixed_bytes!(
     /// Identifier for a cross-chain transfer.
     pub struct BridgeTransferId<32>;

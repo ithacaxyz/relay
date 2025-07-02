@@ -87,25 +87,25 @@ impl FeeTokens {
                         let decimals = erc20.decimals();
                         let symbol = erc20.symbol();
 
-                        let coin_kind = CoinKind::get_token(coin_registry, chain, *token)
-                            .ok_or_else(|| {
-                                eyre::eyre!("Token not supported: {token} @ {chain}.")
-                            })?;
+                        let Some(coin_kind) = CoinKind::get_token(coin_registry, chain, *token)
+                        else {
+                            return Ok(None);
+                        };
 
                         (try_join!(decimals.call(), symbol.call())?, coin_kind)
                     };
 
-                    Ok::<_, eyre::Error>((
+                    Ok::<_, eyre::Error>(Some((
                         chain,
                         Token::new(*token, decimals, symbol, coin_kind, interop),
-                    ))
+                    )))
                 }
             });
         let fee_tokens = try_join_all(futs).await?;
 
         // Collect into a set first to make sure we don't have duplicates
         let mut map: HashMap<ChainId, HashSet<Token>> = HashMap::default();
-        for (chain_id, token) in fee_tokens.into_iter() {
+        for (chain_id, token) in fee_tokens.into_iter().flatten() {
             map.entry(chain_id).or_default().insert(token);
         }
 

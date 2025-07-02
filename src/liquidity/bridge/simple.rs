@@ -189,7 +189,7 @@ impl SimpleBridgeInner {
         bridge_data: &mut SimpleBridgeData,
     ) -> eyre::Result<u64> {
         // get or prepare outbound transaction
-        let oubound_tx = match &mut bridge_data.outbound_tx {
+        let oubound_tx = match &bridge_data.outbound_tx {
             Some(tx) => tx,
             // If the tx is not yet created, build and save it.
             None => {
@@ -212,7 +212,7 @@ impl SimpleBridgeInner {
 
                 self.save_bridge_data(transfer, bridge_data).await?;
 
-                bridge_data.outbound_tx.as_mut().unwrap()
+                bridge_data.outbound_tx.as_ref().unwrap()
             }
         };
 
@@ -240,7 +240,7 @@ impl SimpleBridgeInner {
         transfer: &BridgeTransfer,
         bridge_data: &mut SimpleBridgeData,
     ) -> eyre::Result<u64> {
-        let inbound_tx = match &mut bridge_data.inbound_tx {
+        let inbound_tx = match &bridge_data.inbound_tx {
             Some(tx) => tx,
             None => {
                 let tx = if !transfer.to.1.is_zero() {
@@ -265,7 +265,7 @@ impl SimpleBridgeInner {
 
                 bridge_data.inbound_tx = Some(tx);
                 self.save_bridge_data(transfer, bridge_data).await?;
-                bridge_data.inbound_tx.as_mut().unwrap()
+                bridge_data.inbound_tx.as_ref().unwrap()
             }
         };
 
