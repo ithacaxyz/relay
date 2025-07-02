@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    storage::{RelayStorage, StorageApi},
+    storage::{InteropTxType, RelayStorage, StorageApi},
     types::{IERC20, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
@@ -58,7 +58,10 @@ impl InteropBundle {
         self.src_txs.push(tx);
     }
 
-    /// Appends a destination transaction to the bundle and updates asset transfers
+    /// Appends a destination transaction to the bundle and updates asset transfers.
+    /// 
+    /// Extracts fund transfers from the transaction's quote intent and adds them 
+    /// to the bundle's asset_transfers vector for liquidity tracking.
     pub fn append_dst(&mut self, tx: RelayTransaction) {
         // Calculate asset transfers for this transaction
         if let Some(transfers) = tx.quote().and_then(|q| q.intent.fund_transfers().ok()) {
@@ -487,7 +490,7 @@ impl InteropServiceInner {
         &self,
         bundle: &mut BundleWithStatus,
         new_status: BundleStatus,
-        is_source: bool,
+        tx_type: InteropTxType,
     ) -> Result<(), InteropBundleError> {
         // Validate state transition
         if !bundle.status.can_transition_to(&new_status) {
@@ -497,7 +500,7 @@ impl InteropServiceInner {
             });
         }
 
-        self.storage.queue_bundle_transactions(&bundle.bundle, new_status, is_source).await?;
+        self.storage.queue_bundle_transactions(&bundle.bundle, new_status, tx_type).await?;
         bundle.status = new_status;
         Ok(())
     }
@@ -514,7 +517,12 @@ impl InteropServiceInner {
         );
 
         // Update status and queue source transactions atomically
-        self.queue_transactions_and_update_status(bundle, BundleStatus::SourceQueued, true).await?;
+        self.queue_transactions_and_update_status(
+            bundle,
+            BundleStatus::SourceQueued,
+            InteropTxType::Source,
+        )
+        .await?;
 
         // Send the transactions
         self.send_transactions(&bundle.bundle.src_txs).await?;
@@ -558,8 +566,12 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
         // Update status and queue destination transactions atomically
-        self.queue_transactions_and_update_status(bundle, BundleStatus::DestinationQueued, false)
-            .await?;
+        self.queue_transactions_and_update_status(
+            bundle,
+            BundleStatus::DestinationQueued,
+            InteropTxType::Destination,
+        )
+        .await?;
 
         // Send the transactions
         self.send_transactions(&bundle.bundle.dst_txs).await?;

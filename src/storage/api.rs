@@ -6,7 +6,7 @@ use crate::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, InteropTxType, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -108,12 +108,12 @@ pub trait StorageApi: Debug + Send + Sync {
     /// # Arguments
     /// * `bundle` - The bundle containing transactions to queue
     /// * `status` - The new status for the bundle
-    /// * `is_source` - If true, queue source transactions; if false, queue destination transactions
+    /// * `tx_type` - Specifies whether to queue source or destination transactions
     async fn queue_bundle_transactions(
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        is_source: bool,
+        tx_type: InteropTxType,
     ) -> Result<()>;
 
     /// Moves a bundle from pending_bundles to finished_bundles table.

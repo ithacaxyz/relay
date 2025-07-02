@@ -1,7 +1,10 @@
 //! Relay storage
 
 mod api;
-pub use crate::transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle};
+pub use crate::{
+    transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
+    types::InteropTxType,
+};
 pub use api::StorageApi;
 
 mod memory;
@@ -159,9 +162,9 @@ impl StorageApi for RelayStorage {
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        is_source: bool,
+        tx_type: InteropTxType,
     ) -> api::Result<()> {
-        self.inner.queue_bundle_transactions(bundle, status, is_source).await
+        self.inner.queue_bundle_transactions(bundle, status, tx_type).await
     }
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> api::Result<()> {

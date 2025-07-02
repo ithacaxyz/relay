@@ -1,6 +1,6 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -178,10 +178,10 @@ impl StorageApi for InMemoryStorage {
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        is_source: bool,
+        tx_type: InteropTxType,
     ) -> Result<()> {
         // Queue the appropriate transactions
-        let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
+        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
 
         for tx in transactions {
             let chain_id = tx.chain_id();

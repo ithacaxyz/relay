@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -489,12 +489,12 @@ impl StorageApi for PgStorage {
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        is_source: bool,
+        tx_type: InteropTxType,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
         // Queue the appropriate transactions
-        let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
+        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
 
         for relay_tx in transactions {
             self.queue_transaction_with(relay_tx, &mut tx).await?;
