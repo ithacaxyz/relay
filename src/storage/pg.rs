@@ -13,8 +13,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use eyre::eyre;
-use sqlx::{Connection, PgPool};
+use sqlx::PgPool;
 use tracing::instrument;
 
 /// PostgreSQL storage implementation.
@@ -346,10 +345,7 @@ impl StorageApi for PgStorage {
     }
 
     async fn ping(&self) -> Result<()> {
-        if let Some(mut connection) = self.pool.try_acquire() {
-            connection.ping().await.map_err(eyre::Error::from).map_err(Into::into)
-        } else {
-            Err(eyre!("no connection to database").into())
-        }
+        // acquire a connection to ensure DB is reachable
+        self.pool.acquire().await.map_err(eyre::Error::from).map_err(Into::into).map(drop)
     }
 }
