@@ -1,7 +1,7 @@
 //! Relay storage
 
 mod api;
-pub use crate::transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx};
+pub use crate::transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle, TxOrRef};
 pub use api::StorageApi;
 
 mod memory;

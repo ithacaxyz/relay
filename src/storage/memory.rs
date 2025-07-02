@@ -4,7 +4,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxOrRef},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -183,14 +183,15 @@ impl StorageApi for InMemoryStorage {
         // Queue the appropriate transactions
         let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
 
-        for tx_or_id in transactions.iter_mut() {
-            if let TxIdOrTx::Tx(tx) = tx_or_id {
+        for tx_ref in transactions.iter_mut() {
+            if let TxOrRef::Full(tx) = tx_ref {
                 let chain_id = tx.chain_id();
                 self.queued_transactions.entry(chain_id).or_default().push((**tx).clone());
 
-                // Replace with ID after queueing
+                // Replace with Ref after queueing
                 let tx_id = tx.id;
-                *tx_or_id = TxIdOrTx::Id(tx_id);
+                let chain_id = tx.chain_id();
+                *tx_ref = TxOrRef::Ref { chain_id, tx_id };
             }
         }
 

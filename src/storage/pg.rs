@@ -6,7 +6,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxIdOrTx},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxOrRef},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -470,8 +470,8 @@ impl StorageApi for PgStorage {
         // First, queue the appropriate transactions
         let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
 
-        for tx_or_id in transactions.iter_mut() {
-            if let TxIdOrTx::Tx(relay_tx) = tx_or_id {
+        for tx_ref in transactions.iter_mut() {
+            if let TxOrRef::Full(relay_tx) = tx_ref {
                 let relay_tx_json = serde_json::to_value(relay_tx.as_ref())
                     .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
 
@@ -489,9 +489,10 @@ impl StorageApi for PgStorage {
                 .await
                 .map_err(eyre::Error::from)?;
 
-                // Replace with ID after queueing
+                // Replace with Ref after queueing
                 let tx_id = relay_tx.id;
-                *tx_or_id = TxIdOrTx::Id(tx_id);
+                let chain_id = relay_tx.chain_id();
+                *tx_ref = TxOrRef::Ref { chain_id, tx_id };
             }
         }
 
