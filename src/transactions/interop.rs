@@ -90,6 +90,9 @@ enum InteropBundleError {
     /// Transaction failed.
     #[error("transaction failed: {0}")]
     TransactionError(Arc<dyn TransactionFailureReason>),
+    /// Invalid state transition
+    #[error("invalid state transition from {from:?} to {to:?}")]
+    InvalidStateTransition { from: BundleStatus, to: BundleStatus },
     /// Not enough liquidity.
     #[error("don't have enough liquidity for the bundle")]
     NotEnoughLiquidity,
@@ -175,6 +178,27 @@ impl BundleStatus {
     /// Whether status is [`Self::DestinationFailures`].
     pub fn is_destination_failures(&self) -> bool {
         matches!(self, Self::DestinationFailures)
+    }
+
+    /// Check if this status can transition to another status
+    pub fn can_transition_to(&self, next: &Self) -> bool {
+        use BundleStatus::*;
+        matches!(
+            (self, next),
+            (Init, SourceQueued)
+                | (SourceQueued, SourceConfirmed)
+                | (SourceQueued, SourceFailures)
+                | (SourceConfirmed, DestinationQueued)
+                | (SourceFailures, RefundsQueued)
+                | (SourceFailures, Failed)
+                | (DestinationQueued, DestinationConfirmed)
+                | (DestinationQueued, DestinationFailures)
+                | (DestinationFailures, RefundsQueued)
+                | (DestinationFailures, Failed)
+                | (DestinationConfirmed, WithdrawalsQueued)
+                | (RefundsQueued, Failed)
+                | (WithdrawalsQueued, Done)
+        )
     }
 }
 
@@ -440,7 +464,35 @@ impl InteropServiceInner {
         bundle: &mut BundleWithStatus,
         new_status: BundleStatus,
     ) -> Result<(), InteropBundleError> {
+        // Validate state transition
+        if !bundle.status.can_transition_to(&new_status) {
+            return Err(InteropBundleError::InvalidStateTransition {
+                from: bundle.status,
+                to: new_status,
+            });
+        }
+
         self.storage.update_pending_bundle_status(bundle.bundle.id, new_status).await?;
+        bundle.status = new_status;
+        Ok(())
+    }
+
+    /// Helper to queue transactions and update bundle status atomically
+    async fn queue_transactions_and_update_status(
+        &self,
+        bundle: &mut BundleWithStatus,
+        new_status: BundleStatus,
+        is_source: bool,
+    ) -> Result<(), InteropBundleError> {
+        // Validate state transition
+        if !bundle.status.can_transition_to(&new_status) {
+            return Err(InteropBundleError::InvalidStateTransition {
+                from: bundle.status,
+                to: new_status,
+            });
+        }
+
+        self.storage.queue_bundle_transactions(&bundle.bundle, new_status, is_source).await?;
         bundle.status = new_status;
         Ok(())
     }
@@ -449,13 +501,15 @@ impl InteropServiceInner {
     ///
     /// Transitions to: [`BundleStatus::SourceQueued`]
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Initializing bundle");
+        tracing::info!(
+            bundle_id = ?bundle.bundle.id,
+            src_count = bundle.bundle.src_txs.len(),
+            dst_count = bundle.bundle.dst_txs.len(),
+            "Initializing bundle"
+        );
 
         // Update status and queue source transactions atomically
-        self.storage
-            .queue_bundle_transactions(&bundle.bundle, BundleStatus::SourceQueued, true)
-            .await?;
-        bundle.status = BundleStatus::SourceQueued;
+        self.queue_transactions_and_update_status(bundle, BundleStatus::SourceQueued, true).await?;
 
         // Send the transactions
         self.send_transactions(&bundle.bundle.src_txs).await?;
@@ -499,10 +553,8 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
         // Update status and queue destination transactions atomically
-        self.storage
-            .queue_bundle_transactions(&bundle.bundle, BundleStatus::DestinationQueued, false)
+        self.queue_transactions_and_update_status(bundle, BundleStatus::DestinationQueued, false)
             .await?;
-        bundle.status = BundleStatus::DestinationQueued;
 
         // Send the transactions
         self.send_transactions(&bundle.bundle.dst_txs).await?;
@@ -886,5 +938,130 @@ impl Future for InteropService {
         }
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::RelayStorage;
+    use sqlx::PgPool;
+
+    async fn get_test_storage() -> RelayStorage {
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            // Use PostgreSQL if DATABASE_URL is set
+            let pool = PgPool::connect(&db_url)
+                .await
+                .expect("Failed to connect to PostgreSQL with DATABASE_URL");
+
+            // Run migrations
+            sqlx::migrate!().run(&pool).await.expect("Failed to run migrations");
+
+            RelayStorage::pg(pool)
+        } else {
+            // Use in-memory storage if DATABASE_URL is not set
+            RelayStorage::in_memory()
+        }
+    }
+
+    #[test]
+    fn test_bundle_status_transitions() {
+        use BundleStatus::*;
+
+        // Valid transitions
+        assert!(Init.can_transition_to(&SourceQueued));
+        assert!(SourceQueued.can_transition_to(&SourceConfirmed));
+        assert!(SourceQueued.can_transition_to(&SourceFailures));
+        assert!(SourceConfirmed.can_transition_to(&DestinationQueued));
+        assert!(SourceFailures.can_transition_to(&RefundsQueued));
+        assert!(SourceFailures.can_transition_to(&Failed));
+        assert!(DestinationQueued.can_transition_to(&DestinationConfirmed));
+        assert!(DestinationQueued.can_transition_to(&DestinationFailures));
+        assert!(DestinationFailures.can_transition_to(&RefundsQueued));
+        assert!(DestinationFailures.can_transition_to(&Failed));
+        assert!(DestinationConfirmed.can_transition_to(&WithdrawalsQueued));
+        assert!(RefundsQueued.can_transition_to(&Failed));
+        assert!(WithdrawalsQueued.can_transition_to(&Done));
+
+        // Invalid transitions
+        assert!(!Init.can_transition_to(&SourceConfirmed));
+        assert!(!Init.can_transition_to(&Done));
+        assert!(!SourceQueued.can_transition_to(&DestinationQueued));
+        assert!(!DestinationConfirmed.can_transition_to(&SourceQueued));
+        assert!(!Done.can_transition_to(&Init));
+        assert!(!Failed.can_transition_to(&Init));
+    }
+
+    #[test]
+    fn test_interop_bundle_creation() {
+        let bundle_id = BundleId::random();
+        let bundle = InteropBundle::new(bundle_id);
+
+        assert_eq!(bundle.id, bundle_id);
+        assert!(bundle.src_txs.is_empty());
+        assert!(bundle.dst_txs.is_empty());
+        assert!(bundle.asset_transfers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bundle_persistence_and_recovery() {
+        let storage = get_test_storage().await;
+        let bundle_id = BundleId::random();
+        let bundle = InteropBundle::new(bundle_id);
+
+        // Store bundle with Init status
+        storage.store_pending_bundle(&bundle, BundleStatus::Init).await.unwrap();
+
+        // Retrieve bundle
+        let retrieved = storage.get_pending_bundle(bundle_id).await.unwrap();
+        assert!(retrieved.is_some());
+
+        let bundle_with_status = retrieved.unwrap();
+        assert_eq!(bundle_with_status.bundle.id, bundle_id);
+        assert_eq!(bundle_with_status.status, BundleStatus::Init);
+
+        // Update status
+        storage.update_pending_bundle_status(bundle_id, BundleStatus::SourceQueued).await.unwrap();
+
+        // Verify status updated
+        let updated = storage.get_pending_bundle(bundle_id).await.unwrap().unwrap();
+        assert_eq!(updated.status, BundleStatus::SourceQueued);
+
+        // Move to finished
+        storage.update_pending_bundle_status(bundle_id, BundleStatus::Done).await.unwrap();
+        storage.move_bundle_to_finished(bundle_id).await.unwrap();
+
+        // Verify no longer in pending
+        assert!(storage.get_pending_bundle(bundle_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_state_transition_error() {
+        let storage = get_test_storage().await;
+        let providers: HashMap<ChainId, DynProvider> = HashMap::default();
+        let tx_handles: HashMap<ChainId, TransactionServiceHandle> = HashMap::default();
+        let funder = Address::default();
+
+        let inner =
+            InteropServiceInner::new(tx_handles, LiquidityTracker::new(providers, funder), storage);
+
+        let bundle_id = BundleId::random();
+        let bundle = InteropBundle::new(bundle_id);
+        let mut bundle_with_status = BundleWithStatus {
+            bundle,
+            status: BundleStatus::Done, // Terminal state
+        };
+
+        // Try invalid transition from Done to SourceQueued
+        let result =
+            inner.update_bundle_status(&mut bundle_with_status, BundleStatus::SourceQueued).await;
+
+        assert!(matches!(
+            result,
+            Err(InteropBundleError::InvalidStateTransition {
+                from: BundleStatus::Done,
+                to: BundleStatus::SourceQueued
+            })
+        ));
     }
 }
