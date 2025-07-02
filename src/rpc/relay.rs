@@ -659,6 +659,11 @@ impl Relay {
         })
     }
 
+    /// Returns an iterator over all installed [`Chain`]s.
+    pub fn chains(&self) -> impl Iterator<Item = &Chain> {
+        self.inner.chains.chains()
+    }
+
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
         Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
@@ -1269,17 +1274,30 @@ impl Relay {
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<String> {
-        let providers = self
+        let chains_ok = try_join_all(self.chains().map(|chain| async {
+            chain.provider().get_block_number().await.inspect_err(|err| {
+                error!(
+                    %err,
+                    chain_id=%chain.id(),
+                    "Failed to obtain block number for health check",
+                );
+            })
+        }))
+        .await
+        .is_ok();
+
+        let db_ok = self
             .inner
-            .chains
-            .chain_ids_iter()
-            .map(|chain_id| self.provider(*chain_id))
-            .collect::<Result<Vec<_>, RelayError>>()?;
-        let chains_ok =
-            try_join_all(providers.into_iter().map(|provider| provider.get_block_number()))
-                .await
-                .is_ok();
-        let db_ok = self.inner.storage.ping().await.is_ok();
+            .storage
+            .ping()
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to ping database for health check",
+                );
+            })
+            .is_ok();
 
         if chains_ok && db_ok {
             Ok(RELAY_SHORT_VERSION.to_string())
