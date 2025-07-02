@@ -38,10 +38,54 @@ sol! {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SimpleBridgeData {
-    outbound_tx: Option<Signed<TxEip1559>>,
-    inbound_tx: Option<Signed<TxEip1559>>,
+/// Simple bridge implementation which assumes that signer address is funded on all chains.
+#[derive(Debug)]
+pub struct SimpleBridge {
+    inner: Arc<SimpleBridgeInner>,
+    events_rx: mpsc::UnboundedReceiver<BridgeEvent>,
+}
+
+impl SimpleBridge {
+    /// Creates a new SimpleBridge instance.
+    pub fn new(
+        providers: HashMap<ChainId, DynProvider>,
+        signer: DynSigner,
+        funder_address: Address,
+        storage: RelayStorage,
+    ) -> Self {
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+        let inner = SimpleBridgeInner { providers, signer, funder_address, storage, events_tx };
+
+        Self { inner: Arc::new(inner), events_rx }
+    }
+}
+
+impl Stream for SimpleBridge {
+    type Item = BridgeEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.events_rx.poll_recv(cx)
+    }
+}
+
+impl Bridge for SimpleBridge {
+    fn id(&self) -> &'static str {
+        "simple"
+    }
+
+    fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> bool {
+        true
+    }
+
+    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let this = self.inner.clone();
+        Box::pin(async move {
+            if let Err(e) = this.advance_transfer(transfer).await {
+                error!("Failed to advance transfer: {}", e);
+            }
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -112,6 +156,7 @@ impl SimpleBridgeInner {
         Ok(receipt)
     }
 
+    /// Saves [`SimpleBridgeData`] for a transfer.
     async fn save_bridge_data(
         &self,
         transfer: &Transfer,
@@ -122,6 +167,7 @@ impl SimpleBridgeInner {
         Ok(())
     }
 
+    /// Loads [`SimpleBridgeData`] for a transfer. If it's not found, returns a default value.
     async fn load_bridge_data(&self, transfer: &Transfer) -> eyre::Result<SimpleBridgeData> {
         if let Some(data) = self.storage.get_transfer_bridge_data(transfer.id).await? {
             Ok(serde_json::from_value(data)?)
@@ -130,11 +176,11 @@ impl SimpleBridgeInner {
         }
     }
 
-    async fn update_state(&self, transfer: &Transfer, state: TransferState) -> eyre::Result<()> {
-        let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
-        Ok(())
-    }
-
+    /// Handles outbound transaction. This essentially means pulling the tokens from the funder on
+    /// the source chain.
+    ///
+    /// This method will build transaction and save it to database as part of [`SimpleBridgeData`],
+    /// and then wait for it to land.
     async fn handle_outbound_tx(
         &self,
         transfer: &Transfer,
@@ -173,6 +219,10 @@ impl SimpleBridgeInner {
         Ok(receipt.block_number.unwrap_or_default())
     }
 
+    /// This is invoked once we know that the outbound transaction has landed.
+    ///
+    /// Handles inbound transaction, which means sending the tokens to the recipient on the
+    /// destination chain.
     async fn handle_inbound_tx(
         &self,
         transfer: &Transfer,
@@ -231,7 +281,7 @@ impl SimpleBridgeInner {
                         }
                     }
 
-                    self.update_state(&transfer, state).await?;
+                    let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
                 }
                 TransferState::Sent(_) => {
                     state = match self.handle_inbound_tx(&transfer, &mut bridge_data).await {
@@ -242,7 +292,7 @@ impl SimpleBridgeInner {
                         }
                     };
 
-                    self.update_state(&transfer, state).await?;
+                    let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
                 }
                 TransferState::OutboundFailed
                 | TransferState::InboundFailed
@@ -254,52 +304,11 @@ impl SimpleBridgeInner {
     }
 }
 
-/// Simple bridge implementation which assumes that signer address is funded on all chains.
-#[derive(Debug)]
-pub struct SimpleBridge {
-    inner: Arc<SimpleBridgeInner>,
-    events_rx: mpsc::UnboundedReceiver<BridgeEvent>,
-}
-
-impl SimpleBridge {
-    /// Creates a new SimpleBridge instance.
-    pub fn new(
-        providers: HashMap<ChainId, DynProvider>,
-        signer: DynSigner,
-        funder_address: Address,
-        storage: RelayStorage,
-    ) -> Self {
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-
-        let inner = SimpleBridgeInner { providers, signer, funder_address, storage, events_tx };
-
-        Self { inner: Arc::new(inner), events_rx }
-    }
-}
-
-impl Stream for SimpleBridge {
-    type Item = BridgeEvent;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.events_rx.poll_recv(cx)
-    }
-}
-
-impl Bridge for SimpleBridge {
-    fn id(&self) -> &'static str {
-        "simple"
-    }
-
-    fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> bool {
-        true
-    }
-
-    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let this = self.inner.clone();
-        Box::pin(async move {
-            if let Err(e) = this.advance_transfer(transfer).await {
-                error!("Failed to advance transfer: {}", e);
-            }
-        })
-    }
+/// State of a transfer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SimpleBridgeData {
+    /// Outbound transaction.
+    outbound_tx: Option<Signed<TxEip1559>>,
+    /// Inbound transaction.
+    inbound_tx: Option<Signed<TxEip1559>>,
 }
