@@ -1220,7 +1220,7 @@ impl Relay {
         Ok(bundle_id)
     }
 
-    /// Creates a PersistentBundle from signed quotes for multichain transactions.
+    /// Creates a [`InteropBundle`] from signed quotes for multichain transactions.
     async fn create_interop_bundle(
         &self,
         bundle_id: BundleId,
