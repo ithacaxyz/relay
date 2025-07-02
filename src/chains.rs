@@ -28,6 +28,18 @@ pub struct Chain {
     pub chain_id: ChainId,
 }
 
+impl Chain {
+    /// Returns the provider used to interact with this chain.
+    pub const fn provider(&self) -> &DynProvider {
+        &self.provider
+    }
+
+    /// Returns the chain id
+    pub const fn id(&self) -> ChainId {
+        self.chain_id
+    }
+}
+
 /// A collection of providers for different chains.
 #[derive(Clone)]
 pub struct Chains {
@@ -84,6 +96,11 @@ impl Chains {
     /// Get a provider for a given chain ID.
     pub fn get(&self, chain_id: ChainId) -> Option<Chain> {
         self.chains.get(&chain_id).cloned()
+    }
+
+    /// Returns an iterator over all installed [`Chain`]s.
+    pub fn chains(&self) -> impl Iterator<Item = &Chain> {
+        self.chains.values()
     }
 
     /// Get an iterator over the supported chain IDs.
