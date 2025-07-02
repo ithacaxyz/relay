@@ -38,9 +38,6 @@ impl PgStorage {
         relay_tx: &RelayTransaction,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
     ) -> Result<()> {
-        let relay_tx_json = serde_json::to_value(relay_tx)
-            .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
-
         sqlx::query!(
             r#"
             INSERT INTO queued_txs (tx_id, chain_id, tx)
@@ -49,7 +46,7 @@ impl PgStorage {
             "#,
             relay_tx.id.as_slice(),
             relay_tx.chain_id() as i64,
-            relay_tx_json
+            serde_json::to_value(relay_tx)?
         )
         .execute(&mut **tx)
         .await
@@ -417,9 +414,6 @@ impl StorageApi for PgStorage {
         bundle: &InteropBundle,
         status: BundleStatus,
     ) -> Result<()> {
-        let bundle_data = serde_json::to_value(bundle)
-            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
-
         sqlx::query!(
             r#"
             INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)
@@ -427,7 +421,7 @@ impl StorageApi for PgStorage {
             "#,
             bundle.id.as_slice(),
             status as _,
-            bundle_data,
+            serde_json::to_value(bundle)?,
         )
         .execute(&self.pool)
         .await
