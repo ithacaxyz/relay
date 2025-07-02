@@ -39,10 +39,10 @@ pub struct AssetTransfer {
 pub struct InteropBundle {
     /// Unique identifier for the bundle.
     pub id: BundleId,
-    /// Source chain transactions (can be references or full transactions)
-    pub src_txs: Vec<TxOrRef>,
-    /// Destination chain transactions (can be references or full transactions)
-    pub dst_txs: Vec<TxOrRef>,
+    /// Source chain transactions
+    pub src_txs: Vec<RelayTransaction>,
+    /// Destination chain transactions
+    pub dst_txs: Vec<RelayTransaction>,
     /// Pre-calculated asset transfers for liquidity tracking
     pub asset_transfers: Vec<AssetTransfer>,
 }
@@ -55,7 +55,7 @@ impl InteropBundle {
 
     /// Appends a source transaction to the bundle
     pub fn append_src(&mut self, tx: RelayTransaction) {
-        self.src_txs.push(TxOrRef::Full(Box::new(tx)));
+        self.src_txs.push(tx);
     }
 
     /// Appends a destination transaction to the bundle and updates asset transfers
@@ -71,7 +71,7 @@ impl InteropBundle {
             }
         }
 
-        self.dst_txs.push(TxOrRef::Full(Box::new(tx)));
+        self.dst_txs.push(tx);
     }
 }
 
@@ -175,46 +175,6 @@ impl BundleStatus {
     /// Whether status is [`Self::DestinationFailures`].
     pub fn is_destination_failures(&self) -> bool {
         matches!(self, Self::DestinationFailures)
-    }
-}
-
-/// Represents either a [`RelayTransaction`] or a reference with chain id and tx id.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TxOrRef {
-    /// Full transaction data
-    Full(Box<RelayTransaction>),
-    /// Transaction reference with chain ID
-    Ref {
-        /// The chain ID where the transaction was submitted
-        chain_id: ChainId,
-        /// The transaction ID
-        tx_id: TxId,
-    },
-}
-
-impl TxOrRef {
-    /// Get the transaction ID regardless of variant
-    pub fn id(&self) -> TxId {
-        match self {
-            TxOrRef::Full(tx) => tx.id,
-            TxOrRef::Ref { tx_id, .. } => *tx_id,
-        }
-    }
-
-    /// Get the chain ID (always available)
-    pub fn chain_id(&self) -> ChainId {
-        match self {
-            TxOrRef::Full(tx) => tx.chain_id(),
-            TxOrRef::Ref { chain_id, .. } => *chain_id,
-        }
-    }
-
-    /// Get the full transaction if it exists.
-    pub fn tx(&self) -> Option<RelayTransaction> {
-        match self {
-            TxOrRef::Full(tx) => Some((**tx).clone()),
-            TxOrRef::Ref { .. } => None,
-        }
     }
 }
 
@@ -474,24 +434,31 @@ impl InteropServiceInner {
         Self { tx_service_handles, liquidity_tracker, storage }
     }
 
+    /// Helper to update bundle status in storage and locally
+    async fn update_bundle_status(
+        &self,
+        bundle: &mut BundleWithStatus,
+        new_status: BundleStatus,
+    ) -> Result<(), InteropBundleError> {
+        self.storage.update_pending_bundle_status(bundle.bundle.id, new_status).await?;
+        bundle.status = new_status;
+        Ok(())
+    }
+
     /// Handle the Init status - check liquidity and queue source transactions
     ///
     /// Transitions to: [`BundleStatus::SourceQueued`]
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Initializing bundle");
 
-        // Extract source transactions before update (since update will modify the bundle)
-        let src_transactions: Vec<RelayTransaction> =
-            bundle.bundle.src_txs.iter().filter_map(TxOrRef::tx).collect();
-
         // Update status and queue source transactions atomically
-        bundle.status = BundleStatus::SourceQueued;
         self.storage
-            .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, true)
+            .queue_bundle_transactions(&bundle.bundle, BundleStatus::SourceQueued, true)
             .await?;
+        bundle.status = BundleStatus::SourceQueued;
 
         // Send the transactions
-        self.send_transactions(&src_transactions).await?;
+        self.send_transactions(&bundle.bundle.src_txs).await?;
 
         Ok(())
     }
@@ -506,19 +473,19 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing source transactions");
 
         // Process source transactions (waits for completion)
-        match self.process_source_transactions(&bundle.bundle).await {
+        let new_status = match self.process_source_transactions(&bundle.bundle).await {
             Ok(()) => {
                 // Update status to source confirmed
-                bundle.status = BundleStatus::SourceConfirmed;
+                BundleStatus::SourceConfirmed
             }
             Err(e) => {
                 // Update status to source failures
                 tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Source transactions failed");
-                bundle.status = BundleStatus::SourceFailures;
+                BundleStatus::SourceFailures
             }
-        }
+        };
 
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, new_status).await?;
         Ok(())
     }
 
@@ -531,18 +498,14 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
-        // Extract destination transactions before update.
-        let dst_transactions: Vec<RelayTransaction> =
-            bundle.bundle.dst_txs.iter().filter_map(TxOrRef::tx).collect();
-
         // Update status and queue destination transactions atomically
-        bundle.status = BundleStatus::DestinationQueued;
         self.storage
-            .update_bundle_and_queue_transactions(&mut bundle.bundle, bundle.status, false)
+            .queue_bundle_transactions(&bundle.bundle, BundleStatus::DestinationQueued, false)
             .await?;
+        bundle.status = BundleStatus::DestinationQueued;
 
         // Send the transactions
-        self.send_transactions(&dst_transactions).await?;
+        self.send_transactions(&bundle.bundle.dst_txs).await?;
 
         Ok(())
     }
@@ -560,8 +523,7 @@ impl InteropServiceInner {
             "Handling source failures - TODO: implement retry logic or manual intervention"
         );
         // TODO: Issue refunds if any of the sources transactions passed.
-        bundle.status = BundleStatus::Failed;
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, BundleStatus::Failed).await?;
         Ok(())
     }
 
@@ -576,19 +538,19 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
         // Process destination transactions (waits for completion)
-        match self.process_destination_transactions(&bundle.bundle).await {
+        let new_status = match self.process_destination_transactions(&bundle.bundle).await {
             Ok(()) => {
                 // Update status to destination confirmed
-                bundle.status = BundleStatus::DestinationConfirmed;
+                BundleStatus::DestinationConfirmed
             }
             Err(e) => {
                 // Update status to destination failures
                 tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Destination transactions failed");
-                bundle.status = BundleStatus::DestinationFailures;
+                BundleStatus::DestinationFailures
             }
-        }
+        };
 
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, new_status).await?;
         Ok(())
     }
 
@@ -606,8 +568,7 @@ impl InteropServiceInner {
         );
 
         // TODO: update bundle to RefundsQueued and process Refunds
-        bundle.status = BundleStatus::Failed;
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, BundleStatus::Failed).await?;
 
         Ok(())
     }
@@ -622,8 +583,7 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing withdrawals");
         // TODO: Queue withdrawal transactions
         // For now, transition to WithdrawalsQueued state
-        bundle.status = BundleStatus::WithdrawalsQueued;
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, BundleStatus::WithdrawalsQueued).await?;
         Ok(())
     }
 
@@ -639,8 +599,7 @@ impl InteropServiceInner {
         // TODO: Implement refund processing logic
         // - Check if refunds are confirmed
         // - If confirmed, transition to Failed or other
-        bundle.status = BundleStatus::Failed;
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, BundleStatus::Failed).await?;
         Ok(())
     }
 
@@ -655,8 +614,7 @@ impl InteropServiceInner {
 
         // TODO: Implement withdrawal processing logic
 
-        bundle.status = BundleStatus::Done;
-        self.storage.update_pending_bundle_status(bundle.bundle.id, bundle.status).await?;
+        self.update_bundle_status(bundle, BundleStatus::Done).await?;
         Ok(())
     }
 
@@ -700,21 +658,21 @@ impl InteropServiceInner {
     /// Watch transactions until they complete.
     async fn watch_transactions(
         &self,
-        tx_ids: impl Iterator<Item = &TxOrRef>,
+        txs: impl Iterator<Item = &RelayTransaction>,
     ) -> Result<
         Vec<(TxId, Result<TransactionReceipt, Arc<dyn TransactionFailureReason>>)>,
         InteropBundleError,
     > {
-        try_join_all(tx_ids.map(|tx| async move {
+        try_join_all(txs.map(|tx| async move {
             let tx_service = self
                 .tx_service_handles
                 .get(&tx.chain_id())
                 .ok_or(InteropBundleError::NoTransactionService(tx.chain_id()))?;
 
             // Convert to result based on status type
-            let result = match tx_service.wait_for_tx(tx.id()).await? {
+            let result = match tx_service.wait_for_tx(tx.id).await? {
                 TransactionStatus::Confirmed(receipt) => {
-                    tracing::debug!(tx_id = ?tx.id(), "Transaction confirmed");
+                    tracing::debug!(tx_id = ?tx.id, "Transaction confirmed");
                     match IntentExecuted::try_from_receipt(&receipt) {
                         Some(event) if !event.has_error() => Ok(*receipt),
                         Some(event) => Err(Arc::new(InteropBundleError::IntentExecutionFailed(
@@ -724,13 +682,13 @@ impl InteropServiceInner {
                     }
                 }
                 TransactionStatus::Failed(err) => {
-                    tracing::warn!(tx_id = ?tx.id(), "Transaction failed");
+                    tracing::warn!(tx_id = ?tx.id, "Transaction failed");
                     Err(err)
                 }
                 _ => unreachable!("wait_for_tx only returns final statuses"),
             };
 
-            Ok((tx.id(), result))
+            Ok((tx.id, result))
         }))
         .await
     }
@@ -743,7 +701,7 @@ impl InteropServiceInner {
         bundle: &InteropBundle,
     ) -> Result<(), InteropBundleError> {
         // Wait for all transactions to complete
-        // Transactions were already queued by update_bundle_and_queue_transactions
+        // Transactions were already queued by queue_bundle_transactions
         let results = self.watch_transactions(bundle.src_txs.iter()).await?;
 
         // Check if any failed
@@ -767,7 +725,7 @@ impl InteropServiceInner {
         let mut maybe_err = Ok(());
 
         // Wait for all transactions to complete
-        // Transactions were already queued by update_bundle_and_queue_transactions
+        // Transactions were already queued by queue_bundle_transactions
         let results = self.watch_transactions(bundle.dst_txs.iter()).await?;
 
         // Collect receipts and check if any failed
@@ -785,7 +743,7 @@ impl InteropServiceInner {
         }
 
         for (transfer, tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
-            let block = receipts.get(&tx.id()).and_then(|r| r.block_number).unwrap_or_default();
+            let block = receipts.get(&tx.id).and_then(|r| r.block_number).unwrap_or_default();
 
             self.liquidity_tracker
                 .unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block)

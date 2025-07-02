@@ -103,18 +103,15 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets a specific pending bundle by ID.
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;
 
-    /// Atomically update bundle and queue transactions.
-    /// This ensures consistency between bundle state and transaction queuing.
+    /// Atomically update bundle status and queue transactions.
     ///
     /// # Arguments
-    /// * `bundle` - The mutable bundle to update in storage. The selected transactions (`src_txs`
-    ///   if `is_source=true`, `dst_txs` if `is_source=false`) will be queued and replaced with
-    ///   their [`TxId`]
+    /// * `bundle` - The bundle containing transactions to queue
     /// * `status` - The new status for the bundle
     /// * `is_source` - If true, queue source transactions; if false, queue destination transactions
-    async fn update_bundle_and_queue_transactions(
+    async fn queue_bundle_transactions(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &InteropBundle,
         status: BundleStatus,
         is_source: bool,
     ) -> Result<()>;

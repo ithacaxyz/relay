@@ -4,7 +4,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxOrRef},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -174,29 +174,25 @@ impl StorageApi for InMemoryStorage {
         Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
     }
 
-    async fn update_bundle_and_queue_transactions(
+    async fn queue_bundle_transactions(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &InteropBundle,
         status: BundleStatus,
         is_source: bool,
     ) -> Result<()> {
         // Queue the appropriate transactions
-        let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
+        let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
 
-        for tx_ref in transactions.iter_mut() {
-            if let TxOrRef::Full(tx) = tx_ref {
-                let chain_id = tx.chain_id();
-                self.queued_transactions.entry(chain_id).or_default().push((**tx).clone());
-
-                // Replace with Ref after queueing
-                let tx_id = tx.id;
-                let chain_id = tx.chain_id();
-                *tx_ref = TxOrRef::Ref { chain_id, tx_id };
-            }
+        for tx in transactions {
+            let chain_id = tx.chain_id();
+            self.queued_transactions.entry(chain_id).or_default().push(tx.clone());
         }
 
-        // Update the bundle in storage with just tx id
-        self.pending_bundles.insert(bundle.id, BundleWithStatus { bundle: bundle.clone(), status });
+        // Update bundle status
+        self.pending_bundles
+            .get_mut(&bundle.id)
+            .ok_or_else(|| eyre::eyre!("Bundle disappeared during update"))?
+            .status = status;
 
         Ok(())
     }

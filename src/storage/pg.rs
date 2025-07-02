@@ -6,7 +6,7 @@ use super::{StorageApi, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
-        interop::{BundleStatus, BundleWithStatus, InteropBundle, TxOrRef},
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
@@ -30,6 +30,55 @@ impl PgStorage {
     /// Creates a new PostgreSQL storage instance.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Queue a single transaction within an existing database transaction
+    async fn queue_transaction_with(
+        &self,
+        relay_tx: &RelayTransaction,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        let relay_tx_json = serde_json::to_value(relay_tx)
+            .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO queued_txs (tx_id, chain_id, tx)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (tx_id) DO NOTHING
+            "#,
+            relay_tx.id.as_slice(),
+            relay_tx.chain_id() as i64,
+            relay_tx_json
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    /// Update pending bundle status within an existing database transaction
+    async fn update_pending_bundle_status_with(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE pending_bundles 
+            SET status = $2, updated_at = NOW()
+            WHERE bundle_id = $1
+            "#,
+            bundle_id.as_slice(),
+            status as _
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
     }
 }
 
@@ -287,16 +336,9 @@ impl StorageApi for PgStorage {
 
     #[instrument(skip(self))]
     async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()> {
-        sqlx::query!(
-            "insert into queued_txs (chain_id, tx_id, tx) values ($1, $2, $3)",
-            tx.chain_id() as i64, // yikes!
-            tx.id.as_slice(),
-            serde_json::to_value(&tx)?,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
+        let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+        self.queue_transaction_with(tx, &mut db_tx).await?;
+        db_tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
     }
 
@@ -399,19 +441,9 @@ impl StorageApi for PgStorage {
         bundle_id: BundleId,
         status: BundleStatus,
     ) -> Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE pending_bundles 
-            SET status = $2, updated_at = NOW()
-            WHERE bundle_id = $1
-            "#,
-            bundle_id.as_slice(),
-            status as _
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+        self.update_pending_bundle_status_with(bundle_id, status, &mut tx).await?;
+        tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
     }
 
@@ -459,63 +491,23 @@ impl StorageApi for PgStorage {
         }
     }
 
-    async fn update_bundle_and_queue_transactions(
+    async fn queue_bundle_transactions(
         &self,
-        bundle: &mut InteropBundle,
+        bundle: &InteropBundle,
         status: BundleStatus,
         is_source: bool,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
-        // First, queue the appropriate transactions
-        let transactions = if is_source { &mut bundle.src_txs } else { &mut bundle.dst_txs };
+        // Queue the appropriate transactions
+        let transactions = if is_source { &bundle.src_txs } else { &bundle.dst_txs };
 
-        for tx_ref in transactions.iter_mut() {
-            if let TxOrRef::Full(relay_tx) = tx_ref {
-                let relay_tx_json = serde_json::to_value(relay_tx.as_ref())
-                    .map_err(|e| eyre::eyre!("Failed to serialize relay transaction: {}", e))?;
-
-                sqlx::query!(
-                    r#"
-                    INSERT INTO queued_txs (tx_id, chain_id, tx)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (tx_id) DO NOTHING
-                    "#,
-                    relay_tx.id.as_slice(),
-                    relay_tx.chain_id() as i64,
-                    relay_tx_json
-                )
-                .execute(&mut *tx)
-                .await
-                .map_err(eyre::Error::from)?;
-
-                // Replace with Ref after queueing
-                let tx_id = relay_tx.id;
-                let chain_id = relay_tx.chain_id();
-                *tx_ref = TxOrRef::Ref { chain_id, tx_id };
-            }
+        for relay_tx in transactions {
+            self.queue_transaction_with(relay_tx, &mut tx).await?;
         }
 
-        // Then update or insert the bundle in storage (now with TxIds instead of full transactions)
-        let bundle_json = serde_json::to_value(&bundle)
-            .map_err(|e| eyre::eyre!("Failed to serialize bundle: {}", e))?;
-
-        sqlx::query!(
-            r#"
-            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at, updated_at)
-            VALUES ($1, $2, $3, NOW(), NOW())
-            ON CONFLICT (bundle_id) DO UPDATE
-            SET bundle_data = EXCLUDED.bundle_data, 
-                status = EXCLUDED.status, 
-                updated_at = NOW()
-            "#,
-            bundle.id.as_slice(),
-            status as _,
-            bundle_json,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(eyre::Error::from)?;
+        // Update bundle status
+        self.update_pending_bundle_status_with(bundle.id, status, &mut tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
