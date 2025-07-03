@@ -184,8 +184,7 @@ impl StorageApi for InMemoryStorage {
         let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
 
         for tx in transactions {
-            let chain_id = tx.chain_id();
-            self.queued_transactions.entry(chain_id).or_default().push(tx.clone());
+            self.queue_transaction(tx).await?;
         }
 
         // Update bundle status
