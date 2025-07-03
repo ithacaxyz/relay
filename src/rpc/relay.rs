@@ -1125,7 +1125,7 @@ impl Relay {
             .build_intent(
                 request,
                 maybe_stored,
-                calls.clone(),
+                calls,
                 nonce,
                 IntentKind::MultiOutput {
                     leaf_index: funding_chains.len(),
@@ -1874,7 +1874,7 @@ impl Relay {
             RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
         })?;
 
-        // Calculate refund timestamp 
+        // Calculate refund timestamp
         let current_timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(RelayError::internal)?
