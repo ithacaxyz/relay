@@ -96,8 +96,7 @@ impl StorageApi for InMemoryStorage {
         Ok(self.statuses.get(&tx).as_deref().cloned())
     }
 
-    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()> {
-        self.statuses.insert(tx, (chain_id, TransactionStatus::InFlight));
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
         self.bundles.entry(bundle).or_default().push(tx);
         Ok(())
     }
@@ -106,7 +105,8 @@ impl StorageApi for InMemoryStorage {
         Ok(self.bundles.get(&bundle).as_deref().cloned().unwrap_or_default())
     }
 
-    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()> {
+    async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
+        self.statuses.insert(tx.id, (tx.chain_id(), TransactionStatus::InFlight));
         self.queued_transactions.entry(tx.chain_id()).or_default().push(tx.clone());
         Ok(())
     }
@@ -184,8 +184,7 @@ impl StorageApi for InMemoryStorage {
         let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
 
         for tx in transactions {
-            let chain_id = tx.chain_id();
-            self.queued_transactions.entry(chain_id).or_default().push(tx.clone());
+            self.queue_transaction(tx).await?;
         }
 
         // Update bundle status

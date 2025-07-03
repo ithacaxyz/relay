@@ -67,7 +67,7 @@ impl TransactionServiceHandle {
         &self,
         tx: RelayTransaction,
     ) -> Result<broadcast::Receiver<TransactionStatus>, StorageError> {
-        self.storage.write_queued_transaction(&tx).await?;
+        self.storage.queue_transaction(&tx).await?;
         Ok(self.send_transaction_no_queue(tx))
     }
 
