@@ -1652,8 +1652,10 @@ impl RelayApiServer for Relay {
             }))
             .await?;
 
-        let any_pending = tx_statuses.iter().flatten().any(|(_, status)| {
-            matches!(status, TransactionStatus::InFlight | TransactionStatus::Pending(_))
+        let any_pending = tx_statuses.iter().any(|status| {
+            status.as_ref().is_none_or(|(_, status)| {
+                matches!(status, TransactionStatus::InFlight | TransactionStatus::Pending(_))
+            })
         });
         let any_failed = tx_statuses
             .iter()
