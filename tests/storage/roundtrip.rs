@@ -135,6 +135,8 @@ impl Fixtures {
             encodedFundTransfers: vec![r_bytes.clone()],
             funder: r_address,
             funderSignature: r_bytes.clone(),
+            settler: r_address,
+            settlerContext: r_bytes.clone(),
         };
         let quote = Quote {
             chain_id: r_u64,

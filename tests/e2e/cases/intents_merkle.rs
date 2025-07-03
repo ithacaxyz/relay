@@ -2,7 +2,7 @@
 
 use crate::e2e::Environment;
 use alloy::{
-    primitives::{Address, B256, Bytes, U256, uint},
+    primitives::{Address, B256, Bytes, U256, bytes, uint},
     sol_types::SolValue,
 };
 use relay::types::{Call, Intent, Intents, LazyMerkleTree};
@@ -28,6 +28,8 @@ fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Inte
         supportedAccountImplementation: Address::ZERO,
         funder: Address::ZERO,
         funderSignature: Bytes::default(),
+        settler: Address::ZERO,
+        settlerContext: bytes!(""),
     }
 }
 

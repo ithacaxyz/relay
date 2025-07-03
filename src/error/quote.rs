@@ -42,6 +42,12 @@ pub enum QuoteError {
     /// Missing required funds in the request.
     #[error("missing required funds")]
     MissingRequiredFunds,
+    /// Multichain functionality is disabled due to missing contracts.
+    #[error("multichain functionality is disabled: {reason}")]
+    MultichainDisabled {
+        /// The reason why multichain is disabled.
+        reason: String,
+    },
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -53,7 +59,8 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::UnsupportedFeeToken(..)
             | QuoteError::InvalidNumberOfIntents { .. }
             | QuoteError::InvalidFeeAmount { .. }
-            | QuoteError::MissingRequiredFunds => invalid_params(err.to_string()),
+            | QuoteError::MissingRequiredFunds
+            | QuoteError::MultichainDisabled { .. } => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
                 internal_rpc(err.to_string())
             }

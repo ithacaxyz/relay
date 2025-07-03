@@ -53,6 +53,10 @@ pub struct VersionedContracts {
     pub simulator: VersionedContract,
     /// Funder.
     pub funder: VersionedContract,
+    /// Escrow.
+    pub escrow: VersionedContract,
+    /// Settler.
+    pub settler: VersionedContract,
 }
 
 impl VersionedContracts {
@@ -116,6 +120,8 @@ impl VersionedContracts {
             delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
             simulator: VersionedContract::no_version(config.simulator),
             funder: VersionedContract::no_version(config.funder),
+            escrow: VersionedContract::no_version(config.escrow),
+            settler: VersionedContract::no_version(config.settler),
         })
     }
 }

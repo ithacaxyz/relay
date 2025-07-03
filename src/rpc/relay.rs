@@ -11,21 +11,23 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    constants::{ESCROW_REFUND_DURATION_SECS, ESCROW_SALT_LENGTH},
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
-        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
+        Asset, AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundingIntentContext,
+        GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
+        MULTICHAIN_NONCE_PREFIX,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
-            ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse,
-            PrepareCallsContext, PrepareUpgradeAccountResponse, RelayCapabilities,
-            SendPreparedCallsCapabilities, UpgradeAccountContext, UpgradeAccountDigests,
-            ValidSignatureProof,
+            ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
+            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
+            RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
+            UpgradeAccountDigests, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -33,7 +35,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -324,6 +326,12 @@ impl Relay {
                 .collect(),
             ..Default::default()
         };
+
+        // For MultiOutput intents, set the settler address and context
+        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
+            intent_to_sign.settler = self.inner.contracts.settler.address;
+            intent_to_sign.settlerContext = settler_context.clone();
+        }
 
         let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
             * U256::from(10u128.pow(token.decimals as u32))
@@ -818,7 +826,7 @@ impl Relay {
 
         // We only apply client-supplied state overrides on intents on the destination chain
         let overrides = match intent_kind {
-            IntentKind::Single | IntentKind::MultiOutput(_, _) => request.state_overrides.clone(),
+            IntentKind::Single | IntentKind::MultiOutput { .. } => request.state_overrides.clone(),
             _ => Default::default(),
         };
 
@@ -1070,6 +1078,9 @@ impl Relay {
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
+        // Validate that all required multichain contracts are configured
+        self.validate_multichain_contracts()?;
+
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
         let requested_asset = request
@@ -1098,42 +1109,55 @@ impl Relay {
         }
         .into();
 
-        let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
-            async |(leaf, (chain_id, amount))| {
-                self.prepare_calls_inner(
-                    PrepareCallsParameters::build_funding_intent(
-                        eoa,
-                        *chain_id,
-                        asset,
-                        *amount,
-                        // todo: should get the equivalent coin
-                        request.capabilities.meta.fee_token,
-                        request_key.clone(),
-                    ),
-                    Some(IntentKind::MultiInput(leaf)),
-                )
-                .await
-            },
-        ))
-        .await?;
-
+        // Calculate total sourced funds
         let mut sourced_funds = U256::ZERO;
         for (_, amount) in funding_chains.iter() {
             sourced_funds += amount;
         }
 
-        let (asset_diffs, quote) = self
+        // Encode the input chain IDs for the settler context
+        let input_chain_ids: Vec<U256> =
+            funding_chains.iter().map(|(chain_id, _)| U256::from(*chain_id)).collect();
+        let settler_context = input_chain_ids.abi_encode().into();
+
+        // First, build the output intent to get its digest
+        let (asset_diffs, output_quote) = self
             .build_intent(
                 request,
                 maybe_stored,
-                calls,
+                calls.clone(),
                 nonce,
-                IntentKind::MultiOutput(
-                    funding_intents.len(),
-                    vec![(requested_asset, sourced_funds)],
-                ),
+                IntentKind::MultiOutput {
+                    leaf_index: funding_chains.len(),
+                    fund_transfers: vec![(requested_asset, sourced_funds)],
+                    settler_context,
+                },
             )
             .await?;
+
+        let output_intent_digest = output_quote.intent.digest();
+
+        let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
+            async |(leaf, (chain_id, amount))| {
+                let funding_context = FundingIntentContext {
+                    eoa,
+                    chain_id: *chain_id,
+                    asset,
+                    amount: *amount,
+                    // todo: should get the equivalent coin
+                    fee_token: request.capabilities.meta.fee_token,
+                    output_intent_digest,
+                    output_chain_id: request.chain_id,
+                };
+
+                self.prepare_calls_inner(
+                    self.build_funding_intent(funding_context, request_key.clone())?,
+                    Some(IntentKind::MultiInput { leaf_index: leaf }),
+                )
+                .await
+            },
+        ))
+        .await?;
 
         // todo: assetdiffs should change
         Ok((
@@ -1144,7 +1168,7 @@ impl Relay {
                     .flat_map(|resp| {
                         resp.context.quote().expect("should exist").ty().quotes.clone()
                     })
-                    .chain(std::iter::once(quote))
+                    .chain(std::iter::once(output_quote))
                     .collect(),
                 ttl: SystemTime::now()
                     .checked_add(self.inner.quote_config.ttl)
@@ -1815,6 +1839,126 @@ impl Relay {
     /// The simulator address.
     pub fn simulator(&self) -> Address {
         self.inner.contracts.simulator.address
+    }
+
+    /// The escrow address.
+    pub fn escrow(&self) -> Address {
+        self.inner.contracts.escrow.address
+    }
+
+    /// Validates that all required multichain contracts are properly configured.
+    ///
+    /// Returns an error if any of the required contracts (escrow, settler, funder)
+    /// have zero addresses, indicating they are not properly configured.
+    fn validate_multichain_contracts(&self) -> Result<(), RelayError> {
+        let required_contracts = &[
+            ("escrow", self.inner.contracts.escrow.address),
+            ("settler", self.inner.contracts.settler.address),
+            ("funder", self.inner.contracts.funder.address),
+        ];
+
+        for (name, address) in required_contracts {
+            if address.is_zero() {
+                return Err(RelayError::Quote(QuoteError::MultichainDisabled {
+                    reason: format!("{name} contract not configured"),
+                }));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Creates an escrow struct for funding intents.
+    fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
+        // Generate a cryptographically secure random salt
+        let salt = B192::random().as_slice()[..ESCROW_SALT_LENGTH].try_into().map_err(|_| {
+            RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
+        })?;
+
+        // Calculate refund timestamp with proper error handling
+        let current_timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(RelayError::internal)?
+            .as_secs();
+        let refund_timestamp =
+            U256::from(current_timestamp.saturating_add(ESCROW_REFUND_DURATION_SECS));
+
+        Ok(Escrow {
+            salt,
+            depositor: context.eoa,
+            recipient: self.inner.contracts.funder.address,
+            token: context.asset.address(),
+            settler: self.inner.contracts.settler.address,
+            sender: self.orchestrator(),
+            settlementId: context.output_intent_digest,
+            senderChainId: U256::from(context.output_chain_id),
+            escrowAmount: context.amount,
+            refundAmount: context.amount,
+            refundTimestamp: refund_timestamp,
+        })
+    }
+
+    /// Builds the escrow calls based on the asset type.
+    fn build_escrow_calls(&self, escrow: Escrow, context: &FundingIntentContext) -> Vec<Call> {
+        // Build the escrow call
+        let escrow_call = Call {
+            to: self.inner.contracts.escrow.address,
+            value: if context.asset.is_native() { context.amount } else { U256::ZERO },
+            data: IEscrow::escrowCall { _escrows: vec![escrow] }.abi_encode().into(),
+        };
+
+        // Build the transaction calls based on token type
+        if context.asset.is_native() {
+            // Native token: single escrow call with value
+            vec![escrow_call]
+        } else {
+            // ERC20 token: approve then escrow
+            vec![
+                Call {
+                    to: context.asset.address(),
+                    value: U256::ZERO,
+                    data: IERC20::approveCall {
+                        spender: self.inner.contracts.escrow.address,
+                        amount: context.amount,
+                    }
+                    .abi_encode()
+                    .into(),
+                },
+                escrow_call,
+            ]
+        }
+    }
+
+    /// Builds a funding intent for multichain operations.
+    ///
+    /// Creates the necessary calls to escrow funds on an input chain that will
+    /// be used to fund a multichain intent execution on the output chain.
+    fn build_funding_intent(
+        &self,
+        context: FundingIntentContext,
+        request_key: CallKey,
+    ) -> Result<PrepareCallsParameters, RelayError> {
+        // Create the escrow struct
+        let escrow = self.create_escrow_struct(&context)?;
+
+        // Build the escrow calls
+        let calls = self.build_escrow_calls(escrow, &context);
+
+        Ok(PrepareCallsParameters {
+            calls,
+            chain_id: context.chain_id,
+            from: Some(context.eoa),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                revoke_keys: vec![],
+                pre_calls: vec![],
+                pre_call: false,
+            },
+            state_overrides: Default::default(),
+            key: Some(request_key),
+            required_funds: vec![],
+        })
     }
 }
 

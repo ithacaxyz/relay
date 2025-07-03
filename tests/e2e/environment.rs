@@ -93,6 +93,10 @@ pub struct Environment {
     pub erc20s: Vec<Address>,
     /// Usable ERC721 contract.
     pub erc721: Address,
+    /// Escrow contract for cross-chain intents.
+    pub escrow: Address,
+    /// Settler contract for cross-chain settlement.
+    pub settler: Address,
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
@@ -108,6 +112,8 @@ impl std::fmt::Debug for Environment {
             .field("orchestrator", &self.orchestrator)
             .field("delegation", &self.delegation)
             .field("erc20", &self.erc20)
+            .field("escrow", &self.escrow)
+            .field("settler", &self.settler)
             .field("num_chains", &self.anvils.len())
             .field("chain_ids", &self.chain_ids)
             .field("relay_endpoint", &self.relay_endpoint)
@@ -208,6 +214,8 @@ struct ContractAddresses {
     delegation_implementation: Address,
     orchestrator: Address,
     funder: Address,
+    escrow: Address,
+    settler: Address,
     erc20s: Vec<Address>,
     erc721: Address,
 }
@@ -434,7 +442,9 @@ impl Environment {
                 .with_delegation_proxy(Some(contracts.delegation))
                 .with_simulator(Some(contracts.simulator))
                 .with_funder(Some(contracts.funder))
-                .with_intent_gas_buffer(0) // todo: temp
+                .with_escrow(Some(contracts.escrow))
+                .with_settler(Some(contracts.settler))
+                .with_intent_gas_buffer(20_000) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_database_url(database_url),
@@ -457,6 +467,8 @@ impl Environment {
             erc20: contracts.erc20s[0],
             erc20s: contracts.erc20s[2..].to_vec(),
             erc721: contracts.erc721,
+            escrow: contracts.escrow,
+            settler: contracts.settler,
             relay_endpoint,
             relay_handle,
             signers,
@@ -769,6 +781,18 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         deploy_erc721(provider, &contracts_path).await?
     };
 
+    let escrow = if let Ok(address) = std::env::var("TEST_ESCROW") {
+        Address::from_str(&address).wrap_err("Escrow address parse failed.")?
+    } else {
+        deploy_escrow(provider, &contracts_path).await?
+    };
+
+    let settler = if let Ok(address) = std::env::var("TEST_SETTLER") {
+        Address::from_str(&address).wrap_err("Settler address parse failed.")?
+    } else {
+        deploy_settler(provider, &contracts_path, provider.default_signer_address()).await?
+    };
+
     // Deploy Multicall3 if needed
     if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
@@ -780,6 +804,8 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         delegation_implementation,
         orchestrator,
         funder,
+        escrow,
+        settler,
         erc20s,
         erc721,
     })
@@ -888,6 +914,25 @@ async fn deploy_erc20_tokens<P: Provider>(
 /// Deploy an ERC721 token
 async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
     deploy_contract(provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None).await
+}
+
+/// Deploy the Escrow contract
+async fn deploy_escrow<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+    deploy_contract(provider, &contracts_path.join("Escrow.sol/Escrow.json"), None).await
+}
+
+/// Deploy the Settler contract
+async fn deploy_settler<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    owner: Address,
+) -> eyre::Result<Address> {
+    deploy_contract(
+        provider,
+        &contracts_path.join("SimpleSettler.sol/SimpleSettler.json"),
+        Some(owner.abi_encode().into()),
+    )
+    .await
 }
 
 pub async fn deploy_contract<P: Provider>(

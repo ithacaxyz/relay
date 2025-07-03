@@ -1,11 +1,13 @@
 //! Multi-chain USDT transfer test case
 //!
-//! This test demonstrates cross-chain functionality:
+//! This test demonstrates cross-chain functionality with escrow and settler:
 //! - Sets up 3 local chains
 //! - Chain 1: User has N USDT balance
 //! - Chain 2: User has N USDT balance
 //! - Chain 3: User has 0 USDT balance (but has ETH for gas)
 //! - Executes prepare_calls and send_prepared_calls on chain 3
+//! - The output intent on chain 3 includes settler configuration
+//! - Funding intents on chains 1 & 2 use escrow mechanism
 //! - Attempts to transfer N+N USDT to address 0xbeef
 
 use crate::e2e::{cases::upgrade_account_eagerly, *};
@@ -85,6 +87,19 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
         .await?;
 
     let PrepareCallsResponse { context, digest, .. } = prepare_result;
+
+    // Verify that the output intent has settler configured
+    let quotes = context.quote().expect("should have quotes");
+    let output_quote = quotes.ty().quotes.last().expect("should have output quote");
+    assert_ne!(
+        output_quote.intent.settler,
+        Address::ZERO,
+        "Output intent should have settler configured"
+    );
+
+    // Verify funding intents are present (chains 1 & 2 will use escrow mechanism)
+    let funding_quotes = &quotes.ty().quotes[..quotes.ty().quotes.len() - 1];
+    assert_eq!(funding_quotes.len(), 2, "Should have 2 funding intents for chains 1 & 2");
 
     // Sign the digest
     let signature = key.sign_payload_hash(digest).await?;

@@ -4,8 +4,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
-        Account, Asset, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, IERC20, Key,
-        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
+        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
@@ -18,7 +18,7 @@ use alloy::{
     },
     providers::DynProvider,
     rpc::types::{Log, state::StateOverride},
-    sol_types::{SolCall, SolEvent},
+    sol_types::SolEvent,
     uint,
 };
 use serde::{Deserialize, Serialize};
@@ -157,44 +157,6 @@ impl PrepareCallsParameters {
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
-        }
-    }
-
-    /// Return a self that will be used as a funding intent
-    pub fn build_funding_intent(
-        eoa: Address,
-        chain_id: ChainId,
-        funding_asset: Asset,
-        amount: U256,
-        fee_token: Address,
-        request_key: CallKey,
-    ) -> Self {
-        // todo: escrow
-        let escrow = Address::ZERO;
-        let escrow_call = if funding_asset.is_native() {
-            Call { to: escrow, value: amount, data: Default::default() }
-        } else {
-            Call {
-                to: funding_asset.address(),
-                value: U256::ZERO,
-                data: IERC20::transferCall { to: escrow, amount }.abi_encode().into(),
-            }
-        };
-
-        PrepareCallsParameters {
-            calls: vec![escrow_call],
-            chain_id,
-            from: Some(eoa),
-            capabilities: PrepareCallsCapabilities {
-                authorize_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token, nonce: None },
-                revoke_keys: vec![],
-                pre_calls: vec![],
-                pre_call: false,
-            },
-            state_overrides: Default::default(),
-            key: Some(request_key),
-            required_funds: vec![],
         }
     }
 }
