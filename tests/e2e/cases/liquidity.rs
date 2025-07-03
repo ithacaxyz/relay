@@ -23,8 +23,17 @@ async fn test_liquidity_management() -> Result<()> {
             (*chain_id, env.relay_handle.chains.get(*chain_id).unwrap().provider.clone())
         })
         .collect();
+    let tx_services = env
+        .relay_handle
+        .chains
+        .chain_ids_iter()
+        .map(|chain_id| {
+            (*chain_id, env.relay_handle.chains.get(*chain_id).unwrap().transactions.clone())
+        })
+        .collect();
     let bridge = SimpleBridge::new(
         providers,
+        tx_services,
         env.deployer.clone(),
         env.funder,
         env.relay_handle.storage.clone(),

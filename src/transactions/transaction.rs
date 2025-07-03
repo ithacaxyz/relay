@@ -81,10 +81,20 @@ impl RelayTransaction {
     }
 
     /// Create a new [`RelayTransaction`] for an internal transaction.
-    pub fn new_internal(kind: TxKind, input: Bytes, chain_id: ChainId, gas_limit: u64) -> Self {
+    pub fn new_internal(
+        kind: impl Into<TxKind>,
+        input: impl Into<Bytes>,
+        chain_id: ChainId,
+        gas_limit: u64,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
-            kind: RelayTransactionKind::Internal { kind, input, chain_id, gas_limit },
+            kind: RelayTransactionKind::Internal {
+                kind: kind.into(),
+                input: input.into(),
+                chain_id,
+                gas_limit,
+            },
             trace_context: Context::current(),
             received_at: Utc::now(),
         }

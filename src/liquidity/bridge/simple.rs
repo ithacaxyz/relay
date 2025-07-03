@@ -8,6 +8,7 @@ use crate::{
     },
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
+    transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
     types::IERC20::transferCall,
 };
 use alloy::{
@@ -49,13 +50,21 @@ impl SimpleBridge {
     /// Creates a new SimpleBridge instance.
     pub fn new(
         providers: HashMap<ChainId, DynProvider>,
+        tx_services: HashMap<ChainId, TransactionServiceHandle>,
         signer: DynSigner,
         funder_address: Address,
         storage: RelayStorage,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let inner = SimpleBridgeInner { providers, signer, funder_address, storage, events_tx };
+        let inner = SimpleBridgeInner {
+            providers,
+            tx_services,
+            signer,
+            funder_address,
+            storage,
+            events_tx,
+        };
 
         Self { inner: Arc::new(inner), events_rx }
     }
@@ -91,6 +100,7 @@ impl Bridge for SimpleBridge {
 #[derive(Debug)]
 struct SimpleBridgeInner {
     providers: HashMap<ChainId, DynProvider>,
+    tx_services: HashMap<ChainId, TransactionServiceHandle>,
     signer: DynSigner,
     funder_address: Address,
     storage: RelayStorage,
@@ -202,10 +212,12 @@ impl SimpleBridgeInner {
                     pullGasCall { amount: transfer.amount }.abi_encode()
                 };
 
-                bridge_data.outbound_tx = Some(
-                    self.build_tx(transfer.from.0, self.funder_address, input.into(), U256::ZERO)
-                        .await?,
-                );
+                bridge_data.outbound_tx = Some(RelayTransaction::new_internal(
+                    self.funder_address,
+                    input,
+                    transfer.from.0,
+                    1_000_000,
+                ));
 
                 self.save_bridge_data(transfer, bridge_data).await?;
 
@@ -213,8 +225,17 @@ impl SimpleBridgeInner {
             }
         };
 
+        let tx_service = &self.tx_services[&transfer.from.0];
+
+        if self.storage.read_transaction_status(oubound_tx.id).await?.is_none() {
+            tx_service.send_transaction(oubound_tx.clone()).await?;
+        }
+
         // send and wait for outbound transaction
-        let receipt = self.send_tx(oubound_tx).await?;
+        let status = tx_service.wait_for_tx(oubound_tx.id).await?;
+        let TransactionStatus::Confirmed(receipt) = status else {
+            eyre::bail!("outbound transaction failed: {:?}", status);
+        };
 
         Ok(receipt.block_number.unwrap_or_default())
     }
@@ -308,7 +329,7 @@ impl SimpleBridgeInner {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SimpleBridgeData {
     /// Outbound transaction.
-    outbound_tx: Option<Signed<TxEip1559>>,
+    outbound_tx: Option<RelayTransaction>,
     /// Inbound transaction.
     inbound_tx: Option<Signed<TxEip1559>>,
 }
