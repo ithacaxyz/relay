@@ -137,6 +137,7 @@ jobs:
       - name: Run tests
         run: |
           cargo nextest run \
+            --release
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
