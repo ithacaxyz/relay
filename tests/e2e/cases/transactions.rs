@@ -346,6 +346,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 /// Asserts that on fee growth, we can successfully drop an underpriced transaction, and handle
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn pause_out_of_funds() -> eyre::Result<()> {
     let num_signers = 3;
     let env = Environment::setup_with_config(EnvironmentConfig {

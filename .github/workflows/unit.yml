@@ -88,7 +88,6 @@ jobs:
       - name: Run tests
         run: |
           cargo e2e -- \
-            --release \
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
