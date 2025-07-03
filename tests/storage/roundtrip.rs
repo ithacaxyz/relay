@@ -38,19 +38,19 @@ async fn storage() -> eyre::Result<RelayStorage> {
 #[ignore]
 async fn write() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer: _, chain_id, queued_tx, pending_tx, bundle_id, email } =
+    let Fixtures { account, signer: _, chain_id: _, queued_tx, pending_tx, bundle_id, email } =
         Fixtures::generate().await?;
 
     // Account & Keys
     storage.write_account(account.clone()).await?;
 
     // Queued & Pending txs
-    storage.write_queued_transaction(&queued_tx).await?;
+    storage.queue_transaction(&queued_tx).await?;
     storage.replace_queued_tx_with_pending(&pending_tx).await?;
-    storage.write_queued_transaction(&queued_tx).await?;
+    storage.queue_transaction(&queued_tx).await?;
 
     // Bundle status
-    storage.add_bundle_tx(bundle_id, chain_id, queued_tx.id).await?;
+    storage.add_bundle_tx(bundle_id, queued_tx.id).await?;
 
     // Email
     storage.add_unverified_email(email.0, &email.1, &email.2).await?;
@@ -148,8 +148,9 @@ impl Fixtures {
             orchestrator: r_address,
             is_multi_chain: false,
         };
+        let queued_id = B256::with_last_byte(1);
         let queued_tx = RelayTransaction {
-            id: TxId(r_b256),
+            id: TxId(queued_id),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
                 authorization: Some(authorization.clone()),
@@ -158,8 +159,13 @@ impl Fixtures {
             received_at: Utc::now(),
         };
 
+        let pending_id = B256::with_last_byte(2);
+        let pending_tx = {
+            let mut tx = queued_tx.clone();
+            tx.id = TxId(pending_id);
+            tx
+        };
         let pending_tx = PendingTransaction {
-            tx: queued_tx.clone(),
             sent: vec![
                 NetworkWallet::<Ethereum>::sign_transaction_from(
                     &signer,
@@ -168,6 +174,7 @@ impl Fixtures {
                 )
                 .await?,
             ],
+            tx: pending_tx,
             signer: r_address,
             sent_at: Utc::now(),
         };

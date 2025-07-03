@@ -89,21 +89,16 @@ impl StorageApi for RelayStorage {
         self.inner.read_transaction_status(tx).await
     }
 
-    async fn add_bundle_tx(
-        &self,
-        bundle: BundleId,
-        chain_id: ChainId,
-        tx: TxId,
-    ) -> api::Result<()> {
-        self.inner.add_bundle_tx(bundle, chain_id, tx).await
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {
+        self.inner.add_bundle_tx(bundle, tx).await
     }
 
     async fn get_bundle_transactions(&self, bundle: BundleId) -> api::Result<Vec<TxId>> {
         self.inner.get_bundle_transactions(bundle).await
     }
 
-    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> api::Result<()> {
-        self.inner.write_queued_transaction(tx).await
+    async fn queue_transaction(&self, tx: &RelayTransaction) -> api::Result<()> {
+        self.inner.queue_transaction(tx).await
     }
 
     async fn read_queued_transactions(&self, chain_id: u64) -> api::Result<Vec<RelayTransaction>> {
