@@ -2,9 +2,12 @@
 
 use std::sync::Arc;
 
-use super::{StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transactions::{
+        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        interop::{BundleStatus, BundleWithStatus, InteropBundle},
+    },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
@@ -13,8 +16,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use eyre::eyre;
-use sqlx::{Connection, PgPool};
+use sqlx::PgPool;
 use tracing::instrument;
 
 /// PostgreSQL storage implementation.
@@ -27,6 +29,52 @@ impl PgStorage {
     /// Creates a new PostgreSQL storage instance.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Queue a single transaction within an existing database transaction
+    async fn queue_transaction_with(
+        &self,
+        relay_tx: &RelayTransaction,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO queued_txs (tx_id, chain_id, tx)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (tx_id) DO NOTHING
+            "#,
+            relay_tx.id.as_slice(),
+            relay_tx.chain_id() as i64,
+            serde_json::to_value(relay_tx)?
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    /// Update pending bundle status within an existing database transaction
+    async fn update_pending_bundle_status_with(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE pending_bundles 
+            SET status = $2, updated_at = NOW()
+            WHERE bundle_id = $1
+            "#,
+            bundle_id.as_slice(),
+            status as _
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
     }
 }
 
@@ -284,16 +332,9 @@ impl StorageApi for PgStorage {
 
     #[instrument(skip(self))]
     async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()> {
-        sqlx::query!(
-            "insert into queued_txs (chain_id, tx_id, tx) values ($1, $2, $3)",
-            tx.chain_id() as i64, // yikes!
-            tx.id.as_slice(),
-            serde_json::to_value(&tx)?,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
+        let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+        self.queue_transaction_with(tx, &mut db_tx).await?;
+        db_tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
     }
 
@@ -360,10 +401,134 @@ impl StorageApi for PgStorage {
     }
 
     async fn ping(&self) -> Result<()> {
-        if let Some(mut connection) = self.pool.try_acquire() {
-            connection.ping().await.map_err(eyre::Error::from).map_err(Into::into)
-        } else {
-            Err(eyre!("no connection to database").into())
+        // acquire a connection to ensure DB is reachable
+        self.pool.acquire().await.map_err(eyre::Error::from).map_err(Into::into).map(drop)
+    }
+
+    async fn store_pending_bundle(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)
+            VALUES ($1, $2, $3, NOW())
+            "#,
+            bundle.id.as_slice(),
+            status as _,
+            serde_json::to_value(bundle)?,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    async fn update_pending_bundle_status(
+        &self,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+        self.update_pending_bundle_status_with(bundle_id, status, &mut tx).await?;
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT status AS "status: BundleStatus", bundle_data
+            FROM pending_bundles
+            ORDER BY created_at
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let bundle: InteropBundle = serde_json::from_value(row.bundle_data)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
+                Ok(BundleWithStatus { bundle, status: row.status })
+            })
+            .collect()
+    }
+
+    async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT status AS "status: BundleStatus", bundle_data
+            FROM pending_bundles
+            WHERE bundle_id = $1
+            "#,
+            bundle_id.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        match row {
+            Some(row) => {
+                let bundle: InteropBundle = serde_json::from_value(row.bundle_data)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
+                Ok(Some(BundleWithStatus { bundle, status: row.status }))
+            }
+            None => Ok(None),
         }
+    }
+
+    async fn queue_bundle_transactions(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+        tx_type: InteropTxType,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // Queue the appropriate transactions
+        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
+
+        for relay_tx in transactions {
+            self.queue_transaction_with(relay_tx, &mut tx).await?;
+        }
+
+        // Update bundle status
+        self.update_pending_bundle_status_with(bundle.id, status, &mut tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // Move the bundle from pending to finished in a single transaction
+        let result = sqlx::query!(
+            r#"
+            WITH moved AS (
+                DELETE FROM pending_bundles
+                WHERE bundle_id = $1
+                RETURNING bundle_id, status, bundle_data, created_at
+            )
+            INSERT INTO finished_bundles (bundle_id, status, bundle_data, created_at, finished_at)
+            SELECT bundle_id, status, bundle_data, created_at, NOW()
+            FROM moved
+            "#,
+            bundle_id.as_slice()
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        if result.rows_affected() == 0 {
+            return Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into());
+        }
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
     }
 }

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Clear dependencies to make the script rerunnable
+rm -rf lib
+
 # Install dependencies
 forge install foundry-rs/forge-std@v1.9.5 --no-git
 forge install vectorized/solady@v0.0.246 --no-git

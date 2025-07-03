@@ -14,7 +14,7 @@ use crate::{
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
-    transactions::InteropBundle,
+    transactions::interop::InteropBundle,
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, FeeTokens, GasEstimate, IERC20,
         IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
@@ -659,6 +659,11 @@ impl Relay {
         })
     }
 
+    /// Returns an iterator over all installed [`Chain`]s.
+    pub fn chains(&self) -> impl Iterator<Item = &Chain> {
+        self.inner.chains.chains()
+    }
+
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
         Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
@@ -1208,12 +1213,12 @@ impl Relay {
         let bundle =
             self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
 
-        self.inner.chains.interop().send_bundle(bundle).map_err(RelayError::internal)?;
+        self.inner.chains.interop().send_bundle(bundle).await?;
 
         Ok(bundle_id)
     }
 
-    /// Creates an InteropBundle from signed quotes for multichain transactions.
+    /// Creates a [`InteropBundle`] from signed quotes for multichain transactions.
     async fn create_interop_bundle(
         &self,
         bundle_id: BundleId,
@@ -1233,11 +1238,8 @@ impl Relay {
                 .collect::<Result<_, _>>()?,
         );
 
-        let mut bundle = InteropBundle {
-            id: bundle_id,
-            src_transactions: Vec::new(),
-            dst_transactions: Vec::new(),
-        };
+        // Create InteropBundle
+        let mut bundle = InteropBundle::new(bundle_id);
 
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
@@ -1253,12 +1255,12 @@ impl Relay {
                 .map_err(|e| RelayError::InternalError(e.into()))
         });
 
-        // Separate source and destination transactions
+        // Append transactions directly to bundle
         for (idx, tx) in try_join_all(tx_futures).await? {
             if idx == dst_idx {
-                bundle.dst_transactions.push(tx);
+                bundle.append_dst(tx);
             } else {
-                bundle.src_transactions.push(tx);
+                bundle.append_src(tx);
             }
         }
 
@@ -1269,17 +1271,30 @@ impl Relay {
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<String> {
-        let providers = self
+        let chains_ok = try_join_all(self.chains().map(|chain| async {
+            chain.provider().get_block_number().await.inspect_err(|err| {
+                error!(
+                    %err,
+                    chain_id=%chain.id(),
+                    "Failed to obtain block number for health check",
+                );
+            })
+        }))
+        .await
+        .is_ok();
+
+        let db_ok = self
             .inner
-            .chains
-            .chain_ids_iter()
-            .map(|chain_id| self.provider(*chain_id))
-            .collect::<Result<Vec<_>, RelayError>>()?;
-        let chains_ok =
-            try_join_all(providers.into_iter().map(|provider| provider.get_block_number()))
-                .await
-                .is_ok();
-        let db_ok = self.inner.storage.ping().await.is_ok();
+            .storage
+            .ping()
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to ping database for health check",
+                );
+            })
+            .is_ok();
 
         if chains_ok && db_ok {
             Ok(RELAY_SHORT_VERSION.to_string())

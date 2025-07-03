@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE pending_bundles \n            SET status = $2, updated_at = NOW()\n            WHERE bundle_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        {
+          "Custom": {
+            "name": "bundle_status",
+            "kind": {
+              "Enum": [
+                "init",
+                "source_queued",
+                "source_confirmed",
+                "source_failures",
+                "destination_queued",
+                "destination_failures",
+                "destination_confirmed",
+                "refunds_queued",
+                "withdrawals_queued",
+                "done",
+                "failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7f96ea98c34a6dff7c2f7448e6e014e09c5559e5e95f6f099ade3105456d3c8c"
+}

@@ -15,46 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build once and share artifacts with test jobs
-  build-contracts:
-    name: build-contracts
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
-
-      - name: Build test contracts
-        run: |
-          cd tests/account
-          forge build
-          forge build lib/solady/test/utils/mocks/MockERC20.sol
-          forge build lib/solady/test/utils/mocks/MockERC721.sol
-          
-      - name: Build LayerZero test contracts
-        run: |
-          cd tests/e2e/layerzero/contracts
-          chmod +x build.sh
-          ./build.sh
-
-      - name: Upload contracts
-        uses: actions/upload-artifact@v4
-        with:
-          name: contracts
-          path: |
-            tests/account/out
-            tests/e2e/layerzero/contracts/out
-          retention-days: 1
-
   test:
     name: test – ${{ matrix.variant }}
-    needs: build-contracts
     strategy:
       fail-fast: false
       matrix:
@@ -91,17 +53,6 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Download contracts
-        uses: actions/download-artifact@v4
-        with:
-          name: contracts
-          path: tests
-
-      - name: Set TEST_CONTRACTS environment variable
-        run: |
-          echo "TEST_CONTRACTS=${{ github.workspace }}/tests/account/out" >> $GITHUB_ENV
-          echo "LAYERZERO_CONTRACTS=${{ github.workspace }}/tests/e2e/layerzero/contracts/out" >> $GITHUB_ENV
-
       - uses: taiki-e/install-action@nextest
 
       - name: Set fork environment
@@ -136,8 +87,8 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo nextest run \
-            --release
+          cargo e2e -- \
+            --release \
             --locked \
             --workspace \
             -E "$TEST_FILTER" \
@@ -194,7 +145,7 @@ jobs:
     name: unit success
     runs-on: ubuntu-latest
     if: always()
-    needs: [build-contracts, test, test-migrations]
+    needs: [test, test-migrations]
     timeout-minutes: 5
     steps:
       - name: Decide whether the needed jobs succeeded or failed

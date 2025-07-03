@@ -2,7 +2,7 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetWithInfo,
+        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
@@ -263,9 +263,12 @@ impl AssetInfoService {
                         // todo: only supports eth as native coin for now
                         Some(AssetWithInfo {
                             asset: Asset::Native,
-                            symbol: Some("ETH".to_string()),
-                            decimals: Some(18u8),
-                            name: None,
+                            metadata: AssetMetadata {
+                                symbol: Some("ETH".to_string()),
+                                decimals: Some(18u8),
+                                name: None,
+                                uri: None,
+                            },
                         })
                     } else {
                         self.cache.get(&(chain_id, asset)).cloned()
@@ -355,9 +358,12 @@ async fn get_info<P: Provider>(
         // & decode.
         assets_with_info.push(AssetWithInfo {
             asset: Asset::Token(asset),
-            decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data).ok(),
-            symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data).ok(),
-            name: IERC20::nameCall::abi_decode_returns(&name.return_data).ok(),
+            metadata: AssetMetadata {
+                decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data).ok(),
+                symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data).ok(),
+                name: IERC20::nameCall::abi_decode_returns(&name.return_data).ok(),
+                uri: None,
+            },
         })
     }
 

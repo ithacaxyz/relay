@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)\n            VALUES ($1, $2, $3, NOW())\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        {
+          "Custom": {
+            "name": "bundle_status",
+            "kind": {
+              "Enum": [
+                "init",
+                "source_queued",
+                "source_confirmed",
+                "source_failures",
+                "destination_queued",
+                "destination_failures",
+                "destination_confirmed",
+                "refunds_queued",
+                "withdrawals_queued",
+                "done",
+                "failed"
+              ]
+            }
+          }
+        },
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5d19bd26bec547a5e4026104e3f53fcc9bf20d442799f43ca5585822701dd197"
+}

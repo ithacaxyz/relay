@@ -63,40 +63,41 @@ cargo test
 
 End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) under a git submodule located at `tests/account`. These tests depend on building certain these contracts.
 
-1. **Prerequisites**
+#### Prerequisites
 
-   Make sure [Foundry](https://getfoundry.sh/) is installed and available in your PATH.
-
-2. **Pull `ithacaxyz/account`**
+- Make sure [`forge`](https://getfoundry.sh/) is installed and available in your PATH.
+- Make sure [`cargo-nextest`](https://nextest.rs) is installed an available in your PATH.
+- Pull `ithacaxyz/account`
 
    ```bash
    git submodule update --init --recursive
    ```
 
-3. **Build the contracts**
+#### Running
 
-   ```bash
-   cd tests/account
-   forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol && forge build lib/solady/test/utils/mocks/MockERC721.sol
-   ```
+From the repository root, use the xtask command which automatically builds contracts and runs tests:
 
-4. **Run the Tests**
+```bash
+cargo e2e
+```
 
-   You can run the tests still in the same directory as before.
+You can pass additional arguments to `cargo test`:
 
-   ```bash
-   TEST_CONTRACTS=$(pwd)/out cargo test -- e2e
-   ```
+```bash
+cargo e2e -- --nocapture --test-threads=1
+```
 
-   More advanced options are available through the following environment variables with `.env` support.
-   - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
-   - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
-   - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
-   - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
-   - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
-   - `TEST_PROXY`: Address for proxy contract; deploys a mock if unset.
-   - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
-   - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
+##### Environment Variables
+
+Both approaches support the following environment variables with `.env` support:
+- `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
+- `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
+- `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
+- `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
+- `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
+- `TEST_PROXY`: Address for proxy contract; deploys a mock if unset.
+- `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
+- `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
 
 ## Deploying
 
