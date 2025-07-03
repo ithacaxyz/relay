@@ -20,7 +20,6 @@ use relay::{
     signers::DynSigner,
     storage::StorageApi,
     transactions::{RelayTransactionKind, TransactionService, TransactionStatus},
-    types::rpc::BundleId,
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::broadcast;
@@ -580,11 +579,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
     let num_accounts = 10;
     let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
         let account = MockAccount::new(&env).await.unwrap();
-        let tx = account.prepare_tx(&env).await;
-        // TODO: figure out if we should remove this, right now status is only written if this is
-        // called
-        storage.add_bundle_tx(BundleId::random(), env.chain_id(), tx.id).await.unwrap();
-        tx
+        account.prepare_tx(&env).await
     }))
     .buffered(10)
     .collect::<Vec<_>>()

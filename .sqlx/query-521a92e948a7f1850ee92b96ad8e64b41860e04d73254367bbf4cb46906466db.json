@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into bundle_transactions (bundle_id, tx_id) values ($1, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "521a92e948a7f1850ee92b96ad8e64b41860e04d73254367bbf4cb46906466db"
+}

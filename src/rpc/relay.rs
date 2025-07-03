@@ -561,7 +561,7 @@ impl Relay {
         quote.intent.paymentRecipient = self.inner.fee_recipient;
 
         let tx = RelayTransaction::new(quote.clone(), authorization.clone());
-        self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
+        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
     }

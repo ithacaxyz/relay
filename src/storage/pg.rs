@@ -37,6 +37,16 @@ impl PgStorage {
         relay_tx: &RelayTransaction,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
     ) -> Result<()> {
+        // Insert transaction into txs table
+        sqlx::query!(
+            "insert into txs (tx_id, chain_id) values ($1, $2)",
+            relay_tx.id.as_slice(),
+            relay_tx.chain_id() as i64 // yikes..
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
         sqlx::query!(
             r#"
             INSERT INTO queued_txs (tx_id, chain_id, tx)
@@ -306,12 +316,11 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip(self))]
-    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()> {
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
         sqlx::query!(
-            "insert into txs (tx_id, bundle_id, chain_id) values ($1, $2, $3)",
-            tx.as_slice(),
+            "insert into bundle_transactions (bundle_id, tx_id) values ($1, $2)",
             bundle.as_slice(),
-            chain_id as i64 // yikes..
+            tx.as_slice()
         )
         .execute(&self.pool)
         .await
@@ -322,16 +331,19 @@ impl StorageApi for PgStorage {
 
     #[instrument(skip(self))]
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>> {
-        let rows = sqlx::query!("select tx_id from txs where bundle_id = $1", bundle.as_slice())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(eyre::Error::from)?;
+        let rows = sqlx::query!(
+            "select tx_id from bundle_transactions where bundle_id = $1",
+            bundle.as_slice()
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
 
         Ok(rows.into_iter().map(|row| TxId::from_slice(&row.tx_id)).collect())
     }
 
     #[instrument(skip(self))]
-    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()> {
+    async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
         let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
         self.queue_transaction_with(tx, &mut db_tx).await?;
         db_tx.commit().await.map_err(eyre::Error::from)?;
