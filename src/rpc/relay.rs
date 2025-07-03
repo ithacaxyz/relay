@@ -1870,12 +1870,11 @@ impl Relay {
 
     /// Creates an escrow struct for funding intents.
     fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
-        // Generate a cryptographically secure random salt
         let salt = B192::random().as_slice()[..ESCROW_SALT_LENGTH].try_into().map_err(|_| {
             RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
         })?;
 
-        // Calculate refund timestamp with proper error handling
+        // Calculate refund timestamp 
         let current_timestamp = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(RelayError::internal)?
@@ -1900,7 +1899,6 @@ impl Relay {
 
     /// Builds the escrow calls based on the asset type.
     fn build_escrow_calls(&self, escrow: Escrow, context: &FundingIntentContext) -> Vec<Call> {
-        // Build the escrow call
         let escrow_call = Call {
             to: self.inner.contracts.escrow.address,
             value: if context.asset.is_native() { context.amount } else { U256::ZERO },
@@ -1909,7 +1907,6 @@ impl Relay {
 
         // Build the transaction calls based on token type
         if context.asset.is_native() {
-            // Native token: single escrow call with value
             vec![escrow_call]
         } else {
             // ERC20 token: approve then escrow
@@ -1938,10 +1935,7 @@ impl Relay {
         context: FundingIntentContext,
         request_key: CallKey,
     ) -> Result<PrepareCallsParameters, RelayError> {
-        // Create the escrow struct
         let escrow = self.create_escrow_struct(&context)?;
-
-        // Build the escrow calls
         let calls = self.build_escrow_calls(escrow, &context);
 
         Ok(PrepareCallsParameters {
