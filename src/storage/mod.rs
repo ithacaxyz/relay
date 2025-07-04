@@ -171,11 +171,13 @@ impl StorageApi for RelayStorage {
         self.inner.move_bundle_to_finished(bundle_id).await
     }
 
-    async fn try_lock_liquidity(
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> api::Result<()> {
-        self.inner.try_lock_liquidity(assets).await
+        self.inner.lock_liquidity_for_bundle(assets, bundle_id, status).await
     }
 
     async fn unlock_liquidity(

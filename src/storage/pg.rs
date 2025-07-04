@@ -759,13 +759,16 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn try_lock_liquidity(
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
         self.try_lock_liquidity_with(assets, &mut tx).await?;
+        self.update_pending_bundle_status_with(bundle_id, status, &mut tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
 

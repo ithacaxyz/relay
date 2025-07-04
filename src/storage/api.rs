@@ -136,10 +136,13 @@ pub trait StorageApi: Debug + Send + Sync {
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
 
-    /// Attempts to lock liquidity for the given assets.
-    async fn try_lock_liquidity(
+    /// Attempts to lock liquidity for the given assets corresponding to an interop bundle, and
+    /// updates the bundle status to the given status.
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> Result<()>;
 
     /// Unlocks liquidity for the given asset.

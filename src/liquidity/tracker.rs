@@ -1,7 +1,7 @@
 use crate::{
     error::StorageError,
     liquidity::bridge::Transfer,
-    storage::{LockLiquidityInput, RelayStorage, StorageApi},
+    storage::{BundleStatus, InteropBundle, LockLiquidityInput, RelayStorage, StorageApi},
     types::IERC20,
 };
 use alloy::{
@@ -153,11 +153,21 @@ impl LiquidityTracker {
     }
 
     /// Locks liquidity for an interop bundle.
-    pub async fn try_lock_liquidity(
+    pub async fn try_lock_liquidity_for_bundle(
         &self,
-        assets: impl IntoIterator<Item = (ChainId, Address, U256)>,
+        bundle: &InteropBundle,
+        status: BundleStatus,
     ) -> Result<(), LiquidityTrackerError> {
-        self.storage.try_lock_liquidity(self.prepare_lock_inputs(assets).await?).await?;
+        self.storage
+            .lock_liquidity_for_bundle(
+                self.prepare_lock_inputs(
+                    bundle.asset_transfers.iter().map(|t| (t.chain_id, t.asset_address, t.amount)),
+                )
+                .await?,
+                bundle.id,
+                status,
+            )
+            .await?;
 
         Ok(())
     }

@@ -215,11 +215,18 @@ impl StorageApi for InMemoryStorage {
         }
     }
 
-    async fn try_lock_liquidity(
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> Result<()> {
-        self.liquidity.write().await.try_lock_liquidity(assets).await
+        self.liquidity.write().await.try_lock_liquidity(assets).await?;
+        self.pending_bundles
+            .get_mut(&bundle_id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
+        Ok(())
     }
 
     async fn unlock_liquidity(
@@ -263,7 +270,11 @@ impl StorageApi for InMemoryStorage {
         input: LockLiquidityInput,
     ) -> Result<()> {
         // First try to lock the liquidity
-        self.try_lock_liquidity(HashMap::from_iter([(transfer.from, input)])).await?;
+        self.liquidity
+            .write()
+            .await
+            .try_lock_liquidity(HashMap::from_iter([(transfer.from, input)]))
+            .await?;
         self.transfers.insert(transfer.id, (transfer.clone(), None, TransferState::Pending));
 
         Ok(())

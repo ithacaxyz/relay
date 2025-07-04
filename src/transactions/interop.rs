@@ -76,9 +76,11 @@ impl InteropBundle {
 }
 
 /// Bundle with its current status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct BundleWithStatus {
     /// The interop bundle containing transaction data
+    #[deref]
+    #[deref_mut]
     pub bundle: InteropBundle,
     /// Current status of the bundle in the processing pipeline
     pub status: BundleStatus,
@@ -127,6 +129,10 @@ pub enum BundleStatus {
     ///
     /// Next: [`Self::SourceQueued`]
     Init,
+    /// Liquidity for destination transactions was locked.
+    ///
+    /// Next: [`Self::SourceQueued`]
+    LiquidityLocked,
     /// Source transactions are queued
     ///
     /// Next: [`Self::SourceConfirmed`] OR [`Self::SourceFailures`]
@@ -185,7 +191,8 @@ impl BundleStatus {
         use BundleStatus::*;
         matches!(
             (self, next),
-            (Init, SourceQueued)
+            (Init, LiquidityLocked)
+                | (LiquidityLocked, SourceQueued)
                 | (SourceQueued, SourceConfirmed)
                 | (SourceQueued, SourceFailures)
                 | (SourceConfirmed, DestinationQueued)
@@ -309,9 +316,9 @@ impl InteropServiceInner {
         Ok(())
     }
 
-    /// Handle the Init status - check liquidity and queue source transactions
+    /// Handle the Init status - lock liquidity
     ///
-    /// Transitions to: [`BundleStatus::SourceQueued`]
+    /// Transitions to: [`BundleStatus::LiquidityLocked`]
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
         tracing::info!(
             bundle_id = ?bundle.bundle.id,
@@ -319,6 +326,22 @@ impl InteropServiceInner {
             dst_count = bundle.bundle.dst_txs.len(),
             "Initializing bundle"
         );
+
+        self.liquidity_tracker
+            .try_lock_liquidity_for_bundle(&bundle.bundle, BundleStatus::LiquidityLocked)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Handle the LiquidityLocked status - queue source transactions
+    ///
+    /// Transitions to: [`BundleStatus::SourceQueued`]
+    async fn on_liquidity_locked(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Sending source transactions");
 
         // Update status and queue source transactions atomically
         self.queue_transactions_and_update_status(
@@ -661,23 +684,10 @@ impl InteropServiceInner {
         &self,
         mut bundle: BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        // Lock liquidity before processing the bundle (skip if already has processed the
-        // destination transactions)
-        if !bundle.status.is_destination_failures() && !bundle.status.is_destination_confirmed() {
-            self.liquidity_tracker
-                .try_lock_liquidity(
-                    bundle
-                        .bundle
-                        .asset_transfers
-                        .iter()
-                        .map(|t| (t.chain_id, t.asset_address, t.amount)),
-                )
-                .await?;
-        }
-
         loop {
             match bundle.status {
                 BundleStatus::Init => self.on_init(&mut bundle).await?,
+                BundleStatus::LiquidityLocked => self.on_liquidity_locked(&mut bundle).await?,
                 BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,
                 BundleStatus::SourceConfirmed => self.on_source_confirmed(&mut bundle).await?,
                 BundleStatus::SourceFailures => self.on_source_failures(&mut bundle).await?,
