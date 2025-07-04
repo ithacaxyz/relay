@@ -77,6 +77,7 @@ impl BinanceBridge {
         funder_address: Address,
         funder_owner: DynSigner,
     ) -> eyre::Result<Self> {
+        // Build Binance client.
         let client = WalletRestApi::production(
             ConfigurationRestApi::builder()
                 .api_key(api_key)
@@ -85,6 +86,7 @@ impl BinanceBridge {
                 .map_err(|e| eyre::eyre!("Failed to build Binance client: {}", e))?,
         );
 
+        // Collect deposit addresses and supported withdrawal networks.
         let mut deposit_addresses = HashMap::new();
         let mut supported_withdrawals = HashMap::new();
 
@@ -105,11 +107,13 @@ impl BinanceBridge {
                 continue;
             };
 
+            // Iterate over all supported networks for the coin.
             for network in networks {
                 let Some(network_name) = &network.network else {
                     continue;
                 };
 
+                // Try to parse the network into supported chain.
                 let Some(chain) = binance_network_to_chain(network_name) else {
                     continue;
                 };
@@ -120,12 +124,14 @@ impl BinanceBridge {
                     continue;
                 };
 
+                // Find whether this coin is supported for interop on the given chain.
                 let Some(token) =
                     fee_tokens.find(chain.id(), &contract_address).filter(|t| t.interop)
                 else {
                     continue;
                 };
 
+                // If deposits are supported, fetch deposit address.
                 if network.deposit_enable.is_some_and(|enable| enable) {
                     if let Some(deposit_address) = client
                         .deposit_address(
@@ -149,6 +155,7 @@ impl BinanceBridge {
                     }
                 }
 
+                // If withdrawals are supported, fetch neccesary context.
                 if network.withdraw_enable.is_some_and(|enable| enable) {
                     // This represents amount of decimals accepted by Binance for withdrawal amount.
                     let withdraw_decimals =
@@ -242,6 +249,7 @@ impl BinanceBridgeInner {
         transfer: &Transfer,
         bridge_data: &mut BinanceBridgeData,
     ) -> eyre::Result<u64> {
+        // Send or load previously sent deposit transaction.
         let deposit_tx = if let Some(deposit_tx) = &bridge_data.deposit_tx {
             deposit_tx
         } else {
@@ -249,6 +257,7 @@ impl BinanceBridgeInner {
                 return Err(eyre::eyre!("No deposit address found for source chain"));
             };
 
+            // Prepare calldata for the funder.
             let input = Funder::new(self.funder_address, &self.providers[&transfer.from.0])
                 .withdrawal_call(
                     transfer.from.1,
@@ -273,6 +282,7 @@ impl BinanceBridgeInner {
 
         let tx_service = &self.tx_services[&transfer.from.0];
 
+        // Send the transaction if it's not already sent.
         if self.storage.read_transaction_status(deposit_tx.id).await?.is_none() {
             tx_service.send_transaction(deposit_tx.clone()).await?;
         }
@@ -367,6 +377,9 @@ impl BinanceBridgeInner {
                 *withdraw_decimals as u32,
             )?;
 
+            // Send the withdrawal.
+            // We are assigning a client side ID here to be able to lookup it later without dealing
+            // with Binance server-side IDs.
             self.client
                 .withdraw(
                     WithdrawParams::builder(name.clone(), self.funder_address.to_string(), amount)
@@ -388,10 +401,13 @@ impl BinanceBridgeInner {
             eyre::bail!("unknown chain")
         };
 
+        // Wait for the withdrawal to be completed.
         loop {
+            // Fetch the withdrawal.
             let withdrawal =
                 self.find_withdrawal(transfer).await?.ok_or_eyre("failed to fetch withdrawal")?;
 
+            // If we already have a transaction hash, just wait for it to be confirmed.
             if let Some(tx_id) = withdrawal.tx_id {
                 let tx_id = B256::from_str(&tx_id)?;
                 if let Some(receipt) = provider.get_transaction_receipt(tx_id).await? {
