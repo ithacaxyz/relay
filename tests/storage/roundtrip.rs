@@ -47,7 +47,11 @@ async fn write() -> eyre::Result<()> {
     // Queued & Pending txs
     storage.queue_transaction(&queued_tx).await?;
     storage.replace_queued_tx_with_pending(&pending_tx).await?;
-    storage.queue_transaction(&queued_tx).await?;
+
+    // Create a new queued transaction with different ID
+    let mut queued_tx2 = queued_tx.clone();
+    queued_tx2.id = TxId(B256::with_last_byte(3));
+    storage.queue_transaction(&queued_tx2).await?;
 
     // Bundle status
     storage.add_bundle_tx(bundle_id, queued_tx.id).await?;
