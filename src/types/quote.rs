@@ -60,6 +60,50 @@ impl Quotes {
 
         Ok(self)
     }
+
+    /// Get the total fees in all of the inner quotes combined.
+    ///
+    /// For now, this assumes a uniform fee token across all intents, but we may change this in the
+    /// future.
+    ///
+    /// Returns `None` if there are no inner quotes.
+    pub fn fees(&self) -> Option<(Address, U256)> {
+        Some((
+            self.quotes.first()?.intent.paymentToken,
+            self.quotes.iter().map(|quote| quote.intent.totalPaymentMaxAmount).sum(),
+        ))
+    }
+
+    /// Add a signature turning the quotes into a [`SignedQuotes`].
+    pub fn into_signed(self, signature: Signature) -> SignedQuotes {
+        let digest = self.digest();
+        SignedQuotes::new_unchecked(self, signature, digest)
+    }
+
+    /// Compute a digest of the quotes for signing.
+    pub fn digest(&self) -> B256 {
+        let mut hasher = Keccak256::new();
+        for quote in &self.quotes {
+            hasher.update(quote.digest());
+        }
+        hasher.update(
+            self.ttl
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::from_secs(0))
+                .as_secs()
+                .to_be_bytes(),
+        );
+        if let Some(root) = self.multi_chain_root {
+            hasher.update(root);
+        }
+        hasher.finalize()
+    }
+}
+
+impl Sealable for Quotes {
+    fn hash_slow(&self) -> B256 {
+        self.digest()
+    }
 }
 
 /// A quote from a relay for a given [`Intent`].
@@ -100,38 +144,5 @@ impl Quote {
         hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
         hasher.finalize()
-    }
-}
-
-impl Quotes {
-    /// Add a signature turning the quotes into a [`SignedQuotes`].
-    pub fn into_signed(self, signature: Signature) -> SignedQuotes {
-        let digest = self.digest();
-        SignedQuotes::new_unchecked(self, signature, digest)
-    }
-
-    /// Compute a digest of the quotes for signing.
-    pub fn digest(&self) -> B256 {
-        let mut hasher = Keccak256::new();
-        for quote in &self.quotes {
-            hasher.update(quote.digest());
-        }
-        hasher.update(
-            self.ttl
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::from_secs(0))
-                .as_secs()
-                .to_be_bytes(),
-        );
-        if let Some(root) = self.multi_chain_root {
-            hasher.update(root);
-        }
-        hasher.finalize()
-    }
-}
-
-impl Sealable for Quotes {
-    fn hash_slow(&self) -> B256 {
-        self.digest()
     }
 }

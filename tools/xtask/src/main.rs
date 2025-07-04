@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path};
+use std::env;
 use xshell::{Shell, cmd};
 
 mod flags;

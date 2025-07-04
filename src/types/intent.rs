@@ -500,6 +500,9 @@ pub enum IntentKind {
     MultiInput {
         /// The leaf index in the merkle tree.
         leaf_index: usize,
+        /// The fee to pay, if precomputed as `(token address, amount)`. If this is `None`, the
+        /// fee will be estimated as normal.
+        fee: Option<(Address, U256)>,
     },
 }
 
@@ -527,7 +530,7 @@ impl IntentKind {
         match self {
             IntentKind::Single => panic!("Only multi chain intents have a leaf number."),
             IntentKind::MultiOutput { leaf_index, .. } => *leaf_index,
-            IntentKind::MultiInput { leaf_index } => *leaf_index,
+            IntentKind::MultiInput { leaf_index, .. } => *leaf_index,
         }
     }
 
@@ -565,6 +568,29 @@ pub struct FundingIntentContext {
     pub output_intent_digest: B256,
     /// The destination chain ID where funds will be used
     pub output_chain_id: ChainId,
+}
+
+/// A funding source.
+///
+/// A funding source is an amount of assets on a specific chain, and an associated cost with using
+/// those funds.
+#[derive(Debug, Clone)]
+pub struct FundSource {
+    /// The chain ID the funds are on.
+    pub chain_id: ChainId,
+    /// The amount of funds on that chain.
+    pub amount: U256,
+    /// The address of the funds.
+    ///
+    /// # Note
+    ///
+    /// This can (and probably will!) differ from chain to chain.
+    pub address: Address,
+    /// The cost of transferring the funds.
+    ///
+    /// The cost is in base units of the funds we are trying to transfer; in the future, we may
+    /// want to separate this out.
+    pub cost: U256,
 }
 
 #[cfg(test)]
