@@ -30,9 +30,10 @@ use relay::{
 };
 use sqlx::{ConnectOptions, Executor, PgPool, postgres::PgConnectOptions};
 use std::{
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     str::FromStr,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use url::Url;
 
@@ -192,11 +193,35 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
         args.extend(["--fork-block-number", fork_block_number]);
     }
 
-    Anvil::new()
+    let mut anvil = Anvil::new()
         .chain_id(chain_id)
-        .args(["--optimism", "--host", "0.0.0.0", "--print-traces"].into_iter().chain(args))
+        .args(
+            ["--optimism", "--host", "0.0.0.0", "--max-persisted-states", "100000"]
+                .into_iter()
+                .chain(args),
+        )
+        .keep_stdout()
         .try_spawn()
-        .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
+        .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))?;
+
+    let stdout = anvil.child_mut().stdout.take().unwrap();
+    std::thread::spawn(move || {
+        use std::{
+            fs::File,
+            io::{BufWriter, Write},
+        };
+        let duration_since_epoch =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
+        let file = File::create(format!("anvil-{}.txt", duration_since_epoch.as_micros())).unwrap();
+        let mut writer = BufWriter::new(file);
+        let reader = BufReader::new(stdout);
+        // Read line by line
+        for line in reader.lines() {
+            writeln!(writer, "{}", line.unwrap()).unwrap();
+        }
+    });
+
+    Ok(anvil)
 }
 
 /// Contract addresses for deployed contracts
