@@ -644,6 +644,9 @@ impl InteropServiceInner {
     ///                              Init
     ///                               │
     ///                               ▼
+    ///                        LiquidityLocked
+    ///                               │
+    ///                               ▼
     ///                          SourceQueued
     ///                          ╱         ╲
     ///                         ╱           ╲
@@ -798,7 +801,8 @@ mod tests {
         use BundleStatus::*;
 
         // Valid transitions
-        assert!(Init.can_transition_to(&SourceQueued));
+        assert!(Init.can_transition_to(&LiquidityLocked));
+        assert!(LiquidityLocked.can_transition_to(&SourceQueued));
         assert!(SourceQueued.can_transition_to(&SourceConfirmed));
         assert!(SourceQueued.can_transition_to(&SourceFailures));
         assert!(SourceConfirmed.can_transition_to(&DestinationQueued));
@@ -814,7 +818,10 @@ mod tests {
 
         // Invalid transitions
         assert!(!Init.can_transition_to(&SourceConfirmed));
+        assert!(!Init.can_transition_to(&SourceQueued)); // Must go through LiquidityLocked
         assert!(!Init.can_transition_to(&Done));
+        assert!(!LiquidityLocked.can_transition_to(&SourceConfirmed));
+        assert!(!LiquidityLocked.can_transition_to(&DestinationQueued));
         assert!(!SourceQueued.can_transition_to(&DestinationQueued));
         assert!(!DestinationConfirmed.can_transition_to(&SourceQueued));
         assert!(!Done.can_transition_to(&Init));
@@ -849,7 +856,17 @@ mod tests {
         assert_eq!(bundle_with_status.bundle.id, bundle_id);
         assert_eq!(bundle_with_status.status, BundleStatus::Init);
 
-        // Update status
+        // Update status to LiquidityLocked first
+        storage
+            .update_pending_bundle_status(bundle_id, BundleStatus::LiquidityLocked)
+            .await
+            .unwrap();
+
+        // Verify status updated
+        let updated = storage.get_pending_bundle(bundle_id).await.unwrap().unwrap();
+        assert_eq!(updated.status, BundleStatus::LiquidityLocked);
+
+        // Update to SourceQueued
         storage.update_pending_bundle_status(bundle_id, BundleStatus::SourceQueued).await.unwrap();
 
         // Verify status updated
