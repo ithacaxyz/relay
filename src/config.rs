@@ -47,6 +47,10 @@ pub struct RelayConfig {
     pub simulator: Address,
     /// Funder address.
     pub funder: Address,
+    /// Escrow address.
+    pub escrow: Address,
+    /// Settler address.
+    pub settler: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -269,6 +273,8 @@ impl Default for RelayConfig {
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
             funder: Address::ZERO,
+            escrow: Address::ZERO,
+            settler: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -412,6 +418,22 @@ impl RelayConfig {
     pub fn with_funder(mut self, funder: Option<Address>) -> Self {
         if let Some(funder) = funder {
             self.funder = funder;
+        }
+        self
+    }
+
+    /// Sets the escrow address.
+    pub fn with_escrow(mut self, escrow: Option<Address>) -> Self {
+        if let Some(escrow) = escrow {
+            self.escrow = escrow;
+        }
+        self
+    }
+
+    /// Sets the settler address.
+    pub fn with_settler(mut self, settler: Option<Address>) -> Self {
+        if let Some(settler) = settler {
+            self.settler = settler;
         }
         self
     }

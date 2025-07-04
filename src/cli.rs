@@ -70,6 +70,12 @@ pub struct Args {
     /// The address of the funder
     #[arg(long = "funder", required_unless_present("config_only"), value_name = "FUNDER")]
     pub funder: Option<Address>,
+    /// The address of the escrow contract
+    #[arg(long = "escrow", required_unless_present("config_only"), value_name = "ESCROW")]
+    pub escrow: Option<Address>,
+    /// The address of the settler contract
+    #[arg(long = "settler", required_unless_present("config_only"), value_name = "SETTLER")]
+    pub settler: Option<Address>,
     /// The RPC endpoint of a chain to send transactions to.
     ///
     /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
@@ -196,6 +202,8 @@ impl Args {
             .with_legacy_delegation_proxies(&self.legacy_delegation_proxies.unwrap_or_default())
             .with_simulator(self.simulator)
             .with_funder(self.funder)
+            .with_escrow(self.escrow)
+            .with_settler(self.settler)
             .with_funder_key(self.funder_key)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)

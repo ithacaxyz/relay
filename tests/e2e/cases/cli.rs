@@ -31,6 +31,8 @@ async fn respawn_cli() -> eyre::Result<()> {
                 legacy_delegation_proxies: Default::default(),
                 simulator: Default::default(),
                 funder: Default::default(),
+                escrow: None,
+                settler: None,
                 endpoints: Some(vec![
                     Url::from_str(&env.anvils[0].as_ref().unwrap().endpoint()).unwrap(),
                 ]),

@@ -1,4 +1,4 @@
-use super::{Call, IDelegation::authorizeCall, Key, OrchestratorContract};
+use super::{Asset, Call, IDelegation::authorizeCall, Key, OrchestratorContract};
 use crate::types::{
     CallPermission,
     IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
@@ -7,7 +7,9 @@ use crate::types::{
 };
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, Keccak256, U256, aliases::U192, keccak256, map::HashMap},
+    primitives::{
+        Address, B256, Bytes, ChainId, Keccak256, U256, aliases::U192, keccak256, map::HashMap,
+    },
     providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
@@ -94,6 +96,8 @@ sol! {
         bytes[] encodedPreCalls;
         /// Only relevant for multi chain intents.
         bytes[] encodedFundTransfers;
+        /// The settler address.
+        address settler;
         ////////////////////////////////////////////////////////////////////////
         // Additional Fields (Not included in EIP-712)
         ////////////////////////////////////////////////////////////////////////
@@ -101,6 +105,11 @@ sol! {
         address funder;
         /// The funder signature.
         bytes funderSignature;
+        /// Context data passed to the settler for processing attestations.
+        ///
+        /// This data is ABI-encoded and contains information needed by the settler
+        /// to process the multichain intent (e.g., list of chain IDs).
+        bytes settlerContext;
         /// The actual pre payment amount, requested by the filler. MUST be less than or equal to `prePaymentMaxAmount`
         uint256 prePaymentAmount;
         /// The actual total payment amount, requested by the filler. MUST be less than or equal to `totalPaymentMaxAmount`
@@ -212,6 +221,7 @@ mod eip712 {
             uint256 combinedGas;
             bytes[] encodedPreCalls;
             bytes[] encodedFundTransfers;
+            address settler;
         }
 
         #[derive(serde::Serialize)]
@@ -260,6 +270,7 @@ impl Intent {
         for transfer in &self.encodedFundTransfers {
             hasher.update(transfer);
         }
+        hasher.update(self.settler);
         hasher.update(self.supportedAccountImplementation);
         hasher.finalize()
     }
@@ -446,6 +457,7 @@ impl SignedCalls for Intent {
             combinedGas: self.combinedGas,
             encodedPreCalls: self.encodedPreCalls.clone(),
             encodedFundTransfers: self.encodedFundTransfers.clone(),
+            settler: self.settler,
         })
     }
 
@@ -469,10 +481,20 @@ impl SignedCalls for Intent {
 pub enum IntentKind {
     /// Single chain intent.
     Single,
-    /// Output of a multi chain intent. usize is the leaf nth.
-    MultiOutput(usize, Vec<(Address, U256)>),
-    /// Input of a multi chain intent. usize is the leaf nth.
-    MultiInput(usize),
+    /// Output of a multi chain intent.
+    MultiOutput {
+        /// The leaf index in the merkle tree.
+        leaf_index: usize,
+        /// Fund transfers (token address, amount) pairs.
+        fund_transfers: Vec<(Address, U256)>,
+        /// Settler context (ABI encoded).
+        settler_context: Bytes,
+    },
+    /// Input of a multi chain intent.
+    MultiInput {
+        /// The leaf index in the merkle tree.
+        leaf_index: usize,
+    },
 }
 
 impl IntentKind {
@@ -483,12 +505,12 @@ impl IntentKind {
 
     /// Returns `true` if this is [`IntentKind::MultiOutput`].
     pub fn is_multi_output(&self) -> bool {
-        matches!(self, IntentKind::MultiOutput(_, _))
+        matches!(self, IntentKind::MultiOutput { .. })
     }
 
     /// Returns `true` if this is [`IntentKind::MultiInput`].
     pub fn is_multi_input(&self) -> bool {
-        matches!(self, IntentKind::MultiInput(_))
+        matches!(self, IntentKind::MultiInput { .. })
     }
 
     /// Returns the nth leaf if dealing with a multi chain intent.
@@ -498,18 +520,45 @@ impl IntentKind {
     pub fn leaf_nth(&self) -> usize {
         match self {
             IntentKind::Single => panic!("Only multi chain intents have a leaf number."),
-            IntentKind::MultiOutput(leaf, _) => *leaf,
-            IntentKind::MultiInput(leaf) => *leaf,
+            IntentKind::MultiOutput { leaf_index, .. } => *leaf_index,
+            IntentKind::MultiInput { leaf_index } => *leaf_index,
         }
     }
 
-    /// Returns the nth leaf if dealing with a multi chain intent.
+    /// Returns the fund transfers if dealing with a multi chain intent.
     pub fn fund_transfers(&self) -> Vec<(Address, U256)> {
         match self {
-            IntentKind::MultiOutput(_, fund_transfers) => fund_transfers.clone(),
+            IntentKind::MultiOutput { fund_transfers, .. } => fund_transfers.clone(),
             _ => vec![],
         }
     }
+
+    /// Returns the settler context if this is a MultiOutput intent.
+    pub fn settler_context(&self) -> Bytes {
+        match self {
+            IntentKind::MultiOutput { settler_context, .. } => settler_context.clone(),
+            _ => Bytes::default(),
+        }
+    }
+}
+
+/// Context for building a funding intent in multichain operations.
+#[derive(Debug, Clone)]
+pub struct FundingIntentContext {
+    /// The EOA that will escrow funds
+    pub eoa: Address,
+    /// The chain where funds will be escrowed
+    pub chain_id: ChainId,
+    /// The asset to be escrowed (native or ERC20)
+    pub asset: Asset,
+    /// The amount to escrow
+    pub amount: U256,
+    /// The fee token to use for gas payment
+    pub fee_token: Address,
+    /// The output intent digest this funding will support
+    pub output_intent_digest: B256,
+    /// The destination chain ID where funds will be used
+    pub output_chain_id: ChainId,
 }
 
 #[cfg(test)]
@@ -552,13 +601,15 @@ mod tests {
             totalPaymentMaxAmount: U256::from(3822601006u64),
             combinedGas: U256::from(10_000_000u64),
             encodedPreCalls: vec![],
+            encodedFundTransfers: vec![bytes!("")],
+            settler: Address::ZERO,
+            settlerContext: bytes!(""),
             prePaymentAmount: U256::from(3822601006u64),
             totalPaymentAmount: U256::from(3822601006u64),
             paymentRecipient: Address::ZERO,
             signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedAccountImplementation: Address::ZERO,
-            encodedFundTransfers: vec![bytes!("")],
             funder: Address::ZERO,
             funderSignature: bytes!(""),
         };
@@ -573,7 +624,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0xd3073c2ed4e4c122d0895e4f5e5574297f66bb503e3646955e39148b549089c2")
+            b256!("0x6c8889de8c7b799bf53cec42005dd23e488a6e4be0c900ae85b715be4ee1d558")
         );
 
         // Multichain op
@@ -586,7 +637,7 @@ mod tests {
                 Some(address!("0x307AF7d28AfEE82092aA95D35644898311CA5360")),
                 None
             )),
-            b256!("0x41f244fe031bac7f3f54dc45bd3edc3ad3a56a41bcdb67d00f9bf573b983f065")
+            b256!("0xe38dcdc3ce26a5d87fde3980da8db9f20e6a14dc7870cbe76901273bd7d371b2")
         );
     }
 
@@ -604,19 +655,21 @@ mod tests {
             totalPaymentMaxAmount: U256::from(1021265804),
             combinedGas: U256::from(10000000u64),
             encodedPreCalls: vec![],
+            encodedFundTransfers: vec![bytes!("")],
+            settler: Address::ZERO,
+            settlerContext: bytes!(""),
             prePaymentAmount: U256::from(1021265804),
             totalPaymentAmount: U256::from(1021265804),
             paymentRecipient: Address::ZERO,
             signature: bytes!(""),
             paymentSignature: bytes!(""),
             supportedAccountImplementation: Address::ZERO,
-            encodedFundTransfers: vec![bytes!("")],
             funder: Address::ZERO,
             funderSignature: bytes!(""),
         };
 
         let expected_digest =
-            b256!("0xecbc5b73c5bd49aef761c86e80940db8362ce5712512f2fff70485f64a973c83");
+            b256!("0x3eaa22e383a1afa0f3c53544aa21cfb58b4abb96c60ecc3bae3e7df5ea62412e");
         assert_eq!(
             intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
@@ -638,14 +691,14 @@ mod tests {
         assert_eq!(
             intent.signature,
             bytes!(
-                "0xd3d5e107ac80ce0578e9669b4b04423349c9395ec2aafc9d2d0340965704ca7368f9c9859548d39cb39d9374bb1c29b38f7df7df711211e5d3401802a291dd0b1b"
+                "0xc9ac635b60edf0b7d5927ff08efe9ad57ab25922d49229020338b4f2134934062846089ff04295351c89f5195c799207fe55808a5686da317f7ea54a19e277a11b"
             )
         );
 
         assert_eq!(
             Bytes::from(intent.abi_encode()),
             bytes!(
-                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044000000000000000000000000000000000000000000000000000000000000004c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f3950000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041d3d5e107ac80ce0578e9669b4b04423349c9395ec2aafc9d2d0340965704ca7368f9c9859548d39cb39d9374bb1c29b38f7df7df711211e5d3401802a291dd0b1b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000e017a867c7204fd596ae3141a5b194596849a196000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c7183455a4c133ae270771860664b6b7ec320bb1000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000003e000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004600000000000000000000000000000000000000000000000000000000000000480000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000003cdf478c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004a00000000000000000000000000000000000000000000000000000000000000520000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496000000000000000000000000000000000000000000000000000000009009e8ec000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000443c78f39500000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041c9ac635b60edf0b7d5927ff08efe9ad57ab25922d49229020338b4f2134934062846089ff04295351c89f5195c799207fe55808a5686da317f7ea54a19e277a11b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             )
         );
     }
