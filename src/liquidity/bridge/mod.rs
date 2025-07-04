@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Debug, pin::Pin};
 
 mod simple;
-pub use simple::{Funder, SimpleBridge};
+pub use simple::SimpleBridge;
 
 wrap_fixed_bytes!(
     /// Identifier for a cross-chain transfer.

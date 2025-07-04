@@ -1,15 +1,12 @@
 use crate::{
     liquidity::{
-        bridge::{
-            Bridge, BridgeEvent, Transfer, TransferState,
-            simple::Funder::{pullGasCall, withdrawTokensCall},
-        },
+        bridge::{Bridge, BridgeEvent, Transfer, TransferState},
         tracker::ChainAddress,
     },
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
-    types::IERC20::transferCall,
+    types::{Funder, IERC20::transferCall},
 };
 use alloy::{
     consensus::{SignableTransaction, Signed, TxEip1559},
@@ -17,7 +14,6 @@ use alloy::{
     primitives::{Address, Bytes, ChainId, U256},
     providers::{DynProvider, PendingTransactionBuilder, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest},
-    sol,
     sol_types::SolCall,
 };
 use eyre::OptionExt;
@@ -31,13 +27,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tracing::error;
-
-sol! {
-    contract Funder {
-        function withdrawTokens(address token, address recipient, uint256 amount) external;
-        function pullGas(uint256 amount) external;
-    }
-}
 
 /// Simple bridge implementation which assumes that signer address is funded on all chains.
 #[derive(Debug)]
@@ -54,6 +43,7 @@ impl SimpleBridge {
         signer: DynSigner,
         funder_address: Address,
         storage: RelayStorage,
+        funder_owner: DynSigner,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
@@ -64,6 +54,7 @@ impl SimpleBridge {
             funder_address,
             storage,
             events_tx,
+            funder_owner,
         };
 
         Self { inner: Arc::new(inner), events_rx }
@@ -105,6 +96,7 @@ struct SimpleBridgeInner {
     funder_address: Address,
     storage: RelayStorage,
     events_tx: mpsc::UnboundedSender<BridgeEvent>,
+    funder_owner: DynSigner,
 }
 
 impl SimpleBridgeInner {
@@ -201,16 +193,15 @@ impl SimpleBridgeInner {
             Some(tx) => tx,
             // If the tx is not yet created, build and save it.
             None => {
-                let input = if !transfer.from.1.is_zero() {
-                    withdrawTokensCall {
-                        token: transfer.from.1,
-                        recipient: self.signer.address(),
-                        amount: transfer.amount,
-                    }
-                    .abi_encode()
-                } else {
-                    pullGasCall { amount: transfer.amount }.abi_encode()
-                };
+                let input = Funder::new(self.funder_address, &self.providers[&transfer.from.0])
+                    .withdrawal_call(
+                        transfer.from.1,
+                        self.signer.address(),
+                        transfer.amount,
+                        &self.funder_owner,
+                    )
+                    .await?
+                    .abi_encode();
 
                 bridge_data.outbound_tx = Some(RelayTransaction::new_internal(
                     self.funder_address,
@@ -266,8 +257,8 @@ impl SimpleBridgeInner {
                     self.build_tx(
                         transfer.to.0,
                         self.funder_address,
-                        pullGasCall { amount: transfer.amount }.abi_encode().into(),
-                        U256::ZERO,
+                        Default::default(),
+                        transfer.amount,
                     )
                     .await?
                 };
