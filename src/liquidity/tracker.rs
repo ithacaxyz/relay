@@ -192,17 +192,6 @@ impl LiquidityTracker {
         Ok(())
     }
 
-    /// Unlocks liquidity from an interop bundle.
-    pub async fn unlock_liquidity(
-        &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
-    ) -> Result<(), LiquidityTrackerError> {
-        self.storage.unlock_liquidity(asset, amount, at).await?;
-        Ok(())
-    }
-
     /// Returns reference to underlying [`RelayStorage`].
     pub fn storage(&self) -> &RelayStorage {
         &self.storage

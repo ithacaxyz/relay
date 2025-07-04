@@ -17,6 +17,7 @@ use crate::{
 use alloy::{
     consensus::TxEnvelope,
     primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
+    rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -776,13 +777,30 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn unlock_liquidity(
+    async fn unlock_bundle_liquidity(
         &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
     ) -> Result<()> {
-        self.unlock_liquidity_with(asset, amount, at, &self.pool).await?;
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        for transfer in &bundle.asset_transfers {
+            let block =
+                receipts.get(&transfer.tx_id).and_then(|r| r.block_number).unwrap_or_default();
+            self.unlock_liquidity_with(
+                (transfer.chain_id, transfer.asset_address),
+                transfer.amount,
+                block,
+                &mut *tx,
+            )
+            .await?;
+        }
+
+        self.update_pending_bundle_status_with(bundle.id, status, &mut tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+
         Ok(())
     }
 

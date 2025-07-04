@@ -31,6 +31,8 @@ pub struct AssetTransfer {
     pub asset_address: Address,
     /// The amount of the asset to transfer
     pub amount: U256,
+    /// The transaction ID of the asset transfer
+    pub tx_id: TxId,
 }
 
 /// Persistent bundle structure that stores full transaction data
@@ -67,6 +69,7 @@ impl InteropBundle {
                     chain_id: tx.chain_id(),
                     asset_address: asset,
                     amount,
+                    tx_id: tx.id,
                 });
             }
         }
@@ -433,20 +436,9 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
-        // Process destination transactions (waits for completion)
-        let new_status = match self.process_destination_transactions(&bundle.bundle).await {
-            Ok(()) => {
-                // Update status to destination confirmed
-                BundleStatus::DestinationConfirmed
-            }
-            Err(e) => {
-                // Update status to destination failures
-                tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Destination transactions failed");
-                BundleStatus::DestinationFailures
-            }
-        };
+        let (status, receipts) = self.process_destination_transactions(&bundle.bundle).await?;
+        self.storage.unlock_bundle_liquidity(&bundle.bundle, receipts, status).await?;
 
-        self.update_bundle_status(bundle, new_status).await?;
         Ok(())
     }
 
@@ -616,14 +608,15 @@ impl InteropServiceInner {
     async fn process_destination_transactions(
         &self,
         bundle: &InteropBundle,
-    ) -> Result<(), InteropBundleError> {
-        let mut maybe_err = Ok(());
-
+    ) -> Result<(BundleStatus, HashMap<TxId, TransactionReceipt>), InteropBundleError> {
         // Wait for transactions queued by `queue_bundle_transactions
         let results = self.watch_transactions(bundle.dst_txs.iter()).await?;
 
         // Collect receipts and check if any failed
-        let mut receipts = HashMap::with_capacity(bundle.dst_txs.len());
+        let mut receipts =
+            HashMap::with_capacity_and_hasher(bundle.dst_txs.len(), Default::default());
+        let mut any_failed = false;
+
         for (tx_id, result) in results {
             match result {
                 Ok(receipt) => {
@@ -631,24 +624,18 @@ impl InteropServiceInner {
                 }
                 Err(err) => {
                     tracing::error!(tx_id = ?tx_id, ?err, "Destination transaction failed");
-                    maybe_err = Err(InteropBundleError::TransactionError(err));
+                    any_failed = true;
                 }
             }
         }
 
-        for (transfer, tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
-            let block = receipts.get(&tx.id).and_then(|r| r.block_number).unwrap_or_default();
+        let status = if any_failed {
+            BundleStatus::DestinationFailures
+        } else {
+            BundleStatus::DestinationConfirmed
+        };
 
-            self.liquidity_tracker
-                .unlock_liquidity(
-                    (transfer.chain_id, transfer.asset_address),
-                    transfer.amount,
-                    block,
-                )
-                .await?;
-        }
-
-        maybe_err
+        Ok((status, receipts))
     }
 
     /// # Bundle State Machine

@@ -17,6 +17,7 @@ use crate::{
 use alloy::{
     consensus::TxEnvelope,
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -229,13 +230,26 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn unlock_liquidity(
+    async fn unlock_bundle_liquidity(
         &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
     ) -> Result<()> {
-        self.liquidity.write().await.unlock_liquidity(asset, amount, at);
+        for transfer in &bundle.asset_transfers {
+            let block =
+                receipts.get(&transfer.tx_id).and_then(|r| r.block_number).unwrap_or_default();
+            self.liquidity.write().await.unlock_liquidity(
+                (transfer.chain_id, transfer.asset_address),
+                transfer.amount,
+                block,
+            );
+        }
+
+        self.pending_bundles
+            .get_mut(&bundle.id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
 
         Ok(())
     }
@@ -334,7 +348,7 @@ impl StorageApi for InMemoryStorage {
         self.update_transfer_state(transfer_id, state).await?;
 
         // Unlock liquidity
-        self.unlock_liquidity(transfer.from, transfer.amount, at).await?;
+        self.liquidity.write().await.unlock_liquidity(transfer.from, transfer.amount, at);
 
         Ok(())
     }
