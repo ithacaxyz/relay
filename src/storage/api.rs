@@ -56,13 +56,13 @@ pub trait StorageApi: Debug + Send + Sync {
     ) -> Result<Option<(ChainId, TransactionStatus)>>;
 
     /// Adds a transaction to a bundle.
-    async fn add_bundle_tx(&self, bundle: BundleId, chain_id: ChainId, tx: TxId) -> Result<()>;
+    async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()>;
 
     /// Gets all transactions in a bundle.
     async fn get_bundle_transactions(&self, bundle: BundleId) -> Result<Vec<TxId>>;
 
     /// Writes a queued transaction.
-    async fn write_queued_transaction(&self, tx: &RelayTransaction) -> Result<()>;
+    async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()>;
 
     /// Reads queued transactions for the given chain.
     async fn read_queued_transactions(&self, chain_id: u64) -> Result<Vec<RelayTransaction>>;

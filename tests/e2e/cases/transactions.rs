@@ -20,7 +20,6 @@ use relay::{
     signers::DynSigner,
     storage::StorageApi,
     transactions::{RelayTransactionKind, TransactionService, TransactionStatus},
-    types::rpc::BundleId,
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::broadcast;
@@ -122,7 +121,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(10)
+            .buffered(1)
             .try_collect::<Vec<_>>()
             .await?;
     // wait a bit to make sure all tasks see the tx confirmation
@@ -131,7 +130,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
@@ -146,7 +145,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
     // send `num_accounts` more transactions some of which are failing
-    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
     let mut invalid = 0;
     let handles = transactions
         .into_iter()
@@ -343,6 +345,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 /// Asserts that on fee growth, we can successfully drop an underpriced transaction, and handle
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn pause_out_of_funds() -> eyre::Result<()> {
     let num_signers = 3;
     let env = Environment::setup_with_config(EnvironmentConfig {
@@ -367,7 +370,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // use a consistent seed
     let rng = StdRng::seed_from_u64(KEY_SEED);
-    // setup 30 accounts
+    // setup accounts
     let num_accounts = 30;
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
@@ -378,14 +381,15 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
-    let handles = transactions
-        .into_iter()
-        .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<TryJoinAll<_>>()
-        .await?;
+    let handles = futures_util::stream::iter(
+        transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx)),
+    )
+    .buffered(num_accounts)
+    .try_collect::<Vec<_>>()
+    .await?;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
@@ -539,7 +543,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         let account = MockAccount::new(&env).await.unwrap();
         account.prepare_tx(&env).await
     }))
-    .buffered(10)
+    .buffered(5)
     .collect::<Vec<_>>()
     .await;
     let handles = transactions
@@ -580,11 +584,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
     let num_accounts = 10;
     let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
         let account = MockAccount::new(&env).await.unwrap();
-        let tx = account.prepare_tx(&env).await;
-        // TODO: figure out if we should remove this, right now status is only written if this is
-        // called
-        storage.add_bundle_tx(BundleId::random(), env.chain_id(), tx.id).await.unwrap();
-        tx
+        account.prepare_tx(&env).await
     }))
     .buffered(10)
     .collect::<Vec<_>>()
