@@ -1,11 +1,12 @@
 use crate::{
     liquidity::{
         ChainAddress,
-        bridge::{Bridge, BridgeEvent, Funder::withdrawTokensCall, Transfer, TransferState},
+        bridge::{Bridge, BridgeEvent, Transfer, TransferState},
     },
+    signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
-    types::FeeTokens,
+    types::{FeeTokens, Funder},
 };
 use alloy::{
     primitives::{Address, B256, ChainId, U256},
@@ -65,6 +66,7 @@ pub struct BinanceBridge {
 
 impl BinanceBridge {
     /// Create a new [`BinanceBridge`] instance.
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         providers: HashMap<ChainId, DynProvider>,
         tx_services: HashMap<ChainId, TransactionServiceHandle>,
@@ -73,6 +75,7 @@ impl BinanceBridge {
         fee_tokens: &FeeTokens,
         storage: RelayStorage,
         funder_address: Address,
+        funder_owner: DynSigner,
     ) -> eyre::Result<Self> {
         let client = WalletRestApi::production(
             ConfigurationRestApi::builder()
@@ -183,6 +186,7 @@ impl BinanceBridge {
                 funder_address,
                 events_tx,
                 providers,
+                funder_owner,
                 tx_services,
             }),
             events_rx,
@@ -206,6 +210,7 @@ pub struct BinanceBridgeInner {
     supported_withdrawals: HashMap<ChainAddress, WithdrawTokenData>,
     storage: RelayStorage,
     funder_address: Address,
+    funder_owner: DynSigner,
     events_tx: mpsc::UnboundedSender<BridgeEvent>,
 }
 
@@ -244,12 +249,15 @@ impl BinanceBridgeInner {
                 return Err(eyre::eyre!("No deposit address found for source chain"));
             };
 
-            let input = withdrawTokensCall {
-                token: transfer.from.1,
-                recipient: *deposit_address,
-                amount: transfer.amount,
-            }
-            .abi_encode();
+            let input = Funder::new(self.funder_address, &self.providers[&transfer.from.0])
+                .withdrawal_call(
+                    transfer.from.1,
+                    *deposit_address,
+                    transfer.amount,
+                    &self.funder_owner,
+                )
+                .await?
+                .abi_encode();
 
             bridge_data.deposit_tx = Some(RelayTransaction::new_internal(
                 self.funder_address,
