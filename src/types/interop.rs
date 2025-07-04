@@ -6,6 +6,8 @@ pub enum InteropTxType {
     Source,
     /// Destination chain transactions
     Destination,
+    /// Refund transactions
+    Refund,
 }
 
 impl InteropTxType {
@@ -17,5 +19,10 @@ impl InteropTxType {
     /// Returns true if this is the Destination variant.
     pub fn is_destination(&self) -> bool {
         matches!(self, Self::Destination)
+    }
+
+    /// Returns true if this is the Refund variant.
+    pub fn is_refund(&self) -> bool {
+        matches!(self, Self::Refund)
     }
 }

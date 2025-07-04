@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod error;
+pub mod interop;
 pub mod metrics;
 pub mod nonce;
 pub mod op;

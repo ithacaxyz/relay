@@ -13,6 +13,7 @@ use alloy::{
     primitives::{Address, ChainId},
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
@@ -27,6 +28,7 @@ pub struct InMemoryStorage {
     verified_emails: DashMap<String, Address>,
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
+    pending_refunds: DashMap<BundleId, DateTime<Utc>>,
 }
 
 #[async_trait]
@@ -181,17 +183,29 @@ impl StorageApi for InMemoryStorage {
         tx_type: InteropTxType,
     ) -> Result<()> {
         // Queue the appropriate transactions
-        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
-
-        for tx in transactions {
+        for tx in bundle.transactions(tx_type) {
             self.queue_transaction(tx).await?;
         }
 
-        // Update bundle status
-        self.pending_bundles
-            .get_mut(&bundle.id)
-            .ok_or_else(|| eyre::eyre!("Bundle disappeared during update"))?
-            .status = status;
+        // Only update the status, don't store the bundle
+        self.update_pending_bundle_status(bundle.id, status).await?;
+
+        Ok(())
+    }
+
+    async fn update_bundle_and_queue_transactions(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+        transactions: &[RelayTransaction],
+    ) -> Result<()> {
+        // First store the bundle with the new status
+        self.store_pending_bundle(bundle, status).await?;
+
+        // Then queue the specific transactions provided
+        for relay_tx in transactions {
+            self.queue_transaction(relay_tx).await?;
+        }
 
         Ok(())
     }
@@ -203,5 +217,49 @@ impl StorageApi for InMemoryStorage {
         } else {
             Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into())
         }
+    }
+
+    async fn store_pending_refund(
+        &self,
+        bundle_id: BundleId,
+        refund_timestamp: DateTime<Utc>,
+        new_status: BundleStatus,
+    ) -> Result<()> {
+        self.pending_refunds.insert(bundle_id, refund_timestamp);
+
+        if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
+            entry.status = new_status;
+        }
+
+        Ok(())
+    }
+
+    async fn get_pending_refunds_ready(
+        &self,
+        current_time: DateTime<Utc>,
+    ) -> Result<Vec<(BundleId, DateTime<Utc>)>> {
+        Ok(self
+            .pending_refunds
+            .iter()
+            .filter(|entry| *entry.value() <= current_time)
+            .map(|entry| (*entry.key(), *entry.value()))
+            .collect())
+    }
+
+    async fn remove_processed_refund(&self, bundle_id: BundleId) -> Result<()> {
+        self.pending_refunds.remove(&bundle_id);
+        Ok(())
+    }
+
+    async fn mark_refund_ready(&self, bundle_id: BundleId, new_status: BundleStatus) -> Result<()> {
+        // Update bundle status
+        if let Some(mut bundle) = self.pending_bundles.get_mut(&bundle_id) {
+            bundle.status = new_status;
+        }
+
+        // Remove from pending refunds
+        self.remove_processed_refund(bundle_id).await?;
+
+        Ok(())
     }
 }

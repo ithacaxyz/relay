@@ -3,7 +3,12 @@
 //! This module defines the escrow system used for cross-chain intents,
 //! where funds are locked in escrow until settlement or refund conditions are met.
 
-use alloy::sol;
+use alloy::{
+    primitives::{B256, keccak256},
+    sol,
+    sol_types::SolValue,
+};
+use serde::{Deserialize, Serialize};
 
 sol! {
     /// Represents the current state of an escrow.
@@ -20,7 +25,7 @@ sol! {
     }
 
     /// Represents an escrow entry with all necessary metadata for cross-chain settlement.
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct Escrow {
         /// Random salt for escrow uniqueness.
         bytes12 salt;
@@ -94,5 +99,14 @@ sol! {
         /// # Arguments
         /// * `escrowIds` - Array of escrow IDs to settle
         function settle(bytes32[] calldata escrowIds) external;
+    }
+}
+
+impl Escrow {
+    /// Calculates the escrow ID from the escrow parameters.
+    ///
+    /// The escrow ID is calculated as keccak256(abi.encode(escrow))
+    pub fn calculate_id(&self) -> B256 {
+        keccak256(self.abi_encode())
     }
 }
