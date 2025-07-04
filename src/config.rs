@@ -1,6 +1,7 @@
 //! Relay configuration.
-use crate::constants::{
-    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+use crate::{
+    constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
+    liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
 };
 use alloy::{
     primitives::Address,
@@ -88,6 +89,10 @@ pub struct ChainConfig {
     /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
     /// contract.
     pub fee_recipient: Address,
+    /// Optional rebalance service configuration.
+    ///
+    /// If provided, this relay instance will handle rebalancing of liquidity across chains.
+    pub rebalance_service: Option<RebalanceServiceConfig>,
 }
 
 /// Quote configuration.
@@ -198,6 +203,17 @@ impl Default for SecretsConfig {
     }
 }
 
+/// Configuration for the rebalance service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebalanceServiceConfig {
+    /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
+    pub binance: Option<BinanceBridgeConfig>,
+    /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
+    pub simple: Option<SimpleBridgeConfig>,
+    /// The private key of the funder account owner. Required for pulling funds from the funders.
+    pub funder_owner_key: String,
+}
+
 /// Configuration for transaction service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
@@ -257,6 +273,7 @@ impl Default for RelayConfig {
                 fee_tokens: vec![],
                 interop_tokens: vec![],
                 fee_recipient: Address::ZERO,
+                rebalance_service: None,
             },
             quote: QuoteConfig {
                 constant_rate: None,
@@ -486,9 +503,15 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the maximum number of pending transactions that can be handled by a single signer.
+    /// Sets the configuration for the transaction service.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
+        self
+    }
+
+    /// Sets the rebalance service configuration.
+    pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
+        self.chain.rebalance_service = config;
         self
     }
 

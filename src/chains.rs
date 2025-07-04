@@ -4,15 +4,21 @@ use alloy::{
     primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
+use tracing::warn;
 
 use crate::{
     config::RelayConfig,
+    liquidity::{
+        LiquidityTracker, RebalanceService,
+        bridge::{BinanceBridge, Bridge, SimpleBridge},
+    },
     provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
+    types::FeeTokens,
 };
 
 /// A single supported chain.
@@ -55,6 +61,7 @@ impl Chains {
         providers: Vec<DynProvider>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
+        fee_tokens: &FeeTokens,
         config: &RelayConfig,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
@@ -78,16 +85,59 @@ impl Chains {
             .await?,
         );
 
-        let providers_with_chain =
+        let providers_with_chain: HashMap<_, _> =
             chains.iter().map(|(chain_id, chain)| (*chain_id, chain.provider.clone())).collect();
         let tx_handles: HashMap<ChainId, TransactionServiceHandle> = chains
             .iter()
             .map(|(chain_id, chain)| (*chain_id, chain.transactions.clone()))
             .collect();
 
+        let liquidity_tracker =
+            LiquidityTracker::new(providers_with_chain.clone(), config.funder, storage.clone());
+
+        if let Some(rebalance_config) = &config.chain.rebalance_service {
+            let funder_owner = DynSigner::from_raw(&rebalance_config.funder_owner_key).await?;
+
+            let mut bridges: Vec<Box<dyn Bridge>> = Vec::new();
+
+            if let Some(binance) = &rebalance_config.binance {
+                bridges.push(Box::new(
+                    BinanceBridge::new(
+                        providers_with_chain.clone(),
+                        tx_handles.clone(),
+                        binance.clone(),
+                        fee_tokens,
+                        storage.clone(),
+                        config.funder,
+                        funder_owner.clone(),
+                    )
+                    .await?,
+                ));
+            }
+
+            if let Some(simple) = &rebalance_config.simple {
+                warn!("Enabling SimpleBridge. Should not be used in production!");
+
+                bridges.push(Box::new(
+                    SimpleBridge::new(
+                        providers_with_chain.clone(),
+                        tx_handles.clone(),
+                        simple.clone(),
+                        config.funder,
+                        storage.clone(),
+                        funder_owner.clone(),
+                    )
+                    .await?,
+                ));
+            }
+
+            let service = RebalanceService::new(fee_tokens, liquidity_tracker.clone(), bridges);
+            tokio::spawn(service.into_future().await?);
+        }
+
         // Create and spawn the interop service
         let (interop_service, interop_handle) =
-            InteropService::new(providers_with_chain, tx_handles, config.funder, storage).await?;
+            InteropService::new(tx_handles, liquidity_tracker).await?;
         tokio::spawn(interop_service);
 
         Ok(Self { chains, interop: interop_handle })

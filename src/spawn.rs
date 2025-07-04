@@ -188,7 +188,18 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
+    let fee_tokens = Arc::new(
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers.clone(),
+        )
+        .await?,
+    );
+
+    let chains =
+        Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
@@ -199,16 +210,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     let contracts =
         VersionedContracts::new(&config, providers.first().expect("should have at least one"))
             .await?;
-
-    let fee_tokens = Arc::new(
-        FeeTokens::new(
-            &registry,
-            &config.chain.fee_tokens,
-            &config.chain.interop_tokens,
-            providers,
-        )
-        .await?,
-    );
 
     // todo: avoid all this darn cloning
     let relay = Relay::new(

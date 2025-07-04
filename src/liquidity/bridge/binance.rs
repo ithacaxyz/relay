@@ -9,7 +9,7 @@ use crate::{
     types::{FeeTokens, Funder},
 };
 use alloy::{
-    primitives::{Address, B256, ChainId, U256},
+    primitives::{Address, B256, ChainId, U256, map::HashMap},
     providers::{DynProvider, Provider},
     sol_types::SolCall,
 };
@@ -29,7 +29,6 @@ use futures_util::Stream;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -67,6 +66,15 @@ struct WithdrawTokenData {
     withdraw_decimals: u8,
 }
 
+/// Configuration for the [`BinanceBridge`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinanceBridgeConfig {
+    /// Binance API key.
+    pub api_key: String,
+    /// Binance API secret.
+    pub api_secret: String,
+}
+
 /// [`Bridge`] implementation that bridges tokens by depositing and then withdrawing from Binance.
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
@@ -77,12 +85,10 @@ pub struct BinanceBridge {
 
 impl BinanceBridge {
     /// Create a new [`BinanceBridge`] instance.
-    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         providers: HashMap<ChainId, DynProvider>,
         tx_services: HashMap<ChainId, TransactionServiceHandle>,
-        api_key: String,
-        api_secret: String,
+        config: BinanceBridgeConfig,
         fee_tokens: &FeeTokens,
         storage: RelayStorage,
         funder_address: Address,
@@ -91,15 +97,15 @@ impl BinanceBridge {
         // Build Binance client.
         let client = WalletRestApi::production(
             ConfigurationRestApi::builder()
-                .api_key(api_key)
-                .api_secret(api_secret)
+                .api_key(config.api_key)
+                .api_secret(config.api_secret)
                 .build()
                 .map_err(|e| eyre::eyre!("Failed to build Binance client: {}", e))?,
         );
 
         // Collect deposit addresses and supported withdrawal networks.
-        let mut deposit_addresses = HashMap::new();
-        let mut supported_withdrawals = HashMap::new();
+        let mut deposit_addresses = HashMap::default();
+        let mut supported_withdrawals = HashMap::default();
 
         let coins = client
             .all_coins_information(Default::default())

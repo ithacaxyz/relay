@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy::{
     primitives::{Address, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MulticallError},
+    providers::MulticallError,
     rpc::types::TransactionReceipt,
 };
 use futures_util::future::try_join_all;
@@ -716,14 +716,12 @@ pub struct InteropService {
 impl InteropService {
     /// Creates a new interop service.
     pub async fn new(
-        providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        funder_address: Address,
-        storage: RelayStorage,
+        liquidity_tracker: LiquidityTracker,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let liquidity_tracker = LiquidityTracker::new(providers, funder_address, storage.clone());
+        let storage = liquidity_tracker.storage().clone();
         let pending_bundles = storage.get_pending_bundles().await?;
 
         let service = Self {
@@ -779,6 +777,7 @@ impl Future for InteropService {
 mod tests {
     use super::*;
     use crate::storage::RelayStorage;
+    use alloy::providers::DynProvider;
     use sqlx::PgPool;
 
     async fn get_test_storage() -> RelayStorage {
