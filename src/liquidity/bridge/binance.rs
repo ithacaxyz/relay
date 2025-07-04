@@ -48,6 +48,16 @@ fn binance_network_to_chain(network: &str) -> Option<Chain> {
     }
 }
 
+/// Maps Binance network ID to the Binance coin ID for the native token on this chain.
+fn binance_network_to_native_coin(network: &str) -> Option<&'static str> {
+    match network {
+        "ETH" => Some("ETH"),
+        "BASE" => Some("ETH"),
+        "ARBITRUM" => Some("ETH"),
+        _ => None,
+    }
+}
+
 /// Metadata needed to create [`WithdrawParams`] for a token.
 #[derive(Debug, Clone)]
 struct WithdrawTokenData {
@@ -118,9 +128,20 @@ impl BinanceBridge {
                     continue;
                 };
 
-                let Some(contract_address) = &network.contract_address else { continue };
-
-                let Ok(contract_address) = Address::from_str(contract_address) else {
+                let Some(contract_address) = network
+                    .contract_address
+                    .as_ref()
+                    .and_then(|addr| Address::from_str(addr).ok())
+                    .or_else(|| {
+                        if binance_network_to_native_coin(network_name)
+                            .is_some_and(|native| native == coin_name)
+                        {
+                            Some(Address::ZERO)
+                        } else {
+                            None
+                        }
+                    })
+                else {
                     continue;
                 };
 
