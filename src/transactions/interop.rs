@@ -333,6 +333,7 @@ impl InteropServiceInner {
         self.liquidity_tracker
             .try_lock_liquidity_for_bundle(&bundle.bundle, BundleStatus::LiquidityLocked)
             .await?;
+        bundle.status = BundleStatus::LiquidityLocked;
 
         Ok(())
     }
@@ -393,7 +394,7 @@ impl InteropServiceInner {
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Sending destination transactions");
 
         // Update status and queue destination transactions atomically
         self.queue_transactions_and_update_status(
@@ -438,6 +439,7 @@ impl InteropServiceInner {
 
         let (status, receipts) = self.process_destination_transactions(&bundle.bundle).await?;
         self.storage.unlock_bundle_liquidity(&bundle.bundle, receipts, status).await?;
+        bundle.status = status;
 
         Ok(())
     }
