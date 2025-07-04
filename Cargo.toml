@@ -38,6 +38,7 @@ alloy = { version = "1.0.16", features = [
     "reqwest-rustls-tls",
     "signer-mnemonic",
     "signer-aws",
+    "rand",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
