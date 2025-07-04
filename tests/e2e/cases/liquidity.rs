@@ -12,11 +12,7 @@ use relay::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_liquidity_management() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
+async fn test_multi_chain_liquidity_management() -> Result<()> {
     let env = Environment::setup_multi_chain(2).await?;
 
     let providers = env
