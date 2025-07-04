@@ -15,6 +15,7 @@ use crate::{
 use alloy::{
     consensus::TxEnvelope,
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -136,18 +137,21 @@ pub trait StorageApi: Debug + Send + Sync {
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
 
-    /// Attempts to lock liquidity for the given assets.
-    async fn try_lock_liquidity(
+    /// Attempts to lock liquidity for the given assets corresponding to an interop bundle, and
+    /// updates the bundle status to the given status.
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> Result<()>;
 
-    /// Unlocks liquidity for the given asset.
-    async fn unlock_liquidity(
+    /// Unlocks liquidity for the given [`InteropBundle`] and updates its status.
+    async fn unlock_bundle_liquidity(
         &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
     ) -> Result<()>;
 
     /// Gets total locked liquidity for the given asset.

@@ -5,7 +5,10 @@ pub use crate::{
     transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
     types::InteropTxType,
 };
-use alloy::primitives::{BlockNumber, U256};
+use alloy::{
+    primitives::{BlockNumber, U256},
+    rpc::types::TransactionReceipt,
+};
 pub use api::{LockLiquidityInput, StorageApi};
 
 mod memory;
@@ -171,20 +174,22 @@ impl StorageApi for RelayStorage {
         self.inner.move_bundle_to_finished(bundle_id).await
     }
 
-    async fn try_lock_liquidity(
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> api::Result<()> {
-        self.inner.try_lock_liquidity(assets).await
+        self.inner.lock_liquidity_for_bundle(assets, bundle_id, status).await
     }
 
-    async fn unlock_liquidity(
+    async fn unlock_bundle_liquidity(
         &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
     ) -> api::Result<()> {
-        self.inner.unlock_liquidity(asset, amount, at).await
+        self.inner.unlock_bundle_liquidity(bundle, receipts, status).await
     }
 
     async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> api::Result<U256> {

@@ -17,6 +17,7 @@ use crate::{
 use alloy::{
     consensus::TxEnvelope,
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -215,20 +216,40 @@ impl StorageApi for InMemoryStorage {
         }
     }
 
-    async fn try_lock_liquidity(
+    async fn lock_liquidity_for_bundle(
         &self,
         assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
     ) -> Result<()> {
-        self.liquidity.write().await.try_lock_liquidity(assets).await
+        self.liquidity.write().await.try_lock_liquidity(assets).await?;
+        self.pending_bundles
+            .get_mut(&bundle_id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
+        Ok(())
     }
 
-    async fn unlock_liquidity(
+    async fn unlock_bundle_liquidity(
         &self,
-        asset: ChainAddress,
-        amount: U256,
-        at: BlockNumber,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
     ) -> Result<()> {
-        self.liquidity.write().await.unlock_liquidity(asset, amount, at);
+        for transfer in &bundle.asset_transfers {
+            let block =
+                receipts.get(&transfer.tx_id).and_then(|r| r.block_number).unwrap_or_default();
+            self.liquidity.write().await.unlock_liquidity(
+                (transfer.chain_id, transfer.asset_address),
+                transfer.amount,
+                block,
+            );
+        }
+
+        self.pending_bundles
+            .get_mut(&bundle.id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
 
         Ok(())
     }
@@ -263,7 +284,11 @@ impl StorageApi for InMemoryStorage {
         input: LockLiquidityInput,
     ) -> Result<()> {
         // First try to lock the liquidity
-        self.try_lock_liquidity(HashMap::from_iter([(transfer.from, input)])).await?;
+        self.liquidity
+            .write()
+            .await
+            .try_lock_liquidity(HashMap::from_iter([(transfer.from, input)]))
+            .await?;
         self.transfers.insert(transfer.id, (transfer.clone(), None, TransferState::Pending));
 
         Ok(())
@@ -323,7 +348,7 @@ impl StorageApi for InMemoryStorage {
         self.update_transfer_state(transfer_id, state).await?;
 
         // Unlock liquidity
-        self.unlock_liquidity(transfer.from, transfer.amount, at).await?;
+        self.liquidity.write().await.unlock_liquidity(transfer.from, transfer.amount, at);
 
         Ok(())
     }
