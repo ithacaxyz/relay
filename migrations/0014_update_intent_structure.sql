@@ -1,2 +1,0 @@
-UPDATE queued_txs SET tx = jsonb_set(jsonb_set(tx, '{quote,intent,settler}', '"0x0000000000000000000000000000000000000000"'::jsonb), '{quote,intent,settlerContext}', '"0x"'::jsonb);
-UPDATE pending_txs SET tx = jsonb_set(jsonb_set(tx, '{quote,intent,settler}', '"0x0000000000000000000000000000000000000000"'::jsonb), '{quote,intent,settlerContext}', '"0x"'::jsonb);
