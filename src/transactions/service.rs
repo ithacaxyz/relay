@@ -94,7 +94,7 @@ impl TransactionServiceHandle {
         // Now check the status in storage
         if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await? {
             if status.is_final() {
-                return Ok(status.clone());
+                return Ok(status);
             }
         }
 
