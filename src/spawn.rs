@@ -69,32 +69,32 @@ impl RelayHandle {
 }
 
 /// Attempts to spawn the relay service using CLI arguments and a configuration file.
-pub async fn try_spawn_with_args<P: AsRef<Path>>(
+pub async fn try_spawn_with_args(
     args: Args,
-    config_path: P,
-    registry_path: P,
+    config_path: &Path,
+    registry_path: &Path,
 ) -> eyre::Result<RelayHandle> {
-    let config = if !config_path.as_ref().exists() {
+    let config = if !config_path.exists() {
         let config = args.merge_relay_config(RelayConfig::default());
-        config.save_to_file(&config_path)?;
+        config.save_to_file(config_path)?;
         config
     } else if !args.config_only {
         // File exists: load and override with CLI values.
-        args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
+        args.merge_relay_config(RelayConfig::load_from_file(config_path)?)
     } else {
-        let mut config = RelayConfig::load_from_file(&config_path)?;
+        let mut config = RelayConfig::load_from_file(config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
         config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config.with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
     };
 
-    let registry = if !registry_path.as_ref().exists() {
+    let registry = if !registry_path.exists() {
         let registry = CoinRegistry::default();
-        registry.save_to_file(&registry_path)?;
+        registry.save_to_file(registry_path)?;
         registry
     } else {
-        CoinRegistry::load_from_file(&registry_path)?
+        CoinRegistry::load_from_file(registry_path)?
     };
 
     try_spawn(config, registry).await
