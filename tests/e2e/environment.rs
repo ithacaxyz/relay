@@ -200,7 +200,7 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
 
     Anvil::new()
         .chain_id(chain_id)
-        .args(["--optimism", "--host", "0.0.0.0", "--print-traces"].into_iter().chain(args))
+        .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
         .try_spawn()
         .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
 }
