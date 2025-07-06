@@ -58,8 +58,8 @@ async fn respawn_cli() -> eyre::Result<()> {
                 resend_api_key: Default::default(),
                 porto_base_url: Default::default(),
             },
-            config.clone(),
-            registry.clone(),
+            &config,
+            &registry,
         )
         .await?;
     }
