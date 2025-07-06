@@ -1,6 +1,6 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, TransactionStatusBatch, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -94,6 +94,19 @@ impl StorageApi for InMemoryStorage {
         tx: TxId,
     ) -> Result<Option<(ChainId, TransactionStatus)>> {
         Ok(self.statuses.get(&tx).as_deref().cloned())
+    }
+
+    async fn read_transaction_statuses(&self, tx_ids: &[TxId]) -> Result<TransactionStatusBatch> {
+        let entries: Vec<(TxId, ChainId, TransactionStatus)> = tx_ids
+            .iter()
+            .filter_map(|tx_id| {
+                self.statuses
+                    .get(tx_id)
+                    .map(|entry| (*tx_id, entry.0, entry.1.clone()))
+            })
+            .collect();
+
+        Ok(TransactionStatusBatch::new(entries, tx_ids.to_vec()))
     }
 
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {

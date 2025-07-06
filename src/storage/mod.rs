@@ -5,7 +5,7 @@ pub use crate::{
     transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
     types::InteropTxType,
 };
-pub use api::StorageApi;
+pub use api::{StorageApi, TransactionStatusBatch};
 
 mod memory;
 mod pg;
@@ -87,6 +87,10 @@ impl StorageApi for RelayStorage {
         tx: TxId,
     ) -> api::Result<Option<(ChainId, TransactionStatus)>> {
         self.inner.read_transaction_status(tx).await
+    }
+
+    async fn read_transaction_statuses(&self, tx_ids: &[TxId]) -> api::Result<TransactionStatusBatch> {
+        self.inner.read_transaction_statuses(tx_ids).await
     }
 
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {

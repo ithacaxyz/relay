@@ -13,7 +13,7 @@ use alloy::{
     primitives::{Address, ChainId},
 };
 use async_trait::async_trait;
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
@@ -54,6 +54,12 @@ pub trait StorageApi: Debug + Send + Sync {
         &self,
         tx: TxId,
     ) -> Result<Option<(ChainId, TransactionStatus)>>;
+
+    /// Reads multiple transaction statuses in a single query.
+    /// 
+    /// This is more efficient than calling `read_transaction_status` multiple times
+    /// as it reduces database round trips.
+    async fn read_transaction_statuses(&self, tx_ids: &[TxId]) -> Result<TransactionStatusBatch>;
 
     /// Adds a transaction to a bundle.
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()>;
@@ -119,4 +125,74 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Moves a bundle from pending_bundles to finished_bundles table.
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
+}
+
+/// Container for batch transaction status results.
+/// 
+/// Provides efficient lookup and iteration over transaction statuses
+/// fetched in a single database query.
+#[derive(Debug, Clone)]
+pub struct TransactionStatusBatch {
+    /// Map from transaction ID to its chain ID and status
+    statuses: HashMap<TxId, (ChainId, TransactionStatus)>,
+    /// Original order of transaction IDs for ordered iteration
+    order: Vec<TxId>,
+}
+
+impl TransactionStatusBatch {
+    /// Creates a new batch from a list of transaction status entries and the original request order.
+    pub fn new(entries: Vec<(TxId, ChainId, TransactionStatus)>, requested_order: Vec<TxId>) -> Self {
+        let statuses: HashMap<TxId, (ChainId, TransactionStatus)> = entries
+            .into_iter()
+            .map(|(id, chain_id, status)| (id, (chain_id, status)))
+            .collect();
+        
+        Self { statuses, order: requested_order }
+    }
+
+    /// Creates an empty batch.
+    pub fn empty() -> Self {
+        Self {
+            statuses: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+
+    /// Gets the status for a specific transaction ID.
+    pub fn get(&self, tx_id: &TxId) -> Option<&(ChainId, TransactionStatus)> {
+        self.statuses.get(tx_id)
+    }
+
+    /// Returns the number of transaction statuses in the batch.
+    pub fn len(&self) -> usize {
+        self.statuses.len()
+    }
+
+    /// Returns true if the batch contains no statuses.
+    pub fn is_empty(&self) -> bool {
+        self.statuses.is_empty()
+    }
+
+    /// Iterates over all statuses in the order they were requested.
+    pub fn iter(&self) -> impl Iterator<Item = (TxId, &ChainId, &TransactionStatus)> {
+        self.order.iter().filter_map(move |tx_id| {
+            self.statuses
+                .get(tx_id)
+                .map(|(chain_id, status)| (*tx_id, chain_id, status))
+        })
+    }
+
+    /// Consumes the batch and returns the underlying HashMap.
+    pub fn into_map(self) -> HashMap<TxId, (ChainId, TransactionStatus)> {
+        self.statuses
+    }
+
+    /// Returns a vector of transaction IDs that were not found.
+    pub fn missing(&self, requested: &[TxId]) -> Vec<TxId> {
+        requested
+            .iter()
+            .filter(|tx_id| !self.statuses.contains_key(*tx_id))
+            .copied()
+            .collect()
+    }
 }

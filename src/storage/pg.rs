@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{InteropTxType, StorageApi, TransactionStatusBatch, api::Result};
 use crate::{
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -313,6 +313,51 @@ impl StorageApi for PgStorage {
             ))
         })
         .transpose()
+    }
+
+    #[instrument(skip(self))]
+    async fn read_transaction_statuses(&self, tx_ids: &[TxId]) -> Result<TransactionStatusBatch> {
+        if tx_ids.is_empty() {
+            return Ok(TransactionStatusBatch::empty());
+        }
+
+        // Convert TxIds to bytes for the query
+        let tx_ids_bytes: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
+
+        let rows = sqlx::query_as::<_, (Vec<u8>, i32, Option<Vec<u8>>, TxStatus, Option<String>, Option<serde_json::Value>)>(
+            r#"
+            SELECT tx_id, chain_id, tx_hash, status, error, receipt 
+            FROM txs 
+            WHERE tx_id = ANY($1)
+            "#
+        )
+        .bind(&tx_ids_bytes)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let entries: Result<Vec<_>> = rows
+            .into_iter()
+            .map(|(tx_id_bytes, chain_id, tx_hash_bytes, status, error, receipt)| {
+                let tx_id = TxId::from_slice(&tx_id_bytes);
+                let tx_hash = tx_hash_bytes.as_ref().map(|hash| B256::from_slice(hash));
+                
+                let status = match status {
+                    TxStatus::InFlight => TransactionStatus::InFlight,
+                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
+                    TxStatus::Confirmed => TransactionStatus::Confirmed(
+                        serde_json::from_value(receipt.unwrap()).map_err(eyre::Error::from)?
+                    ),
+                    TxStatus::Failed => TransactionStatus::Failed(Arc::new(
+                        error.unwrap_or_else(|| "transaction failed".to_string())
+                    )),
+                };
+
+                Ok((tx_id, chain_id as u64, status))
+            })
+            .collect();
+
+        Ok(TransactionStatusBatch::new(entries?, tx_ids.to_vec()))
     }
 
     #[instrument(skip(self))]
