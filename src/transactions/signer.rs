@@ -285,7 +285,7 @@ impl Signer {
         self.storage.remove_pending_transaction(tx).await?;
 
         // Update status
-        self.update_tx_status(tx, TransactionStatus::Failed(Arc::new(err))).await?;
+        self.update_tx_status(tx, TransactionStatus::failed(err)).await?;
 
         Ok(())
     }

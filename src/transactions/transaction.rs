@@ -209,6 +209,13 @@ pub enum TransactionStatus {
 }
 
 impl TransactionStatus {
+    /// Creates a new failed status with the given reason.
+    /// 
+    /// This is a convenience constructor that handles Arc creation internally.
+    pub fn failed<R: TransactionFailureReason + 'static>(reason: R) -> Self {
+        Self::Failed(Arc::new(reason))
+    }
+
     /// Whether the status is final.
     pub fn is_final(&self) -> bool {
         matches!(self, Self::Confirmed(_) | Self::Failed(_))
