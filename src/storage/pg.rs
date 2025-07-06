@@ -1,7 +1,5 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use std::sync::Arc;
-
 use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
     transactions::{
@@ -306,9 +304,9 @@ impl StorageApi for PgStorage {
                     TxStatus::Confirmed => TransactionStatus::Confirmed(
                         serde_json::from_value(row.receipt.unwrap()).map_err(eyre::Error::from)?,
                     ),
-                    TxStatus::Failed => TransactionStatus::Failed(Arc::new(
+                    TxStatus::Failed => TransactionStatus::failed(
                         row.error.unwrap_or_else(|| "transaction failed".to_string()),
-                    )),
+                    ),
                 },
             ))
         })

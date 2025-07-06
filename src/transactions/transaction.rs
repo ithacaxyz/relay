@@ -209,6 +209,11 @@ pub enum TransactionStatus {
 }
 
 impl TransactionStatus {
+    /// Creates a new [`TransactionStatus::Failed`] status with the given reason.
+    pub fn failed<R: TransactionFailureReason + 'static>(reason: R) -> Self {
+        Self::Failed(Arc::new(reason))
+    }
+
     /// Whether the status is final.
     pub fn is_final(&self) -> bool {
         matches!(self, Self::Confirmed(_) | Self::Failed(_))
