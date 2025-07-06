@@ -43,7 +43,6 @@ cargo run --bin relay -- \
 
 ## Contributing
 
-
 ### Opening PRs against <https://github.com/ithacaxyz/relay/>
 
 * Do not update submodules (tests/account) when making changes unrelated to those submodules.
