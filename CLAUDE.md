@@ -41,6 +41,15 @@ cargo run --bin relay -- \
     --simulator $SIMULATOR_ADDR
 ```
 
+## Contributing
+
+
+### Opening PRs against <https://github.com/ithacaxyz/relay/>
+
+* Do not update submodules (tests/account) when making changes unrelated to those submodules.
+* Before opening a PR, ensure code is properly formatted.
+* Write clear, specific pull request descriptions that focus on essential information and avoid redundancy.
+
 ## Architecture Overview
 
 The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 accounts. It sponsors transactions and provides fee abstraction services.
