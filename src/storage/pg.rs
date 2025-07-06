@@ -321,8 +321,18 @@ impl StorageApi for PgStorage {
             return Ok(TransactionStatusBatch::empty());
         }
 
-        // Convert TxIds to bytes for the query
-        let tx_ids_bytes: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
+        // Optimize for single transaction case
+        if tx_ids.len() == 1 {
+            let tx_id = tx_ids[0];
+            match self.read_transaction_status(tx_id).await? {
+                Some((chain_id, status)) => {
+                    Ok(TransactionStatusBatch::new(vec![(tx_id, chain_id, status)], vec![tx_id]))
+                }
+                None => Ok(TransactionStatusBatch::new(vec![], vec![tx_id])),
+            }
+        } else {
+            // Convert TxIds to bytes for the query
+            let tx_ids_bytes: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
 
         let rows = sqlx::query_as::<_, (Vec<u8>, i32, Option<Vec<u8>>, TxStatus, Option<String>, Option<serde_json::Value>)>(
             r#"
@@ -357,7 +367,8 @@ impl StorageApi for PgStorage {
             })
             .collect();
 
-        Ok(TransactionStatusBatch::new(entries?, tx_ids.to_vec()))
+            Ok(TransactionStatusBatch::new(entries?, tx_ids.to_vec()))
+        }
     }
 
     #[instrument(skip(self))]

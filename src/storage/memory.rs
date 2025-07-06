@@ -97,16 +97,34 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn read_transaction_statuses(&self, tx_ids: &[TxId]) -> Result<TransactionStatusBatch> {
-        let entries: Vec<(TxId, ChainId, TransactionStatus)> = tx_ids
-            .iter()
-            .filter_map(|tx_id| {
-                self.statuses
-                    .get(tx_id)
-                    .map(|entry| (*tx_id, entry.0, entry.1.clone()))
-            })
-            .collect();
+        if tx_ids.is_empty() {
+            return Ok(TransactionStatusBatch::empty());
+        }
 
-        Ok(TransactionStatusBatch::new(entries, tx_ids.to_vec()))
+        // Optimize for single transaction case
+        if tx_ids.len() == 1 {
+            let tx_id = tx_ids[0];
+            match self.statuses.get(&tx_id) {
+                Some(entry) => {
+                    Ok(TransactionStatusBatch::new(
+                        vec![(tx_id, entry.0, entry.1.clone())],
+                        vec![tx_id],
+                    ))
+                }
+                None => Ok(TransactionStatusBatch::new(vec![], vec![tx_id])),
+            }
+        } else {
+            let entries: Vec<(TxId, ChainId, TransactionStatus)> = tx_ids
+                .iter()
+                .filter_map(|tx_id| {
+                    self.statuses
+                        .get(tx_id)
+                        .map(|entry| (*tx_id, entry.0, entry.1.clone()))
+                })
+                .collect();
+
+            Ok(TransactionStatusBatch::new(entries, tx_ids.to_vec()))
+        }
     }
 
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
