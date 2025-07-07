@@ -1,6 +1,6 @@
 use crate::{
     interop::EscrowDetails,
-    types::{Quote, SignedCalls},
+    types::{IEscrow, Quote, SignedCalls},
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
@@ -261,9 +261,7 @@ impl RelayTransaction {
             if let Ok(calls) = quote.intent.calls() {
                 if let Some(call) = calls.last() {
                     // Try to decode as an escrow call
-                    if let Ok(escrow_call) =
-                        crate::types::IEscrow::escrowCall::abi_decode(&call.data)
-                    {
+                    if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
                         // We found an escrow call! Extract the first escrow
                         if let Some(escrow) = escrow_call._escrows.first() {
                             // Create EscrowDetails from the escrow
@@ -278,6 +276,19 @@ impl RelayTransaction {
             }
         }
         None
+    }
+
+    /// Returns escrow IDs from a refund transaction.
+    ///
+    /// For refund transactions, decodes the call data to extract escrow IDs.
+    /// For other transaction types, returns an empty vector.
+    pub fn escrow_ids(&self) -> Vec<B256> {
+        match &self.kind {
+            RelayTransactionKind::Refund { input, .. } => IEscrow::refundCall::abi_decode(input)
+                .map(|call| call.escrowIds)
+                .unwrap_or_default(),
+            _ => vec![],
+        }
     }
 }
 

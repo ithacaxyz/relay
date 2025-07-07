@@ -94,6 +94,10 @@ impl RefundMonitorService {
     }
 
     /// Resumes bundle processing for refund.
+    ///
+    /// Transitions a bundle from waiting state to refund-ready after its refund timestamp
+    /// is reached, triggering the interop service to execute refund transactions that
+    /// return escrowed assets to users.
     async fn resume_bundle_for_refund(&self, bundle_id: BundleId) -> Result<(), StorageError> {
         // Get the bundle from storage
         if let Some(mut bundle_with_status) = self.storage.get_pending_bundle(bundle_id).await? {
@@ -116,17 +120,13 @@ impl RefundMonitorService {
             Ok(())
         }
     }
-}
 
-/// Creates and starts a refund monitor service as a background task.
-pub fn spawn_refund_monitor(
-    storage: RelayStorage,
-    interop_service: InteropServiceHandle,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let service = RefundMonitorService::new(storage, interop_service);
-        if let Err(e) = service.run().await {
-            error!("Refund monitor service exited with error: {e}");
-        }
-    })
+    /// Spawns the refund monitor service as a background task.
+    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            if let Err(e) = self.run().await {
+                error!("Refund monitor service exited with error: {e}");
+            }
+        })
+    }
 }

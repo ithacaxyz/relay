@@ -8,7 +8,7 @@ use crate::{
     interop::escrow::EscrowDetails,
     storage::{RelayStorage, StorageApi},
     transactions::{
-        RelayTransaction, RelayTransactionKind, TransactionServiceHandle, TxId,
+        RelayTransaction, TransactionServiceHandle, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{IEscrow, rpc::BundleId},
@@ -105,6 +105,16 @@ impl RefundProcessor {
         Self { storage, tx_service_handles, providers }
     }
 
+    /// Get the transaction service handle for a specific chain.
+    fn tx_service(
+        &self,
+        chain_id: ChainId,
+    ) -> Result<&TransactionServiceHandle, RefundProcessorError> {
+        self.tx_service_handles
+            .get(&chain_id)
+            .ok_or(RefundProcessorError::NoTransactionService(chain_id))
+    }
+
     /// Schedule refunds for confirmed escrows in a bundle
     ///
     /// This method extracts escrow details from confirmed source transactions,
@@ -167,6 +177,9 @@ impl RefundProcessor {
     }
 
     /// Build refund transactions for escrows that don't have them yet.
+    ///
+    /// This method modifies the bundle by removing any failed refund transactions
+    /// before building new ones.
     #[instrument(skip(self, bundle, escrow_details), fields(
         bundle_id = %bundle.id,
         escrow_count = escrow_details.len()
@@ -289,7 +302,7 @@ impl RefundProcessor {
         let new_refund_txs = self.build_missing_refunds(&mut bundle.bundle, escrow_details).await?;
 
         if !new_refund_txs.is_empty() {
-            // Add new transactions to the bundle
+            let original_len = bundle.bundle.refund_txs.len();
             bundle.bundle.refund_txs.extend(new_refund_txs.clone());
 
             // Update storage with RefundsQueued status and queue transactions
@@ -299,9 +312,10 @@ impl RefundProcessor {
                     BundleStatus::RefundsQueued,
                     &new_refund_txs,
                 )
-                .await?;
+                .await
+                .inspect_err(|_| bundle.bundle.refund_txs.truncate(original_len))?;
 
-            // Update the bundle's status field
+            // Update the bundle's status field only after successful storage update
             bundle.status = BundleStatus::RefundsQueued;
 
             // Send the transactions after database is updated
@@ -338,11 +352,7 @@ impl RefundProcessor {
         refund_txs: &[RelayTransaction],
     ) -> Result<Vec<TxId>, RefundProcessorError> {
         let results = try_join_all(refund_txs.iter().map(async |tx| {
-            let tx_service = self
-                .tx_service_handles
-                .get(&tx.chain_id())
-                .ok_or(RefundProcessorError::NoTransactionService(tx.chain_id()))?;
-
+            let tx_service = self.tx_service(tx.chain_id())?;
             let status = tx_service.wait_for_tx(tx.id).await?;
             Ok::<_, RefundProcessorError>((tx.id, status))
         }))
@@ -488,7 +498,7 @@ impl RefundProcessor {
                     failed_tx_ids.push(refund_tx.id);
                 } else {
                     // Extract escrow IDs from successful or pending transactions
-                    self.extract_escrow_ids_from_transaction(refund_tx, &mut refunded_escrow_ids);
+                    refunded_escrow_ids.extend(refund_tx.escrow_ids());
                 }
             }
         }
@@ -497,25 +507,6 @@ impl RefundProcessor {
         bundle.refund_txs.retain(|tx| !failed_tx_ids.contains(&tx.id));
 
         Ok(refunded_escrow_ids)
-    }
-
-    /// Extract escrow IDs from a refund transaction.
-    ///
-    /// This method decodes the refund call data to extract escrow IDs.
-    /// Only processes Internal and Refund transaction types.
-    fn extract_escrow_ids_from_transaction(
-        &self,
-        tx: &RelayTransaction,
-        escrow_ids: &mut HashSet<B256>,
-    ) {
-        match &tx.kind {
-            RelayTransactionKind::Refund { input, .. } => {
-                if let Ok(decoded) = IEscrow::refundCall::abi_decode(input) {
-                    escrow_ids.extend(decoded.escrowIds);
-                }
-            }
-            RelayTransactionKind::Internal { .. } | RelayTransactionKind::Intent { .. } => {}
-        }
     }
 
     /// Build refund transactions for escrows that need them
@@ -588,48 +579,9 @@ impl RefundProcessor {
         transactions: &[RelayTransaction],
     ) -> Result<(), RefundProcessorError> {
         for tx in transactions {
-            self.tx_service_handles
-                .get(&tx.chain_id())
-                .ok_or(RefundProcessorError::NoTransactionService(tx.chain_id()))?
-                .send_transaction_no_queue(tx.clone());
+            self.tx_service(tx.chain_id())?.send_transaction_no_queue(tx.clone());
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::primitives::address;
-
-    /// Test that escrow IDs can be correctly extracted from refund transactions.
-    #[test]
-    fn test_extract_escrow_ids_from_transaction() {
-        let storage = RelayStorage::in_memory();
-        let tx_handles = alloy::primitives::map::HashMap::default();
-        let providers = alloy::primitives::map::HashMap::default();
-        let processor = RefundProcessor::new(storage, tx_handles, providers);
-
-        // Create a refund transaction with encoded escrow IDs
-        let escrow_ids = vec![B256::random(), B256::random()];
-        let call = IEscrow::refundCall { escrowIds: escrow_ids.clone() };
-        let input = call.abi_encode();
-
-        let tx = RelayTransaction::new_refund(
-            TxId(B256::random()),
-            address!("0000000000000000000000000000000000000001").into(),
-            input.into(),
-            1,
-            100_000,
-        );
-
-        let mut extracted_ids = HashSet::new();
-        processor.extract_escrow_ids_from_transaction(&tx, &mut extracted_ids);
-
-        assert_eq!(extracted_ids.len(), 2);
-        for id in &escrow_ids {
-            assert!(extracted_ids.contains(id));
-        }
     }
 }

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    interop::{RefundProcessor, RefundProcessorError, spawn_refund_monitor},
+    interop::{RefundMonitorService, RefundProcessor, RefundProcessorError},
     storage::{RelayStorage, StorageApi},
     types::{IERC20, InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
@@ -1036,7 +1036,7 @@ impl InteropService {
         let handle = InteropServiceHandle { command_tx, storage: storage.clone() };
 
         // Spawn the refund monitor service
-        spawn_refund_monitor(storage, handle.clone());
+        RefundMonitorService::new(storage, handle.clone()).spawn();
 
         for bundle in pending_bundles {
             tracing::info!(
