@@ -68,6 +68,7 @@ struct WithdrawTokenData {
 }
 
 /// [`Bridge`] implementation that bridges tokens by depositing and then withdrawing from Binance.
+#[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
 pub struct BinanceBridge {
     inner: Arc<BinanceBridgeInner>,
@@ -221,6 +222,36 @@ impl BinanceBridge {
         })
     }
 }
+
+impl Stream for BinanceBridge {
+    type Item = BridgeEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.events_rx.poll_recv(cx)
+    }
+}
+
+impl Bridge for BinanceBridge {
+    fn id(&self) -> &'static str {
+        "binance"
+    }
+
+    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool {
+        self.inner.deposit_addresses.contains_key(&src)
+            && self.inner.supported_withdrawals.contains_key(&dst)
+    }
+
+    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let this = self.inner.clone();
+
+        Box::pin(async move {
+            if let Err(e) = this.advance_transfer(transfer).await {
+                error!("Failed to advance transfer: {}", e);
+            }
+        })
+    }
+}
+
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BinanceBridgeData {
@@ -475,34 +506,5 @@ impl BinanceBridgeInner {
                 _ => break Ok(()),
             }
         }
-    }
-}
-
-impl Stream for BinanceBridge {
-    type Item = BridgeEvent;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.events_rx.poll_recv(cx)
-    }
-}
-
-impl Bridge for BinanceBridge {
-    fn id(&self) -> &'static str {
-        "binance"
-    }
-
-    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool {
-        self.inner.deposit_addresses.contains_key(&src)
-            && self.inner.supported_withdrawals.contains_key(&dst)
-    }
-
-    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let this = self.inner.clone();
-
-        Box::pin(async move {
-            if let Err(e) = this.advance_transfer(transfer).await {
-                error!("Failed to advance transfer: {}", e);
-            }
-        })
     }
 }
