@@ -4,7 +4,7 @@ use alloy::{
     primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     config::RelayConfig,
@@ -130,6 +130,8 @@ impl Chains {
                     .await?,
                 ));
             }
+
+            info!(bridges=?bridges.iter().map(|b| b.id()).collect::<Vec<_>>(), "Launching interop service");
 
             let service = RebalanceService::new(fee_tokens, liquidity_tracker.clone(), bridges);
             tokio::spawn(service.into_future().await?);
