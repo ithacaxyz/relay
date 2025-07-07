@@ -825,7 +825,15 @@ impl Relay {
 
         // We only apply client-supplied state overrides on intents on the destination chain
         let overrides = match intent_kind {
-            IntentKind::Single | IntentKind::MultiOutput { .. } => request.state_overrides.clone(),
+            IntentKind::Single | IntentKind::MultiOutput { .. } => {
+                let provider = self.provider(request.chain_id)?;
+
+                let mut overrides = request.state_overrides.clone();
+                overrides.extend(
+                    request.balance_overrides.clone().into_state_overrides(provider).await?,
+                );
+                overrides
+            }
             _ => Default::default(),
         };
 
@@ -1951,6 +1959,7 @@ impl Relay {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(request_key),
             required_funds: vec![],
         })

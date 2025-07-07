@@ -94,6 +94,7 @@ impl StressAccount {
                         pre_call: false,
                     },
                     state_overrides: Default::default(),
+                    balance_overrides: Default::default(),
                     key: Some(self.key.to_call_key()),
                 })
                 .await
