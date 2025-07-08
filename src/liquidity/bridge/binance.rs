@@ -252,7 +252,6 @@ impl Bridge for BinanceBridge {
     }
 }
 
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BinanceBridgeData {
     deposit_tx: Option<RelayTransaction>,
