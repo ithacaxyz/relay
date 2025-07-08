@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update bridge_transfers set inbound_block_number = $1 where transfer_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "feb85b17b6047d883bb5b8192eb548f187a1dbc6cc6b77bae54dd70aa5eb9fe4"
+}

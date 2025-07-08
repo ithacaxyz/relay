@@ -94,7 +94,7 @@ impl TransactionServiceHandle {
         // Now check the status in storage
         if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await? {
             if status.is_final() {
-                return Ok(status.clone());
+                return Ok(status);
             }
         }
 
@@ -379,7 +379,7 @@ impl TransactionService {
     fn push_to_queue(&mut self, tx: RelayTransaction) {
         let tx_id = tx.id;
         if let Err(err) = self.queue.push_transaction(tx) {
-            let status = TransactionStatus::Failed(Arc::new(err));
+            let status = TransactionStatus::failed(err);
 
             // If we've failed to record transaction in internal queue, we need to remove it from
             // database.

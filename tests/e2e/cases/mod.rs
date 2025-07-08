@@ -6,6 +6,7 @@ mod cli;
 mod delegation;
 mod errors;
 mod keys;
+mod liquidity;
 mod multi_chain;
 mod multichain_refund;
 pub mod multichain_usdt_transfer;

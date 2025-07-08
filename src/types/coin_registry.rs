@@ -60,6 +60,18 @@ impl CoinRegistry {
         std::fs::write(path, content)?;
         Ok(())
     }
+
+    /// Returns the address of a coin on a chain.
+    ///
+    /// If the coin is native, returns `None`.
+    pub fn address(&self, kind: CoinKind, chain: ChainId) -> Option<Option<Address>> {
+        self.iter().find(|(k, v)| **v == kind && k.chain == chain).map(|(k, _)| k.address)
+    }
+
+    /// Retains only the entries for which the predicate returns true.
+    pub fn retain(&mut self, f: impl Fn(&CoinRegistryKey, &CoinKind) -> bool) {
+        self.0.retain(|k, v| f(k, v));
+    }
 }
 
 impl Default for CoinRegistry {
@@ -67,6 +79,7 @@ impl Default for CoinRegistry {
         let ethereum: ChainId = Chain::mainnet().into();
         let op: ChainId = Chain::optimism_mainnet().into();
         let base: ChainId = Chain::base_mainnet().into();
+        let arbitrum: ChainId = Chain::arbitrum_mainnet().into();
         let odyssey: ChainId = NamedChain::Odyssey.into();
 
         let eth = CoinKind::ETH;
@@ -80,6 +93,7 @@ impl Default for CoinRegistry {
                 ((op, None), eth),
                 ((base, None), eth),
                 ((odyssey, None), eth),
+                ((arbitrum, None), eth),
                 // USDT mappings
                 ((ethereum, address!("0xdAC17F958D2ee523a2206206994597C13D831ec7").into()), usdt),
                 ((op, address!("0xdAC17F958D2ee523a2206206994597C13D831ec7").into()), usdt),
@@ -88,6 +102,7 @@ impl Default for CoinRegistry {
                 // USDC mappings
                 ((ethereum, address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").into()), usdc),
                 ((base, address!("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").into()), usdc),
+                ((arbitrum, address!("0xaf88d065e77c8cC2239327C5EDb3A432268e5831").into()), usdc),
             ]
             .into_iter()
             .map(|(k, v)| (k.into(), v))

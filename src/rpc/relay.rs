@@ -158,7 +158,7 @@ impl Relay {
         funder_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
-        fee_tokens: FeeTokens,
+        fee_tokens: Arc<FeeTokens>,
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
@@ -481,8 +481,7 @@ impl Relay {
     ) -> RpcResult<RelayTransaction> {
         let chain_id = quote.chain_id;
         // todo: chain support should probably be checked before we send txs
-        let Chain { provider, .. } =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let provider = self.provider(chain_id)?;
 
         let authorization_address = quote.authorization_address;
         let intent = &mut quote.intent;
@@ -828,7 +827,15 @@ impl Relay {
 
         // We only apply client-supplied state overrides on intents on the destination chain
         let overrides = match intent_kind {
-            IntentKind::Single | IntentKind::MultiOutput { .. } => request.state_overrides.clone(),
+            IntentKind::Single | IntentKind::MultiOutput { .. } => {
+                let provider = self.provider(request.chain_id)?;
+
+                let mut overrides = request.state_overrides.clone();
+                overrides.extend(
+                    request.balance_overrides.clone().into_state_overrides(provider).await?,
+                );
+                overrides
+            }
             _ => Default::default(),
         };
 
@@ -1790,7 +1797,7 @@ pub(super) struct RelayInner {
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.
-    fee_tokens: FeeTokens,
+    fee_tokens: Arc<FeeTokens>,
     /// The fee recipient address.
     fee_recipient: Address,
     /// The signer used to sign quotes.
@@ -1959,6 +1966,7 @@ impl Relay {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(request_key),
             required_funds: vec![],
         })

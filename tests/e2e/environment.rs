@@ -20,7 +20,7 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::{InteropConfig, RelayConfig, TransactionServiceConfig},
+    config::{InteropConfig, RebalanceServiceConfig, RelayConfig, TransactionServiceConfig},
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
@@ -51,6 +51,7 @@ const MULTICALL3_BYTECODE: Bytes = bytes!(
 pub struct EnvironmentConfig {
     pub block_time: Option<f64>,
     pub transaction_service_config: TransactionServiceConfig,
+    pub rebalance_service_config: Option<RebalanceServiceConfig>,
     /// The default block number to use for forking.
     ///
     /// Negative value represents `latest - num`.
@@ -70,6 +71,7 @@ impl Default for EnvironmentConfig {
                 num_signers: 1,
                 ..Default::default()
             },
+            rebalance_service_config: None,
             fork_block_number: None,
             fee_recipient: Address::ZERO,
             num_chains: 1,
@@ -91,6 +93,7 @@ pub struct Environment {
     pub eoa: DynSigner,
     pub orchestrator: Address,
     pub delegation: Address,
+    pub funder: Address,
     /// Minted to the eoa.
     pub fee_token: Address,
     /// Minted to the eoa.
@@ -108,6 +111,7 @@ pub struct Environment {
     pub signers: Vec<DynSigner>,
     /// Settlement configuration for cross-chain messaging
     pub settlement: SettlementConfig,
+    pub deployer: DynSigner,
 }
 
 impl std::fmt::Debug for Environment {
@@ -207,7 +211,7 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
 
     Anvil::new()
         .chain_id(chain_id)
-        .args(["--optimism", "--host", "0.0.0.0", "--print-traces"].into_iter().chain(args))
+        .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
         .try_spawn()
         .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
 }
@@ -455,6 +459,7 @@ impl Environment {
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_interop_config(config.interop_config)
+                .with_rebalance_service_config(config.rebalance_service_config)
                 .with_database_url(database_url),
             registry,
         )
@@ -472,6 +477,7 @@ impl Environment {
             orchestrator: contracts.orchestrator,
             delegation: contracts.delegation,
             fee_token: contracts.erc20s[1],
+            funder: contracts.funder,
             erc20: contracts.erc20s[0],
             erc20s: contracts.erc20s[2..].to_vec(),
             erc721: contracts.erc721,
@@ -481,6 +487,7 @@ impl Environment {
             relay_handle,
             signers,
             settlement: SettlementConfig::default(),
+            deployer,
         })
     }
 

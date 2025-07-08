@@ -57,9 +57,12 @@ async fn respawn_cli() -> eyre::Result<()> {
                 banxa_api_key: Default::default(),
                 resend_api_key: Default::default(),
                 porto_base_url: Default::default(),
+                funder_owner_key: Default::default(),
+                binance_api_key: Default::default(),
+                binance_api_secret: Default::default(),
             },
-            config.clone(),
-            registry.clone(),
+            &config,
+            &registry,
         )
         .await?;
     }
