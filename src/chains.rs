@@ -138,14 +138,9 @@ impl Chains {
         }
 
         // Create and spawn the interop service
-        let (interop_service, interop_handle) = InteropService::new(
-            providers_with_chain,
-            tx_handles,
-            config.funder,
-            config.interop.clone(),
-            storage.clone(),
-        )
-        .await?;
+        let (interop_service, interop_handle) =
+            InteropService::new(tx_handles, liquidity_tracker.clone(), config.interop.clone())
+                .await?;
 
         tokio::spawn(interop_service);
 

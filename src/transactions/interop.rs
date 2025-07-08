@@ -889,15 +889,14 @@ pub struct InteropService {
 impl InteropService {
     /// Creates a new interop service.
     pub async fn new(
-        providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        funder_address: Address,
+        liquidity_tracker: LiquidityTracker,
         interop_config: InteropConfig,
-        storage: RelayStorage,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let liquidity_tracker = LiquidityTracker::new(providers.clone(), funder_address, storage.clone());
+        let storage = liquidity_tracker.storage().clone();
+        let providers = liquidity_tracker.providers().clone();
         let pending_bundles = storage.get_pending_bundles().await?;
 
         let service = Self {
@@ -910,7 +909,8 @@ impl InteropService {
             command_rx,
         };
 
-        let handle = InteropServiceHandle { command_tx, storage: storage.clone(), liquidity_tracker };
+        let handle =
+            InteropServiceHandle { command_tx, storage: storage.clone(), liquidity_tracker };
 
         // Spawn the refund monitor service with configured interval
         RefundMonitorService::with_interval(

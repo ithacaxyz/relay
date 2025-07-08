@@ -1,8 +1,8 @@
 //! Relay configuration.
 use crate::{
     constants::{
-        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS, INTENT_GAS_BUFFER,
-        TX_GAS_BUFFER,
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS,
+        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
 };
