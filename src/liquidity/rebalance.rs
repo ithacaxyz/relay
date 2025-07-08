@@ -15,20 +15,47 @@ use futures_util::{
 use std::{ops::RangeInclusive, time::Duration};
 use tracing::warn;
 
+/// Represents an asset in a chain tracked by [`RebalanceService`].
 #[derive(Debug, Clone, Copy)]
 pub struct Asset {
+    /// Address of the asset, [`Address::ZERO`] for native.
     address: Address,
+    /// Chain ID of the asset.
     chain_id: ChainId,
+    /// Kind of the asset.
     kind: CoinKind,
 }
 
+/// An instruction to rebalance an asset from one chain to another.
+#[derive(Debug, Clone)]
+pub struct AssetsToRebalance {
+    /// Asset to rebalance from.
+    from: Asset,
+    /// Asset to rebalance to.
+    to: Asset,
+    /// Amount to rebalance.
+    amount: U256,
+}
+
 /// A service that rebalances liquidity across chains.
+///
+/// The way rebalance service operates is by firstly finding an asset that is below threshold on one
+/// chain and above on another, and triggering a transfer between them.
+///
+/// Transfers are handled via configured [`Bridge`] implementations. First bridge supporting the
+/// given route is used.
 #[derive(Debug)]
 pub struct RebalanceService {
+    /// Assets that are tracked and supported by the service.
     assets: Vec<Asset>,
+    /// Relay storage used by the service.
     storage: RelayStorage,
+    /// Liquidity tracker.
     tracker: LiquidityTracker,
+    /// Bridges that are supported by the service. Wrapped in [`SelectAll`] to allow for
+    /// polling of events from all bridges.
     bridges: SelectAll<Box<dyn Bridge>>,
+    /// Transfers that are in progress.
     transfers_in_progress: HashMap<TransferId, Transfer>,
 }
 
@@ -106,8 +133,10 @@ impl RebalanceService {
         Ok(balances)
     }
 
-    /// Initiates a cross-chain transfer through a bridge.
-    async fn bridge(&mut self, from: Asset, to: Asset, amount: U256) -> eyre::Result<()> {
+    /// Initiates a cross-chain transfer through a [`Bridge`].
+    async fn bridge(&mut self, rebalance: AssetsToRebalance) -> eyre::Result<()> {
+        let AssetsToRebalance { from, to, amount } = rebalance;
+
         // Find bridge that supports the given asset.
         let Some(bridge) = self.bridges.iter_mut().find(|bridge| {
             bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
@@ -135,7 +164,7 @@ impl RebalanceService {
     }
 
     /// Finds next rebalance that needs to be delegated to a bridge.
-    async fn find_next_rebalance(&self) -> eyre::Result<Option<(Asset, Asset, U256)>> {
+    async fn find_next_rebalance(&self) -> eyre::Result<Option<AssetsToRebalance>> {
         let mut coin_kind_to_deltas: HashMap<_, Vec<_>> = HashMap::default();
 
         for (asset, balance) in self.balance_ranges().await? {
@@ -174,7 +203,11 @@ impl RebalanceService {
                 U256::from((-(*min_negative.1.end())).min(*max_positive.1.start()));
 
             if rebalance_amount >= self.get_min_rebalance(&min_negative.0) {
-                return Ok(Some((max_positive.0, min_negative.0, rebalance_amount)));
+                return Ok(Some(AssetsToRebalance {
+                    from: max_positive.0,
+                    to: min_negative.0,
+                    amount: rebalance_amount,
+                }));
             }
         }
 
@@ -206,8 +239,8 @@ impl RebalanceService {
                 tokio::select! {
                     // Wake up to find next rebalance.
                     _ = interval.tick() => {
-                        if let Ok(Some((from, to, amount))) = self.find_next_rebalance().await {
-                            if let Err(err) = self.bridge(from, to, amount).await {
+                        if let Ok(Some(rebalance)) = self.find_next_rebalance().await {
+                            if let Err(err) = self.bridge(rebalance).await {
                                 warn!("failed to bridge: {}", err);
                             }
                         }
