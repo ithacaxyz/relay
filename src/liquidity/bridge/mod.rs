@@ -11,12 +11,12 @@ pub use simple::SimpleBridge;
 
 wrap_fixed_bytes!(
     /// Identifier for a cross-chain transfer.
-    pub struct TransferId<32>;
+    pub struct BridgeTransferId<32>;
 );
 
 /// States of a [`Transfer`].
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
-pub enum TransferState {
+pub enum BridgeTransferState {
     /// Initial state.
     #[default]
     Pending,
@@ -33,9 +33,9 @@ pub enum TransferState {
 
 /// A cross-chain transfer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Transfer {
+pub struct BridgeTransfer {
     /// Unique identifier of the transfer.
-    pub id: TransferId,
+    pub id: BridgeTransferId,
     /// Bridge that is handling the transfer.
     pub bridge_id: Cow<'static, str>,
     /// Source asset.
@@ -50,7 +50,7 @@ pub struct Transfer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeEvent {
     /// Emitted when funds are pulled from the source chain.
-    TransferState(TransferId, TransferState),
+    TransferState(BridgeTransferId, BridgeTransferState),
 }
 
 /// An abstraction over a bridge that is able to accept bridging requests and driving them to
@@ -64,5 +64,5 @@ pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
 
     /// Triggers processing of the given transfer. The bridge is expected to return a future that
     /// would advance the transfer progress based on internally saved `bridge_data` in storage.`
-    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn process(&self, transfer: BridgeTransfer) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }

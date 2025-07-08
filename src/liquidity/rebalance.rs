@@ -1,7 +1,7 @@
 use crate::{
     liquidity::{
         LiquidityTracker,
-        bridge::{Bridge, BridgeEvent, Transfer, TransferId, TransferState},
+        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     storage::{RelayStorage, StorageApi},
     types::{CoinKind, FeeTokens},
@@ -56,7 +56,7 @@ pub struct RebalanceService {
     /// polling of events from all bridges.
     bridges: SelectAll<Box<dyn Bridge>>,
     /// Transfers that are in progress.
-    transfers_in_progress: HashMap<TransferId, Transfer>,
+    transfers_in_progress: HashMap<BridgeTransferId, BridgeTransfer>,
 }
 
 impl RebalanceService {
@@ -144,8 +144,8 @@ impl RebalanceService {
             eyre::bail!("no bridge for the given asset");
         };
 
-        let transfer = Transfer {
-            id: TransferId::random(),
+        let transfer = BridgeTransfer {
+            id: BridgeTransferId::random(),
             bridge_id: bridge.id().into(),
             from: (from.chain_id, from.address),
             to: (to.chain_id, to.address),
@@ -251,23 +251,23 @@ impl RebalanceService {
                             // Unlock liquidity for completed/failed transfers.
                             BridgeEvent::TransferState(transfer_id, state) => {
                                 match state {
-                                    TransferState::Pending => {
+                                    BridgeTransferState::Pending => {
                                         // Do nothing.
                                     }
                                     // Once source transfer (the one we've locked liquidity for) is completed or failed,
                                     // we need to atomically update the state and unlock liquidity.
-                                    TransferState::Sent(block_number) => {
+                                    BridgeTransferState::Sent(block_number) => {
                                         let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state, block_number).await;
                                     }
-                                    TransferState::OutboundFailed => {
+                                    BridgeTransferState::OutboundFailed => {
                                         let _ = self.storage.update_transfer_state_and_unlock_liquidity(transfer_id, state, 0).await;
                                         self.transfers_in_progress.remove(&transfer_id);
                                     }
-                                    TransferState::Completed(_) => {
+                                    BridgeTransferState::Completed(_) => {
                                         let _ = self.storage.update_transfer_state(transfer_id, state).await;
                                         self.transfers_in_progress.remove(&transfer_id);
                                     }
-                                    TransferState::InboundFailed => {
+                                    BridgeTransferState::InboundFailed => {
                                         let _ = self.storage.update_transfer_state(transfer_id, state).await;
                                         self.transfers_in_progress.remove(&transfer_id);
                                     }

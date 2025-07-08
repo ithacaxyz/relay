@@ -5,7 +5,7 @@ use crate::{
     error::StorageError,
     liquidity::{
         ChainAddress,
-        bridge::{Transfer, TransferId, TransferState},
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     storage::api::LockLiquidityInput,
     transactions::{
@@ -37,7 +37,8 @@ pub struct InMemoryStorage {
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
     liquidity: RwLock<LiquidityTrackerInner>,
-    transfers: DashMap<TransferId, (Transfer, Option<serde_json::Value>, TransferState)>,
+    transfers:
+        DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
 }
 
 #[async_trait]
@@ -280,7 +281,7 @@ impl StorageApi for InMemoryStorage {
 
     async fn lock_liquidity_for_bridge(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         input: LockLiquidityInput,
     ) -> Result<()> {
         // First try to lock the liquidity
@@ -289,14 +290,14 @@ impl StorageApi for InMemoryStorage {
             .await
             .try_lock_liquidity(HashMap::from_iter([(transfer.from, input)]))
             .await?;
-        self.transfers.insert(transfer.id, (transfer.clone(), None, TransferState::Pending));
+        self.transfers.insert(transfer.id, (transfer.clone(), None, BridgeTransferState::Pending));
 
         Ok(())
     }
 
     async fn update_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
         data: &serde_json::Value,
     ) -> Result<()> {
         if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
@@ -309,7 +310,7 @@ impl StorageApi for InMemoryStorage {
 
     async fn get_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
     ) -> Result<Option<serde_json::Value>> {
         if let Some(transfer_data) = self.transfers.get(&transfer_id) {
             Ok(transfer_data.1.clone())
@@ -320,8 +321,8 @@ impl StorageApi for InMemoryStorage {
 
     async fn update_transfer_state(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
     ) -> Result<()> {
         if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
             transfer_data.2 = state;
@@ -333,8 +334,8 @@ impl StorageApi for InMemoryStorage {
 
     async fn update_transfer_state_and_unlock_liquidity(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
         at: BlockNumber,
     ) -> Result<()> {
         let transfer = self
@@ -353,7 +354,10 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+    async fn get_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> Result<Option<BridgeTransferState>> {
         if let Some(transfer_data) = self.transfers.get(&transfer_id) {
             Ok(Some(transfer_data.2))
         } else {
@@ -361,13 +365,13 @@ impl StorageApi for InMemoryStorage {
         }
     }
 
-    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+    async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>> {
         let mut transfers = Vec::new();
 
         for entry in self.transfers.iter() {
             let (transfer, _, state) = entry.value();
             match state {
-                TransferState::Pending | TransferState::Sent(_) => {
+                BridgeTransferState::Pending | BridgeTransferState::Sent(_) => {
                     transfers.push(transfer.clone());
                 }
                 _ => {}

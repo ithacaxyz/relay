@@ -17,7 +17,7 @@ mod pg;
 use crate::{
     liquidity::{
         ChainAddress,
-        bridge::{Transfer, TransferId, TransferState},
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
@@ -206,7 +206,7 @@ impl StorageApi for RelayStorage {
 
     async fn lock_liquidity_for_bridge(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         input: LockLiquidityInput,
     ) -> api::Result<()> {
         self.inner.lock_liquidity_for_bridge(transfer, input).await
@@ -214,7 +214,7 @@ impl StorageApi for RelayStorage {
 
     async fn update_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
         data: &serde_json::Value,
     ) -> api::Result<()> {
         self.inner.update_transfer_bridge_data(transfer_id, data).await
@@ -222,23 +222,23 @@ impl StorageApi for RelayStorage {
 
     async fn get_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
     ) -> api::Result<Option<serde_json::Value>> {
         self.inner.get_transfer_bridge_data(transfer_id).await
     }
 
     async fn update_transfer_state(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
     ) -> api::Result<()> {
         self.inner.update_transfer_state(transfer_id, state).await
     }
 
     async fn update_transfer_state_and_unlock_liquidity(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
         at: BlockNumber,
     ) -> api::Result<()> {
         self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state, at).await
@@ -246,12 +246,12 @@ impl StorageApi for RelayStorage {
 
     async fn get_transfer_state(
         &self,
-        transfer_id: TransferId,
-    ) -> api::Result<Option<TransferState>> {
+        transfer_id: BridgeTransferId,
+    ) -> api::Result<Option<BridgeTransferState>> {
         self.inner.get_transfer_state(transfer_id).await
     }
 
-    async fn load_pending_transfers(&self) -> api::Result<Vec<Transfer>> {
+    async fn load_pending_transfers(&self) -> api::Result<Vec<BridgeTransfer>> {
         self.inner.load_pending_transfers().await
     }
 }

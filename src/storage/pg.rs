@@ -5,7 +5,7 @@ use crate::{
     error::StorageError,
     liquidity::{
         ChainAddress,
-        bridge::{Transfer, TransferId, TransferState},
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     storage::api::LockLiquidityInput,
     transactions::{
@@ -186,16 +186,16 @@ impl PgStorage {
 
     async fn update_transfer_state_with(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
         tx: &mut sqlx::Transaction<'static, Postgres>,
     ) -> Result<()> {
         let status = match state {
-            TransferState::Pending => BridgeTransferStatus::Pending,
-            TransferState::Sent(_) => BridgeTransferStatus::Sent,
-            TransferState::OutboundFailed => BridgeTransferStatus::OutboundFailed,
-            TransferState::Completed(_) => BridgeTransferStatus::Completed,
-            TransferState::InboundFailed => BridgeTransferStatus::InboundFailed,
+            BridgeTransferState::Pending => BridgeTransferStatus::Pending,
+            BridgeTransferState::Sent(_) => BridgeTransferStatus::Sent,
+            BridgeTransferState::OutboundFailed => BridgeTransferStatus::OutboundFailed,
+            BridgeTransferState::Completed(_) => BridgeTransferStatus::Completed,
+            BridgeTransferState::InboundFailed => BridgeTransferStatus::InboundFailed,
         };
 
         sqlx::query!(
@@ -207,7 +207,7 @@ impl PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        if let TransferState::Sent(block_number) = state {
+        if let BridgeTransferState::Sent(block_number) = state {
             sqlx::query!(
                 "update bridge_transfers set outbound_block_number = $1 where transfer_id = $2",
                 block_number as i64,
@@ -218,7 +218,7 @@ impl PgStorage {
             .map_err(eyre::Error::from)?;
         }
 
-        if let TransferState::Completed(block_number) = state {
+        if let BridgeTransferState::Completed(block_number) = state {
             sqlx::query!(
                 "update bridge_transfers set inbound_block_number = $1 where transfer_id = $2",
                 block_number as i64,
@@ -255,9 +255,9 @@ impl PgStorage {
 
     async fn load_transfer_with(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
         executor: impl sqlx::Executor<'_, Database = Postgres>,
-    ) -> Result<Option<Transfer>> {
+    ) -> Result<Option<BridgeTransfer>> {
         let Some(row) = sqlx::query!(
             "select transfer_data from bridge_transfers where transfer_id = $1",
             transfer_id.as_slice()
@@ -864,7 +864,7 @@ impl StorageApi for PgStorage {
     #[instrument(skip_all)]
     async fn lock_liquidity_for_bridge(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         input: LockLiquidityInput,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
@@ -887,7 +887,7 @@ impl StorageApi for PgStorage {
     /// Updates a bridge-specific data for a transfer.
     async fn update_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
         data: &serde_json::Value,
     ) -> Result<()> {
         sqlx::query!(
@@ -904,7 +904,7 @@ impl StorageApi for PgStorage {
 
     async fn get_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
     ) -> Result<Option<serde_json::Value>> {
         let row = sqlx::query!(
             "select bridge_data from bridge_transfers where transfer_id = $1",
@@ -919,8 +919,8 @@ impl StorageApi for PgStorage {
 
     async fn update_transfer_state(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
@@ -933,8 +933,8 @@ impl StorageApi for PgStorage {
 
     async fn update_transfer_state_and_unlock_liquidity(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
         at: BlockNumber,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
@@ -951,7 +951,10 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
-    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>> {
+    async fn get_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> Result<Option<BridgeTransferState>> {
         let row = sqlx::query_as!(
             BridgeTransferRow,
             "select status as \"status: BridgeTransferStatus\", outbound_block_number, inbound_block_number from bridge_transfers where transfer_id = $1",
@@ -966,23 +969,23 @@ impl StorageApi for PgStorage {
         };
 
         let state = match row.status {
-            BridgeTransferStatus::Pending => TransferState::Pending,
+            BridgeTransferStatus::Pending => BridgeTransferState::Pending,
             BridgeTransferStatus::Sent => {
                 let block_number = row.outbound_block_number.unwrap_or(0) as u64;
-                TransferState::Sent(block_number)
+                BridgeTransferState::Sent(block_number)
             }
-            BridgeTransferStatus::OutboundFailed => TransferState::OutboundFailed,
+            BridgeTransferStatus::OutboundFailed => BridgeTransferState::OutboundFailed,
             BridgeTransferStatus::Completed => {
                 let block_number = row.inbound_block_number.unwrap_or(0) as u64;
-                TransferState::Completed(block_number)
+                BridgeTransferState::Completed(block_number)
             }
-            BridgeTransferStatus::InboundFailed => TransferState::InboundFailed,
+            BridgeTransferStatus::InboundFailed => BridgeTransferState::InboundFailed,
         };
 
         Ok(Some(state))
     }
 
-    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>> {
+    async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>> {
         let rows = sqlx::query!(
             r#"
             select transfer_data 

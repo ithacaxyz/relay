@@ -4,7 +4,7 @@ use crate::{
     error::StorageError,
     liquidity::{
         ChainAddress,
-        bridge::{Transfer, TransferId, TransferState},
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
@@ -165,28 +165,28 @@ pub trait StorageApi: Debug + Send + Sync {
     /// the database.
     async fn lock_liquidity_for_bridge(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         input: LockLiquidityInput,
     ) -> Result<()>;
 
     /// Updates a bridge-specific data for a transfer.
     async fn update_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
         data: &serde_json::Value,
     ) -> Result<()>;
 
     /// Gets bridge-specific data for a transfer.
     async fn get_transfer_bridge_data(
         &self,
-        transfer_id: TransferId,
+        transfer_id: BridgeTransferId,
     ) -> Result<Option<serde_json::Value>>;
 
     /// Updates transfer state.
     async fn update_transfer_state(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
     ) -> Result<()>;
 
     /// Updates transfer state and unlocks liquidity for it.
@@ -195,18 +195,21 @@ pub trait StorageApi: Debug + Send + Sync {
     /// atomically.
     async fn update_transfer_state_and_unlock_liquidity(
         &self,
-        transfer_id: TransferId,
-        state: TransferState,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
         at: BlockNumber,
     ) -> Result<()>;
 
     /// Gets the current state of a bridge transfer.
-    async fn get_transfer_state(&self, transfer_id: TransferId) -> Result<Option<TransferState>>;
+    async fn get_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> Result<Option<BridgeTransferState>>;
 
     /// Loads all pending transfers from storage.
     ///
     /// This returns transfers in states that require monitoring:
     /// - Pending: Initial state, waiting to be sent
     /// - Sent: Outbound transaction sent, monitoring for completion
-    async fn load_pending_transfers(&self) -> Result<Vec<Transfer>>;
+    async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>>;
 }

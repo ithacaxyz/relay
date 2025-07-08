@@ -1,6 +1,6 @@
 use crate::{
     error::StorageError,
-    liquidity::bridge::Transfer,
+    liquidity::bridge::BridgeTransfer,
     storage::{BundleStatus, InteropBundle, LockLiquidityInput, RelayStorage, StorageApi},
     types::IERC20,
 };
@@ -175,7 +175,7 @@ impl LiquidityTracker {
     /// Locks liquidity for an interop bundle.
     pub async fn try_lock_liquidity_for_bridge(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
     ) -> Result<(), LiquidityTrackerError> {
         let input = self
             .prepare_lock_inputs(core::iter::once((

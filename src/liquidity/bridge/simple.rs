@@ -1,6 +1,6 @@
 use crate::{
     liquidity::{
-        bridge::{Bridge, BridgeEvent, Transfer, TransferState},
+        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState},
         tracker::ChainAddress,
     },
     signers::DynSigner,
@@ -78,7 +78,7 @@ impl Bridge for SimpleBridge {
         true
     }
 
-    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn process(&self, transfer: BridgeTransfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let this = self.inner.clone();
         Box::pin(async move {
             if let Err(e) = this.advance_transfer(transfer).await {
@@ -161,7 +161,7 @@ impl SimpleBridgeInner {
     /// Saves [`SimpleBridgeData`] for a transfer.
     async fn save_bridge_data(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         data: &SimpleBridgeData,
     ) -> eyre::Result<()> {
         let json_data = serde_json::to_value(data)?;
@@ -170,7 +170,7 @@ impl SimpleBridgeInner {
     }
 
     /// Loads [`SimpleBridgeData`] for a transfer. If it's not found, returns a default value.
-    async fn load_bridge_data(&self, transfer: &Transfer) -> eyre::Result<SimpleBridgeData> {
+    async fn load_bridge_data(&self, transfer: &BridgeTransfer) -> eyre::Result<SimpleBridgeData> {
         if let Some(data) = self.storage.get_transfer_bridge_data(transfer.id).await? {
             Ok(serde_json::from_value(data)?)
         } else {
@@ -185,7 +185,7 @@ impl SimpleBridgeInner {
     /// and then wait for it to land.
     async fn handle_outbound_tx(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         bridge_data: &mut SimpleBridgeData,
     ) -> eyre::Result<u64> {
         // get or prepare outbound transaction
@@ -237,7 +237,7 @@ impl SimpleBridgeInner {
     /// destination chain.
     async fn handle_inbound_tx(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         bridge_data: &mut SimpleBridgeData,
     ) -> eyre::Result<u64> {
         let inbound_tx = match &mut bridge_data.inbound_tx {
@@ -275,40 +275,40 @@ impl SimpleBridgeInner {
         Ok(receipt.block_number.unwrap_or_default())
     }
 
-    async fn advance_transfer(&self, transfer: Transfer) -> eyre::Result<()> {
+    async fn advance_transfer(&self, transfer: BridgeTransfer) -> eyre::Result<()> {
         let mut bridge_data = self.load_bridge_data(&transfer).await?;
         let mut state =
             self.storage.get_transfer_state(transfer.id).await?.ok_or_eyre("transfer not found")?;
 
         loop {
             match state {
-                TransferState::Pending => {
+                BridgeTransferState::Pending => {
                     match self.handle_outbound_tx(&transfer, &mut bridge_data).await {
                         Ok(block_number) => {
-                            state = TransferState::Sent(block_number);
+                            state = BridgeTransferState::Sent(block_number);
                         }
                         Err(e) => {
                             error!("Failed to handle outbound tx: {}", e);
-                            state = TransferState::OutboundFailed;
+                            state = BridgeTransferState::OutboundFailed;
                         }
                     }
 
                     let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
                 }
-                TransferState::Sent(_) => {
+                BridgeTransferState::Sent(_) => {
                     state = match self.handle_inbound_tx(&transfer, &mut bridge_data).await {
-                        Ok(block_number) => TransferState::Completed(block_number),
+                        Ok(block_number) => BridgeTransferState::Completed(block_number),
                         Err(e) => {
                             error!("Failed to handle inbound tx: {}", e);
-                            TransferState::InboundFailed
+                            BridgeTransferState::InboundFailed
                         }
                     };
 
                     let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
                 }
-                TransferState::OutboundFailed
-                | TransferState::InboundFailed
-                | TransferState::Completed(_) => break,
+                BridgeTransferState::OutboundFailed
+                | BridgeTransferState::InboundFailed
+                | BridgeTransferState::Completed(_) => break,
             }
         }
 
