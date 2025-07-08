@@ -189,7 +189,7 @@ impl RefundProcessor {
         &self,
         bundle: &InteropBundle,
         escrow_details: &[EscrowDetails],
-    ) -> Result<RefundsReplacements, RefundProcessorError> {
+    ) -> Result<RefundTransactions, RefundProcessorError> {
         // Build mapping of escrow IDs to source transaction IDs
         let escrow_to_source_tx: HashMap<B256, TxId> = bundle
             .src_txs
@@ -214,7 +214,7 @@ impl RefundProcessor {
                 bundle_id = ?bundle.id,
                 "All escrows already have refund transactions"
             );
-            return Ok(RefundsReplacements {
+            return Ok(RefundTransactions {
                 new_refund_txs: Vec::new(),
                 failed_tx_ids: existing_refunds.failed_tx_ids,
             });
@@ -238,7 +238,7 @@ impl RefundProcessor {
             "Built refund transactions for missing escrows"
         );
 
-        Ok(RefundsReplacements { new_refund_txs, failed_tx_ids: existing_refunds.failed_tx_ids })
+        Ok(RefundTransactions { new_refund_txs, failed_tx_ids: existing_refunds.failed_tx_ids })
     }
 
     /// Queue refunds by building and sending missing refund transactions
@@ -488,9 +488,12 @@ impl RefundProcessor {
     }
 }
 
-/// Failed refund transaction ids and their transaction replacements
+/// Result of building refund transactions for escrows that need them.
+///
+/// This includes both new refund transactions for escrows that don't have any,
+/// as well as information about failed refund transactions that should be removed.
 #[derive(Debug)]
-pub struct RefundsReplacements {
+pub struct RefundTransactions {
     /// New refund transactions to add
     pub new_refund_txs: Vec<RelayTransaction>,
     /// Transaction IDs that failed and should be removed
