@@ -4,49 +4,25 @@ use crate::e2e::{cases::upgrade_account_eagerly, *};
 use alloy_primitives::U256;
 use eyre::Result;
 use relay::{
-    liquidity::{
-        RebalanceService,
-        bridge::{Bridge, SimpleBridge},
-    },
+    config::RebalanceServiceConfig,
+    liquidity::bridge::SimpleBridgeConfig,
     types::{IERC20, KeyType},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_chain_liquidity_management() -> Result<()> {
-    let env = Environment::setup_multi_chain(2).await?;
-
-    let providers = env
-        .relay_handle
-        .chains
-        .chain_ids_iter()
-        .map(|chain_id| {
-            (*chain_id, env.relay_handle.chains.get(*chain_id).unwrap().provider.clone())
-        })
-        .collect();
-    let tx_services = env
-        .relay_handle
-        .chains
-        .chain_ids_iter()
-        .map(|chain_id| {
-            (*chain_id, env.relay_handle.chains.get(*chain_id).unwrap().transactions.clone())
-        })
-        .collect();
-    let bridge = SimpleBridge::new(
-        providers,
-        tx_services,
-        env.deployer.clone(),
-        env.funder,
-        env.relay_handle.storage.clone(),
-        env.deployer.clone(),
-    );
+    let env = Environment::setup_with_config(EnvironmentConfig {
+        num_chains: 2,
+        rebalance_service_config: Some(RebalanceServiceConfig {
+            binance: None,
+            simple: Some(SimpleBridgeConfig { signer_key: DEPLOYER_PRIVATE_KEY.to_string() }),
+            funder_owner_key: DEPLOYER_PRIVATE_KEY.to_string(),
+        }),
+        ..Default::default()
+    })
+    .await?;
 
     let signer = env.deployer.clone();
-
-    let rebalance_service = RebalanceService::new(
-        &env.relay_handle.fee_tokens,
-        env.relay_handle.chains.interop().liquidity_tracker().clone(),
-        vec![Box::new(bridge) as Box<dyn Bridge>],
-    );
 
     let token = env.erc20;
     let provider_0 = env.provider_for(0);
@@ -61,8 +37,6 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
     let funder_balance_0 = IERC20::new(token, provider_0).balanceOf(env.funder).call().await?;
     let funder_balance_1 = IERC20::new(token, provider_1).balanceOf(env.funder).call().await?;
     let eoa_balance_1 = IERC20::new(token, provider_1).balanceOf(env.eoa.address()).call().await?;
-
-    tokio::spawn(rebalance_service.into_future().await?);
 
     // Create a key for signing
     let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
