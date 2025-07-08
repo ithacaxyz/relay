@@ -92,6 +92,7 @@ pub struct ChainConfig {
     /// Optional rebalance service configuration.
     ///
     /// If provided, this relay instance will handle rebalancing of liquidity across chains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebalance_service: Option<RebalanceServiceConfig>,
 }
 
@@ -207,10 +208,13 @@ impl Default for SecretsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RebalanceServiceConfig {
     /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binance: Option<BinanceBridgeConfig>,
     /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simple: Option<SimpleBridgeConfig>,
     /// The private key of the funder account owner. Required for pulling funds from the funders.
+    #[serde(default)]
     pub funder_owner_key: String,
 }
 
@@ -518,6 +522,34 @@ impl RelayConfig {
     /// Sets the funder signing key used to sign fund operations.
     pub fn with_funder_key(mut self, funder_key: String) -> Self {
         self.secrets.funder_key = funder_key;
+        self
+    }
+
+    /// Sets the funder owner key, and enables the rebalance service.
+    pub fn with_funder_owner_key(mut self, funder_owner_key: String) -> Self {
+        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        rebalance_service.funder_owner_key = funder_owner_key;
+        self
+    }
+
+    /// Sets the Binance API key and secret.
+    pub fn with_binance_keys(
+        mut self,
+        api_key: Option<String>,
+        api_secret: Option<String>,
+    ) -> Self {
+        let (Some(api_key), Some(api_secret)) = (api_key, api_secret) else {
+            panic!("expected both Binance API key and secret");
+        };
+        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+
+        if rebalance_service.binance.is_none() {
+            rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });
+        } else {
+            rebalance_service.binance.as_mut().unwrap().api_key = api_key;
+            rebalance_service.binance.as_mut().unwrap().api_secret = api_secret;
+        }
+
         self
     }
 
