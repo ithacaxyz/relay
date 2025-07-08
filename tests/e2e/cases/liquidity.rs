@@ -61,6 +61,7 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
             key: Some(key.to_call_key()),
             required_funds: vec![(env.erc20, funder_balance_1 + eoa_balance_1)],
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
         })
         .await?;
 
