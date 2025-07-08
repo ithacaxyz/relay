@@ -11,7 +11,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, Signed, TxEip1559},
     eips::Encodable2718,
-    primitives::{Address, Bytes, ChainId, U256},
+    primitives::{Address, Bytes, ChainId, U256, map::HashMap},
     providers::{DynProvider, PendingTransactionBuilder, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest},
     sol_types::SolCall,
@@ -20,13 +20,19 @@ use eyre::OptionExt;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
 use tracing::error;
+
+/// Configuration for the [`SimpleBridge`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleBridgeConfig {
+    /// Key of the funded signer.
+    pub signer_key: String,
+}
 
 /// Simple bridge implementation which assumes that signer address is funded on all chains.
 #[derive(Debug)]
@@ -37,27 +43,27 @@ pub struct SimpleBridge {
 
 impl SimpleBridge {
     /// Creates a new SimpleBridge instance.
-    pub fn new(
+    pub async fn new(
         providers: HashMap<ChainId, DynProvider>,
         tx_services: HashMap<ChainId, TransactionServiceHandle>,
-        signer: DynSigner,
+        config: SimpleBridgeConfig,
         funder_address: Address,
         storage: RelayStorage,
         funder_owner: DynSigner,
-    ) -> Self {
+    ) -> eyre::Result<Self> {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
         let inner = SimpleBridgeInner {
             providers,
             tx_services,
-            signer,
+            signer: DynSigner::from_raw(&config.signer_key).await?,
             funder_address,
             storage,
             events_tx,
             funder_owner,
         };
 
-        Self { inner: Arc::new(inner), events_rx }
+        Ok(Self { inner: Arc::new(inner), events_rx })
     }
 }
 
