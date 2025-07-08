@@ -538,8 +538,10 @@ impl RelayConfig {
         api_key: Option<String>,
         api_secret: Option<String>,
     ) -> Self {
-        let (Some(api_key), Some(api_secret)) = (api_key, api_secret) else {
-            panic!("expected both Binance API key and secret");
+        let (api_key, api_secret) = match (api_key, api_secret) {
+            (Some(api_key), Some(api_secret)) => (api_key, api_secret),
+            (None, None) => return self,
+            _ => panic!("expected both Binance API key and secret"),
         };
         let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
 
