@@ -23,7 +23,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
 use sqlx::{PgPool, Postgres, types::BigDecimal};
-use std::sync::Arc;
 use tracing::instrument;
 
 /// PostgreSQL storage implementation.
