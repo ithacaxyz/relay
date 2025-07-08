@@ -44,11 +44,7 @@ impl RefundMonitorService {
         interop_service: InteropServiceHandle,
         check_interval: Duration,
     ) -> Self {
-        Self {
-            storage,
-            interop_service,
-            check_interval,
-        }
+        Self { storage, interop_service, check_interval }
     }
 
     /// Runs the refund monitoring loop.

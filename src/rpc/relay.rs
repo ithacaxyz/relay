@@ -11,7 +11,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::{ESCROW_REFUND_DURATION_SECS, ESCROW_SALT_LENGTH},
+    constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
@@ -163,6 +163,7 @@ impl Relay {
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
+        escrow_refund_threshold: u64,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -176,6 +177,7 @@ impl Relay {
             storage,
             asset_info,
             priority_fee_percentile,
+            escrow_refund_threshold,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -1805,6 +1807,8 @@ pub(super) struct RelayInner {
     asset_info: AssetInfoServiceHandle,
     /// Percentile of the priority fees to use for the transactions.
     priority_fee_percentile: f64,
+    /// Escrow refund threshold in seconds
+    escrow_refund_threshold: u64,
 }
 
 impl Relay {
@@ -1877,7 +1881,7 @@ impl Relay {
             .map_err(RelayError::internal)?
             .as_secs();
         let refund_timestamp =
-            U256::from(current_timestamp.saturating_add(ESCROW_REFUND_DURATION_SECS));
+            U256::from(current_timestamp.saturating_add(self.inner.escrow_refund_threshold));
 
         Ok(Escrow {
             salt,

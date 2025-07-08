@@ -217,6 +217,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
+        config.interop.escrow_refund_threshold,
     );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {

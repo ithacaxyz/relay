@@ -1,6 +1,7 @@
 //! Relay configuration.
 use crate::constants::{
-    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS, INTENT_GAS_BUFFER,
+    TX_GAS_BUFFER,
 };
 use alloy::{
     primitives::Address,
@@ -207,12 +208,15 @@ pub struct InteropConfig {
     /// Interval for checking pending refunds.
     #[serde(with = "crate::serde::duration")]
     pub refund_check_interval: Duration,
+    /// Time threshold in seconds before refunds can be processed for escrows.
+    pub escrow_refund_threshold: u64,
 }
 
 impl Default for InteropConfig {
     fn default() -> Self {
         Self {
             refund_check_interval: Duration::from_secs(60),
+            escrow_refund_threshold: ESCROW_REFUND_DURATION_SECS,
         }
     }
 }

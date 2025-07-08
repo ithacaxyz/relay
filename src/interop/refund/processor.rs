@@ -539,7 +539,7 @@ impl RefundProcessor {
                     .estimate_gas(tx_request)
                     .await
                     .map(|estimated| {
-                        // Add 20% buffer to the estimate for safety
+                        // add 20% buffer
                         estimated.saturating_mul(120).saturating_div(100)
                     })
                     .unwrap_or_else(|e| {
