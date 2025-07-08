@@ -65,8 +65,8 @@ impl CallKey {
 
 /// A set of balance overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct BalanceOverrides {
-    #[serde(flatten)]
     balances: HashMap<Address, BalanceOverride>,
 }
 
@@ -75,7 +75,8 @@ impl BalanceOverrides {
     ///
     /// # Note
     ///
-    /// This finds storage slots for the assets and might be slow.
+    /// This finds storage slots for the assets and might be slow since it fetches access lists for
+    /// each balance override.
     pub async fn into_state_overrides<P: Provider + Clone>(
         self,
         provider: P,
