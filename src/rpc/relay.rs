@@ -479,8 +479,7 @@ impl Relay {
     ) -> RpcResult<RelayTransaction> {
         let chain_id = quote.chain_id;
         // todo: chain support should probably be checked before we send txs
-        let Chain { provider, .. } =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let provider = self.provider(chain_id)?;
 
         let authorization_address = quote.authorization_address;
         let intent = &mut quote.intent;
