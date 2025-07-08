@@ -5,7 +5,10 @@ use super::{
 use crate::{
     config::InteropConfig,
     error::StorageError,
-    interop::{RefundMonitorService, RefundProcessor, RefundProcessorError},
+    interop::{
+        RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate,
+        refund::processor::MAX_REFUND_RETRY_ATTEMPTS,
+    },
     storage::{RelayStorage, StorageApi},
     types::{IERC20, InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
@@ -110,6 +113,22 @@ pub struct BundleWithStatus {
     pub status: BundleStatus,
 }
 
+impl BundleWithStatus {
+    /// Apply [`RefundUpdate`] to the bundle.
+    pub fn apply_refund_update(&mut self, update: &RefundUpdate) {
+        // Remove failed transactions
+        self.bundle.refund_txs.retain(|tx| !update.failed_tx_ids.contains(&tx.id));
+
+        // Add new refund transactions
+        self.bundle.refund_txs.extend(update.new_refund_txs.clone());
+
+        // Update status if provided
+        if let Some(new_status) = update.new_status {
+            self.status = new_status;
+        }
+    }
+}
+
 /// Errors that can occur during interop bundle processing.
 #[derive(Debug, thiserror::Error)]
 enum InteropBundleError {
@@ -193,7 +212,7 @@ pub enum BundleStatus {
     SettlementsConfirmed,
     /// Refunds are scheduled for delayed execution
     ///
-    /// Next: [`Self::RefundsReady`] OR stays in `RefundsScheduled`
+    /// Next: [`Self::RefundsReady`] OR stays in [`Self::RefundsScheduled`]
     RefundsScheduled,
     /// Refunds are ready to be processed (removed from scheduler)
     ///
@@ -649,10 +668,9 @@ impl InteropServiceInner {
         );
 
         // Try to schedule refunds for any confirmed escrows
-        self.refund_processor.schedule_refunds(bundle).await?;
-
-        // Check if refunds were scheduled by examining the bundle status
-        if !bundle.status.is_refunds_scheduled() {
+        if let Some(new_status) = self.refund_processor.schedule_refunds(&bundle.bundle).await? {
+            bundle.status = new_status;
+        } else {
             // No source transaction was confirmed, so no refunds need to be issued.
             self.update_bundle_status(bundle, BundleStatus::Failed).await?;
         }
@@ -700,10 +718,9 @@ impl InteropServiceInner {
             "Handling destination failures - scheduling refunds for escrows"
         );
 
-        self.refund_processor.schedule_refunds(bundle).await?;
-
-        // Check if refunds were scheduled by examining the bundle status
-        if !bundle.status.is_refunds_scheduled() {
+        if let Some(new_status) = self.refund_processor.schedule_refunds(&bundle.bundle).await? {
+            bundle.status = new_status;
+        } else {
             // This should technically not happen, since we know all source confirmations have been
             // confirmed, otherwise we wouldn't have tried sending destination transactions.
             tracing::error!(status = ?bundle.status, "No escrows to refund, marking bundle as failed");
@@ -751,7 +768,8 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing ready refunds");
 
-        self.refund_processor.queue_refunds(bundle).await?;
+        let update = self.refund_processor.queue_refunds(bundle).await?;
+        bundle.apply_refund_update(&update);
 
         Ok(())
     }
@@ -765,8 +783,47 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Monitoring refund transactions");
 
-        // This will keep retrying until all refunds complete or error
-        self.refund_processor.monitor_and_process_refunds(bundle).await?;
+        // Retry loop for monitoring and rebuilding failed refunds
+        let mut retry_count: u32 = 0;
+
+        loop {
+            // Wait for retry transactions
+            let failed_tx_ids =
+                self.refund_processor.monitor_refund_completion(&bundle.bundle.refund_txs).await?;
+
+            if failed_tx_ids.is_empty() {
+                tracing::info!(
+                    bundle_id = ?bundle.bundle.id,
+                    "All refund transactions succeeded"
+                );
+                break;
+            }
+
+            retry_count += 1;
+            if retry_count >= MAX_REFUND_RETRY_ATTEMPTS {
+                tracing::error!(
+                    bundle_id = ?bundle.bundle.id,
+                    retry_count,
+                    "Maximum refund retry attempts reached"
+                );
+                return Err(InteropBundleError::RefundProcessor(
+                    crate::interop::RefundProcessorError::MaxRetriesReached {
+                        bundle_id: bundle.bundle.id,
+                        attempts: retry_count,
+                    },
+                ));
+            }
+
+            // Some refunds failed, rebuild them
+            tracing::info!(
+                bundle_id = ?bundle.bundle.id,
+                failed_count = failed_tx_ids.len(),
+                "Some refund transactions failed, rebuilding them"
+            );
+
+            let update = self.refund_processor.queue_refunds(bundle).await?;
+            bundle.apply_refund_update(&update);
+        }
 
         tracing::info!(
             bundle_id = ?bundle.bundle.id,

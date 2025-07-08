@@ -57,9 +57,9 @@ impl RefundMonitorService {
         let mut check_timer = interval(self.check_interval);
 
         loop {
-            // At worst it will takes us self.check_interval to process a refund 
+            // At worst it will takes us self.check_interval to process a refund
             check_timer.tick().await;
-            
+
             if let Err(e) = self.process_pending_refunds().await {
                 error!("Error processing pending refunds: {e}");
                 // Reset the timer to retry immediately

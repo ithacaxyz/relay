@@ -7,4 +7,4 @@ pub mod monitor;
 pub mod processor;
 
 pub use monitor::RefundMonitorService;
-pub use processor::{RefundProcessor, RefundProcessorError};
+pub use processor::{RefundProcessor, RefundProcessorError, RefundUpdate};

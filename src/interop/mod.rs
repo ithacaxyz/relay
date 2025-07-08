@@ -7,4 +7,4 @@ pub mod escrow;
 pub mod refund;
 
 pub use escrow::EscrowDetails;
-pub use refund::{RefundMonitorService, RefundProcessor, RefundProcessorError};
+pub use refund::{RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate};
