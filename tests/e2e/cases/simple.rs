@@ -403,6 +403,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_call: true,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
@@ -431,6 +432,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
@@ -481,6 +483,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(session_key.to_call_key()),
         })
         .await?;
