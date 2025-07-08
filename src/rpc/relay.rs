@@ -859,6 +859,11 @@ impl RelayApiServer for Relay {
             };
 
             // Call estimateFee to give us a quote with a complete intent that the user can sign
+            let mut overrides = request.state_overrides.clone();
+            overrides.extend(
+                request.balance_overrides.clone().into_state_overrides(provider.clone()).await?,
+            );
+
             let (asset_diff, quote) = self
                 .estimate_fee(
                     PartialAction {
@@ -882,7 +887,7 @@ impl RelayApiServer for Relay {
                     maybe_stored.as_ref().map(|acc| acc.signed_authorization.address),
                     key,
                     false,
-                    request.state_overrides,
+                    overrides,
                 )
                 .await
                 .inspect_err(|err| {
