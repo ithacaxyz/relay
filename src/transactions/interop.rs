@@ -3,10 +3,7 @@ use super::{
     TransactionStatus, TxId,
 };
 use crate::{
-    error::StorageError,
-    interop::{RefundMonitorService, RefundProcessor, RefundProcessorError},
-    storage::{RelayStorage, StorageApi},
-    types::{IERC20, InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
+    config::InteropConfig, error::StorageError, interop::{RefundMonitorService, RefundProcessor, RefundProcessorError}, storage::{RelayStorage, StorageApi}, types::{rpc::BundleId, InteropTxType, OrchestratorContract::IntentExecuted, IERC20}
 };
 use alloy::{
     primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
@@ -1016,6 +1013,7 @@ impl InteropService {
         providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
         funder_address: Address,
+        interop_config: InteropConfig,
         storage: RelayStorage,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -1035,8 +1033,13 @@ impl InteropService {
 
         let handle = InteropServiceHandle { command_tx, storage: storage.clone() };
 
-        // Spawn the refund monitor service
-        RefundMonitorService::new(storage, handle.clone()).spawn();
+        // Spawn the refund monitor service with configured interval
+        RefundMonitorService::with_interval(
+            storage,
+            handle.clone(),
+            interop_config.refund_check_interval,
+        )
+        .spawn();
 
         for bundle in pending_bundles {
             tracing::info!(

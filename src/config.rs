@@ -35,6 +35,9 @@ pub struct RelayConfig {
     pub email: EmailConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
+    /// Interop configuration.
+    #[serde(default)]
+    pub interop: InteropConfig,
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
@@ -198,6 +201,22 @@ impl Default for SecretsConfig {
     }
 }
 
+/// Interop configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteropConfig {
+    /// Interval for checking pending refunds.
+    #[serde(with = "crate::serde::duration")]
+    pub refund_check_interval: Duration,
+}
+
+impl Default for InteropConfig {
+    fn default() -> Self {
+        Self {
+            refund_check_interval: Duration::from_secs(60),
+        }
+    }
+}
+
 /// Configuration for transaction service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
@@ -267,6 +286,7 @@ impl Default for RelayConfig {
             onramp: OnrampConfig::default(),
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
+            interop: InteropConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
@@ -495,6 +515,12 @@ impl RelayConfig {
     /// Sets the funder signing key used to sign fund operations.
     pub fn with_funder_key(mut self, funder_key: String) -> Self {
         self.secrets.funder_key = funder_key;
+        self
+    }
+
+    /// Sets the interop configuration.
+    pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
+        self.interop = interop_config;
         self
     }
 

@@ -29,12 +29,25 @@ pub struct RefundMonitorService {
 }
 
 impl RefundMonitorService {
-    /// Creates a new refund monitor service.
+    /// Creates a new refund monitor service with default interval.
     pub fn new(storage: RelayStorage, interop_service: InteropServiceHandle) -> Self {
         Self {
             storage,
             interop_service,
             check_interval: Duration::from_secs(DEFAULT_CHECK_INTERVAL_SECS),
+        }
+    }
+
+    /// Creates a new refund monitor service with a custom check interval.
+    pub fn with_interval(
+        storage: RelayStorage,
+        interop_service: InteropServiceHandle,
+        check_interval: Duration,
+    ) -> Self {
+        Self {
+            storage,
+            interop_service,
+            check_interval,
         }
     }
 

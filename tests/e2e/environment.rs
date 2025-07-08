@@ -20,7 +20,7 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::{RelayConfig, TransactionServiceConfig},
+    config::{InteropConfig, RelayConfig, TransactionServiceConfig},
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
@@ -58,6 +58,8 @@ pub struct EnvironmentConfig {
     pub fee_recipient: Address,
     /// Number of chains to spawn. Defaults to 1.
     pub num_chains: usize,
+    /// Interop configuration.
+    pub interop_config: InteropConfig,
 }
 
 impl Default for EnvironmentConfig {
@@ -71,6 +73,7 @@ impl Default for EnvironmentConfig {
             fork_block_number: None,
             fee_recipient: Address::ZERO,
             num_chains: 1,
+            interop_config: InteropConfig::default(),
         }
     }
 }
@@ -447,6 +450,9 @@ impl Environment {
                 .with_intent_gas_buffer(20_000) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
+                .with_interop_config(InteropConfig {
+                    refund_check_interval: Duration::from_millis(100),
+                })
                 .with_database_url(database_url),
             registry,
         )
