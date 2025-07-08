@@ -1,7 +1,7 @@
 use crate::{
     liquidity::{
         ChainAddress,
-        bridge::{Bridge, BridgeEvent, Transfer, TransferState},
+        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState},
     },
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -241,7 +241,7 @@ impl Bridge for BinanceBridge {
             && self.inner.supported_withdrawals.contains_key(&dst)
     }
 
-    fn process(&self, transfer: Transfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn process(&self, transfer: BridgeTransfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let this = self.inner.clone();
 
         Box::pin(async move {
@@ -274,7 +274,7 @@ pub struct BinanceBridgeInner {
 
 impl BinanceBridgeInner {
     /// Loads [`BinanceBridgeData`] for a given transfer.
-    async fn load_bridge_data(&self, transfer: &Transfer) -> eyre::Result<BinanceBridgeData> {
+    async fn load_bridge_data(&self, transfer: &BridgeTransfer) -> eyre::Result<BinanceBridgeData> {
         if let Some(bridge_data) = self.storage.get_transfer_bridge_data(transfer.id).await? {
             Ok(serde_json::from_value(bridge_data)?)
         } else {
@@ -285,7 +285,7 @@ impl BinanceBridgeInner {
     /// Saves [`BinanceBridgeData`] for a given transfer.
     async fn save_bridge_data(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         data: &BinanceBridgeData,
     ) -> eyre::Result<()> {
         let json_data = serde_json::to_value(data)?;
@@ -297,7 +297,7 @@ impl BinanceBridgeInner {
     /// deposit transaction hash.
     async fn send_deposit(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         bridge_data: &mut BinanceBridgeData,
     ) -> eyre::Result<u64> {
         // Send or load previously sent deposit transaction.
@@ -349,12 +349,12 @@ impl BinanceBridgeInner {
         Ok(receipt.block_number.unwrap_or_default())
     }
 
-    /// Fetches a withdrawal for a given transfer. We are using [`Transfer::id`] as a withdrawal
-    /// client-side ID ([`WithdrawHistoryParams::withdraw_order_id`]), allowing us to have a 1:1
-    /// mapping between transfers and withdrawals.
+    /// Fetches a withdrawal for a given transfer. We are using [`BridgeTransfer::id`] as a
+    /// withdrawal client-side ID ([`WithdrawHistoryParams::withdraw_order_id`]), allowing us to
+    /// have a 1:1 mapping between transfers and withdrawals.
     async fn find_withdrawal(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
     ) -> eyre::Result<Option<WithdrawHistoryResponseInner>> {
         let mut withdrawals = self
             .client
@@ -375,7 +375,7 @@ impl BinanceBridgeInner {
     /// Waits for a deposit to be completed and then sends a withdrawal.
     async fn wait_for_deposit_and_withdraw(
         &self,
-        transfer: &Transfer,
+        transfer: &BridgeTransfer,
         bridge_data: &mut BinanceBridgeData,
     ) -> eyre::Result<u64> {
         let Some(deposit_tx_hash) = &bridge_data.deposit_tx_hash else {
@@ -471,33 +471,33 @@ impl BinanceBridgeInner {
     }
 
     /// Advances the transfer state by sending a deposit and immediately withdrawing the funds.
-    async fn advance_transfer(&self, transfer: Transfer) -> eyre::Result<()> {
+    async fn advance_transfer(&self, transfer: BridgeTransfer) -> eyre::Result<()> {
         let mut bridge_data = self.load_bridge_data(&transfer).await?;
         let mut state =
             self.storage.get_transfer_state(transfer.id).await?.ok_or_eyre("transfer not found")?;
 
         loop {
             match state {
-                TransferState::Pending => {
+                BridgeTransferState::Pending => {
                     match self.send_deposit(&transfer, &mut bridge_data).await {
                         Ok(block_number) => {
-                            state = TransferState::Sent(block_number);
+                            state = BridgeTransferState::Sent(block_number);
                         }
                         Err(err) => {
                             warn!(%err, "failed to send deposit");
-                            state = TransferState::OutboundFailed;
+                            state = BridgeTransferState::OutboundFailed;
                         }
                     }
                     let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
                 }
-                TransferState::Sent(_) => {
+                BridgeTransferState::Sent(_) => {
                     match self.wait_for_deposit_and_withdraw(&transfer, &mut bridge_data).await {
                         Ok(block_number) => {
-                            state = TransferState::Completed(block_number);
+                            state = BridgeTransferState::Completed(block_number);
                         }
                         Err(err) => {
                             warn!(%err, "failed to withdraw");
-                            state = TransferState::InboundFailed;
+                            state = BridgeTransferState::InboundFailed;
                         }
                     }
                     let _ = self.events_tx.send(BridgeEvent::TransferState(transfer.id, state));
