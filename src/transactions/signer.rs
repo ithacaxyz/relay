@@ -87,6 +87,10 @@ pub enum SignerError {
     #[error(transparent)]
     Storage(#[from] StorageError),
 
+    /// ABI decoding error.
+    #[error(transparent)]
+    Abi(#[from] alloy::sol_types::Error),
+
     /// Other errors.
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -335,16 +339,19 @@ impl Signer {
         self.provider
             .call(request.clone())
             .await
-            .and_then(|res| {
-                OrchestratorContract::executeCall::abi_decode_returns(&res)
-                    .map_err(TransportErrorKind::custom)
-            })
             .map_err(SignerError::from)
-            .and_then(|result| {
-                if result != ORCHESTRATOR_NO_ERROR {
-                    return Err(SignerError::IntentRevert { revert_reason: result.into() });
+            .and_then(|res| {
+                if tx.is_intent() {
+                    let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
+
+                    if result != ORCHESTRATOR_NO_ERROR {
+                        return Err(SignerError::IntentRevert { revert_reason: result.into() });
+                    }
+
+                    Ok(())
+                } else {
+                    Ok(())
                 }
-                Ok(())
             })
             .inspect_err(|err| {
                 trace!(?err, ?request, "transaction simulation failed");

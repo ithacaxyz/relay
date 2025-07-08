@@ -2,6 +2,12 @@
 
 use super::{InteropTxType, StorageApi, api::Result};
 use crate::{
+    error::StorageError,
+    liquidity::{
+        ChainAddress,
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
+    },
+    storage::api::LockLiquidityInput,
     transactions::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
@@ -10,10 +16,13 @@ use crate::{
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, ChainId},
+    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
+use std::collections::BTreeMap;
+use tokio::sync::RwLock;
 
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
@@ -27,6 +36,9 @@ pub struct InMemoryStorage {
     verified_emails: DashMap<String, Address>,
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
+    liquidity: RwLock<LiquidityTrackerInner>,
+    transfers:
+        DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
 }
 
 #[async_trait]
@@ -203,5 +215,225 @@ impl StorageApi for InMemoryStorage {
         } else {
             Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into())
         }
+    }
+
+    async fn lock_liquidity_for_bundle(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> Result<()> {
+        self.liquidity.write().await.try_lock_liquidity(assets).await?;
+        self.pending_bundles
+            .get_mut(&bundle_id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
+        Ok(())
+    }
+
+    async fn unlock_bundle_liquidity(
+        &self,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
+    ) -> Result<()> {
+        for transfer in &bundle.asset_transfers {
+            let block =
+                receipts.get(&transfer.tx_id).and_then(|r| r.block_number).unwrap_or_default();
+            self.liquidity.write().await.unlock_liquidity(
+                (transfer.chain_id, transfer.asset_address),
+                transfer.amount,
+                block,
+            );
+        }
+
+        self.pending_bundles
+            .get_mut(&bundle.id)
+            .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .status = status;
+
+        Ok(())
+    }
+
+    async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> Result<U256> {
+        Ok(self.liquidity.read().await.get_total_locked_at(asset, at))
+    }
+
+    async fn prune_unlocked_entries(&self, chain_id: ChainId, until: BlockNumber) -> Result<()> {
+        let mut lock = self.liquidity.write().await;
+        let LiquidityTrackerInner { locked_liquidity, pending_unlocks } = &mut *lock;
+        for (asset, unlocks) in pending_unlocks {
+            if asset.0 == chain_id {
+                let to_keep = unlocks.split_off(&until);
+                let to_remove = core::mem::replace(unlocks, to_keep);
+
+                // Remove everything else from the locked mapping
+                for (_, unlock) in to_remove {
+                    locked_liquidity.entry(*asset).and_modify(|amount| {
+                        *amount = amount.saturating_sub(unlock);
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &BridgeTransfer,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        // First try to lock the liquidity
+        self.liquidity
+            .write()
+            .await
+            .try_lock_liquidity(HashMap::from_iter([(transfer.from, input)]))
+            .await?;
+        self.transfers.insert(transfer.id, (transfer.clone(), None, BridgeTransferState::Pending));
+
+        Ok(())
+    }
+
+    async fn update_transfer_bridge_data(
+        &self,
+        transfer_id: BridgeTransferId,
+        data: &serde_json::Value,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.1 = Some(data.clone());
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> Result<Option<serde_json::Value>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(transfer_data.1.clone())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
+    ) -> Result<()> {
+        if let Some(mut transfer_data) = self.transfers.get_mut(&transfer_id) {
+            transfer_data.2 = state;
+            Ok(())
+        } else {
+            Err(eyre::eyre!("transfer not found").into())
+        }
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
+        at: BlockNumber,
+    ) -> Result<()> {
+        let transfer = self
+            .transfers
+            .get(&transfer_id)
+            .ok_or_else(|| eyre::eyre!("transfer not found"))?
+            .0
+            .clone();
+
+        // Update the state
+        self.update_transfer_state(transfer_id, state).await?;
+
+        // Unlock liquidity
+        self.liquidity.write().await.unlock_liquidity(transfer.from, transfer.amount, at);
+
+        Ok(())
+    }
+
+    async fn get_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> Result<Option<BridgeTransferState>> {
+        if let Some(transfer_data) = self.transfers.get(&transfer_id) {
+            Ok(Some(transfer_data.2))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>> {
+        let mut transfers = Vec::new();
+
+        for entry in self.transfers.iter() {
+            let (transfer, _, state) = entry.value();
+            match state {
+                BridgeTransferState::Pending | BridgeTransferState::Sent(_) => {
+                    transfers.push(transfer.clone());
+                }
+                _ => {}
+            }
+        }
+
+        transfers.sort_by_key(|t| t.id);
+        Ok(transfers)
+    }
+}
+
+/// An In-memory liquidity tracker.
+#[derive(Debug, Default)]
+struct LiquidityTrackerInner {
+    /// Assets that are about to be pulled from us, indexed by chain and asset address.
+    ///
+    /// Those correspond to pending cross-chain intents that are not yet confirmed.
+    locked_liquidity: HashMap<ChainAddress, U256>,
+    /// Liquidity amounts that are unlocked at certain block numbers.
+    ///
+    /// Those correspond to blocks when we've sent funds to users.
+    pending_unlocks: HashMap<ChainAddress, BTreeMap<BlockNumber, U256>>,
+}
+
+impl LiquidityTrackerInner {
+    /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
+    /// balances and adding all of the unlocked ones.
+    fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> U256 {
+        let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
+        let unlocked = self
+            .pending_unlocks
+            .get(&asset)
+            .map(|unlocks| unlocks.range(..=at).map(|(_, amount)| *amount).sum::<U256>())
+            .unwrap_or_default();
+
+        locked.saturating_sub(unlocked)
+    }
+
+    /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
+    async fn try_lock_liquidity(
+        &mut self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+    ) -> Result<()> {
+        // Make sure that we have enough funds for all transfers
+        if assets.iter().any(|(asset, input)| {
+            let locked = self.get_total_locked_at(*asset, input.block_number);
+            input.lock_amount + locked > input.current_balance
+        }) {
+            return Err(StorageError::CantLockLiquidity);
+        }
+
+        // Lock liquidity
+        for (asset, input) in assets {
+            *self.locked_liquidity.entry(asset).or_default() += input.lock_amount;
+        }
+
+        Ok(())
+    }
+
+    /// Unlocks liquidity by adding it to the pending unlocks mapping. This should be called once
+    /// bundle is confirmed.
+    fn unlock_liquidity(&mut self, asset: ChainAddress, amount: U256, at: BlockNumber) {
+        *self.pending_unlocks.entry(asset).or_default().entry(at).or_default() += amount;
     }
 }

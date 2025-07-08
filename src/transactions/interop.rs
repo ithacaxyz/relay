@@ -3,24 +3,23 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    storage::{InteropTxType, RelayStorage, StorageApi},
-    types::{IERC20, OrchestratorContract::IntentExecuted, rpc::BundleId},
+    liquidity::{LiquidityTracker, LiquidityTrackerError},
+    storage::{RelayStorage, StorageApi},
+    types::{InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
-    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MulticallError, Provider},
+    primitives::{Address, ChainId, U256, map::HashMap},
+    providers::MulticallError,
     rpc::types::TransactionReceipt,
 };
-use futures_util::future::{TryJoinAll, try_join_all};
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tracing::{error, instrument};
 
 /// Asset transfer information
@@ -32,6 +31,8 @@ pub struct AssetTransfer {
     pub asset_address: Address,
     /// The amount of the asset to transfer
     pub amount: U256,
+    /// The transaction ID of the asset transfer
+    pub tx_id: TxId,
 }
 
 /// Persistent bundle structure that stores full transaction data
@@ -68,6 +69,7 @@ impl InteropBundle {
                     chain_id: tx.chain_id(),
                     asset_address: asset,
                     amount,
+                    tx_id: tx.id,
                 });
             }
         }
@@ -77,9 +79,11 @@ impl InteropBundle {
 }
 
 /// Bundle with its current status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct BundleWithStatus {
     /// The interop bundle containing transaction data
+    #[deref]
+    #[deref_mut]
     pub bundle: InteropBundle,
     /// Current status of the bundle in the processing pipeline
     pub status: BundleStatus,
@@ -91,12 +95,12 @@ enum InteropBundleError {
     /// Transaction failed.
     #[error("transaction failed: {0}")]
     TransactionError(Arc<dyn TransactionFailureReason>),
+    /// Errors returned by [`LiquidityTracker`].
+    #[error(transparent)]
+    Liquidity(#[from] LiquidityTrackerError),
     /// Invalid state transition
     #[error("invalid state transition from {from:?} to {to:?}")]
     InvalidStateTransition { from: BundleStatus, to: BundleStatus },
-    /// Not enough liquidity.
-    #[error("don't have enough liquidity for the bundle")]
-    NotEnoughLiquidity,
     /// Storage error.
     #[error(transparent)]
     Storage(#[from] StorageError),
@@ -128,6 +132,10 @@ pub enum BundleStatus {
     ///
     /// Next: [`Self::SourceQueued`]
     Init,
+    /// Liquidity for destination transactions was locked.
+    ///
+    /// Next: [`Self::SourceQueued`]
+    LiquidityLocked,
     /// Source transactions are queued
     ///
     /// Next: [`Self::SourceConfirmed`] OR [`Self::SourceFailures`]
@@ -186,7 +194,8 @@ impl BundleStatus {
         use BundleStatus::*;
         matches!(
             (self, next),
-            (Init, SourceQueued)
+            (Init, LiquidityLocked)
+                | (LiquidityLocked, SourceQueued)
                 | (SourceQueued, SourceConfirmed)
                 | (SourceQueued, SourceFailures)
                 | (SourceConfirmed, DestinationQueued)
@@ -216,210 +225,12 @@ pub enum InteropServiceMessage {
     SendBundleWithStatus(Box<BundleWithStatus>),
 }
 
-/// Input for [`LiquidityTrackerInner::try_lock_liquidity`].
-#[derive(Debug)]
-struct LockLiquidityInput {
-    /// Current balance of the asset fetched from provider.
-    current_balance: U256,
-    /// Block number at which the balance was fetched.
-    balance_at: BlockNumber,
-    /// Amount of the asset we are trying to lock.
-    lock_amount: U256,
-}
-
-/// An address on a specific chain.
-pub type ChainAddress = (ChainId, Address);
-
-/// Tracks liquidity of relay for interop bundles.
-#[derive(Debug, Default)]
-struct LiquidityTrackerInner {
-    /// Assets that are about to be pulled from us, indexed by chain and asset address.
-    ///
-    /// Those correspond to pending cross-chain intents that are not yet confirmed.
-    locked_liquidity: HashMap<ChainAddress, U256>,
-    /// Liquidity amounts that are unlocked at certain block numbers.
-    ///
-    /// Those correspond to blocks when we've sent funds to users.
-    pending_unlocks: HashMap<ChainAddress, BTreeMap<BlockNumber, U256>>,
-}
-
-impl LiquidityTrackerInner {
-    /// Does a pessimistic estimate of our balance in the given asset, subtracting all of the locked
-    /// balances and adding all of the unlocked ones.
-    fn available_balance(&self, asset: ChainAddress, input: &LockLiquidityInput) -> U256 {
-        let locked = self.locked_liquidity.get(&asset).copied().unwrap_or_default();
-        let unlocked = self
-            .pending_unlocks
-            .get(&asset)
-            .map(|unlocks| {
-                unlocks.range(..=input.balance_at).map(|(_, amount)| *amount).sum::<U256>()
-            })
-            .unwrap_or_default();
-
-        input.current_balance.saturating_add(unlocked).saturating_sub(locked)
-    }
-
-    /// Attempts to lock liquidity by firstly making sure that we have enough funds for it.
-    async fn try_lock_liquidity(
-        &mut self,
-        assets: HashMap<ChainAddress, LockLiquidityInput>,
-    ) -> Result<(), InteropBundleError> {
-        // Make sure that we have enough funds for all transfers
-        if assets
-            .iter()
-            .any(|(asset, input)| input.lock_amount > self.available_balance(*asset, input))
-        {
-            return Err(InteropBundleError::NotEnoughLiquidity);
-        }
-
-        // Lock liquidity
-        for (asset, input) in assets {
-            *self.locked_liquidity.entry(asset).or_default() += input.lock_amount;
-        }
-
-        Ok(())
-    }
-
-    /// Unlocks liquidity by adding it to the pending unlocks mapping. This should be called once
-    /// bundle is confirmed.
-    fn unlock_liquidity(
-        &mut self,
-        chain_id: ChainId,
-        asset: Address,
-        amount: U256,
-        at: BlockNumber,
-    ) {
-        *self.pending_unlocks.entry((chain_id, asset)).or_default().entry(at).or_default() +=
-            amount;
-    }
-}
-
-/// Wrapper around [`LiquidityTrackerInner`] that is used to track liquidity.
-#[derive(Debug, Default)]
-struct LiquidityTracker {
-    inner: Arc<Mutex<LiquidityTrackerInner>>,
-    funder_address: Address,
-    providers: HashMap<ChainId, DynProvider>,
-}
-
-impl LiquidityTracker {
-    /// Creates a new liquidity tracker.
-    pub fn new(providers: HashMap<ChainId, DynProvider>, funder_address: Address) -> Self {
-        let inner = Arc::new(Mutex::new(Default::default()));
-        let this = Self { inner: inner.clone(), providers: providers.clone(), funder_address };
-
-        // Spawn a task that periodically cleans up the pending unlocks for older blocks.
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-
-                let result = providers
-                    .iter()
-                    .map(async |(chain, provider)| {
-                        let latest_block = provider.get_block_number().await?;
-                        let mut lock = inner.lock().await;
-                        let LiquidityTrackerInner { locked_liquidity, pending_unlocks } =
-                            &mut *lock;
-                        for (asset, unlocks) in pending_unlocks {
-                            if asset.0 == *chain {
-                                // Keep 10 blocks of pending unlocks
-                                let to_keep = unlocks.split_off(&latest_block.saturating_sub(10));
-                                let to_remove = core::mem::replace(unlocks, to_keep);
-
-                                // Remove everything else from the locked mapping
-                                for (_, unlock) in to_remove {
-                                    locked_liquidity.entry(*asset).and_modify(|amount| {
-                                        *amount = amount.saturating_sub(unlock);
-                                    });
-                                }
-                            }
-                        }
-                        eyre::Ok(())
-                    })
-                    .collect::<TryJoinAll<_>>()
-                    .await;
-
-                if let Err(e) = result {
-                    error!("liquidity tracker task failed: {:?}", e);
-                }
-            }
-        });
-
-        this
-    }
-
-    /// Locks liquidity for an interop bundle.
-    pub async fn try_lock_liquidity(
-        &self,
-        assets: impl IntoIterator<Item = AssetTransfer>,
-    ) -> Result<(), InteropBundleError> {
-        // Deduplicate assets by chain and asset address
-        let inputs: HashMap<_, U256> = assets
-            .into_iter()
-            .map(|transfer| ((transfer.chain_id, transfer.asset_address), transfer.amount))
-            .fold(HashMap::default(), |mut map, (k, v)| {
-                *map.entry(k).or_default() += v;
-                map
-            });
-
-        // Construct inputs for liquidity tracker by fetching balances
-        let inputs = inputs
-            .into_iter()
-            .map(async |((chain, asset), amount)| {
-                let provider = &self.providers[&chain];
-                let (balance, block_number) = if !asset.is_zero() {
-                    let (balance, block_number) = provider
-                        .multicall()
-                        .add(IERC20::new(asset, provider).balanceOf(self.funder_address))
-                        .get_block_number()
-                        .aggregate()
-                        .await?;
-                    (balance, block_number.to::<u64>())
-                } else {
-                    let block_number = provider.get_block_number().await?;
-                    let balance = provider
-                        .get_balance(self.funder_address)
-                        .block_id(block_number.into())
-                        .await?;
-                    (balance, block_number)
-                };
-
-                Ok::<_, MulticallError>((
-                    (chain, asset),
-                    LockLiquidityInput {
-                        current_balance: balance,
-                        balance_at: block_number,
-                        lock_amount: amount,
-                    },
-                ))
-            })
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .collect();
-
-        self.inner.lock().await.try_lock_liquidity(inputs).await?;
-
-        Ok(())
-    }
-
-    /// Unlocks liquidity from an interop bundle.
-    pub async fn unlock_liquidity(
-        &self,
-        chain_id: ChainId,
-        asset: Address,
-        amount: U256,
-        at: BlockNumber,
-    ) {
-        self.inner.lock().await.unlock_liquidity(chain_id, asset, amount, at);
-    }
-}
-
 /// Handle to communicate with the [`InteropService`].
 #[derive(Debug, Clone)]
 pub struct InteropServiceHandle {
     command_tx: mpsc::UnboundedSender<InteropServiceMessage>,
     storage: RelayStorage,
+    liquidity_tracker: LiquidityTracker,
 }
 
 impl InteropServiceHandle {
@@ -438,6 +249,11 @@ impl InteropServiceHandle {
     /// Sends a bundle with status to the service.
     pub fn send_bundle_with_status(&self, bundle: BundleWithStatus) {
         let _ = self.command_tx.send(InteropServiceMessage::SendBundleWithStatus(Box::new(bundle)));
+    }
+
+    /// Returns a handle to the liquidity tracker.
+    pub fn liquidity_tracker(&self) -> &LiquidityTracker {
+        &self.liquidity_tracker
     }
 }
 
@@ -503,9 +319,9 @@ impl InteropServiceInner {
         Ok(())
     }
 
-    /// Handle the Init status - check liquidity and queue source transactions
+    /// Handle the Init status - lock liquidity
     ///
-    /// Transitions to: [`BundleStatus::SourceQueued`]
+    /// Transitions to: [`BundleStatus::LiquidityLocked`]
     async fn on_init(&self, bundle: &mut BundleWithStatus) -> Result<(), InteropBundleError> {
         tracing::info!(
             bundle_id = ?bundle.bundle.id,
@@ -513,6 +329,23 @@ impl InteropServiceInner {
             dst_count = bundle.bundle.dst_txs.len(),
             "Initializing bundle"
         );
+
+        self.liquidity_tracker
+            .try_lock_liquidity_for_bundle(&bundle.bundle, BundleStatus::LiquidityLocked)
+            .await?;
+        bundle.status = BundleStatus::LiquidityLocked;
+
+        Ok(())
+    }
+
+    /// Handle the LiquidityLocked status - queue source transactions
+    ///
+    /// Transitions to: [`BundleStatus::SourceQueued`]
+    async fn on_liquidity_locked(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Sending source transactions");
 
         // Update status and queue source transactions atomically
         self.queue_transactions_and_update_status(
@@ -561,7 +394,7 @@ impl InteropServiceInner {
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Sending destination transactions");
 
         // Update status and queue destination transactions atomically
         self.queue_transactions_and_update_status(
@@ -604,20 +437,10 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing destination transactions");
 
-        // Process destination transactions (waits for completion)
-        let new_status = match self.process_destination_transactions(&bundle.bundle).await {
-            Ok(()) => {
-                // Update status to destination confirmed
-                BundleStatus::DestinationConfirmed
-            }
-            Err(e) => {
-                // Update status to destination failures
-                tracing::error!(bundle_id = ?bundle.bundle.id, error = ?e, "Destination transactions failed");
-                BundleStatus::DestinationFailures
-            }
-        };
+        let (status, receipts) = self.process_destination_transactions(&bundle.bundle).await?;
+        self.storage.unlock_bundle_liquidity(&bundle.bundle, receipts, status).await?;
+        bundle.status = status;
 
-        self.update_bundle_status(bundle, new_status).await?;
         Ok(())
     }
 
@@ -787,14 +610,15 @@ impl InteropServiceInner {
     async fn process_destination_transactions(
         &self,
         bundle: &InteropBundle,
-    ) -> Result<(), InteropBundleError> {
-        let mut maybe_err = Ok(());
-
+    ) -> Result<(BundleStatus, HashMap<TxId, TransactionReceipt>), InteropBundleError> {
         // Wait for transactions queued by `queue_bundle_transactions
         let results = self.watch_transactions(bundle.dst_txs.iter()).await?;
 
         // Collect receipts and check if any failed
-        let mut receipts = HashMap::with_capacity(bundle.dst_txs.len());
+        let mut receipts =
+            HashMap::with_capacity_and_hasher(bundle.dst_txs.len(), Default::default());
+        let mut any_failed = false;
+
         for (tx_id, result) in results {
             match result {
                 Ok(receipt) => {
@@ -802,26 +626,27 @@ impl InteropServiceInner {
                 }
                 Err(err) => {
                     tracing::error!(tx_id = ?tx_id, ?err, "Destination transaction failed");
-                    maybe_err = Err(InteropBundleError::TransactionError(err));
+                    any_failed = true;
                 }
             }
         }
 
-        for (transfer, tx) in bundle.asset_transfers.iter().zip(&bundle.dst_txs) {
-            let block = receipts.get(&tx.id).and_then(|r| r.block_number).unwrap_or_default();
+        let status = if any_failed {
+            BundleStatus::DestinationFailures
+        } else {
+            BundleStatus::DestinationConfirmed
+        };
 
-            self.liquidity_tracker
-                .unlock_liquidity(transfer.chain_id, transfer.asset_address, transfer.amount, block)
-                .await;
-        }
-
-        maybe_err
+        Ok((status, receipts))
     }
 
     /// # Bundle State Machine
     ///
     /// ```text
     ///                              Init
+    ///                               │
+    ///                               ▼
+    ///                        LiquidityLocked
     ///                               │
     ///                               ▼
     ///                          SourceQueued
@@ -851,17 +676,10 @@ impl InteropServiceInner {
         &self,
         mut bundle: BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        // Lock liquidity before processing the bundle (skip if already has processed the
-        // destination transactions)
-        if !bundle.status.is_destination_failures() && !bundle.status.is_destination_confirmed() {
-            self.liquidity_tracker
-                .try_lock_liquidity(bundle.bundle.asset_transfers.clone())
-                .await?;
-        }
-
         loop {
             match bundle.status {
                 BundleStatus::Init => self.on_init(&mut bundle).await?,
+                BundleStatus::LiquidityLocked => self.on_liquidity_locked(&mut bundle).await?,
                 BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,
                 BundleStatus::SourceConfirmed => self.on_source_confirmed(&mut bundle).await?,
                 BundleStatus::SourceFailures => self.on_source_failures(&mut bundle).await?,
@@ -898,26 +716,24 @@ pub struct InteropService {
 impl InteropService {
     /// Creates a new interop service.
     pub async fn new(
-        providers: HashMap<ChainId, DynProvider>,
         tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        funder_address: Address,
-        storage: RelayStorage,
+        liquidity_tracker: LiquidityTracker,
     ) -> eyre::Result<(Self, InteropServiceHandle)> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
-        let liquidity_tracker = LiquidityTracker::new(providers, funder_address);
+        let storage = liquidity_tracker.storage().clone();
         let pending_bundles = storage.get_pending_bundles().await?;
 
         let service = Self {
             inner: Arc::new(InteropServiceInner::new(
                 tx_service_handles,
-                liquidity_tracker,
+                liquidity_tracker.clone(),
                 storage.clone(),
             )),
             command_rx,
         };
 
-        let handle = InteropServiceHandle { command_tx, storage };
+        let handle = InteropServiceHandle { command_tx, storage, liquidity_tracker };
 
         for bundle in pending_bundles {
             tracing::info!(
@@ -961,6 +777,7 @@ impl Future for InteropService {
 mod tests {
     use super::*;
     use crate::storage::RelayStorage;
+    use alloy::providers::DynProvider;
     use sqlx::PgPool;
 
     async fn get_test_storage() -> RelayStorage {
@@ -985,7 +802,8 @@ mod tests {
         use BundleStatus::*;
 
         // Valid transitions
-        assert!(Init.can_transition_to(&SourceQueued));
+        assert!(Init.can_transition_to(&LiquidityLocked));
+        assert!(LiquidityLocked.can_transition_to(&SourceQueued));
         assert!(SourceQueued.can_transition_to(&SourceConfirmed));
         assert!(SourceQueued.can_transition_to(&SourceFailures));
         assert!(SourceConfirmed.can_transition_to(&DestinationQueued));
@@ -1001,7 +819,10 @@ mod tests {
 
         // Invalid transitions
         assert!(!Init.can_transition_to(&SourceConfirmed));
+        assert!(!Init.can_transition_to(&SourceQueued)); // Must go through LiquidityLocked
         assert!(!Init.can_transition_to(&Done));
+        assert!(!LiquidityLocked.can_transition_to(&SourceConfirmed));
+        assert!(!LiquidityLocked.can_transition_to(&DestinationQueued));
         assert!(!SourceQueued.can_transition_to(&DestinationQueued));
         assert!(!DestinationConfirmed.can_transition_to(&SourceQueued));
         assert!(!Done.can_transition_to(&Init));
@@ -1036,7 +857,17 @@ mod tests {
         assert_eq!(bundle_with_status.bundle.id, bundle_id);
         assert_eq!(bundle_with_status.status, BundleStatus::Init);
 
-        // Update status
+        // Update status to LiquidityLocked first
+        storage
+            .update_pending_bundle_status(bundle_id, BundleStatus::LiquidityLocked)
+            .await
+            .unwrap();
+
+        // Verify status updated
+        let updated = storage.get_pending_bundle(bundle_id).await.unwrap().unwrap();
+        assert_eq!(updated.status, BundleStatus::LiquidityLocked);
+
+        // Update to SourceQueued
         storage.update_pending_bundle_status(bundle_id, BundleStatus::SourceQueued).await.unwrap();
 
         // Verify status updated
@@ -1058,8 +889,11 @@ mod tests {
         let tx_handles: HashMap<ChainId, TransactionServiceHandle> = HashMap::default();
         let funder = Address::default();
 
-        let inner =
-            InteropServiceInner::new(tx_handles, LiquidityTracker::new(providers, funder), storage);
+        let inner = InteropServiceInner::new(
+            tx_handles,
+            LiquidityTracker::new(providers, funder, storage.clone()),
+            storage,
+        );
 
         let bundle_id = BundleId::random();
         let bundle = InteropBundle::new(bundle_id);

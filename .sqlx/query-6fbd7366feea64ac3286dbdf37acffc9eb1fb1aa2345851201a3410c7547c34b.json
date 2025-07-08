@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select status as \"status: BridgeTransferStatus\", outbound_block_number, inbound_block_number from bridge_transfers where transfer_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status: BridgeTransferStatus",
+        "type_info": {
+          "Custom": {
+            "name": "bridge_transfer_status",
+            "kind": {
+              "Enum": [
+                "pending",
+                "sent",
+                "outbound_failed",
+                "completed",
+                "inbound_failed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "outbound_block_number",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "inbound_block_number",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "6fbd7366feea64ac3286dbdf37acffc9eb1fb1aa2345851201a3410c7547c34b"
+}

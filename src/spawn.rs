@@ -59,6 +59,8 @@ pub struct RelayHandle {
     pub metrics: PrometheusHandle,
     /// Price oracle.
     pub price_oracle: PriceOracle,
+    /// Coin registry.
+    pub fee_tokens: Arc<FeeTokens>,
 }
 
 impl RelayHandle {
@@ -186,7 +188,18 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
-    let chains = Chains::new(providers.clone(), signers, storage.clone(), &config).await?;
+    let fee_tokens = Arc::new(
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers.clone(),
+        )
+        .await?,
+    );
+
+    let chains =
+        Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
@@ -206,13 +219,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(
-            &registry,
-            &config.chain.fee_tokens,
-            &config.chain.interop_tokens,
-            providers,
-        )
-        .await?,
+        fee_tokens.clone(),
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
@@ -284,5 +291,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage,
         metrics,
         price_oracle,
+        fee_tokens,
     })
 }

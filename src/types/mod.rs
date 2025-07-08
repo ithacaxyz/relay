@@ -73,3 +73,6 @@ pub use settler::*;
 
 mod escrow;
 pub use escrow::*;
+
+mod funder;
+pub use funder::*;

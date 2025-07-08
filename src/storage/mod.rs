@@ -5,18 +5,26 @@ pub use crate::{
     transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
     types::InteropTxType,
 };
-pub use api::StorageApi;
+use alloy::{
+    primitives::{BlockNumber, U256},
+    rpc::types::TransactionReceipt,
+};
+pub use api::{LockLiquidityInput, StorageApi};
 
 mod memory;
 mod pg;
 
 use crate::{
+    liquidity::{
+        ChainAddress,
+        bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
+    },
     transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, ChainId},
+    primitives::{Address, ChainId, map::HashMap},
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -164,5 +172,86 @@ impl StorageApi for RelayStorage {
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> api::Result<()> {
         self.inner.move_bundle_to_finished(bundle_id).await
+    }
+
+    async fn lock_liquidity_for_bundle(
+        &self,
+        assets: HashMap<ChainAddress, LockLiquidityInput>,
+        bundle_id: BundleId,
+        status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.lock_liquidity_for_bundle(assets, bundle_id, status).await
+    }
+
+    async fn unlock_bundle_liquidity(
+        &self,
+        bundle: &InteropBundle,
+        receipts: HashMap<TxId, TransactionReceipt>,
+        status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.unlock_bundle_liquidity(bundle, receipts, status).await
+    }
+
+    async fn get_total_locked_at(&self, asset: ChainAddress, at: BlockNumber) -> api::Result<U256> {
+        self.inner.get_total_locked_at(asset, at).await
+    }
+
+    async fn prune_unlocked_entries(
+        &self,
+        chain_id: ChainId,
+        until: BlockNumber,
+    ) -> api::Result<()> {
+        self.inner.prune_unlocked_entries(chain_id, until).await
+    }
+
+    async fn lock_liquidity_for_bridge(
+        &self,
+        transfer: &BridgeTransfer,
+        input: LockLiquidityInput,
+    ) -> api::Result<()> {
+        self.inner.lock_liquidity_for_bridge(transfer, input).await
+    }
+
+    async fn update_transfer_bridge_data(
+        &self,
+        transfer_id: BridgeTransferId,
+        data: &serde_json::Value,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_bridge_data(transfer_id, data).await
+    }
+
+    async fn get_transfer_bridge_data(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> api::Result<Option<serde_json::Value>> {
+        self.inner.get_transfer_bridge_data(transfer_id).await
+    }
+
+    async fn update_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_state(transfer_id, state).await
+    }
+
+    async fn update_transfer_state_and_unlock_liquidity(
+        &self,
+        transfer_id: BridgeTransferId,
+        state: BridgeTransferState,
+        at: BlockNumber,
+    ) -> api::Result<()> {
+        self.inner.update_transfer_state_and_unlock_liquidity(transfer_id, state, at).await
+    }
+
+    async fn get_transfer_state(
+        &self,
+        transfer_id: BridgeTransferId,
+    ) -> api::Result<Option<BridgeTransferState>> {
+        self.inner.get_transfer_state(transfer_id).await
+    }
+
+    async fn load_pending_transfers(&self) -> api::Result<Vec<BridgeTransfer>> {
+        self.inner.load_pending_transfers().await
     }
 }

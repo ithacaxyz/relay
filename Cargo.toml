@@ -38,6 +38,7 @@ alloy = { version = "1.0.17", features = [
     "reqwest-rustls-tls",
     "signer-mnemonic",
     "signer-aws",
+    "rand",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
@@ -92,11 +93,17 @@ sqlx = { version = "0.8.5", features = [
     "postgres",
     "runtime-tokio",
     "macros",
+    "bigdecimal",
 ] }
 serde_yaml = "0.9.34"
 resend-rs = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
+num-traits = "0.2"
+num-bigint = "0.4"
+ruint = { version = "1.1.0", features = ["num-bigint"] }
+binance-sdk = { version = "6", features = ["wallet"] }
+rust_decimal = "1"
 
 [dev-dependencies]
 alloy = { version = "1.0.17", features = [
