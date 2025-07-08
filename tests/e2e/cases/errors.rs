@@ -31,6 +31,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(key.to_call_key()),
         })
         .await;

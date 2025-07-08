@@ -35,6 +35,7 @@ async fn pause() -> eyre::Result<()> {
             pre_call: false,
         },
         state_overrides: Default::default(),
+        balance_overrides: Default::default(),
         key: Some(eoa.key.to_call_key()),
     };
 

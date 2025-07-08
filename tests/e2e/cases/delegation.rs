@@ -58,6 +58,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             pre_call: false,
         },
         state_overrides: Default::default(),
+        balance_overrides: Default::default(),
         key: Some(admin_key.to_call_key()),
     };
 
@@ -288,6 +289,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 pre_call: true,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
@@ -316,6 +318,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;

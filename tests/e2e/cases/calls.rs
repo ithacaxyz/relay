@@ -60,6 +60,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     pre_call: false,
                 },
                 state_overrides: Default::default(),
+                balance_overrides: Default::default(),
                 key: Some(signer.to_call_key()),
             })
             .await?;

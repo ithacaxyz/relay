@@ -1,26 +1,34 @@
 //! RPC calls-related request and response types.
 
+use std::collections::HashMap;
+
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
         Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
+        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote, TokenKind,
     },
 };
 use alloy::{
     consensus::Eip658Value,
+    contract::StorageSlotFinder,
     dyn_abi::TypedData,
     primitives::{
         Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
         aliases::{B192, U192},
+        map::B256HashMap,
         wrap_fixed_bytes,
     },
-    providers::DynProvider,
-    rpc::types::{Log, state::StateOverride},
+    providers::{DynProvider, Provider},
+    rpc::types::{
+        Log,
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
+    },
     sol_types::SolEvent,
     uint,
 };
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -55,6 +63,90 @@ impl CallKey {
     }
 }
 
+/// A set of balance overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BalanceOverrides {
+    #[serde(flatten)]
+    balances: HashMap<Address, BalanceOverride>,
+}
+
+impl BalanceOverrides {
+    /// Convert the balance overrides into state overrides.
+    ///
+    /// # Note
+    ///
+    /// This finds storage slots for the assets and might be slow.
+    pub async fn into_state_overrides<P: Provider + Clone>(
+        self,
+        provider: P,
+    ) -> Result<StateOverride, RelayError> {
+        async fn account_override_for_token<P: Provider + Clone>(
+            provider: P,
+            token_address: Address,
+            balances: HashMap<Address, U256>,
+        ) -> Result<AccountOverride, RelayError> {
+            let slots: B256HashMap<B256> =
+                try_join_all(balances.into_iter().map(|(account, balance)| {
+                    let provider = provider.clone();
+
+                    async move {
+                        let slot = StorageSlotFinder::balance_of(provider, token_address, account)
+                            .find_slot()
+                            .await?;
+
+                        Ok::<_, RelayError>((
+                            slot.ok_or_else(|| {
+                                eyre::eyre!(format!(
+                                    "could not determine balance slot for {}",
+                                    token_address
+                                ))
+                            })?,
+                            balance.into(),
+                        ))
+                    }
+                }))
+                .await?
+                .into_iter()
+                .collect();
+
+            Ok::<_, RelayError>(AccountOverride { state: Some(slots), ..Default::default() })
+        }
+
+        let account_overrides: Vec<(Address, AccountOverride)> =
+            try_join_all(self.balances.into_iter().map(|(token_address, overrides)| {
+                let provider = provider.clone();
+                async move {
+                    Ok::<_, RelayError>((
+                        token_address,
+                        account_override_for_token(
+                            provider.clone(),
+                            token_address,
+                            overrides.balances,
+                        )
+                        .await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        Ok(StateOverridesBuilder::default().extend(account_overrides).build())
+    }
+}
+
+/// A balance override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceOverride {
+    /// The kind of asset this is.
+    ///
+    /// # Note
+    ///
+    /// Currently this only supports ERC20, so it should be validated that this is equal to ERC20.
+    kind: TokenKind,
+    /// The balances to override.
+    #[serde(flatten)]
+    balances: HashMap<Address, U256>,
+}
+
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +164,14 @@ pub struct PrepareCallsParameters {
     /// State overrides for simulating the call bundle.
     #[serde(default)]
     pub state_overrides: StateOverride,
+    /// Balance overrides for simulating the call bundle.
+    ///
+    /// This will only be applied to the intent on the output chain in multichain intents.
+    ///
+    /// This uses heuristics to determine the balance slot, so it might be inaccurate in some
+    /// cases.
+    #[serde(default)]
+    pub balance_overrides: BalanceOverrides,
     /// Key that will be used to sign the call bundle. It can only be None, if we are handling a
     /// precall.
     #[serde(default)]

@@ -58,6 +58,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
