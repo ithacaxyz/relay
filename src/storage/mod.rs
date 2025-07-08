@@ -161,15 +161,6 @@ impl StorageApi for RelayStorage {
         self.inner.get_pending_bundle(bundle_id).await
     }
 
-    async fn queue_bundle_transactions(
-        &self,
-        bundle: &InteropBundle,
-        status: BundleStatus,
-        tx_type: InteropTxType,
-    ) -> api::Result<()> {
-        self.inner.queue_bundle_transactions(bundle, status, tx_type).await
-    }
-
     async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &InteropBundle,

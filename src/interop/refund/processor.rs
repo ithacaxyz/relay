@@ -191,17 +191,6 @@ impl RefundProcessor {
         bundle: &InteropBundle,
         escrow_details: &[EscrowDetails],
     ) -> Result<RefundTransactions, RefundProcessorError> {
-        // Build mapping of escrow IDs to source transaction IDs
-        let escrow_to_source_tx: HashMap<B256, TxId> = bundle
-            .src_txs
-            .iter()
-            .filter_map(|tx| {
-                tx.extract_escrow_details()
-                    .filter(|escrow| escrow_details.iter().any(|e| e.escrow_id == escrow.escrow_id))
-                    .map(|escrow| (escrow.escrow_id, tx.id))
-            })
-            .collect();
-
         let existing_refunds = self.process_existing_refund_transactions(bundle).await?;
 
         // Find escrows that need refund transactions
@@ -229,8 +218,7 @@ impl RefundProcessor {
         );
 
         // Build new refund transactions
-        let new_refund_txs =
-            self.build_refund_transactions(&escrow_to_source_tx, &escrows_needing_refunds).await?;
+        let new_refund_txs = self.build_refund_transactions(&escrows_needing_refunds).await?;
 
         info!(
             bundle_id = ?bundle.id,
@@ -430,18 +418,9 @@ impl RefundProcessor {
     /// Build refund transactions for escrows that need them
     async fn build_refund_transactions(
         &self,
-        escrow_to_source_tx: &HashMap<B256, TxId>,
         escrows_needing_refunds: &[&EscrowDetails],
     ) -> Result<Vec<RelayTransaction>, RefundProcessorError> {
         let new_refund_txs = try_join_all(escrows_needing_refunds.iter().map(async |escrow| {
-            let source_tx_id =
-                escrow_to_source_tx.get(&escrow.escrow_id).copied().ok_or_else(|| {
-                    RefundProcessorError::ExecutionFailed(format!(
-                        "Could not find source transaction ID for escrow {:?}",
-                        escrow.escrow_id
-                    ))
-                })?;
-
             let input = IEscrow::refundCall { escrowIds: vec![escrow.escrow_id] }.abi_encode();
 
             // Estimate gas for the refund transaction
@@ -473,10 +452,9 @@ impl RefundProcessor {
                 REFUND_FALLBACK_GAS_LIMIT
             };
 
-            let refund_tx = RelayTransaction::new_refund(
-                source_tx_id,
-                escrow.escrow_address.into(),
-                input.into(),
+            let refund_tx = RelayTransaction::new_internal(
+                escrow.escrow_address,
+                input,
                 escrow.chain_id,
                 gas_limit,
             );

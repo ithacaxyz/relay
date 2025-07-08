@@ -1,6 +1,6 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -752,26 +752,6 @@ impl StorageApi for PgStorage {
             }
             None => Ok(None),
         }
-    }
-
-    async fn queue_bundle_transactions(
-        &self,
-        bundle: &InteropBundle,
-        status: BundleStatus,
-        tx_type: InteropTxType,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
-
-        // Queue the appropriate transactions
-        for relay_tx in bundle.transactions(tx_type) {
-            self.queue_transaction_with(relay_tx, &mut tx).await?;
-        }
-
-        // Update bundle status
-        self.update_pending_bundle_status_with(bundle.id, status, &mut tx).await?;
-
-        tx.commit().await.map_err(eyre::Error::from)?;
-        Ok(())
     }
 
     async fn update_bundle_and_queue_transactions(

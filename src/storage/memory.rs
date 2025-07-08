@@ -1,6 +1,6 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -186,23 +186,6 @@ impl StorageApi for InMemoryStorage {
 
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
         Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
-    }
-
-    async fn queue_bundle_transactions(
-        &self,
-        bundle: &InteropBundle,
-        status: BundleStatus,
-        tx_type: InteropTxType,
-    ) -> Result<()> {
-        // Queue the appropriate transactions
-        for tx in bundle.transactions(tx_type) {
-            self.queue_transaction(tx).await?;
-        }
-
-        // Only update the status, don't store the bundle
-        self.update_pending_bundle_status(bundle.id, status).await?;
-
-        Ok(())
     }
 
     async fn update_bundle_and_queue_transactions(

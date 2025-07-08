@@ -46,19 +46,6 @@ pub enum RelayTransactionKind {
         /// Gas limit of the transaction.
         gas_limit: u64,
     },
-    /// A refund transaction for a failed interop bundle.
-    Refund {
-        /// The source transaction ID that this refund is for.
-        source_tx_id: TxId,
-        /// Kind of the transaction (to address).
-        kind: TxKind,
-        /// Input of the transaction.
-        input: Bytes,
-        /// Chain id of the transaction.
-        chain_id: ChainId,
-        /// Gas limit of the transaction.
-        gas_limit: u64,
-    },
 }
 
 impl RelayTransactionKind {
@@ -67,7 +54,6 @@ impl RelayTransactionKind {
         match self {
             Self::Intent { quote, .. } => quote.chain_id,
             Self::Internal { chain_id, .. } => *chain_id,
-            Self::Refund { chain_id, .. } => *chain_id,
         }
     }
 }
@@ -113,22 +99,6 @@ impl RelayTransaction {
                 chain_id,
                 gas_limit,
             },
-            trace_context: Context::current(),
-            received_at: Utc::now(),
-        }
-    }
-
-    /// Create a new [`RelayTransaction`] for a refund transaction.
-    pub fn new_refund(
-        source_tx_id: TxId,
-        kind: TxKind,
-        input: Bytes,
-        chain_id: ChainId,
-        gas_limit: u64,
-    ) -> Self {
-        Self {
-            id: TxId(B256::random()),
-            kind: RelayTransactionKind::Refund { source_tx_id, kind, input, chain_id, gas_limit },
             trace_context: Context::current(),
             received_at: Utc::now(),
         }
@@ -197,18 +167,6 @@ impl RelayTransaction {
                 access_list: Default::default(),
             }
             .into(),
-            RelayTransactionKind::Refund { kind, input, chain_id, gas_limit, .. } => TxEip1559 {
-                chain_id: *chain_id,
-                nonce,
-                to: *kind,
-                input: input.clone(),
-                gas_limit: *gas_limit,
-                max_fee_per_gas: fees.max_fee_per_gas,
-                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                value: U256::ZERO,
-                access_list: Default::default(),
-            }
-            .into(),
         }
     }
 
@@ -243,20 +201,6 @@ impl RelayTransaction {
     /// Whether the transaction is an intent.
     pub fn is_intent(&self) -> bool {
         matches!(self.kind, RelayTransactionKind::Intent { .. })
-    }
-
-    /// Whether the transaction is a refund.
-    pub fn is_refund(&self) -> bool {
-        matches!(self.kind, RelayTransactionKind::Refund { .. })
-    }
-
-    /// Returns the source transaction ID if this is a refund transaction.
-    pub fn source_tx_id(&self) -> Option<TxId> {
-        if let RelayTransactionKind::Refund { source_tx_id, .. } = &self.kind {
-            Some(*source_tx_id)
-        } else {
-            None
-        }
     }
 
     /// Extracts escrow details from this transaction if it contains an escrow call.
@@ -294,7 +238,7 @@ impl RelayTransaction {
     /// For other transaction types, returns an empty vector.
     pub fn escrow_ids(&self) -> Vec<B256> {
         match &self.kind {
-            RelayTransactionKind::Refund { input, .. } => IEscrow::refundCall::abi_decode(input)
+            RelayTransactionKind::Internal { input, .. } => IEscrow::refundCall::abi_decode(input)
                 .map(|call| call.escrowIds)
                 .unwrap_or_default(),
             _ => vec![],

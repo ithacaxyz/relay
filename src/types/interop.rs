@@ -20,9 +20,4 @@ impl InteropTxType {
     pub fn is_destination(&self) -> bool {
         matches!(self, Self::Destination)
     }
-
-    /// Returns true if this is the Refund variant.
-    pub fn is_refund(&self) -> bool {
-        matches!(self, Self::Refund)
-    }
 }

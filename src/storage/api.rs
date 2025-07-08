@@ -10,7 +10,7 @@ use crate::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, InteropTxType, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -120,19 +120,6 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Gets a specific pending bundle by ID.
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;
-
-    /// Atomically update bundle status and queue transactions.
-    ///
-    /// # Arguments
-    /// * `bundle` - The bundle containing transactions to queue
-    /// * `status` - The new status for the bundle
-    /// * `tx_type` - Specifies whether to queue source or destination transactions
-    async fn queue_bundle_transactions(
-        &self,
-        bundle: &InteropBundle,
-        status: BundleStatus,
-        tx_type: InteropTxType,
-    ) -> Result<()>;
 
     /// Atomically update bundle data and queue specific transactions.
     /// Used when you need to update the bundle and queue transactions atomically.

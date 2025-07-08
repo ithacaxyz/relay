@@ -391,7 +391,12 @@ impl InteropServiceInner {
             });
         }
 
-        self.storage.queue_bundle_transactions(&bundle.bundle, new_status, tx_type).await?;
+        // Update bundle status and queue transactions
+        let transactions: Vec<RelayTransaction> =
+            bundle.bundle.transactions(tx_type).cloned().collect();
+        self.storage
+            .update_bundle_and_queue_transactions(&bundle.bundle, new_status, &transactions)
+            .await?;
         bundle.status = new_status;
         Ok(())
     }
