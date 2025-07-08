@@ -32,6 +32,7 @@ const REFUND_FALLBACK_GAS_LIMIT: u64 = 1_000_000;
 
 /// Updates to apply to the in-memory bundle after queueing refunds
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct RefundUpdate {
     /// New refund transactions to add to the bundle
     pub new_refund_txs: Vec<RelayTransaction>,

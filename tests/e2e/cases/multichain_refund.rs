@@ -9,6 +9,10 @@ use relay::{
 };
 use tokio::time::{Duration, sleep};
 
+/// Tests automatic refund mechanism when destination chain fails.
+///
+/// Transfer initiated but destination chain (3) stops processing. After 2s timeout,
+/// funds locked in escrow on chains 1&2 are automatically refunded to user.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multichain_refund() -> Result<()> {
     // Set up the multichain transfer scenario with custom 2-second refund threshold

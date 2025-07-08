@@ -25,6 +25,10 @@ use relay::{
     },
 };
 
+/// Tests successful cross-chain transfer using escrow mechanism.
+///
+/// User has USDT on chains 1&2, wants to send to recipient on chain 3.
+/// Funds are locked in escrow, settler provides liquidity on destination.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multichain_usdt_transfer() -> Result<()> {
     // Set up the multichain transfer scenario
