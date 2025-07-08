@@ -82,6 +82,7 @@ impl MockAccount {
                     revoke_keys: vec![],
                 },
                 state_overrides: Default::default(),
+                balance_overrides: Default::default(),
                 key: Some(key.to_call_key()),
             })
             .await
@@ -117,6 +118,7 @@ impl MockAccount {
                     revoke_keys: vec![],
                 },
                 state_overrides: Default::default(),
+                balance_overrides: Default::default(),
                 key: Some(self.key.to_call_key()),
             })
             .await

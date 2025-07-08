@@ -79,6 +79,8 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
                 pre_call: false,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+
             key: Some(admin_key.to_call_key()),
         };
         let diffs = env.relay_endpoint.prepare_calls(params).await?.capabilities.asset_diff;
@@ -115,6 +117,8 @@ async fn asset_diff() -> eyre::Result<()> {
             pre_call: false,
         },
         state_overrides: Default::default(),
+        balance_overrides: Default::default(),
+
         key: Some(admin_key.to_call_key()),
     };
 
@@ -243,6 +247,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
             pre_call: false,
         },
         state_overrides: Default::default(),
+        balance_overrides: Default::default(),
         key: Some(admin_key.to_call_key()),
     };
 

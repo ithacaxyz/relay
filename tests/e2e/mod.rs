@@ -137,6 +137,7 @@ pub async fn prepare_calls(
                 pre_call,
             },
             state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(signer.to_call_key()),
         })
         .await;
