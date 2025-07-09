@@ -9,18 +9,6 @@ fn main() -> anyhow::Result<()> {
         flags::XtaskCmd::E2e(flags::E2e { rest }) => {
             let sh = Shell::new()?;
 
-            // todo(joshie): Apply Escrow.sol fix before building. TEMPORARY
-            let escrow_path = Path::new("tests/account/src/Escrow.sol");
-            if escrow_path.exists() {
-                println!("Applying Escrow.sol refund timestamp fix...");
-                let content = fs::read_to_string(escrow_path)?;
-                let fixed_content = content.replace(
-                    "if (_escrow.refundTimestamp < block.timestamp)",
-                    "if (_escrow.refundTimestamp > block.timestamp)",
-                );
-                fs::write(escrow_path, fixed_content)?;
-            }
-
             // Change to the tests/account directory to build contracts
             let account_dir = "tests/account";
             let _dir = sh.push_dir(account_dir);

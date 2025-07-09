@@ -19,9 +19,11 @@ sol! {
         /// Escrow has been created and funds are locked.
         CREATED,
         /// Escrow has been refunded to the depositor.
-        REFUNDED,
-        /// Escrow has been settled and funds transferred to recipient.
-        SETTLED
+        REFUND_DEPOSIT,
+        /// Escrow has been refunded to the recipient.
+        REFUND_RECIPIENT,
+        /// Finalized.
+        FINALIZED
     }
 
     /// Represents an escrow entry with all necessary metadata for cross-chain settlement.
@@ -35,6 +37,12 @@ sol! {
         address recipient;
         /// Token address (or zero address for native token).
         address token;
+        /// Amount of tokens locked in escrow.
+        uint256 escrowAmount;
+        /// Amount to refund if escrow is not settled.
+        uint256 refundAmount;
+        /// Timestamp after which the escrow can be refunded.
+        uint256 refundTimestamp;
         /// Address of the settler contract responsible for attestation.
         address settler;
         /// Address of the sender on the output chain (typically orchestrator).
@@ -43,12 +51,6 @@ sol! {
         bytes32 settlementId;
         /// Chain ID where the sender resides.
         uint256 senderChainId;
-        /// Amount of tokens locked in escrow.
-        uint256 escrowAmount;
-        /// Amount to refund if escrow is not settled.
-        uint256 refundAmount;
-        /// Timestamp after which the escrow can be refunded.
-        uint256 refundTimestamp;
     }
 
     #[sol(rpc)]
