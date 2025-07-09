@@ -198,7 +198,7 @@ impl Relay {
                 max_fee_per_gas: u128::MAX,
                 max_priority_fee_per_gas: u128::MAX,
                 to: (!Address::ZERO).into(),
-                input: intent.encode_execute(false),
+                input: intent.encode_execute(),
                 ..Default::default()
             };
             let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
@@ -341,7 +341,6 @@ impl Relay {
 
         let intrinsic_gas = approx_intrinsic_cost(
             &OrchestratorContract::executeCall {
-                isMultiChain: !context.intent_kind.is_single(),
                 encodedIntent: intent_to_sign.abi_encode().into(),
             }
             .abi_encode(),
@@ -388,6 +387,9 @@ impl Relay {
             )
             .await?;
 
+        // todo: set it before we simulate once we support multichain simulations
+        intent_to_sign.isMultichain = !context.intent_kind.is_single();
+
         // todo: re-evaluate if this is still necessary
         let gas_estimate = GasEstimate::from_combined_gas(
             sim_result.gCombined.to(),
@@ -422,7 +424,6 @@ impl Relay {
             native_fee_estimate,
             authorization_address: context.authorization_address,
             orchestrator: *orchestrator.address(),
-            is_multi_chain: !context.intent_kind.is_single(),
         };
 
         Ok((asset_diff, quote))
@@ -1158,7 +1159,6 @@ impl Relay {
                     output_intent_digest,
                     output_chain_id: request.chain_id,
                 };
-
                 self.prepare_calls_inner(
                     self.build_funding_intent(funding_context, request_key.clone())?,
                     Some(IntentKind::MultiInput { leaf_index: leaf }),

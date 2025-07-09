@@ -87,8 +87,6 @@ pub struct Quote {
     pub authorization_address: Option<Address>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
-    /// Whether it's part of a multi chain intent
-    pub is_multi_chain: bool,
 }
 
 impl Quote {

@@ -118,7 +118,7 @@ sol! {
         /// `encodedIntent` is given by `abi.encode(intent)`, where `intent` is a struct of type `Intent`.
         /// If sufficient gas is provided, returns an error selector that is non-zero
         /// if there is an error during the payment, verification, and call execution.
-        function execute(bool isMultiChain, bytes calldata encodedIntent)
+        function execute(bytes calldata encodedIntent)
             public
             payable
             virtual
@@ -284,10 +284,10 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].
-    pub async fn execute(&self, is_multi_chain: bool, intent: &Intent) -> Result<(), RelayError> {
+    pub async fn execute(&self, intent: &Intent) -> Result<(), RelayError> {
         let ret = self
             .orchestrator
-            .execute(is_multi_chain, intent.abi_encode().into())
+            .execute(intent.abi_encode().into())
             .call()
             .overrides(self.overrides.clone())
             .await
