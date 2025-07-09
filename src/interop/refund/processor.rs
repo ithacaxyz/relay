@@ -157,8 +157,9 @@ impl RefundProcessor {
         let timestamp_secs: i64 = max_refund_timestamp
             .try_into()
             .map_err(|_| RefundProcessorError::InvalidRefundTimestamp)?;
-        
-        // For tests: if the the refund is done at the exact time it will fail. So we delay by one second.
+
+        // For tests: if the the refund is done at the exact time it will fail. So we delay by one
+        // second.
         let refund_timestamp = chrono::DateTime::from_timestamp(timestamp_secs + 1, 0)
             .ok_or(RefundProcessorError::InvalidRefundTimestamp)?;
 
