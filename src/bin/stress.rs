@@ -85,7 +85,7 @@ impl StressAccount {
                     required_funds: vec![],
                     calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
                     chain_id,
-                    from: Some(self.address),
+                    from: self.address,
                     capabilities: PrepareCallsCapabilities {
                         authorize_keys: vec![],
                         meta: Meta { fee_payer: None, fee_token, nonce: None },
