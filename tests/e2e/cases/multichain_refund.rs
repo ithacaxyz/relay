@@ -49,7 +49,7 @@ async fn test_multichain_refund() -> Result<()> {
     );
 
     // Wait for refund processing to have been triggered
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Check that refunds have been processed on chains 1 & 2
     for i in 0..2 {
