@@ -132,7 +132,7 @@ impl MultichainTransferSetup {
                     total_transfer_amount,
                 )],
                 chain_id: chain3_id,
-                from: Some(wallet),
+                from: wallet,
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     revoke_keys: vec![],

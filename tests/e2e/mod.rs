@@ -114,15 +114,11 @@ pub async fn prepare_calls(
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_calls = build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
-    // Deliberately omit the `from` address for the very first Intent precalls
-    // to test the path where precalls are signed before the address is known.
-    let from = (tx_num != 0 || !pre_call).then_some(env.eoa.address());
-
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from,
+            from: env.eoa.address(),
             calls: tx.calls.clone(),
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {

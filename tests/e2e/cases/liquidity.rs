@@ -50,7 +50,7 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
         .prepare_calls(PrepareCallsParameters {
             calls: vec![common_calls::transfer(env.erc20, env.eoa.address(), funder_balance_0)],
             chain_id: env.chain_id_for(1),
-            from: Some(env.eoa.address()),
+            from: env.eoa.address(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],

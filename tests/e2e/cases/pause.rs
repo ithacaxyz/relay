@@ -25,7 +25,7 @@ async fn pause() -> eyre::Result<()> {
 
     let prepare_params = PrepareCallsParameters {
         required_funds: vec![],
-        from: Some(eoa.address),
+        from: eoa.address,
         calls: vec![],
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {

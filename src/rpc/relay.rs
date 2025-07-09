@@ -811,7 +811,7 @@ impl Relay {
         nonce: U256,
         intent_kind: IntentKind,
     ) -> Result<(AssetDiffs, Quote), RelayError> {
-        let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
+        let eoa = request.from;
         let Some(request_key) = &request.key else {
             return Err(IntentError::MissingKey.into());
         };
@@ -894,19 +894,17 @@ impl Relay {
         // Find if the address is delegated or if we have a stored account in storage that can use
         // to delegate.
         let mut maybe_stored = None;
-        if let Some(from) = &request.from {
-            if !Account::new(*from, provider.clone()).is_delegated().await? {
-                maybe_stored = Some(
-                    self.inner
-                        .storage
-                        .read_account(from)
-                        .await
-                        .map_err(|e| RelayError::InternalError(e.into()))?
-                        .ok_or_else(|| {
-                            RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed())
-                        })?,
-                );
-            }
+        if !Account::new(request.from, provider.clone()).is_delegated().await? {
+            maybe_stored = Some(
+                self.inner
+                    .storage
+                    .read_account(&request.from)
+                    .await
+                    .map_err(|e| RelayError::InternalError(e.into()))?
+                    .ok_or_else(|| {
+                        RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
+                    })?,
+            );
         }
 
         // Generate all requested calls.
@@ -918,7 +916,7 @@ impl Relay {
         // If we're dealing with a PreCall do not estimate
         let (asset_diff, context) = if request.capabilities.pre_call {
             let precall = SignedCall {
-                eoa: request.from.unwrap_or_default(),
+                eoa: request.from,
                 executionData: calls.abi_encode().into(),
                 nonce,
                 signature: Bytes::new(),
@@ -942,7 +940,7 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
+            .compute_signing_digest(maybe_stored.as_ref(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1003,7 +1001,7 @@ impl Relay {
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
-        let eoa = request.from.ok_or(IntentError::MissingSender)?;
+        let eoa = request.from;
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
             AddressOrNative::Native
@@ -1091,7 +1089,7 @@ impl Relay {
         // Validate that all required multichain contracts are configured
         self.validate_multichain_contracts()?;
 
-        let eoa = request.from.ok_or(IntentError::MissingSender)?;
+        let eoa = request.from;
         let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
         let requested_asset = request
             .required_funds
@@ -1957,7 +1955,7 @@ impl Relay {
         Ok(PrepareCallsParameters {
             calls,
             chain_id: context.chain_id,
-            from: Some(context.eoa),
+            from: context.eoa,
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
