@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)\n            VALUES ($1, $2, $3, NOW())\n            ",
+  "query": "\n            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)\n            VALUES ($1, $2, $3, NOW())\n            ON CONFLICT (bundle_id) DO UPDATE SET\n                status = EXCLUDED.status,\n                bundle_data = EXCLUDED.bundle_data,\n                updated_at = NOW()\n            ",
   "describe": {
     "columns": [],
     "parameters": {
@@ -34,5 +34,5 @@
     },
     "nullable": []
   },
-  "hash": "5d19bd26bec547a5e4026104e3f53fcc9bf20d442799f43ca5585822701dd197"
+  "hash": "82e7c9cce1aa485db564962b021eaea9756ca73e5298e743ef0c37583fceb803"
 }

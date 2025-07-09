@@ -10,7 +10,7 @@ use crate::{
         PendingTransaction, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, InteropTxType, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -18,6 +18,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -120,22 +121,45 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets a specific pending bundle by ID.
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>>;
 
-    /// Atomically update bundle status and queue transactions.
+    /// Atomically update bundle data and queue specific transactions.
+    /// Used when you need to update the bundle and queue transactions atomically.
     ///
     /// # Arguments
-    /// * `bundle` - The bundle containing transactions to queue
+    /// * `bundle` - The bundle to update
     /// * `status` - The new status for the bundle
-    /// * `tx_type` - Specifies whether to queue source or destination transactions
-    async fn queue_bundle_transactions(
+    /// * `transactions` - Specific transactions to queue
+    async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        tx_type: InteropTxType,
+        transactions: &[RelayTransaction],
     ) -> Result<()>;
 
     /// Moves a bundle from pending_bundles to finished_bundles table.
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
+
+    /// Stores a pending refund for a bundle with the maximum refund timestamp and atomically
+    /// updates the bundle status.
+    async fn store_pending_refund(
+        &self,
+        bundle_id: BundleId,
+        refund_timestamp: DateTime<Utc>,
+        new_status: BundleStatus,
+    ) -> Result<()>;
+
+    /// Gets all pending refunds that are ready to be processed (refund_timestamp <= current time).
+    async fn get_pending_refunds_ready(
+        &self,
+        current_time: DateTime<Utc>,
+    ) -> Result<Vec<(BundleId, DateTime<Utc>)>>;
+
+    /// Removes a processed refund from pending refunds.
+    async fn remove_processed_refund(&self, bundle_id: BundleId) -> Result<()>;
+
+    /// Atomically marks a refund as ready by updating bundle status and removing it from the
+    /// scheduler.
+    async fn mark_refund_ready(&self, bundle_id: BundleId, new_status: BundleStatus) -> Result<()>;
 
     /// Attempts to lock liquidity for the given assets corresponding to an interop bundle, and
     /// updates the bundle status to the given status.

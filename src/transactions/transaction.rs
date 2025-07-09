@@ -1,9 +1,13 @@
-use crate::types::Quote;
+use crate::{
+    interop::EscrowDetails,
+    types::{IEscrow, Quote, SignedCalls},
+};
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{Address, B256, Bytes, ChainId, TxKind, U256, wrap_fixed_bytes},
     rpc::types::TransactionReceipt,
+    sol_types::SolCall,
 };
 use chrono::{DateTime, Utc};
 use opentelemetry::Context;
@@ -103,7 +107,7 @@ impl RelayTransaction {
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
         match &self.kind {
-            RelayTransactionKind::Intent { quote, authorization } => {
+            RelayTransactionKind::Intent { quote, authorization, .. } => {
                 let gas_limit = quote.tx_gas;
                 let max_fee_per_gas = fees.max_fee_per_gas;
                 let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
@@ -198,6 +202,48 @@ impl RelayTransaction {
     pub fn is_intent(&self) -> bool {
         matches!(self.kind, RelayTransactionKind::Intent { .. })
     }
+
+    /// Extracts escrow details from this transaction if it contains an escrow call.
+    /// This parses the transaction's last call to find escrow data, as escrow calls
+    /// are always placed last in the call sequence.
+    pub fn extract_escrow_details(&self) -> Option<EscrowDetails> {
+        if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
+            // Get the chain ID from the transaction
+            let chain_id = self.chain_id();
+
+            // Look for escrow call in the intent's calls - escrow calls are always last
+            if let Ok(calls) = quote.intent.calls() {
+                if let Some(call) = calls.last() {
+                    // Try to decode as an escrow call
+                    if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
+                        // We found an escrow call! Extract the first escrow
+                        if let Some(escrow) = escrow_call._escrows.first() {
+                            // Create EscrowDetails from the escrow
+                            return Some(EscrowDetails::new(
+                                escrow.clone(),
+                                chain_id,
+                                call.to, // The escrow contract address
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns escrow IDs from a refund transaction.
+    ///
+    /// For refund transactions, decodes the call data to extract escrow IDs.
+    /// For other transaction types, returns an empty vector.
+    pub fn escrow_ids(&self) -> Vec<B256> {
+        match &self.kind {
+            RelayTransactionKind::Internal { input, .. } => IEscrow::refundCall::abi_decode(input)
+                .map(|call| call.escrowIds)
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
 }
 
 /// Error occurred while processing a transaction.
@@ -227,6 +273,21 @@ impl TransactionStatus {
     /// Whether the status is final.
     pub fn is_final(&self) -> bool {
         matches!(self, Self::Confirmed(_) | Self::Failed(_))
+    }
+
+    /// Whether the transaction is confirmed.
+    pub fn is_confirmed(&self) -> bool {
+        matches!(self, Self::Confirmed(_))
+    }
+
+    /// Whether the transaction has failed.
+    pub fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed(_))
+    }
+
+    /// Whether the transaction is pending (either InFlight or Pending).
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::InFlight | Self::Pending(_))
     }
 
     /// The transaction hash of the transaction, if any.

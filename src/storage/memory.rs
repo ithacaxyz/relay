@@ -1,6 +1,6 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -20,6 +20,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::BTreeMap;
 use tokio::sync::RwLock;
@@ -36,6 +37,7 @@ pub struct InMemoryStorage {
     verified_emails: DashMap<String, Address>,
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
+    pending_refunds: DashMap<BundleId, DateTime<Utc>>,
     liquidity: RwLock<LiquidityTrackerInner>,
     transfers:
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
@@ -186,24 +188,19 @@ impl StorageApi for InMemoryStorage {
         Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
     }
 
-    async fn queue_bundle_transactions(
+    async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        tx_type: InteropTxType,
+        transactions: &[RelayTransaction],
     ) -> Result<()> {
-        // Queue the appropriate transactions
-        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
+        // First store the bundle with the new status
+        self.store_pending_bundle(bundle, status).await?;
 
-        for tx in transactions {
-            self.queue_transaction(tx).await?;
+        // Then queue the specific transactions provided
+        for relay_tx in transactions {
+            self.queue_transaction(relay_tx).await?;
         }
-
-        // Update bundle status
-        self.pending_bundles
-            .get_mut(&bundle.id)
-            .ok_or_else(|| eyre::eyre!("Bundle disappeared during update"))?
-            .status = status;
 
         Ok(())
     }
@@ -215,6 +212,50 @@ impl StorageApi for InMemoryStorage {
         } else {
             Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into())
         }
+    }
+
+    async fn store_pending_refund(
+        &self,
+        bundle_id: BundleId,
+        refund_timestamp: DateTime<Utc>,
+        new_status: BundleStatus,
+    ) -> Result<()> {
+        self.pending_refunds.insert(bundle_id, refund_timestamp);
+
+        if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
+            entry.status = new_status;
+        }
+
+        Ok(())
+    }
+
+    async fn get_pending_refunds_ready(
+        &self,
+        current_time: DateTime<Utc>,
+    ) -> Result<Vec<(BundleId, DateTime<Utc>)>> {
+        Ok(self
+            .pending_refunds
+            .iter()
+            .filter(|entry| *entry.value() <= current_time)
+            .map(|entry| (*entry.key(), *entry.value()))
+            .collect())
+    }
+
+    async fn remove_processed_refund(&self, bundle_id: BundleId) -> Result<()> {
+        self.pending_refunds.remove(&bundle_id);
+        Ok(())
+    }
+
+    async fn mark_refund_ready(&self, bundle_id: BundleId, new_status: BundleStatus) -> Result<()> {
+        // Update bundle status
+        if let Some(mut bundle) = self.pending_bundles.get_mut(&bundle_id) {
+            bundle.status = new_status;
+        }
+
+        // Remove from pending refunds
+        self.remove_processed_refund(bundle_id).await?;
+
+        Ok(())
     }
 
     async fn lock_liquidity_for_bundle(

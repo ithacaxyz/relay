@@ -161,17 +161,45 @@ impl StorageApi for RelayStorage {
         self.inner.get_pending_bundle(bundle_id).await
     }
 
-    async fn queue_bundle_transactions(
+    async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        tx_type: InteropTxType,
+        transactions: &[RelayTransaction],
     ) -> api::Result<()> {
-        self.inner.queue_bundle_transactions(bundle, status, tx_type).await
+        self.inner.update_bundle_and_queue_transactions(bundle, status, transactions).await
     }
 
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> api::Result<()> {
         self.inner.move_bundle_to_finished(bundle_id).await
+    }
+
+    async fn store_pending_refund(
+        &self,
+        bundle_id: BundleId,
+        refund_timestamp: chrono::DateTime<chrono::Utc>,
+        new_status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.store_pending_refund(bundle_id, refund_timestamp, new_status).await
+    }
+
+    async fn get_pending_refunds_ready(
+        &self,
+        current_time: chrono::DateTime<chrono::Utc>,
+    ) -> api::Result<Vec<(BundleId, chrono::DateTime<chrono::Utc>)>> {
+        self.inner.get_pending_refunds_ready(current_time).await
+    }
+
+    async fn remove_processed_refund(&self, bundle_id: BundleId) -> api::Result<()> {
+        self.inner.remove_processed_refund(bundle_id).await
+    }
+
+    async fn mark_refund_ready(
+        &self,
+        bundle_id: BundleId,
+        new_status: BundleStatus,
+    ) -> api::Result<()> {
+        self.inner.mark_refund_ready(bundle_id, new_status).await
     }
 
     async fn lock_liquidity_for_bundle(

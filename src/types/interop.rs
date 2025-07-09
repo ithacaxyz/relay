@@ -6,6 +6,8 @@ pub enum InteropTxType {
     Source,
     /// Destination chain transactions
     Destination,
+    /// Refund transactions
+    Refund,
 }
 
 impl InteropTxType {

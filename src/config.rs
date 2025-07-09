@@ -1,6 +1,9 @@
 //! Relay configuration.
 use crate::{
-    constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
+    constants::{
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS,
+        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+    },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
 };
 use alloy::{
@@ -36,6 +39,9 @@ pub struct RelayConfig {
     pub email: EmailConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
+    /// Interop configuration.
+    #[serde(default)]
+    pub interop: InteropConfig,
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
@@ -204,6 +210,25 @@ impl Default for SecretsConfig {
     }
 }
 
+/// Interop configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteropConfig {
+    /// Interval for checking pending refunds.
+    #[serde(with = "crate::serde::duration")]
+    pub refund_check_interval: Duration,
+    /// Time threshold in seconds before refunds can be processed for escrows.
+    pub escrow_refund_threshold: u64,
+}
+
+impl Default for InteropConfig {
+    fn default() -> Self {
+        Self {
+            refund_check_interval: Duration::from_secs(60),
+            escrow_refund_threshold: ESCROW_REFUND_DURATION_SECS,
+        }
+    }
+}
+
 /// Configuration for the rebalance service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RebalanceServiceConfig {
@@ -288,6 +313,7 @@ impl Default for RelayConfig {
             onramp: OnrampConfig::default(),
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
+            interop: InteropConfig::default(),
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
@@ -522,6 +548,12 @@ impl RelayConfig {
     /// Sets the funder signing key used to sign fund operations.
     pub fn with_funder_key(mut self, funder_key: String) -> Self {
         self.secrets.funder_key = funder_key;
+        self
+    }
+
+    /// Sets the interop configuration.
+    pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
+        self.interop = interop_config;
         self
     }
 

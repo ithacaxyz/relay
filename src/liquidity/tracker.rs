@@ -196,4 +196,9 @@ impl LiquidityTracker {
     pub fn storage(&self) -> &RelayStorage {
         &self.storage
     }
+
+    /// Returns reference to underlying providers.
+    pub fn providers(&self) -> &HashMap<u64, DynProvider> {
+        &self.providers
+    }
 }

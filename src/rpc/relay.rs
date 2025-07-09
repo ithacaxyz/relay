@@ -11,7 +11,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::{ESCROW_REFUND_DURATION_SECS, ESCROW_SALT_LENGTH},
+    constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
@@ -163,6 +163,7 @@ impl Relay {
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
+        escrow_refund_threshold: u64,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -176,6 +177,7 @@ impl Relay {
             storage,
             asset_info,
             priority_fee_percentile,
+            escrow_refund_threshold,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -1659,15 +1661,10 @@ impl RelayApiServer for Relay {
             }))
             .await?;
 
-        let any_pending = tx_statuses.iter().any(|status| {
-            status.as_ref().is_none_or(|(_, status)| {
-                matches!(status, TransactionStatus::InFlight | TransactionStatus::Pending(_))
-            })
-        });
-        let any_failed = tx_statuses
+        let any_pending = tx_statuses
             .iter()
-            .flatten()
-            .any(|(_, status)| matches!(status, TransactionStatus::Failed(_)));
+            .any(|status| status.as_ref().is_none_or(|(_, status)| status.is_pending()));
+        let any_failed = tx_statuses.iter().flatten().any(|(_, status)| status.is_failed());
 
         let receipts = tx_statuses
             .iter()
@@ -1817,6 +1814,8 @@ pub(super) struct RelayInner {
     asset_info: AssetInfoServiceHandle,
     /// Percentile of the priority fees to use for the transactions.
     priority_fee_percentile: f64,
+    /// Escrow refund threshold in seconds
+    escrow_refund_threshold: u64,
 }
 
 impl Relay {
@@ -1889,7 +1888,7 @@ impl Relay {
             .map_err(RelayError::internal)?
             .as_secs();
         let refund_timestamp =
-            U256::from(current_timestamp.saturating_add(ESCROW_REFUND_DURATION_SECS));
+            U256::from(current_timestamp.saturating_add(self.inner.escrow_refund_threshold));
 
         Ok(Escrow {
             salt,
@@ -1907,6 +1906,10 @@ impl Relay {
     }
 
     /// Builds the escrow calls based on the asset type.
+    ///
+    /// IMPORTANT: The escrow call is always placed last in the returned vector.
+    /// This ordering is critical as it's relied upon by other parts of the system
+    /// (e.g., extract_escrow_details) for efficient parsing.
     fn build_escrow_calls(&self, escrow: Escrow, context: &FundingIntentContext) -> Vec<Call> {
         let escrow_call = Call {
             to: self.inner.contracts.escrow.address,
@@ -1916,9 +1919,10 @@ impl Relay {
 
         // Build the transaction calls based on token type
         if context.asset.is_native() {
+            // Native token: escrow call only (which is also the last call)
             vec![escrow_call]
         } else {
-            // ERC20 token: approve then escrow
+            // ERC20 token: approve then escrow (escrow is last)
             vec![
                 Call {
                     to: context.asset.address(),
@@ -1939,6 +1943,9 @@ impl Relay {
     ///
     /// Creates the necessary calls to escrow funds on an input chain that will
     /// be used to fund a multichain intent execution on the output chain.
+    ///
+    /// Note: The escrow call is always placed last in the call sequence. This is
+    /// relied upon by the extract_escrow_details method for efficient parsing.
     fn build_funding_intent(
         &self,
         context: FundingIntentContext,

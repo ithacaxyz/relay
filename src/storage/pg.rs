@@ -1,6 +1,6 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use super::{InteropTxType, StorageApi, api::Result};
+use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -85,6 +85,26 @@ impl PgStorage {
             "#,
             bundle_id.as_slice(),
             status as _
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    /// Remove processed refund within an existing database transaction
+    async fn remove_processed_refund_with(
+        &self,
+        bundle_id: BundleId,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM pending_refunds 
+            WHERE bundle_id = $1
+            "#,
+            bundle_id.as_slice()
         )
         .execute(&mut **tx)
         .await
@@ -227,6 +247,33 @@ impl PgStorage {
             .await
             .map_err(eyre::Error::from)?;
         }
+
+        Ok(())
+    }
+
+    /// Store a pending bundle within an existing database transaction
+    async fn store_pending_bundle_with(
+        &self,
+        bundle: &InteropBundle,
+        status: BundleStatus,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (bundle_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                bundle_data = EXCLUDED.bundle_data,
+                updated_at = NOW()
+            "#,
+            bundle.id.as_slice(),
+            status as _,
+            serde_json::to_value(bundle)?,
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(eyre::Error::from)?;
 
         Ok(())
     }
@@ -707,23 +754,21 @@ impl StorageApi for PgStorage {
         }
     }
 
-    async fn queue_bundle_transactions(
+    async fn update_bundle_and_queue_transactions(
         &self,
         bundle: &InteropBundle,
         status: BundleStatus,
-        tx_type: InteropTxType,
+        transactions: &[RelayTransaction],
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
-        // Queue the appropriate transactions
-        let transactions = if tx_type.is_source() { &bundle.src_txs } else { &bundle.dst_txs };
+        // First store the bundle with the new status
+        self.store_pending_bundle_with(bundle, status, &mut tx).await?;
 
+        // Then queue the specific transactions provided
         for relay_tx in transactions {
             self.queue_transaction_with(relay_tx, &mut tx).await?;
         }
-
-        // Update bundle status
-        self.update_pending_bundle_status_with(bundle.id, status, &mut tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
@@ -753,6 +798,37 @@ impl StorageApi for PgStorage {
         if result.rows_affected() == 0 {
             return Err(eyre::eyre!("Bundle not found: {:?}", bundle_id).into());
         }
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    async fn store_pending_refund(
+        &self,
+        bundle_id: BundleId,
+        refund_timestamp: DateTime<Utc>,
+        new_status: BundleStatus,
+    ) -> Result<()> {
+        // Perform both operations atomically in a transaction
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // Store the pending refund
+        sqlx::query!(
+            r#"
+            INSERT INTO pending_refunds (bundle_id, refund_timestamp) 
+            VALUES ($1, $2)
+            ON CONFLICT (bundle_id) DO UPDATE SET 
+                refund_timestamp = GREATEST(pending_refunds.refund_timestamp, EXCLUDED.refund_timestamp)
+            "#,
+            bundle_id.0.as_slice(),
+            refund_timestamp
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // Update the bundle status
+        self.update_pending_bundle_status_with(bundle_id, new_status, &mut tx).await?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
@@ -879,8 +955,33 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         tx.commit().await.map_err(eyre::Error::from)?;
-
         Ok(())
+    }
+
+    async fn get_pending_refunds_ready(
+        &self,
+        current_time: DateTime<Utc>,
+    ) -> Result<Vec<(BundleId, DateTime<Utc>)>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT bundle_id, refund_timestamp 
+            FROM pending_refunds 
+            WHERE refund_timestamp <= $1
+            ORDER BY refund_timestamp ASC
+            "#,
+            current_time
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let bundle_id = BundleId(B256::from_slice(&row.bundle_id));
+                (bundle_id, row.refund_timestamp)
+            })
+            .collect())
     }
 
     /// Updates a bridge-specific data for a transfer.
@@ -1003,5 +1104,22 @@ impl StorageApi for PgStorage {
         }
 
         Ok(transfers)
+    }
+
+    async fn remove_processed_refund(&self, bundle_id: BundleId) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+        self.remove_processed_refund_with(bundle_id, &mut tx).await?;
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    async fn mark_refund_ready(&self, bundle_id: BundleId, new_status: BundleStatus) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        self.update_pending_bundle_status_with(bundle_id, new_status, &mut tx).await?;
+        self.remove_processed_refund_with(bundle_id, &mut tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
     }
 }
