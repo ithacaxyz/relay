@@ -140,6 +140,7 @@ impl Fixtures {
             funder: r_address,
             funderSignature: r_bytes.clone(),
             settler: r_address,
+            expiry: r_u256,
             settlerContext: r_bytes.clone(),
             isMultichain: false,
         };
