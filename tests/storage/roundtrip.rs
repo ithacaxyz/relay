@@ -141,6 +141,7 @@ impl Fixtures {
             funderSignature: r_bytes.clone(),
             settler: r_address,
             settlerContext: r_bytes.clone(),
+            isMultichain: false,
         };
         let quote = Quote {
             chain_id: r_u64,

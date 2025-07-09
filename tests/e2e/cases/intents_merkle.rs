@@ -30,6 +30,7 @@ fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Inte
         funderSignature: Bytes::default(),
         settler: Address::ZERO,
         settlerContext: bytes!(""),
+        isMultichain: false,
     }
 }
 

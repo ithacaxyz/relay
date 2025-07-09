@@ -123,8 +123,9 @@ impl RelayTransaction {
 
                 intent.prePaymentAmount = payment_amount;
                 intent.totalPaymentAmount = payment_amount;
+                intent.isMultichain = quote.is_multi_chain;
 
-                let input = intent.encode_execute(quote.is_multi_chain);
+                let input = intent.encode_execute();
 
                 if let Some(auth) = &authorization {
                     TxEip7702 {
