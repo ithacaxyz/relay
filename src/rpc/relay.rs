@@ -387,6 +387,9 @@ impl Relay {
             )
             .await?;
 
+        // todo: set it before we simulate once we support multichain simulations
+        intent_to_sign.isMultichain = !context.intent_kind.is_single();
+
         // todo: re-evaluate if this is still necessary
         let gas_estimate = GasEstimate::from_combined_gas(
             sim_result.gCombined.to(),
@@ -421,7 +424,6 @@ impl Relay {
             native_fee_estimate,
             authorization_address: context.authorization_address,
             orchestrator: *orchestrator.address(),
-            is_multi_chain: !context.intent_kind.is_single(),
         };
 
         Ok((asset_diff, quote))
