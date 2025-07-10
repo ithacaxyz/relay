@@ -20,7 +20,10 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::{InteropConfig, RebalanceServiceConfig, RelayConfig, TransactionServiceConfig},
+    config::{
+        InteropConfig, RebalanceServiceConfig, RelayConfig, SimpleSettlerConfig,
+        TransactionServiceConfig,
+    },
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
@@ -78,6 +81,7 @@ impl Default for EnvironmentConfig {
             interop_config: InteropConfig {
                 refund_check_interval: Duration::from_millis(100),
                 escrow_refund_threshold: 60,
+                settler: Default::default(),
             },
         }
     }
@@ -435,6 +439,11 @@ impl Environment {
             None
         };
 
+        // Configure interop with simple settler for testing
+        let mut interop_config = config.interop_config;
+        interop_config.settler.simple =
+            Some(SimpleSettlerConfig { settler_address: contracts.settler });
+
         // Start relay service with all endpoints
         let relay_handle = try_spawn(
             RelayConfig::default()
@@ -454,11 +463,10 @@ impl Environment {
                 .with_simulator(Some(contracts.simulator))
                 .with_funder(Some(contracts.funder))
                 .with_escrow(Some(contracts.escrow))
-                .with_settler(Some(contracts.settler))
                 .with_intent_gas_buffer(20_000) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
-                .with_interop_config(config.interop_config)
+                .with_interop_config(interop_config)
                 .with_rebalance_service_config(config.rebalance_service_config)
                 .with_database_url(database_url),
             registry,

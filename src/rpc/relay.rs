@@ -331,7 +331,7 @@ impl Relay {
 
         // For MultiOutput intents, set the settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
-            intent_to_sign.settler = self.inner.contracts.settler.address;
+            intent_to_sign.settler = self.inner.chains.interop().settler_address();
             intent_to_sign.settlerContext = settler_context.clone();
         }
 
@@ -1270,7 +1270,8 @@ impl Relay {
         );
 
         // Create InteropBundle
-        let mut bundle = InteropBundle::new(bundle_id);
+        let settler_id = self.inner.chains.interop().settler_id().to_string();
+        let mut bundle = InteropBundle::new(bundle_id, settler_id);
 
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
@@ -1859,7 +1860,7 @@ impl Relay {
     fn validate_multichain_contracts(&self) -> Result<(), RelayError> {
         let required_contracts = &[
             ("escrow", self.inner.contracts.escrow.address),
-            ("settler", self.inner.contracts.settler.address),
+            ("settler", self.inner.chains.interop().settler_address()),
             ("funder", self.inner.contracts.funder.address),
         ];
 
@@ -1893,7 +1894,7 @@ impl Relay {
             depositor: context.eoa,
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
-            settler: self.inner.contracts.settler.address,
+            settler: self.inner.chains.interop().settler_address(),
             sender: self.orchestrator(),
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),

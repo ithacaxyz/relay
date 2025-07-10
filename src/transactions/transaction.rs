@@ -45,6 +45,8 @@ pub enum RelayTransactionKind {
         chain_id: ChainId,
         /// Gas limit of the transaction.
         gas_limit: u64,
+        /// Value to send with the transaction.
+        value: U256,
     },
 }
 
@@ -91,6 +93,17 @@ impl RelayTransaction {
         chain_id: ChainId,
         gas_limit: u64,
     ) -> Self {
+        Self::new_internal_with_value(kind, input, chain_id, gas_limit, U256::ZERO)
+    }
+
+    /// Create a new [`RelayTransaction`] for an internal transaction with a value.
+    pub fn new_internal_with_value(
+        kind: impl Into<TxKind>,
+        input: impl Into<Bytes>,
+        chain_id: ChainId,
+        gas_limit: u64,
+        value: U256,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
             kind: RelayTransactionKind::Internal {
@@ -98,6 +111,7 @@ impl RelayTransaction {
                 input: input.into(),
                 chain_id,
                 gas_limit,
+                value,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),
@@ -155,18 +169,20 @@ impl RelayTransaction {
                     .into()
                 }
             }
-            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit } => TxEip1559 {
-                chain_id: *chain_id,
-                nonce,
-                to: *kind,
-                input: input.clone(),
-                gas_limit: *gas_limit,
-                max_fee_per_gas: fees.max_fee_per_gas,
-                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                value: U256::ZERO,
-                access_list: Default::default(),
+            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit, value } => {
+                TxEip1559 {
+                    chain_id: *chain_id,
+                    nonce,
+                    to: *kind,
+                    input: input.clone(),
+                    gas_limit: *gas_limit,
+                    max_fee_per_gas: fees.max_fee_per_gas,
+                    max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+                    value: *value,
+                    access_list: Default::default(),
+                }
+                .into()
             }
-            .into(),
         }
     }
 

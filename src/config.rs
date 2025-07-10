@@ -4,11 +4,14 @@ use crate::{
         DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS,
         INTENT_GAS_BUFFER, TX_GAS_BUFFER,
     },
+    interop::{LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler},
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
+    storage::RelayStorage,
+    transactions::TransactionServiceHandle,
 };
 use alloy::{
-    primitives::Address,
-    providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+    primitives::{Address, ChainId},
+    providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
     signers::local::coins_bip39::{English, Mnemonic},
 };
 use alloy_chains::Chain;
@@ -56,8 +59,6 @@ pub struct RelayConfig {
     pub funder: Address,
     /// Escrow address.
     pub escrow: Address,
-    /// Settler address.
-    pub settler: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -218,6 +219,8 @@ pub struct InteropConfig {
     pub refund_check_interval: Duration,
     /// Time threshold in seconds before refunds can be processed for escrows.
     pub escrow_refund_threshold: u64,
+    /// Settler configuration.
+    pub settler: SettlerConfig,
 }
 
 impl Default for InteropConfig {
@@ -225,6 +228,7 @@ impl Default for InteropConfig {
         Self {
             refund_check_interval: Duration::from_secs(60),
             escrow_refund_threshold: ESCROW_REFUND_DURATION_SECS,
+            settler: SettlerConfig::default(),
         }
     }
 }
@@ -241,6 +245,63 @@ pub struct RebalanceServiceConfig {
     /// The private key of the funder account owner. Required for pulling funds from the funders.
     #[serde(default)]
     pub funder_owner_key: String,
+}
+
+/// Configuration for the settler service.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SettlerConfig {
+    /// LayerZero configuration for cross-chain settlement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_zero: Option<LayerZeroConfig>,
+    /// Simple settler configuration for testing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simple: Option<SimpleSettlerConfig>,
+}
+
+impl SettlerConfig {
+    /// Creates a settlement processor from this configuration.
+    pub fn settlement_processor(
+        &self,
+        storage: RelayStorage,
+        tx_handles: alloy::primitives::map::HashMap<ChainId, TransactionServiceHandle>,
+        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SettlementProcessor> {
+        // Create the settler based on config
+        let settler: Box<dyn Settler> = if let Some(layer_zero) = &self.layer_zero {
+            Box::new(LayerZeroSettler::new(
+                layer_zero.endpoint_ids.clone().into_iter().collect(),
+                layer_zero.endpoint_addresses.clone().into_iter().collect(),
+                providers.into_iter().collect(),
+                layer_zero.settler_address,
+            ))
+        } else if let Some(simple) = &self.simple {
+            Box::new(SimpleSettler::new(simple.settler_address))
+        } else {
+            return Err(eyre::eyre!("No settler implementation configured"));
+        };
+
+        Ok(SettlementProcessor::new(storage, tx_handles, settler))
+    }
+}
+
+/// Simple settler configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleSettlerConfig {
+    /// The address of the simple settler contract.
+    pub settler_address: Address,
+}
+
+/// LayerZero configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerZeroConfig {
+    /// Mapping of chain ID to LayerZero endpoint ID.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_ids: HashMap<u64, u32>,
+    /// Mapping of chain ID to LayerZero endpoint address.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_addresses: HashMap<u64, Address>,
+    /// LayerZero settler contract address.
+    pub settler_address: Address,
 }
 
 /// Configuration for transaction service.
@@ -321,7 +382,6 @@ impl Default for RelayConfig {
             simulator: Address::ZERO,
             funder: Address::ZERO,
             escrow: Address::ZERO,
-            settler: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -473,14 +533,6 @@ impl RelayConfig {
     pub fn with_escrow(mut self, escrow: Option<Address>) -> Self {
         if let Some(escrow) = escrow {
             self.escrow = escrow;
-        }
-        self
-    }
-
-    /// Sets the settler address.
-    pub fn with_settler(mut self, settler: Option<Address>) -> Self {
-        if let Some(settler) = settler {
-            self.settler = settler;
         }
         self
     }

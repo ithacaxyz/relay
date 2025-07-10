@@ -8,6 +8,7 @@ use crate::{
     interop::{
         RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate,
         refund::processor::MAX_REFUND_RETRY_ATTEMPTS,
+        settler::processor::{SettlementProcessor, SettlementUpdate},
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
@@ -46,6 +47,8 @@ pub struct AssetTransfer {
 pub struct InteropBundle {
     /// Unique identifier for the bundle.
     pub id: BundleId,
+    /// Settler implementation ID (e.g., "layerzero", "simple")
+    pub settler_id: String,
     /// Source chain transactions
     pub src_txs: Vec<RelayTransaction>,
     /// Destination chain transactions
@@ -56,17 +59,21 @@ pub struct InteropBundle {
     ///
     /// Only successful refund transactions are kept in the bundle.
     pub refund_txs: Vec<RelayTransaction>,
+    /// Settlement transactions (populated after destination confirmation)
+    pub settlement_txs: Vec<RelayTransaction>,
 }
 
 impl InteropBundle {
-    /// Creates a new empty interop bundle with the given ID
-    pub fn new(id: BundleId) -> Self {
+    /// Creates a new empty interop bundle with the given ID and settler
+    pub fn new(id: BundleId, settler_id: String) -> Self {
         Self {
             id,
+            settler_id,
             src_txs: Vec::new(),
             dst_txs: Vec::new(),
             asset_transfers: Vec::new(),
             refund_txs: Vec::new(),
+            settlement_txs: Vec::new(),
         }
     }
 
@@ -131,6 +138,17 @@ impl BundleWithStatus {
             self.status = new_status;
         }
     }
+
+    /// Apply [`SettlementUpdate`] to the bundle.
+    pub fn apply_settlement_update(&mut self, update: &SettlementUpdate) {
+        // Add new settlement transactions
+        self.bundle.settlement_txs.extend(update.new_settlement_txs.clone());
+
+        // Update status if provided
+        if let Some(new_status) = update.new_status {
+            self.status = new_status;
+        }
+    }
 }
 
 /// Errors that can occur during interop bundle processing.
@@ -172,6 +190,9 @@ enum InteropBundleError {
     /// Intent executed event not found in receipt.
     #[error("IntentExecuted event not found in receipt")]
     IntentEventNotFound,
+    /// Settlement processor error.
+    #[error("settlement processor error: {0}")]
+    SettlementProcessor(#[from] crate::interop::SettlementProcessorError),
 }
 
 /// Status of a pending interop bundle.
@@ -304,6 +325,7 @@ pub struct InteropServiceHandle {
     command_tx: mpsc::UnboundedSender<InteropServiceMessage>,
     storage: RelayStorage,
     liquidity_tracker: LiquidityTracker,
+    settlement_processor: Arc<SettlementProcessor>,
 }
 
 impl InteropServiceHandle {
@@ -328,6 +350,16 @@ impl InteropServiceHandle {
     pub fn liquidity_tracker(&self) -> &LiquidityTracker {
         &self.liquidity_tracker
     }
+
+    /// Returns the settler address.
+    pub fn settler_address(&self) -> Address {
+        self.settlement_processor.settler_address()
+    }
+
+    /// Returns the settler ID.
+    pub fn settler_id(&self) -> &'static str {
+        self.settlement_processor.settler_id()
+    }
 }
 
 /// Internal state of the interop service.
@@ -337,6 +369,7 @@ struct InteropServiceInner {
     liquidity_tracker: LiquidityTracker,
     storage: RelayStorage,
     refund_processor: RefundProcessor,
+    settlement_processor: Arc<SettlementProcessor>,
 }
 
 impl InteropServiceInner {
@@ -346,10 +379,17 @@ impl InteropServiceInner {
         liquidity_tracker: LiquidityTracker,
         storage: RelayStorage,
         providers: HashMap<ChainId, DynProvider>,
+        settlement_processor: Arc<SettlementProcessor>,
     ) -> Self {
         let refund_processor =
             RefundProcessor::new(storage.clone(), tx_service_handles.clone(), providers);
-        Self { tx_service_handles, liquidity_tracker, storage, refund_processor }
+        Self {
+            tx_service_handles,
+            liquidity_tracker,
+            storage,
+            refund_processor,
+            settlement_processor,
+        }
     }
 
     /// Helper to update bundle status in storage and locally
@@ -565,10 +605,12 @@ impl InteropServiceInner {
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing withdrawals");
-        // TODO: Queue settlement transactions
-        // For now, transition to SettlementsQueued state
-        self.update_bundle_status(bundle, BundleStatus::SettlementsQueued).await?;
+        tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing settlements");
+
+        let update = self.settlement_processor.queue_send_settlements(&bundle.bundle).await?;
+
+        bundle.apply_settlement_update(&update);
+
         Ok(())
     }
 
@@ -671,11 +713,24 @@ impl InteropServiceInner {
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing settlement transactions");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Monitoring settlement transactions");
 
-        // TODO: Wait for settlement transactions to complete
-        // For now, assume they complete successfully
-        self.update_bundle_status(bundle, BundleStatus::SettlementsConfirmed).await?;
+        // Monitor settlement completion (transactions were already sent in queue_settlements)
+        let failed_ids =
+            self.settlement_processor.monitor_settlement_completion(&bundle.bundle).await?;
+
+        if !failed_ids.is_empty() {
+            tracing::error!(
+                bundle_id = ?bundle.bundle.id,
+                failed_count = failed_ids.len(),
+                "Some settlement transactions failed, marking bundle as failed"
+            );
+            self.update_bundle_status(bundle, BundleStatus::Failed).await?;
+        } else {
+            tracing::info!(bundle_id = ?bundle.bundle.id, "All settlement transactions confirmed");
+            self.update_bundle_status(bundle, BundleStatus::SettlementsConfirmed).await?;
+        }
+
         Ok(())
     }
 
@@ -902,29 +957,42 @@ impl InteropService {
 
         let storage = liquidity_tracker.storage().clone();
         let providers = liquidity_tracker.providers().clone();
-        let pending_bundles = storage.get_pending_bundles().await?;
 
-        let service = Self {
-            inner: Arc::new(InteropServiceInner::new(
-                tx_service_handles,
-                liquidity_tracker.clone(),
-                storage.clone(),
-                providers,
-            )),
-            command_rx,
+        // Create the settlement processor from config
+        let settlement_processor = Arc::new(interop_config.settler.settlement_processor(
+            storage.clone(),
+            tx_service_handles.clone(),
+            providers.clone(),
+        )?);
+
+        let inner = InteropServiceInner::new(
+            tx_service_handles,
+            liquidity_tracker.clone(),
+            storage.clone(),
+            providers,
+            Arc::clone(&settlement_processor),
+        );
+
+        let inner = Arc::new(inner);
+
+        let service = Self { inner: inner.clone(), command_rx };
+
+        let handle = InteropServiceHandle {
+            command_tx,
+            storage: storage.clone(),
+            liquidity_tracker,
+            settlement_processor,
         };
-
-        let handle =
-            InteropServiceHandle { command_tx, storage: storage.clone(), liquidity_tracker };
 
         // Spawn the refund monitor service with configured interval
         RefundMonitorService::with_interval(
-            storage,
+            storage.clone(),
             handle.clone(),
             interop_config.refund_check_interval,
         )
         .spawn();
 
+        let pending_bundles = storage.get_pending_bundles().await?;
         for bundle in pending_bundles {
             tracing::info!(
                 bundle_id = ?bundle.bundle.id,
@@ -983,8 +1051,12 @@ impl Future for InteropService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RelayStorage;
-    use alloy::providers::DynProvider;
+    use crate::{
+        interop::{SettlementProcessor, Settler},
+        storage::RelayStorage,
+    };
+    use alloy::{primitives::B256, providers::DynProvider};
+    use async_trait::async_trait;
     use sqlx::PgPool;
 
     async fn get_test_storage() -> RelayStorage {
@@ -1002,6 +1074,45 @@ mod tests {
             // Use in-memory storage if DATABASE_URL is not set
             RelayStorage::in_memory()
         }
+    }
+
+    // Mock settler for tests
+    #[derive(Debug)]
+    struct MockSettler;
+
+    #[async_trait]
+    impl Settler for MockSettler {
+        fn id(&self) -> &'static str {
+            "mock_settler"
+        }
+
+        fn address(&self) -> Address {
+            Address::default()
+        }
+
+        async fn build_send_settlement(
+            &self,
+            _settlement_id: B256,
+            _current_chain_id: u64,
+            _source_chains: Vec<u64>,
+            _settler_contract: Address,
+        ) -> Result<Option<RelayTransaction>, crate::error::RelayError> {
+            Ok(Some(RelayTransaction::new_internal(Address::default(), vec![], 0, 1_000_000)))
+        }
+
+        fn encode_settler_context(
+            &self,
+            _destination_chains: Vec<u64>,
+        ) -> Result<alloy::primitives::Bytes, crate::error::RelayError> {
+            Ok(alloy::primitives::Bytes::new())
+        }
+    }
+
+    fn create_test_settlement_processor(
+        storage: RelayStorage,
+        tx_handles: HashMap<ChainId, TransactionServiceHandle>,
+    ) -> SettlementProcessor {
+        SettlementProcessor::new(storage, tx_handles, Box::new(MockSettler))
     }
 
     #[test]
@@ -1043,9 +1154,11 @@ mod tests {
     #[test]
     fn test_interop_bundle_creation() {
         let bundle_id = BundleId::random();
-        let bundle = InteropBundle::new(bundle_id);
+        let settler_id = "test_settler".to_string();
+        let bundle = InteropBundle::new(bundle_id, settler_id.clone());
 
         assert_eq!(bundle.id, bundle_id);
+        assert_eq!(bundle.settler_id, settler_id);
         assert!(bundle.src_txs.is_empty());
         assert!(bundle.dst_txs.is_empty());
         assert!(bundle.asset_transfers.is_empty());
@@ -1055,7 +1168,7 @@ mod tests {
     async fn test_bundle_persistence_and_recovery() {
         let storage = get_test_storage().await;
         let bundle_id = BundleId::random();
-        let bundle = InteropBundle::new(bundle_id);
+        let bundle = InteropBundle::new(bundle_id, "test_settler".to_string());
 
         // Store bundle with Init status
         storage.store_pending_bundle(&bundle, BundleStatus::Init).await.unwrap();
@@ -1100,15 +1213,19 @@ mod tests {
         let tx_handles: HashMap<ChainId, TransactionServiceHandle> = HashMap::default();
         let funder = Address::default();
 
+        let settlement_processor =
+            create_test_settlement_processor(storage.clone(), tx_handles.clone());
+
         let inner = InteropServiceInner::new(
             tx_handles,
             LiquidityTracker::new(providers.clone(), funder, storage.clone()),
             storage,
             providers,
+            Arc::new(settlement_processor),
         );
 
         let bundle_id = BundleId::random();
-        let bundle = InteropBundle::new(bundle_id);
+        let bundle = InteropBundle::new(bundle_id, "test_settler".to_string());
         let mut bundle_with_status = BundleWithStatus {
             bundle,
             status: BundleStatus::Done, // Terminal state

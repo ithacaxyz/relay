@@ -1,0 +1,38 @@
+/// LayerZero settler implementation.
+pub mod layer_zero;
+/// Settlement processor for handling cross-chain settlements.
+pub mod processor;
+/// Simple settler implementation for testing and development.
+pub mod simple;
+
+pub use layer_zero::LayerZeroSettler;
+pub use processor::{SettlementProcessor, SettlementProcessorError, SettlementUpdate};
+pub use simple::SimpleSettler;
+
+use alloy::primitives::{Address, B256, Bytes};
+use async_trait::async_trait;
+
+use crate::{error::RelayError, transactions::RelayTransaction};
+
+/// Trait for settlement implementations.
+#[async_trait]
+pub trait Settler: Send + Sync + std::fmt::Debug {
+    /// Returns a unique identifier for this settler implementation.
+    fn id(&self) -> &'static str;
+
+    /// Returns the settler contract address.
+    fn address(&self) -> Address;
+
+    /// Builds a send settlement transaction for the given parameters.
+    /// Returns None if this settler doesn't require a send settlement transaction.
+    async fn build_send_settlement(
+        &self,
+        settlement_id: B256,
+        current_chain_id: u64,
+        source_chains: Vec<u64>,
+        settler_contract: Address,
+    ) -> Result<Option<RelayTransaction>, RelayError>;
+
+    /// Encodes the settler context for the given destination chains.
+    fn encode_settler_context(&self, destination_chains: Vec<u64>) -> Result<Bytes, RelayError>;
+}
