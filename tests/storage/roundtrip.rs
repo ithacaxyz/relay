@@ -161,7 +161,7 @@ impl Fixtures {
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
                 authorization: Some(authorization.clone()),
-                eip712_digest: B256::default(),
+                eip712_digest: r_b256,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),

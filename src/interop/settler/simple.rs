@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use itertools::Itertools;
 
 /// A simple settler implementation that does not require cross-chain attestation.
-/// This is useful for testing and development environments.
 #[derive(Debug)]
 pub struct SimpleSettler {
     /// The address of the settler contract
@@ -39,7 +38,6 @@ impl Settler for SimpleSettler {
         _source_chains: Vec<ChainId>,
         _orchestrator: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError> {
-        // Simple settler doesn't need to send settlement transactions
         // The settlement is handled directly during intent execution
         Ok(None)
     }

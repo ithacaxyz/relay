@@ -65,7 +65,7 @@ pub struct EnvironmentConfig {
     /// Interop configuration.
     pub interop_config: InteropConfig,
     /// If true, LayerZero contracts will be deployed and used for settlement
-    pub is_layerzero: bool,
+    pub use_layerzero: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -85,7 +85,7 @@ impl Default for EnvironmentConfig {
                 escrow_refund_threshold: 60,
                 settler: Default::default(),
             },
-            is_layerzero: false,
+            use_layerzero: false,
         }
     }
 }
@@ -446,7 +446,7 @@ impl Environment {
         let mut interop_config = config.interop_config;
         let mut layerzero_config = None;
 
-        if config.is_layerzero {
+        if config.use_layerzero {
             // Deploy LayerZero contracts
             let lz_deployment = deploy_layerzero_infrastructure(
                 &providers,

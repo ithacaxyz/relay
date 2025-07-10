@@ -83,7 +83,7 @@ impl LayerZeroEnvironment for Environment {
         }
 
         // Set up environment with LayerZero configured for relay (settler)
-        let config = EnvironmentConfig { num_chains, is_layerzero: true, ..Default::default() };
+        let config = EnvironmentConfig { num_chains, use_layerzero: true, ..Default::default() };
 
         Self::setup_with_config(config).await
     }

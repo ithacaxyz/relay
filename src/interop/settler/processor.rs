@@ -8,7 +8,8 @@ use crate::{
     error::StorageError,
     storage::{RelayStorage, StorageApi},
     transactions::{
-        RelayTransaction, TransactionServiceError, TransactionServiceHandle, TxId,
+        RelayTransaction, TransactionServiceError, TransactionServiceHandle, TransactionStatus,
+        TxId,
         interop::{BundleStatus, InteropBundle},
     },
 };
@@ -65,8 +66,11 @@ pub enum SettlementError {
 /// Processor for handling settlement transactions in cross-chain bundles.
 #[derive(Debug)]
 pub struct SettlementProcessor {
+    /// Storage backend for persisting data.
     storage: RelayStorage,
+    /// Chain ID to transaction service mapping.
     transaction_services: HashMap<ChainId, TransactionServiceHandle>,
+    /// Settler implementation for cross-chain messaging.
     settler: Box<dyn Settler>,
 }
 
@@ -187,12 +191,9 @@ impl SettlementProcessor {
         }
         let source_chains: Vec<ChainId> = source_chain_set.into_iter().collect();
 
-        // Build settlement transactions - one per destination transaction
-        // Each destination transaction has its own intent digest as settlement_id
-        // Execute all settlement builds concurrently
+        // Build settlement transactions
         let settlement_results = try_join_all(bundle.dst_txs.iter().map(async |dst_tx| {
             let settlement_id = dst_tx.eip712_digest().ok_or(SettlementError::MissingIntent)?;
-
             let destination_chain = dst_tx.chain_id();
 
             info!(
@@ -203,13 +204,12 @@ impl SettlementProcessor {
                 "Building settlement transaction for destination"
             );
 
-            // Build send settlement transaction with all source chains
             let orchestrator = dst_tx.quote().ok_or(SettlementError::MissingIntent)?.orchestrator;
             let result = self
                 .settler
                 .build_send_settlement(
                     settlement_id,
-                    destination_chain, // current_chain_id in the settler
+                    destination_chain,
                     source_chains.clone(),
                     orchestrator,
                 )
@@ -253,7 +253,7 @@ impl SettlementProcessor {
 
             self.transaction_services
                 .get(&tx.chain_id())
-                .expect("transaction service should exist - validated above")
+                .expect("transaction service should exist")
                 .send_transaction_no_queue(tx.clone());
         }
 
@@ -297,18 +297,15 @@ impl SettlementProcessor {
         let failed_ids = results
             .into_iter()
             .filter_map(|(tx_id, status)| match status {
-                crate::transactions::TransactionStatus::Confirmed(_) => {
+                TransactionStatus::Confirmed(_) => {
                     info!(tx_id = ?tx_id, "Settlement transaction confirmed");
                     None
                 }
-                crate::transactions::TransactionStatus::Failed(e) => {
+                TransactionStatus::Failed(e) => {
                     warn!(tx_id = ?tx_id, error = %e, "Settlement transaction failed");
                     Some(tx_id)
                 }
-                _ => {
-                    warn!(tx_id = ?tx_id, "Settlement transaction in unexpected state");
-                    Some(tx_id)
-                }
+                _ => unreachable!("wait_for_tx only returns finalized statuses"),
             })
             .collect();
 

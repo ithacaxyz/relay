@@ -76,7 +76,7 @@ impl MultichainTransferSetup {
 
     /// Run the multichain transfer setup with LayerZero
     pub async fn run_with_layer_zero() -> Result<Self> {
-        Self::setup_with_config(Some(50), true).await
+        Self::setup_with_config(None, true).await
     }
 
     async fn setup_with_config(
@@ -87,7 +87,7 @@ impl MultichainTransferSetup {
         // Set up environment configuration
         let mut env_config = EnvironmentConfig {
             num_chains,
-            is_layerzero: use_layerzero,
+            use_layerzero,
             transaction_service_config: TransactionServiceConfig {
                 num_signers: 1,
                 ..Default::default()

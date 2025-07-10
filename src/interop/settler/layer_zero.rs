@@ -41,9 +41,13 @@ sol! {
 /// LayerZero settler implementation for cross-chain settlement attestation.
 #[derive(Debug)]
 pub struct LayerZeroSettler {
+    /// Chain ID to LayerZero endpoint ID mapping.
     endpoint_ids: HashMap<u64, u32>,
+    /// Chain ID to LayerZero endpoint address mapping.
     endpoint_addresses: HashMap<u64, Address>,
+    /// Chain ID to provider mapping.
     providers: HashMap<u64, DynProvider>,
+    /// On-chain settler contract address.
     settler_address: Address,
 }
 
@@ -144,8 +148,7 @@ impl Settler for LayerZeroSettler {
         }
         .abi_encode();
 
-        // Create an internal transaction for the settlement with the calculated value
-        // Estimate gas for the settlement transaction
+        // Create an internal transaction for the settlement with the calculated gas
         let provider = self
             .providers
             .get(&current_chain_id)
