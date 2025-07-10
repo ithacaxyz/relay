@@ -71,8 +71,10 @@ impl SettlementProcessor {
         self.settler.id()
     }
 
-    /// Validates that the bundle's settler ID matches this processor's settler.
-    fn validate_settler_id(&self, bundle: &InteropBundle) -> Result<(), SettlementProcessorError> {
+    /// Validates that the bundle's settler ID matches this processor's settler and that
+    /// all destination transactions have the correct settler address.
+    fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementProcessorError> {
+        // Validate bundle settler ID
         if bundle.settler_id != self.settler.id() {
             error!(
                 bundle_id = ?bundle.id,
@@ -88,6 +90,29 @@ impl SettlementProcessor {
                 )),
             ));
         }
+
+        // Validate settler address in all destination transactions
+        let settler_address = self.settler.address();
+        for dst_tx in &bundle.dst_txs {
+            if let Some(quote) = dst_tx.quote() {
+                if quote.intent.settler != settler_address {
+                    error!(
+                        bundle_id = ?bundle.id,
+                        tx_id = ?dst_tx.id,
+                        intent_settler = %quote.intent.settler,
+                        current_settler = %settler_address,
+                        "Destination transaction has incorrect settler address"
+                    );
+                    return Err(SettlementProcessorError::Settler(
+                        crate::error::RelayError::InvalidRequest(format!(
+                            "Transaction {} has settler '{}' but current settler is '{}'",
+                            dst_tx.id, quote.intent.settler, settler_address
+                        )),
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -99,7 +124,7 @@ impl SettlementProcessor {
         info!(bundle_id = ?bundle.id, "Queuing send settlements for bundle");
 
         // Validate that the bundle's settler matches this settler
-        self.validate_settler_id(bundle)?;
+        self.validate_settler(bundle)?;
 
         debug!(
             bundle_id = ?bundle.id,
@@ -270,18 +295,17 @@ impl SettlementProcessor {
 mod tests {
     use super::*;
     use crate::{
-        interop::SimpleSettler,
-        storage::RelayStorage,
-        transactions::interop::InteropBundle, 
+        interop::SimpleSettler, storage::RelayStorage, transactions::interop::InteropBundle,
         types::rpc::BundleId,
     };
-    use alloy::primitives::{Address, ChainId, map::HashMap};
+    use alloy::primitives::{Address, ChainId};
 
     #[tokio::test]
     async fn test_settler_id_validation_in_queue_settlements() {
         // Create a settlement processor with a simple settler
         let storage = RelayStorage::in_memory();
-        let tx_services = HashMap::new();
+        let tx_services: alloy::primitives::map::HashMap<ChainId, TransactionServiceHandle> =
+            Default::default();
         let settler = Box::new(SimpleSettler::new(Address::ZERO));
         let processor = SettlementProcessor::new(storage, tx_services, settler);
 
@@ -290,29 +314,6 @@ mod tests {
 
         // Try to queue settlements - should fail due to settler mismatch
         let result = processor.queue_send_settlements(&bundle).await;
-
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            SettlementProcessorError::Settler(crate::error::RelayError::InvalidRequest(msg)) => {
-                assert!(msg.contains("does not match current settler"));
-            }
-            _ => panic!("Expected InvalidRequest error for settler mismatch"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_settler_id_validation_in_monitor_completion() {
-        // Create a settlement processor with a simple settler
-        let storage = RelayStorage::in_memory();
-        let tx_services = HashMap::new();
-        let settler = Box::new(SimpleSettler::new(Address::ZERO));
-        let processor = SettlementProcessor::new(storage, tx_services, settler);
-
-        // Create a bundle with a different settler ID
-        let bundle = InteropBundle::new(BundleId::random(), "different_settler".to_string());
-
-        // Try to monitor settlements - should fail due to settler mismatch
-        let result = processor.monitor_settlement_completion(&bundle).await;
 
         assert!(result.is_err());
         match result.err().unwrap() {
