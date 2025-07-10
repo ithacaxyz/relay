@@ -295,11 +295,13 @@ pub struct SimpleSettlerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerZeroConfig {
     /// Mapping of chain ID to LayerZero endpoint ID.
+    /// Format: { chain_id: endpoint_id }
+    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
     #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_ids: HashMap<u64, u32>,
+    pub endpoint_ids: HashMap<ChainId, u32>,
     /// Mapping of chain ID to LayerZero endpoint address.
     #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_addresses: HashMap<u64, Address>,
+    pub endpoint_addresses: HashMap<ChainId, Address>,
     /// LayerZero settler contract address.
     pub settler_address: Address,
 }
