@@ -15,6 +15,8 @@ async fn respawn_cli() -> eyre::Result<()> {
     let dir = temp_dir();
     let config = dir.join("relay.yaml");
     let registry = dir.join("registry.yaml");
+    let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_file(&registry);
     let mnemonic = "test test test test test test test test test test test junk";
 
     for _ in 0..=1 {

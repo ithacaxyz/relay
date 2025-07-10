@@ -4,7 +4,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    constants::DEFAULT_POLL_INTERVAL,
+    constants::{DEFAULT_POLL_INTERVAL, ESCROW_REFUND_DURATION_SECS},
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{AccountApiServer, AccountRpc, Onramp, OnrampApiServer, Relay, RelayApiServer},
@@ -224,7 +224,11 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
-        config.interop.escrow_refund_threshold,
+        config
+            .interop
+            .as_ref()
+            .map(|i| i.escrow_refund_threshold)
+            .unwrap_or(ESCROW_REFUND_DURATION_SECS),
     );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {

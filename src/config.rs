@@ -1,9 +1,6 @@
 //! Relay configuration.
 use crate::{
-    constants::{
-        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS,
-        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
-    },
+    constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
     interop::{LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler},
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
@@ -43,8 +40,8 @@ pub struct RelayConfig {
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
     /// Interop configuration.
-    #[serde(default)]
-    pub interop: InteropConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interop: Option<InteropConfig>,
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
@@ -223,16 +220,6 @@ pub struct InteropConfig {
     pub settler: SettlerConfig,
 }
 
-impl Default for InteropConfig {
-    fn default() -> Self {
-        Self {
-            refund_check_interval: Duration::from_secs(60),
-            escrow_refund_threshold: ESCROW_REFUND_DURATION_SECS,
-            settler: SettlerConfig::default(),
-        }
-    }
-}
-
 /// Configuration for the rebalance service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RebalanceServiceConfig {
@@ -390,7 +377,7 @@ impl Default for RelayConfig {
             onramp: OnrampConfig::default(),
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
-            interop: InteropConfig::default(),
+            interop: None,
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
@@ -621,7 +608,7 @@ impl RelayConfig {
 
     /// Sets the interop configuration.
     pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
-        self.interop = interop_config;
+        self.interop = Some(interop_config);
         self
     }
 
