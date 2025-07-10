@@ -44,7 +44,7 @@ async fn test_layerzero_settlement() -> Result<()> {
     assert!(assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == total_transfer_amount));
 
     // Wait for settlement processing
-    sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Verify the bundle is no longer in pending bundles
     let pending_bundles = setup.env.relay_handle.storage.get_pending_bundles().await?;

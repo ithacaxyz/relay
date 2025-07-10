@@ -5,6 +5,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use async_trait::async_trait;
+use itertools::Itertools;
 
 /// A simple settler implementation that does not require cross-chain attestation.
 /// This is useful for testing and development environments.
@@ -46,7 +47,7 @@ impl Settler for SimpleSettler {
     fn encode_settler_context(&self, chains: Vec<ChainId>) -> Result<Bytes, SettlementError> {
         // Encode the input chain IDs for the settler context
         let input_chain_ids: Vec<U256> =
-            chains.iter().map(|chain_id| U256::from(*chain_id)).collect();
+            chains.iter().sorted().map(|chain_id| U256::from(*chain_id)).collect();
 
         // Simple settler doesn't need any context
         Ok(input_chain_ids.abi_encode().into())

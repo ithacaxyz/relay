@@ -8,6 +8,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use async_trait::async_trait;
+use itertools::Itertools;
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -184,6 +185,7 @@ impl Settler for LayerZeroSettler {
     ) -> Result<Bytes, SettlementError> {
         let endpoint_ids: Vec<u32> = destination_chains
             .into_iter()
+            .sorted()
             .map(|chain_id| {
                 // Validate we have both endpoint ID and address for this chain
                 if !self.endpoint_addresses.contains_key(&chain_id) {
