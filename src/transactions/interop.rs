@@ -192,7 +192,7 @@ enum InteropBundleError {
     IntentEventNotFound,
     /// Settlement processor error.
     #[error("settlement processor error: {0}")]
-    SettlementProcessor(#[from] crate::interop::SettlementProcessorError),
+    SettlementProcessor(#[from] crate::interop::SettlementError),
 }
 
 /// Status of a pending interop bundle.
@@ -1096,14 +1096,14 @@ mod tests {
             _current_chain_id: u64,
             _source_chains: Vec<u64>,
             _settler_contract: Address,
-        ) -> Result<Option<RelayTransaction>, crate::error::RelayError> {
+        ) -> Result<Option<RelayTransaction>, crate::interop::SettlementError> {
             Ok(Some(RelayTransaction::new_internal(Address::default(), vec![], 0, 1_000_000)))
         }
 
         fn encode_settler_context(
             &self,
             _destination_chains: Vec<u64>,
-        ) -> Result<alloy::primitives::Bytes, crate::error::RelayError> {
+        ) -> Result<alloy::primitives::Bytes, crate::interop::SettlementError> {
             Ok(alloy::primitives::Bytes::new())
         }
     }

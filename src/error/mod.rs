@@ -89,9 +89,6 @@ pub enum RelayError {
     /// The relay is unhealthy.
     #[error("service is unhealthy")]
     Unhealthy,
-    /// Invalid request.
-    #[error("invalid request: {0}")]
-    InvalidRequest(String),
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -146,7 +143,6 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::RpcError(_)
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
-            | RelayError::InvalidRequest(_)
             | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_) => internal_rpc(err.to_string()),

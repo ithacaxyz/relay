@@ -15,22 +15,51 @@ use crate::{
 
 /// Errors that can occur during settlement processing.
 #[derive(thiserror::Error, Debug)]
-pub enum SettlementProcessorError {
+pub enum SettlementError {
     /// Storage error occurred.
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
     /// Transaction service error occurred.
     #[error("Transaction service error: {0}")]
     TransactionService(#[from] TransactionServiceError),
-    /// Settler error occurred.
-    #[error("Settler error: {0}")]
-    Settler(#[from] crate::error::RelayError),
     /// Invalid bundle state for settlement.
     #[error("Invalid bundle state for settlement: {0:?}")]
     InvalidBundleState(BundleStatus),
     /// No transaction service found for chain.
     #[error("No transaction service for chain {0}")]
     NoTransactionService(ChainId),
+    /// Settler ID mismatch.
+    #[error("Bundle settler '{bundle_settler}' does not match current settler '{current_settler}'")]
+    SettlerIdMismatch {
+        /// The settler ID from the bundle
+        bundle_settler: String,
+        /// The current settler ID
+        current_settler: &'static str,
+    },
+    /// Settler address mismatch.
+    #[error(
+        "Transaction {tx_id} has settler '{intent_settler}' but current settler is '{current_settler}'"
+    )]
+    SettlerAddressMismatch {
+        /// The transaction ID with the mismatch
+        tx_id: TxId,
+        /// The settler address from the intent
+        intent_settler: Address,
+        /// The current settler address
+        current_settler: Address,
+    },
+    /// Missing intent in destination transaction.
+    #[error("Destination transaction missing intent")]
+    MissingIntent,
+    /// Unsupported chain.
+    #[error("Unsupported chain: {0}")]
+    UnsupportedChain(ChainId),
+    /// RPC error from provider calls.
+    #[error("RPC error: {0}")]
+    RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// Multicall error.
+    #[error("Multicall error: {0}")]
+    MulticallError(#[from] alloy::providers::MulticallError),
 }
 
 /// Processor for handling settlement transactions in cross-chain bundles.
@@ -80,7 +109,7 @@ impl SettlementProcessor {
 
     /// Validates that the bundle's settler ID matches this processor's settler and that
     /// all destination transactions have the correct settler address.
-    fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementProcessorError> {
+    fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementError> {
         // Validate bundle settler ID
         if bundle.settler_id != self.settler.id() {
             error!(
@@ -89,13 +118,10 @@ impl SettlementProcessor {
                 current_settler = %self.settler.id(),
                 "Bundle settler ID does not match current settler"
             );
-            return Err(SettlementProcessorError::Settler(
-                crate::error::RelayError::InvalidRequest(format!(
-                    "Bundle settler '{}' does not match current settler '{}'",
-                    bundle.settler_id,
-                    self.settler.id()
-                )),
-            ));
+            return Err(SettlementError::SettlerIdMismatch {
+                bundle_settler: bundle.settler_id.clone(),
+                current_settler: self.settler.id(),
+            });
         }
 
         // Validate settler address in all destination transactions
@@ -110,12 +136,11 @@ impl SettlementProcessor {
                         current_settler = %settler_address,
                         "Destination transaction has incorrect settler address"
                     );
-                    return Err(SettlementProcessorError::Settler(
-                        crate::error::RelayError::InvalidRequest(format!(
-                            "Transaction {} has settler '{}' but current settler is '{}'",
-                            dst_tx.id, quote.intent.settler, settler_address
-                        )),
-                    ));
+                    return Err(SettlementError::SettlerAddressMismatch {
+                        tx_id: dst_tx.id,
+                        intent_settler: quote.intent.settler,
+                        current_settler: settler_address,
+                    });
                 }
             }
         }
@@ -127,7 +152,7 @@ impl SettlementProcessor {
     pub async fn queue_send_settlements(
         &self,
         bundle: &InteropBundle,
-    ) -> Result<SettlementUpdate, SettlementProcessorError> {
+    ) -> Result<SettlementUpdate, SettlementError> {
         info!(bundle_id = ?bundle.id, "Queuing send settlements for bundle");
 
         // Validate that the bundle's settler matches this settler
@@ -143,7 +168,7 @@ impl SettlementProcessor {
         // Validate that we have transaction services for all destination chains upfront
         for dst_tx in &bundle.dst_txs {
             if !self.transaction_services.contains_key(&dst_tx.chain_id()) {
-                return Err(SettlementProcessorError::NoTransactionService(dst_tx.chain_id()));
+                return Err(SettlementError::NoTransactionService(dst_tx.chain_id()));
             }
         }
 
@@ -158,12 +183,10 @@ impl SettlementProcessor {
         // Each destination transaction has its own intent digest as settlement_id
         // Execute all settlement builds concurrently
         let settlement_results = try_join_all(bundle.dst_txs.iter().map(async |dst_tx| {
-            let settlement_id =
-                dst_tx.quote().map(|quote| quote.intent.digest()).ok_or_else(|| {
-                    crate::error::RelayError::InvalidRequest(
-                        "Destination transaction missing intent".to_string(),
-                    )
-                })?;
+            let settlement_id = dst_tx
+                .quote()
+                .map(|quote| quote.intent.digest())
+                .ok_or(SettlementError::MissingIntent)?;
 
             let destination_chain = dst_tx.chain_id();
 
@@ -187,7 +210,7 @@ impl SettlementProcessor {
                 .await?;
 
             if let Some(tx) = result {
-                Ok::<Option<RelayTransaction>, SettlementProcessorError>(Some(tx))
+                Ok::<Option<RelayTransaction>, SettlementError>(Some(tx))
             } else {
                 // This might happen if the settlement was embedded with the intent execution.
                 debug!(
@@ -245,7 +268,7 @@ impl SettlementProcessor {
     pub async fn monitor_settlement_completion(
         &self,
         bundle: &InteropBundle,
-    ) -> Result<Vec<TxId>, SettlementProcessorError> {
+    ) -> Result<Vec<TxId>, SettlementError> {
         info!(
             bundle_id = ?bundle.id,
             num_settlements = bundle.settlement_txs.len(),
@@ -257,10 +280,10 @@ impl SettlementProcessor {
             let tx_service = self
                 .transaction_services
                 .get(&tx.chain_id())
-                .ok_or_else(|| SettlementProcessorError::NoTransactionService(tx.chain_id()))?;
+                .ok_or_else(|| SettlementError::NoTransactionService(tx.chain_id()))?;
 
             let status = tx_service.wait_for_tx(tx.id).await?;
-            Ok::<_, SettlementProcessorError>((tx.id, status))
+            Ok::<_, SettlementError>((tx.id, status))
         }))
         .await?;
 
@@ -313,10 +336,11 @@ mod tests {
 
         assert!(result.is_err());
         match result.err().unwrap() {
-            SettlementProcessorError::Settler(crate::error::RelayError::InvalidRequest(msg)) => {
-                assert!(msg.contains("does not match current settler"));
+            SettlementError::SettlerIdMismatch { bundle_settler, current_settler } => {
+                assert_eq!(bundle_settler, "different_settler");
+                assert_eq!(current_settler, "simple");
             }
-            _ => panic!("Expected InvalidRequest error for settler mismatch"),
+            _ => panic!("Expected SettlerIdMismatch error"),
         }
     }
 }

@@ -6,13 +6,13 @@ pub mod processor;
 pub mod simple;
 
 pub use layer_zero::LayerZeroSettler;
-pub use processor::{SettlementProcessor, SettlementProcessorError, SettlementUpdate};
+pub use processor::{SettlementError, SettlementProcessor, SettlementUpdate};
 pub use simple::SimpleSettler;
 
 use alloy::primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
 
-use crate::{error::RelayError, transactions::RelayTransaction};
+use crate::transactions::RelayTransaction;
 
 /// Trait for cross-chain settlement implementations.
 #[async_trait]
@@ -37,10 +37,13 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
         current_chain_id: u64,
         source_chains: Vec<u64>,
         settler_contract: Address,
-    ) -> Result<Option<RelayTransaction>, RelayError>;
+    ) -> Result<Option<RelayTransaction>, SettlementError>;
 
     /// Encodes the settler-specific context for the given destination chains.
     ///
     /// For example LayerZero settler returns encoded endpoint IDs for the destination chains.
-    fn encode_settler_context(&self, destination_chains: Vec<u64>) -> Result<Bytes, RelayError>;
+    fn encode_settler_context(
+        &self,
+        destination_chains: Vec<u64>,
+    ) -> Result<Bytes, SettlementError>;
 }

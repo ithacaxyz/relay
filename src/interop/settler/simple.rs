@@ -1,5 +1,5 @@
-use super::Settler;
-use crate::{error::RelayError, transactions::RelayTransaction};
+use super::{SettlementError, Settler};
+use crate::transactions::RelayTransaction;
 use alloy::primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
 
@@ -34,13 +34,16 @@ impl Settler for SimpleSettler {
         _current_chain_id: u64,
         _source_chains: Vec<u64>,
         _settler_contract: Address,
-    ) -> Result<Option<RelayTransaction>, RelayError> {
+    ) -> Result<Option<RelayTransaction>, SettlementError> {
         // Simple settler doesn't need to send settlement transactions
         // The settlement is handled directly during intent execution
         Ok(None)
     }
 
-    fn encode_settler_context(&self, _destination_chains: Vec<u64>) -> Result<Bytes, RelayError> {
+    fn encode_settler_context(
+        &self,
+        _destination_chains: Vec<u64>,
+    ) -> Result<Bytes, SettlementError> {
         // Simple settler doesn't need any context
         Ok(Bytes::default())
     }

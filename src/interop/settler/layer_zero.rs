@@ -1,5 +1,5 @@
-use super::Settler;
-use crate::{error::RelayError, transactions::RelayTransaction};
+use super::{SettlementError, Settler};
+use crate::transactions::RelayTransaction;
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
@@ -9,7 +9,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use tracing::{error, instrument};
+use tracing::instrument;
 
 sol! {
     interface ILayerZeroSettler {
@@ -87,19 +87,19 @@ impl Settler for LayerZeroSettler {
         current_chain_id: u64,
         source_chains: Vec<u64>,
         settler_contract: Address,
-    ) -> Result<Option<RelayTransaction>, RelayError> {
+    ) -> Result<Option<RelayTransaction>, SettlementError> {
         let settler_context = self.encode_settler_context(source_chains.clone())?;
 
         // Get the provider and endpoint address for the current chain
         let provider = self
             .providers
             .get(&current_chain_id)
-            .ok_or_else(|| RelayError::UnsupportedChain(current_chain_id))?;
+            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
 
         let endpoint_address = self
             .endpoint_addresses
             .get(&current_chain_id)
-            .ok_or_else(|| RelayError::UnsupportedChain(current_chain_id))?;
+            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
 
         // Create endpoint contract instance
         let endpoint = ILayerZeroEndpointV2::new(*endpoint_address, provider);
@@ -112,7 +112,7 @@ impl Settler for LayerZeroSettler {
                 let dst_eid = self
                     .endpoint_ids
                     .get(source_chain_id)
-                    .ok_or_else(|| RelayError::UnsupportedChain(*source_chain_id))?;
+                    .ok_or_else(|| SettlementError::UnsupportedChain(*source_chain_id))?;
 
                 // Build messaging params
                 Ok(MessagingParams {
@@ -125,17 +125,16 @@ impl Settler for LayerZeroSettler {
                     payInLzToken: false,
                 })
             })
-            .collect::<Result<Vec<_>, RelayError>>()?;
+            .collect::<Result<Vec<_>, SettlementError>>()?;
 
-        // Build dynamic multicall using fold
-        let multicall_dynamic =
+        // Quote for all chain fees.
+        let multicall =
             all_params.iter().fold(provider.multicall().dynamic(), |multicall, params| {
                 multicall.add_dynamic(endpoint.quote(params.clone(), settler_contract))
             });
 
-        // Process results and sum native fees
         let native_lz_fee: U256 =
-            multicall_dynamic.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();
+            multicall.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();
 
         let calldata = ILayerZeroSettler::executeSendCall {
             sender: settler_contract,
@@ -149,7 +148,7 @@ impl Settler for LayerZeroSettler {
         let provider = self
             .providers
             .get(&current_chain_id)
-            .ok_or_else(|| RelayError::UnsupportedChain(current_chain_id))?;
+            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
 
         let tx_request = TransactionRequest {
             from: Some(Address::ZERO),
@@ -159,14 +158,7 @@ impl Settler for LayerZeroSettler {
             ..Default::default()
         };
 
-        let gas_limit = provider.estimate_gas(tx_request).await.inspect_err(|e| {
-            error!(
-                chain_id = current_chain_id,
-                settler_contract = ?settler_contract,
-                error = ?e,
-                "Failed to estimate gas for settlement transaction"
-            );
-        })?;
+        let gas_limit = provider.estimate_gas(tx_request).await?;
 
         // Add 20% buffer to the gas estimate
         let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
@@ -182,19 +174,22 @@ impl Settler for LayerZeroSettler {
         Ok(Some(tx))
     }
 
-    fn encode_settler_context(&self, destination_chains: Vec<u64>) -> Result<Bytes, RelayError> {
+    fn encode_settler_context(
+        &self,
+        destination_chains: Vec<u64>,
+    ) -> Result<Bytes, SettlementError> {
         let endpoint_ids: Vec<u32> = destination_chains
             .into_iter()
             .map(|chain_id| {
                 // Validate we have both endpoint ID and address for this chain
                 if !self.endpoint_addresses.contains_key(&chain_id) {
-                    return Err(RelayError::UnsupportedChain(chain_id));
+                    return Err(SettlementError::UnsupportedChain(chain_id));
                 }
 
                 self.endpoint_ids
                     .get(&chain_id)
                     .copied()
-                    .ok_or_else(|| RelayError::UnsupportedChain(chain_id))
+                    .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))
             })
             .collect::<Result<Vec<_>, _>>()?;
 

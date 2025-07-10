@@ -268,14 +268,9 @@ impl SettlerConfig {
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
         let settler: Box<dyn Settler> = if let Some(layer_zero) = &self.layer_zero {
-            Box::new(LayerZeroSettler::new(
-                layer_zero.endpoint_ids.clone().into_iter().collect(),
-                layer_zero.endpoint_addresses.clone().into_iter().collect(),
-                providers.into_iter().collect(),
-                layer_zero.settler_address,
-            ))
+            Box::new(layer_zero.create_settler(providers.into_iter().collect()))
         } else if let Some(simple) = &self.simple {
-            Box::new(SimpleSettler::new(simple.settler_address))
+            Box::new(simple.create_settler())
         } else {
             return Err(eyre::eyre!("No settler implementation configured"));
         };
@@ -291,6 +286,13 @@ pub struct SimpleSettlerConfig {
     pub settler_address: Address,
 }
 
+impl SimpleSettlerConfig {
+    /// Creates a new simple settler instance.
+    pub fn create_settler(&self) -> SimpleSettler {
+        SimpleSettler::new(self.settler_address)
+    }
+}
+
 /// LayerZero configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerZeroConfig {
@@ -304,6 +306,18 @@ pub struct LayerZeroConfig {
     pub endpoint_addresses: HashMap<ChainId, Address>,
     /// LayerZero settler contract address.
     pub settler_address: Address,
+}
+
+impl LayerZeroConfig {
+    /// Creates a new LayerZero settler instance with the given providers.
+    pub fn create_settler(&self, providers: HashMap<ChainId, DynProvider>) -> LayerZeroSettler {
+        LayerZeroSettler::new(
+            self.endpoint_ids.clone(),
+            self.endpoint_addresses.clone(),
+            providers,
+            self.settler_address,
+        )
+    }
 }
 
 /// Configuration for transaction service.
