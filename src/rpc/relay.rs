@@ -1150,7 +1150,12 @@ impl Relay {
             )
             .await?;
 
-        let output_intent_digest = output_quote.intent.digest();
+        // Compute EIP-712 digest for the output intent (settlement_id)
+        let (output_intent_digest, _) = output_quote
+            .intent
+            .compute_eip712_data(output_quote.orchestrator, &self.provider(request.chain_id)?)
+            .await
+            .map_err(RelayError::from)?;
 
         let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
             async |(leaf, (chain_id, amount))| {
