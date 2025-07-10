@@ -14,17 +14,23 @@ use async_trait::async_trait;
 
 use crate::{error::RelayError, transactions::RelayTransaction};
 
-/// Trait for settlement implementations.
+/// Trait for cross-chain settlement implementations.
 #[async_trait]
 pub trait Settler: Send + Sync + std::fmt::Debug {
     /// Returns a unique identifier for this settler implementation.
+    ///
+    /// This ID is used to match bundles with their corresponding settler.
+    /// Common values: "simple", "layer_zero"
     fn id(&self) -> &'static str;
 
     /// Returns the settler contract address.
+    ///
+    /// This is the address of the on-chain contract that handles settlement logic.
     fn address(&self) -> Address;
 
     /// Builds a send settlement transaction for the given parameters.
-    /// Returns None if this settler doesn't require a send settlement transaction.
+    ///
+    /// This method is only called after all the destination intents are confirmed.
     async fn build_send_settlement(
         &self,
         settlement_id: B256,
@@ -33,6 +39,8 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
         settler_contract: Address,
     ) -> Result<Option<RelayTransaction>, RelayError>;
 
-    /// Encodes the settler context for the given destination chains.
+    /// Encodes the settler-specific context for the given destination chains.
+    ///
+    /// For example LayerZero settler returns encoded endpoint IDs for the destination chains.
     fn encode_settler_context(&self, destination_chains: Vec<u64>) -> Result<Bytes, RelayError>;
 }

@@ -1,5 +1,6 @@
 use alloy::primitives::{Address, ChainId, map::HashMap};
 use futures_util::future::try_join_all;
+use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
 use super::Settler;
@@ -53,6 +54,12 @@ pub struct SettlementUpdate {
 
 impl SettlementProcessor {
     /// Creates a new settlement processor.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The relay storage instance
+    /// * `transaction_services` - Map of chain IDs to transaction service handles
+    /// * `settler` - The settler implementation to use for settlements
     pub fn new(
         storage: RelayStorage,
         transaction_services: HashMap<ChainId, TransactionServiceHandle>,
@@ -140,14 +147,12 @@ impl SettlementProcessor {
             }
         }
 
-        // Get all source chain IDs (they're all confirmed at this point)
-        let source_chains: Vec<u64> = bundle
-            .src_txs
-            .iter()
-            .map(|tx| tx.chain_id())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
+        // Get all unique source chain IDs
+        let mut source_chain_set = HashSet::with_capacity(bundle.src_txs.len());
+        for tx in &bundle.src_txs {
+            source_chain_set.insert(tx.chain_id());
+        }
+        let source_chains: Vec<ChainId> = source_chain_set.into_iter().collect();
 
         // Build settlement transactions - one per destination transaction
         // Each destination transaction has its own intent digest as settlement_id
@@ -247,26 +252,17 @@ impl SettlementProcessor {
             "Monitoring settlement transaction completion"
         );
 
-        // Build futures for each transaction
-        let mut futures = Vec::new();
-        for tx in &bundle.settlement_txs {
+        // Wait for all settlement transactions to complete
+        let results = try_join_all(bundle.settlement_txs.iter().map(async |tx| {
             let tx_service = self
                 .transaction_services
                 .get(&tx.chain_id())
-                .ok_or_else(|| SettlementProcessorError::NoTransactionService(tx.chain_id()))?
-                .clone();
+                .ok_or_else(|| SettlementProcessorError::NoTransactionService(tx.chain_id()))?;
 
-            let tx_id = tx.id;
-            futures.push(async move {
-                let status = tx_service.wait_for_tx(tx_id).await?;
-                Ok::<(TxId, crate::transactions::TransactionStatus), SettlementProcessorError>((
-                    tx_id, status,
-                ))
-            });
-        }
-
-        // Wait for all settlement transactions to complete concurrently
-        let results = try_join_all(futures).await?;
+            let status = tx_service.wait_for_tx(tx.id).await?;
+            Ok::<_, SettlementProcessorError>((tx.id, status))
+        }))
+        .await?;
 
         // Process results and collect failed transaction IDs
         let failed_ids = results

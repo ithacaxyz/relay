@@ -1,5 +1,7 @@
+use super::Settler;
+use crate::{error::RelayError, transactions::RelayTransaction};
 use alloy::{
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
     rpc::types::TransactionRequest,
     sol,
@@ -7,10 +9,7 @@ use alloy::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use tracing::error;
-
-use super::Settler;
-use crate::{error::RelayError, transactions::RelayTransaction};
+use tracing::{error, instrument};
 
 sol! {
     interface ILayerZeroSettler {
@@ -49,10 +48,17 @@ pub struct LayerZeroSettler {
 
 impl LayerZeroSettler {
     /// Creates a new LayerZero settler with the given endpoint configurations.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint_ids` - Mapping of chain ID to LayerZero endpoint ID
+    /// * `endpoint_addresses` - Mapping of chain ID to LayerZero endpoint address
+    /// * `providers` - Mapping of chain ID to provider instances
+    /// * `settler_address` - The address of the LayerZero settler contract
     pub fn new(
-        endpoint_ids: HashMap<u64, u32>,
-        endpoint_addresses: HashMap<u64, Address>,
-        providers: HashMap<u64, DynProvider>,
+        endpoint_ids: HashMap<ChainId, u32>,
+        endpoint_addresses: HashMap<ChainId, Address>,
+        providers: HashMap<ChainId, DynProvider>,
         settler_address: Address,
     ) -> Self {
         Self { endpoint_ids, endpoint_addresses, providers, settler_address }
@@ -74,6 +80,7 @@ impl Settler for LayerZeroSettler {
         self.settler_address
     }
 
+    #[instrument(skip(self), fields(settler_id = %self.id()))]
     async fn build_send_settlement(
         &self,
         settlement_id: B256,
@@ -139,40 +146,30 @@ impl Settler for LayerZeroSettler {
 
         // Create an internal transaction for the settlement with the calculated value
         // Estimate gas for the settlement transaction
-        const SETTLEMENT_FALLBACK_GAS_LIMIT: u64 = 1_000_000;
+        let provider = self
+            .providers
+            .get(&current_chain_id)
+            .ok_or_else(|| RelayError::UnsupportedChain(current_chain_id))?;
 
-        let gas_limit = if let Some(provider) = self.providers.get(&current_chain_id) {
-            let tx_request = TransactionRequest {
-                from: Some(Address::ZERO),
-                to: Some(settler_contract.into()),
-                value: Some(native_lz_fee),
-                input: calldata.clone().into(),
-                ..Default::default()
-            };
+        let tx_request = TransactionRequest {
+            from: Some(Address::ZERO),
+            to: Some(settler_contract.into()),
+            value: Some(native_lz_fee),
+            input: calldata.clone().into(),
+            ..Default::default()
+        };
 
-            provider
-                .estimate_gas(tx_request)
-                .await
-                .map(|estimated| {
-                    // Add 20% buffer
-                    estimated.saturating_mul(120).saturating_div(100)
-                })
-                .unwrap_or_else(|e| {
-                    error!(
-                        chain_id = current_chain_id,
-                        settler_contract = ?settler_contract,
-                        error = ?e,
-                        "Failed to estimate gas for settlement transaction, using fallback"
-                    );
-                    SETTLEMENT_FALLBACK_GAS_LIMIT
-                })
-        } else {
+        let gas_limit = provider.estimate_gas(tx_request).await.inspect_err(|e| {
             error!(
                 chain_id = current_chain_id,
-                "No provider available for gas estimation, using fallback"
+                settler_contract = ?settler_contract,
+                error = ?e,
+                "Failed to estimate gas for settlement transaction"
             );
-            SETTLEMENT_FALLBACK_GAS_LIMIT
-        };
+        })?;
+
+        // Add 20% buffer to the gas estimate
+        let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
 
         let tx = RelayTransaction::new_internal_with_value(
             settler_contract,
