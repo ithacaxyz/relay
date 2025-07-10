@@ -46,7 +46,7 @@ async fn test_multichain_layerzero_escrow_with_automatic_delivery() -> Result<()
     let ctx = setup_test_context(&env).await?;
 
     // Start LayerZero relayer using the new integrated method
-    let _relayer_handles = env.start_layerzero_relayer().await?;
+    let (_relayer, _handles) = env.start_layerzero_relayer().await?;
 
     // Setup tokens and balances
     setup_test_balances(&env, &ctx).await?;

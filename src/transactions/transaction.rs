@@ -34,6 +34,8 @@ pub enum RelayTransactionKind {
         quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
         authorization: Option<SignedAuthorization>,
+        /// The EIP-712 digest of the intent.
+        eip712_digest: B256,
     },
     /// An arbitrary internal relay transaction for maintenance purposes.
     Internal {
@@ -77,10 +79,18 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(quote: Quote, authorization: Option<SignedAuthorization>) -> Self {
+    pub fn new(
+        quote: Quote,
+        authorization: Option<SignedAuthorization>,
+        eip712_digest: B256,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
-            kind: RelayTransactionKind::Intent { quote: Box::new(quote), authorization },
+            kind: RelayTransactionKind::Intent {
+                quote: Box::new(quote),
+                authorization,
+                eip712_digest,
+            },
             trace_context: Context::current(),
             received_at: Utc::now(),
         }
@@ -212,6 +222,15 @@ impl RelayTransaction {
     /// Returns the [`Quote`] of the transaction, if it's a [`RelayTransactionKind::Intent`].
     pub fn quote(&self) -> Option<&Quote> {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind { Some(quote) } else { None }
+    }
+
+    /// Returns the EIP-712 digest of the transaction, if it's a [`RelayTransactionKind::Intent`].
+    pub fn eip712_digest(&self) -> Option<B256> {
+        if let RelayTransactionKind::Intent { eip712_digest, .. } = &self.kind {
+            Some(*eip712_digest)
+        } else {
+            None
+        }
     }
 
     /// Whether the transaction is an intent.

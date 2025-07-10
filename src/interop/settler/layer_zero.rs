@@ -3,7 +3,7 @@ use crate::transactions::RelayTransaction;
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
     providers::{DynProvider, Provider},
-    rpc::types::TransactionRequest,
+    rpc::types::{TransactionRequest, state::AccountOverride},
     sol,
     sol_types::{SolCall, SolValue},
 };
@@ -86,7 +86,7 @@ impl Settler for LayerZeroSettler {
         settlement_id: B256,
         current_chain_id: u64,
         source_chains: Vec<u64>,
-        settler_contract: Address,
+        orchestrator: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError> {
         let settler_context = self.encode_settler_context(source_chains.clone())?;
 
@@ -117,8 +117,8 @@ impl Settler for LayerZeroSettler {
                 // Build messaging params
                 Ok(MessagingParams {
                     dstEid: *dst_eid,
-                    receiver: B256::left_padding_from(settler_contract.as_slice()),
-                    message: (settlement_id, settler_contract, U256::from(*source_chain_id))
+                    receiver: B256::left_padding_from(self.settler_address.as_slice()),
+                    message: (settlement_id, self.settler_address, U256::from(*source_chain_id))
                         .abi_encode()
                         .into(),
                     options: Bytes::new(),
@@ -130,14 +130,14 @@ impl Settler for LayerZeroSettler {
         // Quote for all chain fees.
         let multicall =
             all_params.iter().fold(provider.multicall().dynamic(), |multicall, params| {
-                multicall.add_dynamic(endpoint.quote(params.clone(), settler_contract))
+                multicall.add_dynamic(endpoint.quote(params.clone(), self.settler_address))
             });
 
         let native_lz_fee: U256 =
             multicall.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();
 
         let calldata = ILayerZeroSettler::executeSendCall {
-            sender: settler_contract,
+            sender: orchestrator,
             settlementId: settlement_id,
             settlerContext: settler_context,
         }
@@ -150,21 +150,25 @@ impl Settler for LayerZeroSettler {
             .get(&current_chain_id)
             .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
 
+        let from = Address::random();
         let tx_request = TransactionRequest {
-            from: Some(Address::ZERO),
-            to: Some(settler_contract.into()),
+            from: Some(from),
+            to: Some(self.settler_address.into()),
             value: Some(native_lz_fee),
             input: calldata.clone().into(),
             ..Default::default()
         };
 
-        let gas_limit = provider.estimate_gas(tx_request).await?;
+        let gas_limit = provider
+            .estimate_gas(tx_request)
+            .account_override(from, AccountOverride::default().with_balance(U256::MAX))
+            .await?;
 
         // Add 20% buffer to the gas estimate
         let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
 
         let tx = RelayTransaction::new_internal_with_value(
-            settler_contract,
+            self.settler_address,
             calldata,
             current_chain_id,
             gas_limit,

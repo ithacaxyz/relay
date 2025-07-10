@@ -1,6 +1,9 @@
 use super::{SettlementError, Settler};
 use crate::transactions::RelayTransaction;
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::{
+    primitives::{Address, B256, Bytes, ChainId, U256},
+    sol_types::SolValue,
+};
 use async_trait::async_trait;
 
 /// A simple settler implementation that does not require cross-chain attestation.
@@ -31,20 +34,21 @@ impl Settler for SimpleSettler {
     async fn build_send_settlement(
         &self,
         _settlement_id: B256,
-        _current_chain_id: u64,
-        _source_chains: Vec<u64>,
-        _settler_contract: Address,
+        _current_chain_id: ChainId,
+        _source_chains: Vec<ChainId>,
+        _orchestrator: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError> {
         // Simple settler doesn't need to send settlement transactions
         // The settlement is handled directly during intent execution
         Ok(None)
     }
 
-    fn encode_settler_context(
-        &self,
-        _destination_chains: Vec<u64>,
-    ) -> Result<Bytes, SettlementError> {
+    fn encode_settler_context(&self, chains: Vec<ChainId>) -> Result<Bytes, SettlementError> {
+        // Encode the input chain IDs for the settler context
+        let input_chain_ids: Vec<U256> =
+            chains.iter().map(|chain_id| U256::from(*chain_id)).collect();
+
         // Simple settler doesn't need any context
-        Ok(Bytes::default())
+        Ok(input_chain_ids.abi_encode().into())
     }
 }

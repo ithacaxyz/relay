@@ -24,7 +24,13 @@ use alloy::{
 };
 use eyre::Result;
 use parking_lot::Mutex;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tokio::task::JoinHandle;
 
 #[derive(Clone)]
@@ -35,10 +41,17 @@ pub struct ChainEndpoint {
     pub eid: u32,
 }
 
-pub struct LayerZeroRelayer {
+struct LayerZeroRelayerInner {
     endpoints: Vec<ChainEndpoint>,
     providers: Vec<DynProvider>,
-    delivered_guids: Arc<Mutex<HashSet<B256>>>,
+    delivered_guids: Mutex<HashSet<B256>>,
+    messages_seen: AtomicUsize,
+    transactions_sent: AtomicUsize,
+}
+
+#[derive(Clone)]
+pub struct LayerZeroRelayer {
+    inner: Arc<LayerZeroRelayerInner>,
 }
 
 impl LayerZeroRelayer {
@@ -52,14 +65,22 @@ impl LayerZeroRelayer {
         }))
         .await?;
 
-        Ok(Self { endpoints, providers, delivered_guids: Arc::new(Mutex::new(HashSet::new())) })
+        Ok(Self {
+            inner: Arc::new(LayerZeroRelayerInner {
+                endpoints,
+                providers,
+                delivered_guids: Mutex::new(HashSet::new()),
+                messages_seen: AtomicUsize::new(0),
+                transactions_sent: AtomicUsize::new(0),
+            }),
+        })
     }
 
     /// Starts monitoring tasks for all configured chains
-    pub async fn start(self: Arc<Self>) -> Result<Vec<JoinHandle<Result<()>>>> {
-        let mut handles = Vec::with_capacity(self.endpoints.len());
+    pub async fn start(self) -> Result<Vec<JoinHandle<Result<()>>>> {
+        let mut handles = Vec::with_capacity(self.inner.endpoints.len());
 
-        for endpoint in self.endpoints.iter().cloned() {
+        for endpoint in self.inner.endpoints.iter().cloned() {
             let relayer = self.clone();
             let chain_index = endpoint.chain_index;
             let handle = tokio::spawn(async move {
@@ -80,7 +101,7 @@ impl LayerZeroRelayer {
     /// Subscribes to the endpoint's PacketSent events and processes
     /// each one by delivering it to the appropriate destination.
     async fn monitor_chain(&self, chain_endpoint: ChainEndpoint) -> Result<()> {
-        let provider = &self.providers[chain_endpoint.chain_index];
+        let provider = &self.inner.providers[chain_endpoint.chain_index];
 
         let filter = Filter::new()
             .address(chain_endpoint.endpoint)
@@ -105,12 +126,16 @@ impl LayerZeroRelayer {
         let event = IEndpointV2Mock::PacketSent::decode_log(&log.inner)?;
         let packet = self.decode_packet(&event.encodedPayload)?;
 
+        // Increment messages seen counter
+        self.inner.messages_seen.fetch_add(1, Ordering::Relaxed);
+
         // Check if already delivered
         if !self.mark_as_delivered(packet.guid) {
             return Ok(());
         }
 
         let dst_endpoint = self
+            .inner
             .endpoints
             .iter()
             .find(|e| e.eid == packet.dstEid)
@@ -121,14 +146,14 @@ impl LayerZeroRelayer {
 
     /// Marks a GUID as delivered, returns true if it's new
     fn mark_as_delivered(&self, guid: B256) -> bool {
-        let mut delivered = self.delivered_guids.lock();
+        let mut delivered = self.inner.delivered_guids.lock();
         delivered.insert(guid)
     }
 
     /// Delivers a message to the destination chain
     async fn deliver_message(&self, dst_endpoint: &ChainEndpoint, packet: Packet) -> Result<()> {
-        deliver_layerzero_message(
-            &self.providers[dst_endpoint.chain_index],
+        let result = deliver_layerzero_message(
+            &self.inner.providers[dst_endpoint.chain_index],
             dst_endpoint.endpoint,
             packet.srcEid,
             &create_origin(packet.srcEid, packet.sender, packet.nonce),
@@ -136,7 +161,14 @@ impl LayerZeroRelayer {
             packet.guid,
             packet.message,
         )
-        .await
+        .await;
+
+        // Increment transactions sent counter on success
+        if result.is_ok() {
+            self.inner.transactions_sent.fetch_add(1, Ordering::Relaxed);
+        }
+
+        result
     }
 
     /// Decodes a LayerZero packet from encoded bytes
@@ -178,6 +210,16 @@ impl LayerZeroRelayer {
             guid: B256::from_slice(&data[OFFSETS.guid..OFFSETS.message]),
             message: Bytes::from(data[OFFSETS.message..].to_vec()),
         })
+    }
+
+    /// Gets the number of messages seen by the relayer
+    pub fn messages_seen(&self) -> usize {
+        self.inner.messages_seen.load(Ordering::Relaxed)
+    }
+
+    /// Gets the number of transactions sent by the relayer
+    pub fn transactions_sent(&self) -> usize {
+        self.inner.transactions_sent.load(Ordering::Relaxed)
     }
 }
 

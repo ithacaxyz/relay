@@ -16,7 +16,6 @@ sol! {
             uint256 lzTokenFee;
         }
 
-        function setPeer(uint32 eid, bytes32 peer) external;
         function lockTokens(
             address token,
             uint256 amount,
@@ -74,5 +73,11 @@ sol! {
         bytes32 receiver;
         bytes32 guid;
         bytes message;
+    }
+
+    /// OApp interface for LayerZero applications
+    #[sol(rpc)]
+    interface IOApp {
+        function setPeer(uint32 eid, bytes32 peer) external;
     }
 }

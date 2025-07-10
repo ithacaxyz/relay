@@ -6,7 +6,7 @@ use crate::{
     config::InteropConfig,
     error::StorageError,
     interop::{
-        RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate,
+        RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate, SettlementError,
         refund::processor::MAX_REFUND_RETRY_ATTEMPTS,
         settler::processor::{SettlementProcessor, SettlementUpdate},
     },
@@ -15,7 +15,7 @@ use crate::{
     types::{InteropTxType, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
-    primitives::{Address, ChainId, U256, map::HashMap},
+    primitives::{Address, Bytes, ChainId, U256, map::HashMap},
     providers::{DynProvider, MulticallError},
     rpc::types::TransactionReceipt,
 };
@@ -359,6 +359,14 @@ impl InteropServiceHandle {
     /// Returns the settler ID.
     pub fn settler_id(&self) -> &'static str {
         self.settlement_processor.settler_id()
+    }
+
+    /// Encodes the settler context for the given destination chains.
+    pub fn encode_settler_context(
+        &self,
+        destination_chains: Vec<u64>,
+    ) -> Result<Bytes, SettlementError> {
+        self.settlement_processor.encode_settler_context(destination_chains)
     }
 }
 
@@ -1095,7 +1103,7 @@ mod tests {
             _settlement_id: B256,
             _current_chain_id: u64,
             _source_chains: Vec<u64>,
-            _settler_contract: Address,
+            _orchestrator: Address,
         ) -> Result<Option<RelayTransaction>, crate::interop::SettlementError> {
             Ok(Some(RelayTransaction::new_internal(Address::default(), vec![], 0, 1_000_000)))
         }

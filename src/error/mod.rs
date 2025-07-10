@@ -92,6 +92,9 @@ pub enum RelayError {
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
+    /// Settlement-related errors.
+    #[error(transparent)]
+    Settlement(#[from] crate::interop::SettlementError),
 }
 
 impl RelayError {
@@ -145,7 +148,8 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::Unhealthy
             | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
-            | RelayError::InternalError(_) => internal_rpc(err.to_string()),
+            | RelayError::InternalError(_)
+            | RelayError::Settlement(_) => internal_rpc(err.to_string()),
         }
     }
 }

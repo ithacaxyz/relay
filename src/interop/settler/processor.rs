@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, ChainId, map::HashMap};
+use alloy::primitives::{Address, Bytes, ChainId, map::HashMap};
 use futures_util::future::try_join_all;
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
@@ -107,6 +107,14 @@ impl SettlementProcessor {
         self.settler.id()
     }
 
+    /// Encodes the settler context for the given destination chains.
+    pub fn encode_settler_context(
+        &self,
+        destination_chains: Vec<ChainId>,
+    ) -> Result<Bytes, SettlementError> {
+        self.settler.encode_settler_context(destination_chains)
+    }
+
     /// Validates that the bundle's settler ID matches this processor's settler and that
     /// all destination transactions have the correct settler address.
     fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementError> {
@@ -183,10 +191,7 @@ impl SettlementProcessor {
         // Each destination transaction has its own intent digest as settlement_id
         // Execute all settlement builds concurrently
         let settlement_results = try_join_all(bundle.dst_txs.iter().map(async |dst_tx| {
-            let settlement_id = dst_tx
-                .quote()
-                .map(|quote| quote.intent.digest())
-                .ok_or(SettlementError::MissingIntent)?;
+            let settlement_id = dst_tx.eip712_digest().ok_or(SettlementError::MissingIntent)?;
 
             let destination_chain = dst_tx.chain_id();
 
@@ -199,13 +204,14 @@ impl SettlementProcessor {
             );
 
             // Build send settlement transaction with all source chains
+            let orchestrator = dst_tx.quote().ok_or(SettlementError::MissingIntent)?.orchestrator;
             let result = self
                 .settler
                 .build_send_settlement(
                     settlement_id,
                     destination_chain, // current_chain_id in the settler
                     source_chains.clone(),
-                    self.settler.address(),
+                    orchestrator,
                 )
                 .await?;
 

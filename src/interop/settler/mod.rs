@@ -36,7 +36,7 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
         settlement_id: B256,
         current_chain_id: u64,
         source_chains: Vec<u64>,
-        settler_contract: Address,
+        orchestrator: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError>;
 
     /// Encodes the settler-specific context for the given destination chains.

@@ -493,17 +493,19 @@ impl Relay {
         // Fill Intent with the user signature.
         intent.signature = signature;
 
+        // Compute EIP-712 digest for the intent
+        let (eip712_digest, _) = intent
+            .compute_eip712_data(quote.orchestrator, &provider)
+            .await
+            .map_err(RelayError::from)?;
+
         // Sign fund transfers if any
         if !intent.encodedFundTransfers.is_empty() {
             // Set funder contract address and sign
-            let (digest, _) = intent
-                .compute_eip712_data(self.orchestrator(), &provider)
-                .await
-                .map_err(RelayError::from)?;
             intent.funderSignature = self
                 .inner
                 .funder_signer
-                .sign_payload_hash(digest)
+                .sign_payload_hash(eip712_digest)
                 .await
                 .map_err(RelayError::from)?;
             intent.funder = self.inner.contracts.funder.address;
@@ -562,7 +564,7 @@ impl Relay {
         // set our payment recipient
         quote.intent.paymentRecipient = self.inner.fee_recipient;
 
-        let tx = RelayTransaction::new(quote.clone(), authorization.clone());
+        let tx = RelayTransaction::new(quote.clone(), authorization.clone(), eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
@@ -1124,9 +1126,14 @@ impl Relay {
         }
 
         // Encode the input chain IDs for the settler context
-        let input_chain_ids: Vec<U256> =
-            funding_chains.iter().map(|(chain_id, _)| U256::from(*chain_id)).collect();
-        let settler_context = input_chain_ids.abi_encode().into();
+        let input_chain_ids: Vec<ChainId> =
+            funding_chains.iter().map(|(chain_id, _)| *chain_id).collect();
+        let settler_context = self
+            .inner
+            .chains
+            .interop()
+            .encode_settler_context(input_chain_ids)
+            .map_err(RelayError::from)?;
 
         // First, build the output intent to get its digest
         let (asset_diffs, output_quote) = self

@@ -37,7 +37,7 @@ use tracing::{debug, error};
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
     /// Message to send a transaction and receive events about the status of the transaction.
-    SendTransaction(RelayTransaction, broadcast::Sender<TransactionStatus>),
+    SendTransaction(Box<RelayTransaction>, broadcast::Sender<TransactionStatus>),
     /// Subscribe to status updates for a specific transaction.
     Subscribe(TxId, oneshot::Sender<Option<broadcast::Receiver<TransactionStatus>>>),
 }
@@ -77,7 +77,9 @@ impl TransactionServiceHandle {
         tx: RelayTransaction,
     ) -> broadcast::Receiver<TransactionStatus> {
         let (status_tx, status_rx) = broadcast::channel(100);
-        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
+        let _ = self
+            .command_tx
+            .send(TransactionServiceMessage::SendTransaction(Box::new(tx), status_tx));
         status_rx
     }
 
@@ -448,7 +450,7 @@ impl Future for TransactionService {
             if let Some(action) = action_opt {
                 match action {
                     TransactionServiceMessage::SendTransaction(tx, status_tx) => {
-                        this.send_transaction(tx, status_tx);
+                        this.send_transaction(*tx, status_tx);
                     }
                     TransactionServiceMessage::Subscribe(tx_id, status_tx) => {
                         let _ =
@@ -616,7 +618,10 @@ enum QueueError {
 mod tests {
     use super::*;
     use crate::types::{Intent, Quote};
-    use alloy::{eips::eip1559::Eip1559Estimation, primitives::U256};
+    use alloy::{
+        eips::eip1559::Eip1559Estimation,
+        primitives::{B256, U256},
+    };
 
     fn create_tx(sender: Address) -> RelayTransaction {
         let quote = Quote {
@@ -633,7 +638,7 @@ mod tests {
             orchestrator: Default::default(),
             intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
         };
-        RelayTransaction::new(quote, None)
+        RelayTransaction::new(quote, None, B256::random())
     }
 
     #[test]

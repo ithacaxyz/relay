@@ -1,7 +1,7 @@
 //! Relay end-to-end test constants
 
 use super::*;
-use crate::e2e::layerzero::LayerZeroConfig;
+use crate::e2e::layerzero::{LayerZeroTestConfig, setup::deploy_layerzero_infrastructure};
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
@@ -21,7 +21,7 @@ use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     config::{
-        InteropConfig, RebalanceServiceConfig, RelayConfig, SimpleSettlerConfig,
+        InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig, SimpleSettlerConfig,
         TransactionServiceConfig,
     },
     signers::DynSigner,
@@ -64,6 +64,8 @@ pub struct EnvironmentConfig {
     pub num_chains: usize,
     /// Interop configuration.
     pub interop_config: InteropConfig,
+    /// If true, LayerZero contracts will be deployed and used for settlement
+    pub is_layerzero: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -83,6 +85,7 @@ impl Default for EnvironmentConfig {
                 escrow_refund_threshold: 60,
                 settler: Default::default(),
             },
+            is_layerzero: false,
         }
     }
 }
@@ -139,11 +142,11 @@ impl std::fmt::Debug for Environment {
 #[derive(Debug, Clone, Default)]
 pub struct SettlementConfig {
     /// LayerZero configuration
-    pub layerzero: Option<LayerZeroConfig>,
+    pub layerzero: Option<LayerZeroTestConfig>,
 }
 
 /// Set up anvil instances based on configuration
-async fn setup_anvil_instances(
+pub async fn setup_anvil_instances(
     config: &EnvironmentConfig,
 ) -> eyre::Result<(Vec<Option<AnvilInstance>>, Vec<Url>)> {
     let mut anvils = Vec::with_capacity(config.num_chains);
@@ -439,10 +442,29 @@ impl Environment {
             None
         };
 
-        // Configure interop with simple settler for testing
+        // Configure interop and potentially deploy LayerZero
         let mut interop_config = config.interop_config;
-        interop_config.settler.simple =
-            Some(SimpleSettlerConfig { settler_address: contracts.settler });
+        let mut layerzero_config = None;
+
+        if config.is_layerzero {
+            // Deploy LayerZero contracts
+            let lz_deployment = deploy_layerzero_infrastructure(
+                &providers,
+                &chain_ids,
+                &endpoints.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+            )
+            .await?;
+
+            // Configure relay to use LayerZero settler
+            interop_config.settler =
+                SettlerConfig { layer_zero: Some(lz_deployment.relay_config), simple: None };
+
+            layerzero_config = Some(lz_deployment.test_config);
+        } else {
+            // Default to simple settler for testing
+            interop_config.settler.simple =
+                Some(SimpleSettlerConfig { settler_address: contracts.settler });
+        }
 
         // Start relay service with all endpoints
         let relay_handle = try_spawn(
@@ -463,7 +485,7 @@ impl Environment {
                 .with_simulator(Some(contracts.simulator))
                 .with_funder(Some(contracts.funder))
                 .with_escrow(Some(contracts.escrow))
-                .with_intent_gas_buffer(20_000) // todo: temp
+                .with_intent_gas_buffer(50_000) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_interop_config(interop_config)
@@ -494,7 +516,7 @@ impl Environment {
             relay_endpoint,
             relay_handle,
             signers,
-            settlement: SettlementConfig::default(),
+            settlement: SettlementConfig { layerzero: layerzero_config },
             deployer,
         })
     }
