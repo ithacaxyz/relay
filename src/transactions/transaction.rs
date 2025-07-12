@@ -217,12 +217,10 @@ impl RelayTransaction {
                     // Try to decode as an escrow call
                     if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
                         // We found an escrow call! Extract the first escrow
-                        if let Some(escrow) = escrow_call._escrows.first() {
+                        if let Some(escrow) = escrow_call._escrows.into_iter().next() {
                             // Create EscrowDetails from the escrow
                             return Some(EscrowDetails::new(
-                                escrow.clone(),
-                                chain_id,
-                                call.to, // The escrow contract address
+                                escrow, chain_id, call.to, // The escrow contract address
                             ));
                         }
                     }
