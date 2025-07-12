@@ -8,7 +8,7 @@ use crate::{
     interop::escrow::EscrowDetails,
     storage::{RelayStorage, StorageApi},
     transactions::{
-        RelayTransaction, TransactionServiceHandle, TxId,
+        RelayTransaction, TxId,
         interop::{BundleStatus, InteropBundle},
     },
     types::{IEscrow, rpc::BundleId},
@@ -83,11 +83,7 @@ pub struct RefundProcessor {
 
 impl RefundProcessor {
     /// Creates a new refund processor
-    pub fn new(
-        storage: RelayStorage,
-        _tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
-        providers: HashMap<ChainId, DynProvider>,
-    ) -> Self {
+    pub fn new(storage: RelayStorage, providers: HashMap<ChainId, DynProvider>) -> Self {
         Self { storage, providers }
     }
 

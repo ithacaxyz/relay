@@ -1,0 +1,495 @@
+//! # LayerZero Verification Monitoring
+//!
+//! This module handles the monitoring and verification of LayerZero messages across chains.
+//! It implements both event-based monitoring (when WebSocket connections are available) and
+//! polling-based fallbacks to ensure reliable message verification tracking.
+//!
+//! ## Verification Process
+//!
+//! When a LayerZero message is sent from a source chain to a destination chain:
+//!
+//! 1. The source chain emits a `PacketSent` event containing the message details
+//! 2. LayerZero's Decentralized Verifier Networks (DVNs) observe and verify the message
+//! 3. Once verified, the destination chain's endpoint emits a `PacketVerified` event
+//! 4. The message becomes available for execution (non-zero `inboundPayloadHash`)
+
+use crate::interop::settler::{SettlementError, layerzero::types::LayerZeroPacketInfo};
+use alloy::{
+    primitives::{Address, B256, ChainId, keccak256, map::HashMap},
+    providers::Provider,
+    rpc::types::{Filter, Log},
+    sol_types::SolEvent,
+};
+use futures_util::future::try_join_all;
+use std::{collections::HashMap as StdHashMap, sync::Arc};
+use tokio::time::{Duration, Instant, sleep_until};
+use tracing::{info, warn};
+
+use super::{EMPTY_PAYLOAD_HASH, LZChainConfig, contracts::ILayerZeroEndpointV2};
+
+/// Result of verification monitoring for LayerZero messages
+#[derive(Debug)]
+pub struct VerificationResult {
+    /// Packets that were successfully verified
+    pub verified_packets: Vec<LayerZeroPacketInfo>,
+    /// Packets that failed verification with error details
+    pub failed_packets: Vec<(LayerZeroPacketInfo, String)>,
+}
+
+/// Represents a chain's monitoring context
+#[derive(Debug)]
+pub struct ChainMonitor {
+    /// Chain ID for this monitor
+    pub chain_id: u64,
+    /// LayerZero endpoint address on this chain
+    pub endpoint_address: Address,
+    /// Event subscription stream (None if WebSocket unavailable)
+    pub stream: alloy::pubsub::Subscription<Log>,
+    /// Packets to monitor on this chain
+    pub packets: Vec<LayerZeroPacketInfo>,
+}
+
+/// Handles monitoring for LayerZero verification messages
+#[derive(Debug)]
+pub(super) struct LayerZeroVerificationMonitor {
+    chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+}
+
+impl LayerZeroVerificationMonitor {
+    /// Creates a new LayerZero verification monitor
+    pub(super) fn new(chain_configs: Arc<HashMap<ChainId, LZChainConfig>>) -> Self {
+        Self { chain_configs }
+    }
+
+    /// Waits for LayerZero messages to be verified
+    pub async fn wait_for_verifications(
+        &self,
+        packets: Vec<LayerZeroPacketInfo>,
+        timeout_seconds: u64,
+    ) -> Result<VerificationResult, SettlementError> {
+        if packets.is_empty() {
+            return Ok(VerificationResult { verified_packets: vec![], failed_packets: vec![] });
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+
+        info!(
+            num_packets = packets.len(),
+            timeout_secs = timeout_seconds,
+            "Waiting for LayerZero message verifications"
+        );
+
+        let packets_by_chain = self.group_packets_by_chain(packets.clone());
+        let chain_monitors = self.setup_chain_monitors(packets_by_chain).await?;
+        let (already_verified_count, pending_by_chain) =
+            self.check_initial_verification_status(&chain_monitors).await?;
+
+        if pending_by_chain.is_empty() {
+            info!("All {} messages already verified", already_verified_count);
+            return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
+        }
+
+        let verified_via_events =
+            self.monitor_pending_messages(&pending_by_chain, chain_monitors, deadline).await?;
+
+        let final_result =
+            self.final_verification_check(verified_via_events, &pending_by_chain, &packets).await?;
+
+        Ok(final_result)
+    }
+
+    /// Groups packets by their destination chain.
+    pub fn group_packets_by_chain(
+        &self,
+        packets: Vec<LayerZeroPacketInfo>,
+    ) -> StdHashMap<u64, Vec<LayerZeroPacketInfo>> {
+        // Use fold for a more functional approach that can be slightly more efficient
+        packets.into_iter().fold(StdHashMap::new(), |mut map, packet| {
+            map.entry(packet.dst_chain_id).or_default().push(packet);
+            map
+        })
+    }
+
+    /// Sets up event monitors for tracking packet verification events across all chains.
+    pub async fn setup_chain_monitors(
+        &self,
+        packets_by_chain: StdHashMap<u64, Vec<LayerZeroPacketInfo>>,
+    ) -> Result<Vec<ChainMonitor>, SettlementError> {
+        let subscription_tasks: Vec<_> = packets_by_chain
+            .into_iter()
+            .map(|(chain_id, packets)| {
+                let chain_configs = self.chain_configs.clone();
+
+                tokio::spawn(async move {
+                    let config = chain_configs
+                        .get(&chain_id)
+                        .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
+
+                    let filter = Filter::new()
+                        .address(config.endpoint_address)
+                        .event_signature(ILayerZeroEndpointV2::PacketVerified::SIGNATURE_HASH);
+
+                    Ok::<_, SettlementError>(ChainMonitor {
+                        chain_id,
+                        endpoint_address: config.endpoint_address,
+                        stream: config.provider.subscribe_logs(&filter).await?,
+                        packets,
+                    })
+                })
+            })
+            .collect();
+
+        // Collect all monitors
+        let mut monitors = Vec::with_capacity(subscription_tasks.len());
+        for task in subscription_tasks {
+            match task.await {
+                Ok(Ok(monitor)) => monitors.push(monitor),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => {
+                    return Err(SettlementError::InternalError(e.to_string()));
+                }
+            }
+        }
+
+        info!(num_chains = monitors.len(), "Event monitors established for chains");
+
+        Ok(monitors)
+    }
+
+    /// Checks the initial verification status of all monitored packets.
+    ///
+    /// This method performs an initial sweep to determine which messages are already
+    /// verified before starting active monitoring. This optimization prevents unnecessary
+    /// waiting for messages that are already available.
+    /// ## Returns
+    ///
+    /// Returns a tuple containing:
+    /// - Count of messages that are already verified
+    /// - HashMap of chain ID to packets that still need verification
+    pub async fn check_initial_verification_status(
+        &self,
+        monitors: &[ChainMonitor],
+    ) -> Result<(usize, StdHashMap<u64, Vec<LayerZeroPacketInfo>>), SettlementError> {
+        let mut already_verified_count = 0;
+        let mut pending_by_chain: StdHashMap<u64, Vec<LayerZeroPacketInfo>> = StdHashMap::new();
+
+        for monitor in monitors {
+            let mut pending = Vec::with_capacity(monitor.packets.len());
+            for packet in &monitor.packets {
+                if !is_message_available(packet, &self.chain_configs).await? {
+                    pending.push(packet.clone());
+                } else {
+                    already_verified_count += 1;
+                }
+            }
+
+            info!(
+                chain_id = monitor.chain_id,
+                total_packets = monitor.packets.len(),
+                pending_packets = pending.len(),
+                already_verified = monitor.packets.len() - pending.len(),
+                "Initial verification status"
+            );
+
+            if !pending.is_empty() {
+                pending_by_chain.insert(monitor.chain_id, pending);
+            }
+        }
+
+        Ok((already_verified_count, pending_by_chain))
+    }
+
+    /// Monitors pending messages across all chains until the specified deadline.
+    ///
+    /// This method coordinates parallel monitoring of multiple chains, using event
+    /// subscriptions where available and falling back to deadline-based waiting otherwise.
+    ///
+    /// ## Arguments
+    ///
+    /// * `pending_by_chain` - Map of chain IDs to packets that need verification
+    /// * `monitors` - Chain monitors with potential event subscriptions
+    /// * `deadline` - Absolute time to stop monitoring
+    ///
+    /// ## Returns
+    ///
+    /// Returns a vector of GUIDs for all packets that were verified during monitoring.
+    ///
+    /// ## Monitoring Strategy
+    ///
+    /// - **With WebSocket**: Actively monitors `PacketVerified` events in real-time
+    /// - **Without WebSocket**: Waits until deadline then performs final status check
+    /// - **Parallel execution**: All chains are monitored concurrently for efficiency
+    ///
+    /// ## Error Handling
+    ///
+    /// Individual chain monitoring failures are logged but don't fail the overall
+    /// operation, ensuring resilience in multi-chain scenarios.
+    pub async fn monitor_pending_messages(
+        &self,
+        pending_by_chain: &StdHashMap<ChainId, Vec<LayerZeroPacketInfo>>,
+        monitors: Vec<ChainMonitor>,
+        deadline: Instant,
+    ) -> Result<Vec<B256>, SettlementError> {
+        let mut monitoring_tasks = Vec::with_capacity(pending_by_chain.len());
+
+        for monitor in monitors {
+            if let Some(pending_packets) = pending_by_chain.get(&monitor.chain_id) {
+                if pending_packets.is_empty() {
+                    continue;
+                }
+
+                let packets = pending_packets.clone();
+                let task = tokio::spawn(async move {
+                    monitor_packet_stream(
+                        monitor.stream,
+                        monitor.endpoint_address,
+                        packets,
+                        deadline,
+                    )
+                    .await
+                });
+                monitoring_tasks.push(task);
+            }
+        }
+
+        // Collect results from all monitoring tasks
+        let mut all_verified_guids = Vec::with_capacity(monitoring_tasks.len());
+        for task in monitoring_tasks {
+            match task.await {
+                Ok(Ok(verified_guids)) => all_verified_guids.extend(verified_guids),
+                Ok(Err(e)) => warn!(error = ?e, "Monitoring task failed"),
+                Err(e) => warn!(error = ?e, "Monitoring task panicked"),
+            }
+        }
+
+        if !all_verified_guids.is_empty() {
+            info!(count = all_verified_guids.len(), "Messages verified via event monitoring");
+        }
+
+        Ok(all_verified_guids)
+    }
+
+    /// Performs a final verification check for any messages not caught by event monitoring.
+    ///
+    /// This method serves as a safety net to catch messages that may have been verified
+    /// after event monitoring stopped, in cases where event subscriptions failed or any edge cases
+    /// where events were missed.
+    pub async fn final_verification_check(
+        &self,
+        verified_guids: Vec<B256>,
+        pending_by_chain: &StdHashMap<u64, Vec<LayerZeroPacketInfo>>,
+        all_packets: &[LayerZeroPacketInfo],
+    ) -> Result<VerificationResult, SettlementError> {
+        let total_pending: usize = pending_by_chain.values().map(|v| v.len()).sum();
+        let verified_via_events = verified_guids.len();
+
+        // Build set of verified GUIDs for quick lookup
+        let mut verified_guid_set: StdHashMap<B256, ()> =
+            verified_guids.into_iter().map(|g| (g, ())).collect();
+
+        // If we haven't verified everything via events, check remaining
+        if verified_via_events < total_pending {
+            info!(
+                verified_via_events,
+                total_pending, "Timeout reached, performing final verification check"
+            );
+
+            // Check remaining unverified packets
+            let remaining_checks = try_join_all(
+                pending_by_chain
+                    .values()
+                    .flat_map(|packets| packets.iter())
+                    .filter(|packet| !verified_guid_set.contains_key(&packet.guid))
+                    .map(|packet| async move {
+                        let is_verified = is_message_available(packet, &self.chain_configs).await?;
+                        Ok::<_, SettlementError>((packet.clone(), is_verified))
+                    }),
+            )
+            .await?;
+
+            // Add newly verified packets to the set
+            for (packet, is_verified) in remaining_checks {
+                if is_verified {
+                    verified_guid_set.insert(packet.guid, ());
+                }
+            }
+        }
+
+        // Build final result by categorizing all packets
+        let mut verified_packets = Vec::new();
+        let mut failed_packets = Vec::new();
+
+        for packet in all_packets {
+            if verified_guid_set.contains_key(&packet.guid) {
+                verified_packets.push(packet.clone());
+            } else {
+                let error_msg = format!(
+                    "Message verification timeout: GUID {}, src_chain {}, dst_chain {}",
+                    packet.guid, packet.src_chain_id, packet.dst_chain_id
+                );
+                failed_packets.push((packet.clone(), error_msg));
+            }
+        }
+
+        if !failed_packets.is_empty() {
+            warn!(
+                "Failed to verify {} out of {} messages",
+                failed_packets.len(),
+                all_packets.len()
+            );
+        }
+
+        Ok(VerificationResult { verified_packets, failed_packets })
+    }
+}
+
+/// Monitors a WebSocket event stream for packet verification events.
+///
+/// This function subscribes to `PacketVerified` events on a destination chain and tracks
+/// when specific packets are verified.
+///
+/// ## Returns
+///
+/// Returns a vector of GUIDs for packets that were verified during monitoring.
+pub async fn monitor_packet_stream(
+    mut stream: alloy::pubsub::Subscription<Log>,
+    endpoint_address: Address,
+    packets: Vec<LayerZeroPacketInfo>,
+    deadline: Instant,
+) -> Result<Vec<B256>, SettlementError> {
+    let packet_lookup: StdHashMap<(u64, Address, B256), B256> = packets
+        .iter()
+        .map(|packet| {
+            let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();
+            let payload_hash = keccak256(&payload);
+
+            info!(
+                guid = ?packet.guid,
+                nonce = packet.nonce,
+                receiver = ?packet.receiver,
+                payload_hash = ?payload_hash,
+                "Prepared packet for monitoring"
+            );
+            ((packet.nonce, packet.receiver, payload_hash), packet.guid)
+        })
+        .collect();
+
+    let mut verified_guids = Vec::with_capacity(packets.len());
+    let mut remaining = packets.len();
+
+    info!(
+        endpoint = ?endpoint_address,
+        num_packets = packets.len(),
+        timeout_secs = (deadline - Instant::now()).as_secs(),
+        "Starting PacketVerified event monitoring"
+    );
+
+    while remaining > 0 && Instant::now() < deadline {
+        tokio::select! {
+            result = stream.recv() => {
+                match result {
+                    Ok(log) => {
+                        info!(
+                            log_address = ?log.inner.address,
+                            "Received log event"
+                        );
+
+                        match ILayerZeroEndpointV2::PacketVerified::decode_log(&log.inner) {
+                            Ok(event) => {
+                                info!(
+                                    event_nonce = event.origin.nonce,
+                                    event_receiver = ?event.receiver,
+                                    event_payload_hash = ?event.payloadHash,
+                                    event_src_eid = event.origin.srcEid,
+                                    event_sender = ?event.origin.sender,
+                                    "Decoded PacketVerified event"
+                                );
+
+                                // Look up packet by event data
+                                let lookup_key = (event.origin.nonce, event.receiver, event.payloadHash);
+
+                                if let Some(guid) = packet_lookup.get(&lookup_key) {
+                                    verified_guids.push(*guid);
+                                    remaining -= 1;
+                                    info!(
+                                        ?guid,
+                                        nonce = event.origin.nonce,
+                                        receiver = ?event.receiver,
+                                        remaining,
+                                        "Message verified via event"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    error = ?e,
+                                    "Failed to decode PacketVerified event"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            "Stream receive error"
+                        );
+                        break;
+                    }
+                }
+            }
+            _ = sleep_until(deadline) => {
+                info!(
+                    remaining,
+                    verified = verified_guids.len(),
+                    "Verification monitoring timed out"
+                );
+                break;
+            }
+        }
+    }
+
+    info!(verified_count = verified_guids.len(), remaining, "Completed event monitoring");
+
+    Ok(verified_guids)
+}
+
+/// Checks if a LayerZero message is verified and available for execution.
+///
+/// A message is considered available when the destination chain's LayerZero endpoint
+/// has received verification from the DVNs and stored the message payload hash.
+pub(super) async fn is_message_available(
+    packet: &LayerZeroPacketInfo,
+    chain_configs: &HashMap<ChainId, LZChainConfig>,
+) -> Result<bool, SettlementError> {
+    let dst_config = chain_configs
+        .get(&packet.dst_chain_id)
+        .ok_or(SettlementError::UnsupportedChain(packet.dst_chain_id))?;
+
+    let src_config = chain_configs
+        .get(&packet.src_chain_id)
+        .ok_or(SettlementError::UnsupportedChain(packet.src_chain_id))?;
+
+    // Create endpoint contract instance
+    let endpoint = ILayerZeroEndpointV2::new(dst_config.endpoint_address, &dst_config.provider);
+
+    // Convert sender address to bytes32
+    let sender_bytes32 = B256::left_padding_from(packet.sender.as_slice());
+
+    // Check the inbound payload hash
+    let payload_hash = endpoint
+        .inboundPayloadHash(packet.receiver, src_config.endpoint_id, sender_bytes32, packet.nonce)
+        .call()
+        .await?;
+
+    // Message is available if the payload hash is not empty
+    let is_available = payload_hash != EMPTY_PAYLOAD_HASH;
+
+    tracing::debug!(
+        packet_guid = ?packet.guid,
+        payload_hash = ?payload_hash,
+        is_available,
+        "Checked message availability"
+    );
+
+    Ok(is_available)
+}

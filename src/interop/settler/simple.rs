@@ -1,4 +1,4 @@
-use super::{SettlementError, Settler};
+use super::{SettlementError, Settler, VerificationResult};
 use crate::transactions::{RelayTransaction, interop::InteropBundle};
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
@@ -56,16 +56,17 @@ impl Settler for SimpleSettler {
         &self,
         _bundle: &InteropBundle,
         _timeout: Duration,
-    ) -> Result<bool, SettlementError> {
+    ) -> Result<VerificationResult, SettlementError> {
         // Simple settler doesn't need verification, always return success
-        Ok(true)
+        Ok(VerificationResult { verified_packets: vec![], failed_packets: vec![] })
     }
 
     async fn build_execute_receive_transactions(
         &self,
         _bundle: &InteropBundle,
     ) -> Result<Vec<RelayTransaction>, SettlementError> {
-        // Simple settler doesn't need execute receive transactions
+        // currently broken, since the contract itself requires these transaction coming from a
+        // single owner, but we use random signers.
         Ok(vec![])
     }
 }

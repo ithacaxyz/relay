@@ -4,7 +4,6 @@ use crate::{
     interop::{LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler},
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
-    transactions::TransactionServiceHandle,
 };
 use alloy::{
     primitives::{Address, ChainId, map::HashMap as AlloyHashMap},
@@ -278,19 +277,18 @@ impl SettlerConfig {
     pub fn settlement_processor(
         &self,
         storage: RelayStorage,
-        tx_handles: alloy::primitives::map::HashMap<ChainId, TransactionServiceHandle>,
         providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
         let settler: Box<dyn Settler> = if let Some(layer_zero) = &self.layer_zero {
-            Box::new(layer_zero.create_settler(providers.into_iter().collect(), storage.clone()))
+            Box::new(layer_zero.create_settler(providers, storage.clone()))
         } else if let Some(simple) = &self.simple {
             Box::new(simple.create_settler())
         } else {
             return Err(eyre::eyre!("No settler implementation configured"));
         };
 
-        Ok(SettlementProcessor::new(storage, tx_handles, settler))
+        Ok(SettlementProcessor::new(settler))
     }
 }
 
@@ -327,20 +325,13 @@ impl LayerZeroConfig {
     /// Creates a new LayerZero settler instance with the given providers and storage.
     pub fn create_settler(
         &self,
-        providers: HashMap<ChainId, DynProvider>,
+        providers: AlloyHashMap<ChainId, DynProvider>,
         storage: RelayStorage,
     ) -> LayerZeroSettler {
-        // Convert std HashMap to alloy HashMap
-        let alloy_providers: AlloyHashMap<ChainId, DynProvider> = providers.into_iter().collect();
-        let alloy_endpoint_ids: AlloyHashMap<ChainId, u32> =
-            self.endpoint_ids.clone().into_iter().collect();
-        let alloy_endpoint_addresses: AlloyHashMap<ChainId, Address> =
-            self.endpoint_addresses.clone().into_iter().collect();
-
         LayerZeroSettler::new(
-            alloy_endpoint_ids,
-            alloy_endpoint_addresses,
-            alloy_providers,
+            self.endpoint_ids.clone().into_iter().collect(),
+            self.endpoint_addresses.clone().into_iter().collect(),
+            providers,
             self.settler_address,
             storage,
         )

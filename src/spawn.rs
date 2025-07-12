@@ -131,6 +131,14 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(async |url| {
+            // Enforce WebSocket endpoints since we need to subscribe to logs in the interop service
+            if config.interop.is_some()
+                && !url.as_str().starts_with("ws://")
+                && !url.as_str().starts_with("wss://")
+            {
+                eyre::bail!("All endpoints must use WebSocket (ws:// or wss://). Got: {}", url);
+            }
+
             let chain_id =
                 RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
 

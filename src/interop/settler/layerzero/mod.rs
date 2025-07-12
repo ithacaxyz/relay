@@ -1,63 +1,110 @@
+//! # LayerZero Protocol Integration
+//!
+//! This module implements the LayerZero settler for cross-chain settlement attestation in the
+//! Ithaca Relay. LayerZero is an omnichain interoperability protocol that enables secure message
+//! passing between blockchains.
+//!
+//! ## Overview
+//!
+//! The LayerZero integration allows the Ithaca Relay to:
+//! - Send cross-chain settlement attestations via LayerZero's messaging protocol
+//! - Monitor and verify message delivery across chains
+//! - Execute received messages to complete settlement flows
+//!
+//! ## Cross-Chain Settlement Flow
+//!
+//! 1. **Settlement Initiation**: When a settlement needs to be attested across chains, the relay
+//!    calls `build_execute_send_transaction` to create a transaction that sends LayerZero messages
+//!    to all destination chains.
+//!
+//! 2. **Message Transmission**: The LayerZero endpoint on the source chain emits `PacketSent`
+//!    events containing the encoded message payload and routing information.
+//!
+//! 3. **Off-Chain Verification**: LayerZero's decentralized verifier network (DVNs) observes the
+//!    source chain event and attests to its validity on the destination chains.
+//!
+//! 4. **Message Availability**: Once verified, the message becomes available on the destination
+//!    chain's LayerZero endpoint, indicated by a non-zero `inboundPayloadHash`.
+//!
+//! 5. **Message Execution**: The relay monitors for message verification and builds `lzReceive`
+//!    transactions to execute the delivered messages on each destination chain.
+//!
+//! ## Key Concepts
+//!
+//! - **Endpoint ID (EID)**: Each blockchain in the LayerZero network has a unique endpoint ID
+//! - **GUID**: Globally Unique Identifier for each LayerZero packet
+//! - **Nonce**: Per-sender ordering mechanism to ensure message sequencing
+//! - **DVN**: Decentralized Verifier Network that attests to cross-chain messages
+//! - **Packet**: The unit of cross-chain communication containing routing info and payload
+
 use super::{SettlementError, Settler};
 use crate::{
-    interop::settler::layerzero::{
-        contracts::{ILayerZeroEndpointV2, ILayerZeroSettler, MessagingParams, Origin},
-        types::LayerZeroPacketInfo,
-        utils::{bytes32_to_address, decode_packet, decode_packet_sent_event},
+    constants::MULTICALL3_ADDRESS,
+    interop::{
+        EscrowDetails,
+        settler::layerzero::{
+            contracts::{
+                ILayerZeroEndpointV2::{self, PacketSent},
+                ILayerZeroSettler, MessagingParams, Origin,
+            },
+            types::{LayerZeroPacketInfo, LayerZeroPacketV1},
+        },
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
+    types::{Call3, IEscrow, aggregate3Call, rpc::BundleId},
 };
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256, keccak256, map::HashMap as AlloyHashMap},
+    primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap as AlloyHashMap},
     providers::{DynProvider, Provider},
-    rpc::types::{Filter, TransactionReceipt, TransactionRequest, state::AccountOverride},
+    rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolEvent, SolValue},
 };
 use async_trait::async_trait;
 use futures_util::future::try_join_all;
 use itertools::Itertools;
-use std::{collections::HashMap, time::Duration};
-use tokio::time::{Instant, sleep_until};
-use tracing::{debug, info, instrument, warn};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
 pub mod contracts;
 /// LayerZero-specific types.
 pub mod types;
-/// Utility functions for LayerZero protocol integration.
-pub mod utils;
+/// Verification monitoring logic.
+pub mod verification;
+use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
 
 /// Empty payload hash constant used by LayerZero to indicate no message.
-const EMPTY_PAYLOAD_HASH: B256 = B256::ZERO;
+pub(super) const EMPTY_PAYLOAD_HASH: B256 = B256::ZERO;
+
+/// Layerzero configuration for a specific chain.
+#[derive(Debug, Clone)]
+pub(super) struct LZChainConfig {
+    /// LayerZero endpoint ID for this chain.
+    pub endpoint_id: u32,
+    /// LayerZero endpoint address for this chain.
+    pub endpoint_address: Address,
+    /// Provider for this chain.
+    pub provider: DynProvider,
+}
 
 /// LayerZero settler implementation for cross-chain settlement attestation.
 #[derive(Debug)]
 pub struct LayerZeroSettler {
-    /// Chain ID to LayerZero endpoint ID mapping.
-    endpoint_ids: AlloyHashMap<ChainId, u32>,
     /// Reverse mapping: endpoint ID to chain ID for efficient lookups.
     eid_to_chain: HashMap<u32, ChainId>,
     /// Chain ID to LayerZero endpoint address mapping.
     endpoint_addresses: AlloyHashMap<ChainId, Address>,
-    /// Chain ID to provider mapping.
-    providers: AlloyHashMap<ChainId, DynProvider>,
     /// On-chain settler contract address.
     settler_address: Address,
     /// Storage backend for persisting data.
     storage: RelayStorage,
+    /// Chain configurations.
+    chain_configs: Arc<AlloyHashMap<ChainId, LZChainConfig>>,
 }
 
 impl LayerZeroSettler {
-    /// Creates a new LayerZero settler with the given endpoint configurations.
-    ///
-    /// # Arguments
-    ///
-    /// * `endpoint_ids` - Mapping of chain ID to LayerZero endpoint ID
-    /// * `endpoint_addresses` - Mapping of chain ID to LayerZero endpoint address
-    /// * `providers` - Mapping of chain ID to provider instances
-    /// * `settler_address` - The address of the LayerZero settler contract
-    /// * `storage` - The storage backend for persisting data
+    /// Creates a new LayerZero settler instance for cross-chain settlement attestation.
     pub fn new(
         endpoint_ids: AlloyHashMap<ChainId, u32>,
         endpoint_addresses: AlloyHashMap<ChainId, Address>,
@@ -68,7 +115,32 @@ impl LayerZeroSettler {
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
 
-        Self { endpoint_ids, eid_to_chain, endpoint_addresses, providers, settler_address, storage }
+        // Build chain configs
+        let chain_configs = endpoint_ids
+            .keys()
+            .filter_map(|chain_id| {
+                let endpoint_id = endpoint_ids.get(chain_id)?;
+                let endpoint_address = endpoint_addresses.get(chain_id)?;
+                let provider = providers.get(chain_id)?;
+
+                Some((
+                    *chain_id,
+                    LZChainConfig {
+                        endpoint_id: *endpoint_id,
+                        endpoint_address: *endpoint_address,
+                        provider: provider.clone(),
+                    },
+                ))
+            })
+            .collect();
+
+        Self {
+            eid_to_chain,
+            endpoint_addresses,
+            settler_address,
+            storage,
+            chain_configs: Arc::new(chain_configs),
+        }
     }
 
     /// Gets the LayerZero endpoint address for a given chain ID.
@@ -76,17 +148,23 @@ impl LayerZeroSettler {
         self.endpoint_addresses.get(&chain_id)
     }
 
+    /// Gets the cached chain configuration for a given chain ID.
+    fn get_chain_config(&self, chain_id: u64) -> Result<&LZChainConfig, SettlementError> {
+        self.chain_configs.get(&chain_id).ok_or_else(|| SettlementError::UnsupportedChain(chain_id))
+    }
+
     /// Converts a LayerZero endpoint ID to a chain ID.
     fn eid_to_chain_id(&self, eid: u32) -> Result<u64, SettlementError> {
         self.eid_to_chain.get(&eid).copied().ok_or_else(|| SettlementError::UnknownEndpointId(eid))
     }
 
-    /// Extracts packet information from a transaction receipt.
-    fn extract_packet_from_receipt(
+    /// Extracts all packet information from a transaction receipt.
+    fn extract_packets_from_receipt(
         &self,
         receipt: &TransactionReceipt,
-        bundle_id: crate::types::rpc::BundleId,
-    ) -> Result<Option<LayerZeroPacketInfo>, SettlementError> {
+    ) -> Result<Vec<LayerZeroPacketInfo>, SettlementError> {
+        let mut packets = Vec::new();
+
         // Look for PacketSent events in the logs
         for log in receipt.inner.logs() {
             // Check if this is a PacketSent event (topic[0] matches the event signature)
@@ -94,25 +172,18 @@ impl LayerZeroSettler {
                 continue;
             }
 
-            // Try to decode as PacketSent event
-            let decode_result = decode_packet_sent_event(log.data().data.as_ref(), log.topics());
-            if let Ok((encoded_payload, _options, _send_library)) = decode_result {
+            if let Ok(event) = PacketSent::decode_raw_log(log.topics(), log.data().data.as_ref()) {
                 // Decode the packet from the encoded payload
-                let packet = decode_packet(&encoded_payload)
-                    .map_err(SettlementError::PacketExtractionError)?;
+                let packet = LayerZeroPacketV1::decode(&event.encodedPayload)
+                    .map_err(SettlementError::InternalError)?;
 
-                // Convert endpoint IDs to chain IDs
                 let src_chain_id = self.eid_to_chain_id(packet.src_eid)?;
                 let dst_chain_id = self.eid_to_chain_id(packet.dst_eid)?;
 
-                // Convert bytes32 addresses to Address
-                let sender = bytes32_to_address(packet.sender)
-                    .map_err(SettlementError::PacketExtractionError)?;
-                let receiver = bytes32_to_address(packet.receiver)
-                    .map_err(SettlementError::PacketExtractionError)?;
+                let sender = Address::from_slice(&packet.sender[12..]);
+                let receiver = Address::from_slice(&packet.receiver[12..]);
 
-                return Ok(Some(LayerZeroPacketInfo {
-                    bundle_id,
+                packets.push(LayerZeroPacketInfo {
                     src_chain_id,
                     dst_chain_id,
                     nonce: packet.nonce,
@@ -120,133 +191,63 @@ impl LayerZeroSettler {
                     receiver,
                     guid: packet.guid,
                     message: packet.message.into(),
-                }));
+                });
             }
         }
 
-        Ok(None)
+        Ok(packets)
     }
 
-    /// Checks if a LayerZero message is verified and available for execute receive.
-    async fn is_message_available(
-        &self,
-        packet: &LayerZeroPacketInfo,
-    ) -> Result<bool, SettlementError> {
-        // Get the provider for the destination chain
-        let provider = self
-            .providers
-            .get(&packet.dst_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
-
-        // Get the endpoint address for the destination chain
-        let endpoint_address = self
-            .endpoint_addresses
-            .get(&packet.dst_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
-
-        // Get the source endpoint ID
-        let src_eid = self
-            .endpoint_ids
-            .get(&packet.src_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.src_chain_id))?;
-
-        // Create endpoint contract instance
-        let endpoint = ILayerZeroEndpointV2::new(*endpoint_address, provider);
-
-        // Convert sender address to bytes32
-        let sender_bytes32 = B256::left_padding_from(packet.sender.as_slice());
-
-        // Check the inbound payload hash
-        let payload_hash = endpoint
-            .inboundPayloadHash(packet.receiver, *src_eid, sender_bytes32, packet.nonce)
-            .call()
-            .await
-            .map_err(|e| {
-                SettlementError::ContractCallError(format!(
-                    "Failed to check inbound payload hash: {e}"
-                ))
-            })?;
-
-        // Message is available if the payload hash is not empty
-        let is_available = payload_hash != EMPTY_PAYLOAD_HASH;
-
-        debug!(
-            packet_guid = ?packet.guid,
-            payload_hash = ?payload_hash,
-            is_available = is_available,
-            "Message availability check complete"
-        );
-
-        Ok(is_available)
-    }
-
-    /// Builds a single LayerZero execute receive transaction.
+    /// Builds a transaction to execute a single verified LayerZero message.
+    ///
+    /// This method constructs a multicall transaction that:
+    /// 1. Calls `lzReceive` to complete the LayerZero message delivery
+    /// 2. Calls `Escrow.settle` to release the escrowed funds
+    ///
+    /// ## Note
+    ///
+    /// This method assumes the message has already been verified. Always check
+    /// `is_message_available` before building the execute transaction.
     async fn build_execute_receive_transaction(
         &self,
         packet: &LayerZeroPacketInfo,
-    ) -> Result<Option<RelayTransaction>, SettlementError> {
+        bundle: &InteropBundle,
+    ) -> Result<RelayTransaction, SettlementError> {
         debug!(
             packet_guid = ?packet.guid,
             dst_chain = packet.dst_chain_id,
-            "Building execute receive transaction for packet"
+            "Building multicall execute receive transaction"
         );
 
-        // Get the endpoint address for the destination chain
-        let endpoint_address = self
-            .endpoint_addresses
-            .get(&packet.dst_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
+        let dst_config = self.get_chain_config(packet.dst_chain_id)?;
+        let src_config = self.get_chain_config(packet.src_chain_id)?;
 
-        // Get the provider for the destination chain
-        let provider = self
-            .providers
-            .get(&packet.dst_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
+        // Build the LayerZero receive call
+        let lz_receive_call = build_lz_receive_call(packet, src_config)?;
 
-        // Convert source chain ID to endpoint ID
-        let src_eid = self
-            .endpoint_ids
-            .get(&packet.src_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(packet.src_chain_id))?;
+        // Extract and filter escrows for this settlement
+        let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
+        let (escrow_ids, escrow_address) = get_escrows(bundle, packet.dst_chain_id, settlement_id)?;
 
-        // Build the Origin struct
-        let origin = Origin {
-            srcEid: *src_eid,
-            sender: B256::left_padding_from(packet.sender.as_slice()),
-            nonce: packet.nonce,
-        };
+        let multicall_calldata = build_multicall_data(
+            &lz_receive_call,
+            dst_config.endpoint_address,
+            &escrow_ids,
+            escrow_address,
+        )?;
 
-        // Build the lzReceive call
-        let calldata = ILayerZeroEndpointV2::lzReceiveCall {
-            _origin: origin,
-            _receiver: packet.receiver,
-            _guid: packet.guid,
-            _message: packet.message.clone(),
-            _extraData: Bytes::new(),
-        }
-        .abi_encode();
-
-        // Estimate gas for the lzReceive call
-        let from = Address::random();
         let tx_request = TransactionRequest {
-            from: Some(from),
-            to: Some((*endpoint_address).into()),
+            to: Some(MULTICALL3_ADDRESS.into()),
             value: None,
-            input: calldata.clone().into(),
+            input: multicall_calldata.clone().into(),
             ..Default::default()
         };
 
-        let gas_limit = provider
-            .estimate_gas(tx_request)
-            .account_override(from, AccountOverride::default().with_balance(U256::MAX))
-            .await?;
-
-        // Add 20% buffer to the gas estimate
-        let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
+        let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
 
         let tx = RelayTransaction::new_internal(
-            *endpoint_address,
-            calldata,
+            MULTICALL3_ADDRESS,
+            multicall_calldata,
             packet.dst_chain_id,
             gas_limit,
         );
@@ -254,15 +255,19 @@ impl LayerZeroSettler {
         debug!(
             packet_guid = ?packet.guid,
             dst_chain = packet.dst_chain_id,
-            endpoint = ?endpoint_address,
+            num_escrows = escrow_ids.len(),
             gas_limit = gas_limit,
-            "Built execute receive transaction for LayerZero packet"
+            "Built multicall execute receive transaction"
         );
 
-        Ok(Some(tx))
+        Ok(tx)
     }
 
-    /// Extract packet infos from settlement transactions in the bundle.
+    /// Extracts LayerZero packet information from settlement transaction receipts.
+    ///
+    /// This method parses transaction receipts to find `PacketSent` events emitted by
+    /// LayerZero endpoints during the settlement sending phase. Each event contains
+    /// the full packet information needed to track and execute the cross-chain message.
     async fn extract_packet_infos(
         &self,
         bundle: &InteropBundle,
@@ -277,39 +282,114 @@ impl LayerZeroSettler {
             "Extracting LayerZero packet info from settlement receipts"
         );
 
-        // Process each settlement transaction in parallel
+        // Process each settlement transaction
         let packet_results = try_join_all(bundle.settlement_txs.iter().map(async |tx| {
             // Get transaction receipt from storage
             // Note: We can assume transactions are confirmed when called from SettlementsProcessing
             // state
             let (_, status) =
                 self.storage.read_transaction_status(tx.id).await?.ok_or_else(|| {
-                    SettlementError::PacketExtractionError(
-                        "Transaction status not found".to_string(),
-                    )
+                    SettlementError::InternalError("Transaction status not found".to_string())
                 })?;
 
-            // Extract the receipt - we expect all settlements to be confirmed at this point
             let receipt = match status {
                 TransactionStatus::Confirmed(receipt) => receipt,
-                _ => {
-                    return Err(SettlementError::UnexpectedTransactionState {
-                        expected: "confirmed",
-                        actual: format!("{status:?}"),
-                    });
-                }
+                _ => unreachable!("we only process settlements if transactions are confirmed"),
             };
 
             // Extract packet info from receipt logs
-            self.extract_packet_from_receipt(&receipt, bundle.id)
+            self.extract_packets_from_receipt(&receipt)
         }))
         .await?;
 
-        // Filter out None values and collect packet infos
+        // Flatten all packet vectors into a single vector
         let packet_infos: Vec<LayerZeroPacketInfo> = packet_results.into_iter().flatten().collect();
 
         Ok(packet_infos)
     }
+}
+
+/// Extracts relevant escrowIds and escrowAddress for a specific settlement on a destination chain.
+fn get_escrows(
+    bundle: &InteropBundle,
+    dst_chain_id: ChainId,
+    settlement_id: B256,
+) -> Result<(Vec<B256>, Address), SettlementError> {
+    let escrow_details: Vec<EscrowDetails> =
+        bundle.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
+
+    // Filter escrows for this specific settlement and chain
+    let escrow_ids: Vec<B256> = escrow_details
+        .iter()
+        .filter(|escrow| {
+            escrow.chain_id == dst_chain_id && escrow.escrow.settlementId == settlement_id
+        })
+        .map(|escrow| escrow.escrow_id)
+        .collect();
+
+    // Find the escrow contract address for this chain
+    let escrow_address = escrow_details
+        .iter()
+        .find(|e| e.chain_id == dst_chain_id)
+        .map(|e| e.escrow_address)
+        .ok_or_else(|| {
+            SettlementError::InternalError(format!(
+                "No escrow address found for chain {dst_chain_id}"
+            ))
+        })?;
+
+    Ok((escrow_ids, escrow_address))
+}
+
+/// Builds the LayerZero receive call for message execution.
+fn build_lz_receive_call(
+    packet: &LayerZeroPacketInfo,
+    src_config: &LZChainConfig,
+) -> Result<ILayerZeroEndpointV2::lzReceiveCall, SettlementError> {
+    let origin = Origin {
+        srcEid: src_config.endpoint_id,
+        sender: B256::left_padding_from(packet.sender.as_slice()),
+        nonce: packet.nonce,
+    };
+
+    Ok(ILayerZeroEndpointV2::lzReceiveCall {
+        _origin: origin,
+        _receiver: packet.receiver,
+        _guid: packet.guid,
+        _message: packet.message.clone(),
+        _extraData: Bytes::new(),
+    })
+}
+
+/// Builds the multicall data for executing LayerZero receive and escrow settlement.
+///
+/// This function creates a multicall that:
+/// 1. Executes the LayerZero receive call to process the cross-chain message
+/// 2. Settles the escrows to release funds
+fn build_multicall_data(
+    lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
+    endpoint_address: Address,
+    escrow_ids: &[B256],
+    escrow_address: Address,
+) -> Result<Bytes, SettlementError> {
+    // Encode the LayerZero receive call
+    let lz_receive_calldata = lz_receive_call.abi_encode();
+
+    // Encode the escrow settle call
+    let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
+
+    // Build the multicall
+    let calls = vec![
+        Call3 {
+            target: endpoint_address,
+            allowFailure: false,
+            callData: lz_receive_calldata.into(),
+        },
+        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
+    ];
+
+    let multicall_calldata = aggregate3Call { calls }.abi_encode();
+    Ok(multicall_calldata.into())
 }
 
 #[async_trait]
@@ -322,6 +402,12 @@ impl Settler for LayerZeroSettler {
         self.settler_address
     }
 
+    /// Builds a transaction to send settlement attestations to multiple destination chains via
+    /// LayerZero.
+    ///
+    /// This method creates a single transaction that will send LayerZero messages to all specified
+    /// source chains, notifying them about a settlement that occurred on the current chain. It will
+    /// attach a msg.value to pay for the DVNs to attest to this event.
     #[instrument(skip(self), fields(settler_id = %self.id()))]
     async fn build_execute_send_transaction(
         &self,
@@ -332,33 +418,20 @@ impl Settler for LayerZeroSettler {
     ) -> Result<Option<RelayTransaction>, SettlementError> {
         let settler_context = self.encode_settler_context(source_chains.clone())?;
 
-        // Get the provider and endpoint address for the current chain
-        let provider = self
-            .providers
-            .get(&current_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
-
-        let endpoint_address = self
-            .endpoint_addresses
-            .get(&current_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
+        let current_config = self.get_chain_config(current_chain_id)?;
 
         // Create endpoint contract instance
-        let endpoint = ILayerZeroEndpointV2::new(*endpoint_address, provider);
+        let endpoint =
+            ILayerZeroEndpointV2::new(current_config.endpoint_address, &current_config.provider);
 
         // Build all messaging params
         let all_params = source_chains
             .iter()
             .map(|source_chain_id| {
-                // Get the endpoint ID for this source chain (dst_eid in the quote context)
-                let dst_eid = self
-                    .endpoint_ids
-                    .get(source_chain_id)
-                    .ok_or_else(|| SettlementError::UnsupportedChain(*source_chain_id))?;
+                let src_config = self.get_chain_config(*source_chain_id)?;
 
-                // Build messaging params
                 Ok(MessagingParams {
-                    dstEid: *dst_eid,
+                    dstEid: src_config.endpoint_id,
                     receiver: B256::left_padding_from(self.settler_address.as_slice()),
                     message: (settlement_id, self.settler_address, U256::from(*source_chain_id))
                         .abi_encode()
@@ -370,10 +443,12 @@ impl Settler for LayerZeroSettler {
             .collect::<Result<Vec<_>, SettlementError>>()?;
 
         // Quote for all chain fees.
-        let multicall =
-            all_params.iter().fold(provider.multicall().dynamic(), |multicall, params| {
+        let multicall = all_params.iter().fold(
+            current_config.provider.multicall().dynamic(),
+            |multicall, params| {
                 multicall.add_dynamic(endpoint.quote(params.clone(), self.settler_address))
-            });
+            },
+        );
 
         let native_lz_fee: U256 =
             multicall.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();
@@ -385,12 +460,7 @@ impl Settler for LayerZeroSettler {
         }
         .abi_encode();
 
-        // Create an internal transaction for the settlement with the calculated gas
-        let provider = self
-            .providers
-            .get(&current_chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(current_chain_id))?;
-
+        // Create a transaction for the settlement with the calculated gas with native_lz_fee
         let from = Address::random();
         let tx_request = TransactionRequest {
             from: Some(from),
@@ -400,7 +470,8 @@ impl Settler for LayerZeroSettler {
             ..Default::default()
         };
 
-        let gas_limit = provider
+        let gas_limit = current_config
+            .provider
             .estimate_gas(tx_request)
             .account_override(from, AccountOverride::default().with_balance(U256::MAX))
             .await?;
@@ -426,72 +497,44 @@ impl Settler for LayerZeroSettler {
         let endpoint_ids: Vec<u32> = destination_chains
             .into_iter()
             .sorted()
-            .map(|chain_id| {
-                // Validate we have both endpoint ID and address for this chain
-                if !self.endpoint_addresses.contains_key(&chain_id) {
-                    return Err(SettlementError::UnsupportedChain(chain_id));
-                }
-
-                self.endpoint_ids
-                    .get(&chain_id)
-                    .copied()
-                    .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))
-            })
+            .map(|chain_id| self.get_chain_config(chain_id).map(|c| c.endpoint_id))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Encode the endpoint IDs as a dynamic array of uint32
         Ok(endpoint_ids.abi_encode().into())
     }
 
+    /// Waits for LayerZero messages to be verified on their destination chains.
+    ///
+    /// This method monitors the verification status of all LayerZero packets sent as part of
+    /// the settlement process. It uses both event monitoring (via WebSocket when available)
+    /// and polling fallbacks to track when messages become available for execution.
+    ///
+    /// # Verification Process
+    ///
+    /// 1. Extracts packet information from settlement transaction receipts
+    /// 2. Groups packets by destination chain for efficient monitoring
+    /// 3. Sets up event subscriptions for `PacketVerified` events.
+    /// 4. Falls back to polling `inboundPayloadHash` for chains without WebSocket
+    /// 5. Returns early if all messages are already verified
+    ///
+    /// ```
     async fn wait_for_verifications(
         &self,
         bundle: &InteropBundle,
         timeout: Duration,
-    ) -> Result<bool, SettlementError> {
+    ) -> Result<VerificationResult, SettlementError> {
         // Extract packet infos from bundle
         let packet_infos = self.extract_packet_infos(bundle).await?;
-
-        if packet_infos.is_empty() {
-            return Ok(true);
-        }
-
-        let deadline = Instant::now() + timeout;
-
-        info!(
-            num_packets = packet_infos.len(),
-            timeout_secs = timeout.as_secs(),
-            "Waiting for LayerZero message verifications"
-        );
-
-        // Group packets by destination chain
-        let packets_by_chain = self.group_packets_by_chain(packet_infos);
-
-        // Set up event subscriptions for all chains
-        let chain_monitors = self.setup_chain_monitors(packets_by_chain).await?;
-
-        // Small delay to ensure subscriptions are fully established
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Check which messages are already verified
-        let (already_verified_count, pending_by_chain) =
-            self.check_initial_verification_status(&chain_monitors).await?;
-
-        if pending_by_chain.is_empty() {
-            info!("All {} messages already verified", already_verified_count);
-            return Ok(true);
-        }
-
-        // Monitor pending messages until deadline
-        let verified_via_events =
-            self.monitor_pending_messages(&pending_by_chain, chain_monitors, deadline).await?;
-
-        // Final verification check if we timed out
-        let all_verified =
-            self.final_verification_check(verified_via_events, &pending_by_chain).await?;
-
-        Ok(all_verified)
+        LayerZeroVerificationMonitor::new(self.chain_configs.clone())
+            .wait_for_verifications(packet_infos, timeout.as_secs())
+            .await
     }
 
+    /// Builds transactions to execute verified LayerZero messages on their destination chains.
+    ///
+    /// This method creates `lzReceive` transactions for all verified messages, allowing the
+    /// destination chain contracts to process the settlement attestations.
     async fn build_execute_receive_transactions(
         &self,
         bundle: &InteropBundle,
@@ -503,29 +546,30 @@ impl Settler for LayerZeroSettler {
             return Ok(vec![]);
         }
 
-        // Check which packets are actually available for execute receive in parallel
-        let availability_results = try_join_all(all_packet_infos.iter().map(async |packet| {
-            let is_available = self.is_message_available(packet).await?;
-            Ok::<_, SettlementError>((packet.clone(), is_available))
-        }))
+        // Check which packets are actually available for execute receive
+        let availability_results: Vec<bool> = try_join_all(
+            all_packet_infos
+                .iter()
+                .map(async |packet| is_message_available(packet, &self.chain_configs).await),
+        )
         .await?;
 
-        let packet_infos: Vec<LayerZeroPacketInfo> = availability_results
+        // Filter packets based on availability results
+        let packet_infos: Vec<LayerZeroPacketInfo> = all_packet_infos
             .into_iter()
+            .zip(availability_results)
             .filter_map(|(packet, is_available)| if is_available { Some(packet) } else { None })
             .collect();
 
         info!(num_packets = packet_infos.len(), "Building LayerZero execute receive transactions");
 
-        // Build execute receive transactions in parallel
-        let execute_receive_results = try_join_all(
-            packet_infos.iter().map(|packet| self.build_execute_receive_transaction(packet)),
+        // Build execute receive transactions
+        let execute_receive_txs = try_join_all(
+            packet_infos
+                .iter()
+                .map(|packet| self.build_execute_receive_transaction(packet, bundle)),
         )
         .await?;
-
-        // Filter out any None results
-        let execute_receive_txs: Vec<RelayTransaction> =
-            execute_receive_results.into_iter().flatten().collect();
 
         info!(
             num_deliveries = execute_receive_txs.len(),
@@ -534,347 +578,4 @@ impl Settler for LayerZeroSettler {
 
         Ok(execute_receive_txs)
     }
-}
-
-/// Represents a chain's monitoring context
-struct ChainMonitor {
-    /// Chain ID for this monitor
-    chain_id: u64,
-    /// LayerZero endpoint address on this chain
-    endpoint_address: Address,
-    /// Event subscription stream (None if WebSocket unavailable)
-    stream: Option<alloy::pubsub::Subscription<alloy::rpc::types::Log>>,
-    /// Packets to monitor on this chain
-    packets: Vec<LayerZeroPacketInfo>,
-}
-
-impl LayerZeroSettler {
-    /// Groups packets by their destination chain
-    fn group_packets_by_chain(
-        &self,
-        packets: Vec<LayerZeroPacketInfo>,
-    ) -> HashMap<u64, Vec<LayerZeroPacketInfo>> {
-        let mut packets_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>> = HashMap::new();
-        for packet in packets {
-            packets_by_chain.entry(packet.dst_chain_id).or_default().push(packet);
-        }
-        packets_by_chain
-    }
-
-    /// Sets up event monitors for all chains
-    async fn setup_chain_monitors(
-        &self,
-        packets_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>>,
-    ) -> Result<Vec<ChainMonitor>, SettlementError> {
-        let subscription_tasks: Vec<_> = packets_by_chain
-            .into_iter()
-            .map(|(chain_id, packets)| {
-                let provider = self.providers.get(&chain_id).cloned();
-                let endpoint_address = self.endpoint_addresses.get(&chain_id).copied();
-
-                tokio::spawn(async move {
-                    let provider =
-                        provider.ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
-                    let endpoint_address = endpoint_address
-                        .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
-
-                    // Try to subscribe to events
-                    let filter = Filter::new()
-                        .address(endpoint_address)
-                        .event_signature(ILayerZeroEndpointV2::PacketVerified::SIGNATURE_HASH);
-
-                    let stream = match provider.subscribe_logs(&filter).await {
-                        Ok(stream) => {
-                            info!(chain_id, "Successfully subscribed to PacketVerified events");
-                            Some(stream)
-                        }
-                        Err(e) => {
-                            warn!(
-                                chain_id,
-                                error = ?e,
-                                "Failed to subscribe to events, will use polling fallback"
-                            );
-                            None
-                        }
-                    };
-
-                    Ok::<_, SettlementError>(ChainMonitor {
-                        chain_id,
-                        endpoint_address,
-                        stream,
-                        packets,
-                    })
-                })
-            })
-            .collect();
-
-        // Collect all monitors
-        let mut monitors = Vec::new();
-        for task in subscription_tasks {
-            match task.await {
-                Ok(Ok(monitor)) => monitors.push(monitor),
-                Ok(Err(e)) => return Err(e),
-                Err(e) => {
-                    warn!(error = ?e, "Subscription setup task panicked");
-                    return Err(SettlementError::ContractCallError(format!("Task panic: {e}")));
-                }
-            }
-        }
-
-        info!(num_chains = monitors.len(), "Event monitors established for chains");
-
-        Ok(monitors)
-    }
-
-    /// Checks initial verification status and returns already verified count and pending packets
-    async fn check_initial_verification_status(
-        &self,
-        monitors: &[ChainMonitor],
-    ) -> Result<(usize, HashMap<u64, Vec<LayerZeroPacketInfo>>), SettlementError> {
-        let mut already_verified_count = 0;
-        let mut pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>> = HashMap::new();
-
-        for monitor in monitors {
-            let mut pending = Vec::new();
-            for packet in &monitor.packets {
-                if !self.is_message_available(packet).await? {
-                    pending.push(packet.clone());
-                } else {
-                    already_verified_count += 1;
-                }
-            }
-
-            info!(
-                chain_id = monitor.chain_id,
-                has_stream = monitor.stream.is_some(),
-                total_packets = monitor.packets.len(),
-                pending_packets = pending.len(),
-                already_verified = monitor.packets.len() - pending.len(),
-                "Initial verification status"
-            );
-
-            if !pending.is_empty() {
-                pending_by_chain.insert(monitor.chain_id, pending);
-            }
-        }
-
-        Ok((already_verified_count, pending_by_chain))
-    }
-
-    /// Monitors pending messages across all chains until deadline
-    async fn monitor_pending_messages(
-        &self,
-        pending_by_chain: &HashMap<u64, Vec<LayerZeroPacketInfo>>,
-        monitors: Vec<ChainMonitor>,
-        deadline: Instant,
-    ) -> Result<Vec<B256>, SettlementError> {
-        let mut monitoring_tasks = Vec::new();
-
-        for monitor in monitors {
-            if let Some(pending_packets) = pending_by_chain.get(&monitor.chain_id) {
-                if pending_packets.is_empty() {
-                    continue;
-                }
-
-                let packets = pending_packets.clone();
-
-                let task = tokio::spawn(async move {
-                    match monitor.stream {
-                        Some(stream) => {
-                            info!(
-                                chain_id = monitor.chain_id,
-                                num_pending = packets.len(),
-                                "Monitoring chain with event stream"
-                            );
-                            monitor_packet_stream(
-                                stream,
-                                monitor.endpoint_address,
-                                packets,
-                                deadline,
-                            )
-                            .await
-                        }
-                        None => {
-                            warn!(
-                                chain_id = monitor.chain_id,
-                                "No event stream available, waiting until deadline"
-                            );
-                            tokio::time::sleep_until(deadline).await;
-                            Ok(vec![])
-                        }
-                    }
-                });
-                monitoring_tasks.push(task);
-            }
-        }
-
-        // Collect results from all monitoring tasks
-        let mut all_verified_guids = Vec::new();
-        for task in monitoring_tasks {
-            match task.await {
-                Ok(Ok(verified_guids)) => all_verified_guids.extend(verified_guids),
-                Ok(Err(e)) => warn!(error = ?e, "Monitoring task failed"),
-                Err(e) => warn!(error = ?e, "Monitoring task panicked"),
-            }
-        }
-
-        if !all_verified_guids.is_empty() {
-            info!(count = all_verified_guids.len(), "Messages verified via event monitoring");
-        }
-
-        Ok(all_verified_guids)
-    }
-
-    /// Final verification check for any remaining unverified messages
-    async fn final_verification_check(
-        &self,
-        verified_guids: Vec<B256>,
-        pending_by_chain: &HashMap<u64, Vec<LayerZeroPacketInfo>>,
-    ) -> Result<bool, SettlementError> {
-        let total_pending: usize = pending_by_chain.values().map(|v| v.len()).sum();
-        let verified_via_events = verified_guids.len();
-
-        // If we verified everything via events, we're done
-        if verified_via_events >= total_pending {
-            return Ok(true);
-        }
-
-        // We timed out - do a final check on remaining messages
-        info!(
-            verified_via_events,
-            total_pending, "Timeout reached, performing final verification check"
-        );
-
-        let mut final_verified_count = 0;
-        for packets in pending_by_chain.values() {
-            for packet in packets {
-                // Skip packets we already verified via events
-                if verified_guids.contains(&packet.guid) {
-                    continue;
-                }
-
-                if self.is_message_available(packet).await? {
-                    final_verified_count += 1;
-                }
-            }
-        }
-
-        if final_verified_count > 0 {
-            info!(count = final_verified_count, "Additional messages verified in final check");
-        }
-
-        let total_verified = verified_via_events + final_verified_count;
-        Ok(total_verified >= total_pending)
-    }
-}
-
-/// Monitor a stream for packet verifications
-async fn monitor_packet_stream(
-    mut stream: alloy::pubsub::Subscription<alloy::rpc::types::Log>,
-    endpoint_address: Address,
-    packets: Vec<LayerZeroPacketInfo>,
-    deadline: Instant,
-) -> Result<Vec<B256>, SettlementError> {
-    // Precalculate payload hashes
-    let packet_lookup: HashMap<(u64, Address, B256), B256> = packets
-        .iter()
-        .map(|packet| {
-            let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();
-            let payload_hash = keccak256(&payload);
-
-            info!(
-                guid = ?packet.guid,
-                nonce = packet.nonce,
-                receiver = ?packet.receiver,
-                payload_hash = ?payload_hash,
-                "Prepared packet for monitoring"
-            );
-            ((packet.nonce, packet.receiver, payload_hash), packet.guid)
-        })
-        .collect();
-
-    let mut verified_guids = Vec::new();
-    let mut remaining = packets.len();
-
-    info!(
-        endpoint = ?endpoint_address,
-        num_packets = packets.len(),
-        timeout_secs = (deadline - Instant::now()).as_secs(),
-        "Starting PacketVerified event monitoring"
-    );
-
-    while remaining > 0 && Instant::now() < deadline {
-        tokio::select! {
-            result = stream.recv() => {
-                match result {
-                    Ok(log) => {
-                        info!(
-                            log_address = ?log.inner.address,
-                            "Received log event"
-                        );
-
-                        match ILayerZeroEndpointV2::PacketVerified::decode_log(&log.inner) {
-                            Ok(event) => {
-                                info!(
-                                    event_nonce = event.origin.nonce,
-                                    event_receiver = ?event.receiver,
-                                    event_payload_hash = ?event.payloadHash,
-                                    event_src_eid = event.origin.srcEid,
-                                    event_sender = ?event.origin.sender,
-                                    "Decoded PacketVerified event"
-                                );
-
-                                // Look up packet by event data
-                                let lookup_key = (event.origin.nonce, event.receiver, event.payloadHash);
-
-                                if let Some(guid) = packet_lookup.get(&lookup_key) {
-                                    verified_guids.push(*guid);
-                                    remaining -= 1;
-                                    info!(
-                                        ?guid,
-                                        nonce = event.origin.nonce,
-                                        receiver = ?event.receiver,
-                                        remaining,
-                                        "Message verified via event"
-                                    );
-                                } else {
-                                    warn!(
-                                        event_nonce = event.origin.nonce,
-                                        event_receiver = ?event.receiver,
-                                        event_payload_hash = ?event.payloadHash,
-                                        "Received PacketVerified event but no matching packet in lookup"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    error = ?e,
-                                    "Failed to decode PacketVerified event"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = ?e,
-                            "Stream receive error"
-                        );
-                        break;
-                    }
-                }
-            }
-            _ = sleep_until(deadline) => {
-                info!(
-                    remaining,
-                    verified = verified_guids.len(),
-                    "Verification monitoring timed out"
-                );
-                break;
-            }
-        }
-    }
-
-    info!(verified_count = verified_guids.len(), remaining, "Completed event monitoring");
-
-    Ok(verified_guids)
 }

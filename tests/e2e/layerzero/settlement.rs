@@ -9,8 +9,13 @@ use crate::e2e::{
     cases::multichain_usdt_transfer::MultichainTransferSetup,
     layerzero::setup::LayerZeroEnvironment, *,
 };
+use alloy::{rpc::types::Filter, sol_types::SolEvent};
 use eyre::Result;
-use relay::{rpc::RelayApiClient, storage::StorageApi, types::rpc::GetAssetsParameters};
+use relay::{
+    rpc::RelayApiClient,
+    storage::StorageApi,
+    types::{IEscrow, rpc::GetAssetsParameters},
+};
 use tokio::time::{Duration, sleep};
 
 /// Tests successful cross-chain transfer with LayerZero settlement.
@@ -19,7 +24,7 @@ use tokio::time::{Duration, sleep};
 /// Funds are locked in escrow, settler provides liquidity on destination,
 /// and LayerZero is used for cross-chain settlement attestation.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_layerzero_settlement() -> Result<()> {
+async fn test_multichain_layerzero_settlement() -> Result<()> {
     // Set up the multichain transfer scenario with LayerZero
     let setup = MultichainTransferSetup::run_with_layer_zero().await?;
 
@@ -53,6 +58,22 @@ async fn test_layerzero_settlement() -> Result<()> {
     // Verify LayerZero relayer picks up the message and can successfully relay it.
     assert_eq!(relayer.messages_seen(), 2, "Relayer should have seen exactly 2 messages"); // 2 lzSends
     assert_eq!(relayer.transactions_sent(), 2, "Relayer should have sent exactly 2 transactions");
+
+    // Check that EscrowSettled events were emitted on the source chains
+    for chain_idx in 0..2 {
+        let logs = setup.env.providers[chain_idx]
+            .get_logs(
+                &Filter::new()
+                    .address(setup.env.escrow)
+                    .event_signature(IEscrow::EscrowSettled::SIGNATURE_HASH),
+            )
+            .await?;
+        assert!(
+            !logs.is_empty(),
+            "Expected EscrowSettled event on chain {}",
+            setup.env.chain_id_for(chain_idx)
+        );
+    }
 
     Ok(())
 }

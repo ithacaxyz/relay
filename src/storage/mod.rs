@@ -1,10 +1,7 @@
 //! Relay storage
 
 mod api;
-pub use crate::{
-    transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle},
-    types::InteropTxType,
-};
+pub use crate::transactions::interop::{BundleStatus, BundleWithStatus, InteropBundle};
 use alloy::{
     primitives::{BlockNumber, U256},
     rpc::types::TransactionReceipt,

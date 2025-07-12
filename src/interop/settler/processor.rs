@@ -1,16 +1,12 @@
-use alloy::primitives::{Address, Bytes, ChainId, map::HashMap};
+use alloy::primitives::{Address, Bytes, ChainId};
 use futures_util::future::try_join_all;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, error, info};
 
-use super::Settler;
+use super::{Settler, layerzero::verification::VerificationResult};
 use crate::{
     error::StorageError,
-    storage::RelayStorage,
-    transactions::{
-        RelayTransaction, TransactionServiceError, TransactionServiceHandle, TxId,
-        interop::InteropBundle,
-    },
+    transactions::{RelayTransaction, TxId, interop::InteropBundle},
 };
 
 /// Errors that can occur during settlement processing.
@@ -19,34 +15,23 @@ pub enum SettlementError {
     /// Storage error occurred.
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
-    /// Transaction service error occurred.
-    #[error("Transaction service error: {0}")]
-    TransactionService(#[from] TransactionServiceError),
-    /// Invalid bundle state for settlement.
-    #[error("Invalid bundle state for settlement: {0:?}")]
-    InvalidBundleState(crate::transactions::interop::BundleStatus),
-    /// No transaction service found for chain.
-    #[error("No transaction service for chain {0}")]
-    NoTransactionService(ChainId),
     /// Settler ID mismatch.
-    #[error("Bundle settler '{bundle_settler}' does not match current settler '{current_settler}'")]
+    #[error("Expected settler '{expected}' but got '{got}'")]
     SettlerIdMismatch {
-        /// The settler ID from the bundle
-        bundle_settler: String,
-        /// The current settler ID
-        current_settler: &'static str,
+        /// The expected settler ID
+        expected: String,
+        /// The settler ID we got
+        got: String,
     },
     /// Settler address mismatch.
-    #[error(
-        "Transaction {tx_id} has settler '{intent_settler}' but current settler is '{current_settler}'"
-    )]
+    #[error("Transaction {tx_id} expected settler '{expected}' but got '{got}'")]
     SettlerAddressMismatch {
         /// The transaction ID with the mismatch
         tx_id: TxId,
-        /// The settler address from the intent
-        intent_settler: Address,
-        /// The current settler address
-        current_settler: Address,
+        /// The expected settler address
+        expected: Address,
+        /// The settler address we got
+        got: Address,
     },
     /// Missing intent in destination transaction.
     #[error("Destination transaction missing intent")]
@@ -57,38 +42,21 @@ pub enum SettlementError {
     /// Unknown LayerZero endpoint ID.
     #[error("Unknown LayerZero endpoint ID: {0}")]
     UnknownEndpointId(u32),
-    /// Unexpected transaction state.
-    #[error("Unexpected transaction state: expected {expected}, but got {actual}")]
-    UnexpectedTransactionState {
-        /// The expected transaction state
-        expected: &'static str,
-        /// The actual transaction state
-        actual: String,
-    },
-    /// Generic error.
-    #[error("Error: {0}")]
-    GenericError(String),
-    /// Contract call error.
-    #[error("Contract call failed: {0}")]
-    ContractCallError(String),
     /// RPC error.
-    #[error("RPC error: {0}")]
+    #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
     /// Multicall error.
-    #[error("Multicall error: {0}")]
+    #[error(transparent)]
     MulticallError(#[from] alloy::providers::MulticallError),
-    /// No settlement transactions in bundle
-    #[error("No settlement transactions in bundle")]
-    NoSettlementTransactions,
-    /// Failed to extract LayerZero packet info
-    #[error("Failed to extract LayerZero packet info: {0}")]
-    PacketExtractionError(String),
-    /// LayerZero verification timeout
-    #[error("LayerZero verification timeout after {0} seconds")]
-    VerificationTimeout(u64),
-    /// Failed to build delivery transaction
-    #[error("Failed to build delivery transaction: {0}")]
-    DeliveryBuildError(String),
+    /// Contract error.
+    #[error(transparent)]
+    ContractError(#[from] alloy::contract::Error),
+    /// Abi error.
+    #[error(transparent)]
+    AbiError(#[from] alloy::sol_types::Error),
+    /// Internal error occurred
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// Processor for handling settlement transactions in cross-chain bundles.
@@ -107,11 +75,7 @@ impl SettlementProcessor {
     /// * `transaction_services` - Map of chain IDs to transaction service handles (unused but kept
     ///   for API compatibility)
     /// * `settler` - The settler implementation to use for settlements
-    pub fn new(
-        _storage: RelayStorage,
-        _transaction_services: HashMap<ChainId, TransactionServiceHandle>,
-        settler: Box<dyn Settler>,
-    ) -> Self {
+    pub fn new(settler: Box<dyn Settler>) -> Self {
         Self { settler }
     }
 
@@ -135,12 +99,12 @@ impl SettlementProcessor {
 
     /// Wait for settlement verifications with a timeout.
     ///
-    /// Returns true if verification succeeded, false otherwise.
+    /// Returns verification result with details about successes and failures.
     pub async fn wait_for_verifications(
         &self,
         bundle: &InteropBundle,
         timeout: Duration,
-    ) -> Result<bool, SettlementError> {
+    ) -> Result<VerificationResult, SettlementError> {
         self.settler.wait_for_verifications(bundle, timeout).await
     }
 
@@ -164,8 +128,8 @@ impl SettlementProcessor {
                 "Bundle settler ID does not match current settler"
             );
             return Err(SettlementError::SettlerIdMismatch {
-                bundle_settler: bundle.settler_id.clone(),
-                current_settler: self.settler.id(),
+                expected: self.settler.id().to_string(),
+                got: bundle.settler_id.clone(),
             });
         }
 
@@ -183,8 +147,8 @@ impl SettlementProcessor {
                     );
                     return Err(SettlementError::SettlerAddressMismatch {
                         tx_id: dst_tx.id,
-                        intent_settler: quote.intent.settler,
-                        current_settler: settler_address,
+                        expected: settler_address,
+                        got: quote.intent.settler,
                     });
                 }
             }
@@ -274,19 +238,15 @@ impl SettlementProcessor {
 mod tests {
     use super::*;
     use crate::{
-        interop::SimpleSettler, storage::RelayStorage, transactions::interop::InteropBundle,
-        types::rpc::BundleId,
+        interop::SimpleSettler, transactions::interop::InteropBundle, types::rpc::BundleId,
     };
-    use alloy::primitives::{Address, ChainId};
+    use alloy::primitives::Address;
 
     #[tokio::test]
     async fn test_settler_id_validation_in_build_settlements() {
         // Create a settlement processor with a simple settler
-        let storage = RelayStorage::in_memory();
-        let tx_services: alloy::primitives::map::HashMap<ChainId, TransactionServiceHandle> =
-            Default::default();
         let settler = Box::new(SimpleSettler::new(Address::ZERO));
-        let processor = SettlementProcessor::new(storage, tx_services, settler);
+        let processor = SettlementProcessor::new(settler);
 
         // Create a bundle with a different settler ID
         let bundle = InteropBundle::new(BundleId::random(), "different_settler".to_string());
@@ -296,9 +256,9 @@ mod tests {
 
         assert!(result.is_err());
         match result.err().unwrap() {
-            SettlementError::SettlerIdMismatch { bundle_settler, current_settler } => {
-                assert_eq!(bundle_settler, "different_settler");
-                assert_eq!(current_settler, "simple");
+            SettlementError::SettlerIdMismatch { expected, got } => {
+                assert_eq!(expected, "simple");
+                assert_eq!(got, "different_settler");
             }
             _ => panic!("Expected SettlerIdMismatch error"),
         }

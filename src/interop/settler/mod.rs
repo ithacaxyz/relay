@@ -5,7 +5,7 @@ pub mod processor;
 /// Simple settler implementation for testing and development.
 pub mod simple;
 
-pub use layerzero::LayerZeroSettler;
+pub use layerzero::{LayerZeroSettler, verification::VerificationResult};
 pub use processor::{SettlementError, SettlementProcessor};
 pub use simple::SimpleSettler;
 
@@ -53,12 +53,12 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
     /// For LayerZero, this waits for message verification on destination chains.
     /// For simple settler, this immediately returns success.
     ///
-    /// Returns true if verification succeeded, false otherwise.
+    /// Returns verification result with details about successes and failures.
     async fn wait_for_verifications(
         &self,
         bundle: &InteropBundle,
         timeout: Duration,
-    ) -> Result<bool, SettlementError>;
+    ) -> Result<VerificationResult, SettlementError>;
 
     /// Build execute receive transactions needed after verification.
     async fn build_execute_receive_transactions(
