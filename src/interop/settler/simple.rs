@@ -1,11 +1,12 @@
 use super::{SettlementError, Settler};
-use crate::transactions::RelayTransaction;
+use crate::transactions::{RelayTransaction, interop::InteropBundle};
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
     sol_types::SolValue,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use std::time::Duration;
 
 /// A simple settler implementation that does not require cross-chain attestation.
 #[derive(Debug)]
@@ -31,7 +32,7 @@ impl Settler for SimpleSettler {
         self.settler_address
     }
 
-    async fn build_send_settlement(
+    async fn build_execute_send_transaction(
         &self,
         _settlement_id: B256,
         _current_chain_id: ChainId,
@@ -49,5 +50,22 @@ impl Settler for SimpleSettler {
 
         // Simple settler doesn't need any context
         Ok(input_chain_ids.abi_encode().into())
+    }
+
+    async fn wait_for_verifications(
+        &self,
+        _bundle: &InteropBundle,
+        _timeout: Duration,
+    ) -> Result<bool, SettlementError> {
+        // Simple settler doesn't need verification, always return success
+        Ok(true)
+    }
+
+    async fn build_execute_receive_transactions(
+        &self,
+        _bundle: &InteropBundle,
+    ) -> Result<Vec<RelayTransaction>, SettlementError> {
+        // Simple settler doesn't need execute receive transactions
+        Ok(vec![])
     }
 }

@@ -6,9 +6,8 @@ use crate::{
     config::InteropConfig,
     error::StorageError,
     interop::{
-        RefundMonitorService, RefundProcessor, RefundProcessorError, RefundUpdate, SettlementError,
-        refund::processor::MAX_REFUND_RETRY_ATTEMPTS,
-        settler::processor::{SettlementProcessor, SettlementUpdate},
+        RefundMonitorService, RefundProcessor, RefundProcessorError, SettlementError,
+        SettlementTransactions, settler::processor::SettlementProcessor,
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
@@ -27,7 +26,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
-use tracing::{error, instrument};
+use tracing::{debug, error, instrument};
 
 /// Asset transfer information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +60,10 @@ pub struct InteropBundle {
     pub refund_txs: Vec<RelayTransaction>,
     /// Settlement transactions (populated after destination confirmation)
     pub settlement_txs: Vec<RelayTransaction>,
+    /// Execute receive transactions required by the settler (e.g., LayerZero delivery txs).
+    ///
+    /// These are populated after verification steps if needed.
+    pub execute_receive_txs: Vec<RelayTransaction>,
 }
 
 impl InteropBundle {
@@ -74,6 +77,7 @@ impl InteropBundle {
             asset_transfers: Vec::new(),
             refund_txs: Vec::new(),
             settlement_txs: Vec::new(),
+            execute_receive_txs: Vec::new(),
         }
     }
 
@@ -122,33 +126,6 @@ pub struct BundleWithStatus {
     pub bundle: InteropBundle,
     /// Current status of the bundle in the processing pipeline
     pub status: BundleStatus,
-}
-
-impl BundleWithStatus {
-    /// Apply [`RefundUpdate`] to the bundle.
-    pub fn apply_refund_update(&mut self, update: &RefundUpdate) {
-        // Remove failed transactions
-        self.bundle.refund_txs.retain(|tx| !update.failed_tx_ids.contains(&tx.id));
-
-        // Add new refund transactions
-        self.bundle.refund_txs.extend(update.new_refund_txs.clone());
-
-        // Update status if provided
-        if let Some(new_status) = update.new_status {
-            self.status = new_status;
-        }
-    }
-
-    /// Apply [`SettlementUpdate`] to the bundle.
-    pub fn apply_settlement_update(&mut self, update: &SettlementUpdate) {
-        // Add new settlement transactions
-        self.bundle.settlement_txs.extend(update.new_settlement_txs.clone());
-
-        // Update status if provided
-        if let Some(new_status) = update.new_status {
-            self.status = new_status;
-        }
-    }
 }
 
 /// Errors that can occur during interop bundle processing.
@@ -233,12 +210,20 @@ pub enum BundleStatus {
     DestinationConfirmed,
     /// Settlement transactions are queued to be processed
     ///
-    /// Next: [`Self::SettlementsConfirmed`] OR [`Self::Failed`]
+    /// Next: [`Self::SettlementsProcessing`] OR [`Self::Failed`]
     SettlementsQueued,
-    /// Settlement transactions are confirmed
+    /// Additional settler-specific processing is in progress
+    ///
+    /// Next: [`Self::ExecuteReceiveQueued`] OR [`Self::SettlementsComplete`]
+    SettlementsProcessing,
+    /// Execute receive transactions are queued
+    ///
+    /// Next: [`Self::SettlementsComplete`] OR [`Self::Failed`]
+    ExecuteReceiveQueued,
+    /// All settlements are complete
     ///
     /// Next: [`Self::Done`]
-    SettlementsConfirmed,
+    SettlementsComplete,
     /// Refunds are scheduled for delayed execution
     ///
     /// Next: [`Self::RefundsReady`] OR stays in [`Self::RefundsScheduled`]
@@ -295,9 +280,13 @@ impl BundleStatus {
                 | (DestinationFailures, RefundsScheduled)
                 | (DestinationFailures, Failed)
                 | (DestinationConfirmed, SettlementsQueued)
-                | (SettlementsQueued, SettlementsConfirmed)
+                | (SettlementsQueued, SettlementsProcessing)
                 | (SettlementsQueued, Failed)
-                | (SettlementsConfirmed, Done)
+                | (SettlementsProcessing, ExecuteReceiveQueued)
+                | (SettlementsProcessing, SettlementsComplete)
+                | (ExecuteReceiveQueued, SettlementsComplete)
+                | (ExecuteReceiveQueued, Failed)
+                | (SettlementsComplete, Done)
                 | (RefundsScheduled, RefundsReady)
                 | (RefundsReady, RefundsQueued)
                 | (RefundsQueued, Done)
@@ -378,6 +367,7 @@ struct InteropServiceInner {
     storage: RelayStorage,
     refund_processor: RefundProcessor,
     settlement_processor: Arc<SettlementProcessor>,
+    interop_config: InteropConfig,
 }
 
 impl InteropServiceInner {
@@ -388,6 +378,7 @@ impl InteropServiceInner {
         storage: RelayStorage,
         providers: HashMap<ChainId, DynProvider>,
         settlement_processor: Arc<SettlementProcessor>,
+        interop_config: InteropConfig,
     ) -> Self {
         let refund_processor =
             RefundProcessor::new(storage.clone(), tx_service_handles.clone(), providers);
@@ -397,6 +388,7 @@ impl InteropServiceInner {
             storage,
             refund_processor,
             settlement_processor,
+            interop_config,
         }
     }
 
@@ -615,9 +607,25 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing settlements");
 
-        let update = self.settlement_processor.queue_send_settlements(&bundle.bundle).await?;
+        // Build settlements
+        let settlement_txs = self.settlement_processor.build_settlements(&bundle.bundle).await?;
 
-        bundle.apply_settlement_update(&update);
+        // Queue and send the settlement transactions
+        let new_status = self
+            .queue_and_send_bundle_transactions(
+                &bundle.bundle,
+                SettlementTransactions::ExecuteSend(&settlement_txs),
+            )
+            .await?;
+
+        bundle.bundle.settlement_txs = settlement_txs;
+        bundle.status = new_status;
+
+        tracing::info!(
+            bundle_id = ?bundle.bundle.id,
+            num_settlements = bundle.bundle.settlement_txs.len(),
+            "Settlement transactions queued and sent"
+        );
 
         Ok(())
     }
@@ -646,8 +654,37 @@ impl InteropServiceInner {
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing ready refunds");
 
-        let update = self.refund_processor.queue_refunds(bundle).await?;
-        bundle.apply_refund_update(&update);
+        // Get escrow details from confirmed source transactions
+        let escrow_details = self.refund_processor.get_confirmed_escrows(&bundle.bundle).await?;
+
+        if escrow_details.is_empty() {
+            return Err(InteropBundleError::RefundProcessor(
+                RefundProcessorError::ExecutionFailed(
+                    "No escrow details found for refund processing".to_string(),
+                ),
+            ));
+        }
+
+        // Build the refund transactions
+        let refunds =
+            self.refund_processor.build_missing_refunds(&bundle.bundle, &escrow_details).await?;
+
+        // Queue and send transactions atomically
+        let new_status = self
+            .queue_and_send_bundle_transactions(
+                &bundle.bundle,
+                SettlementTransactions::Refund(&refunds.new_refund_txs),
+            )
+            .await?;
+
+        bundle.bundle.refund_txs = refunds.new_refund_txs;
+        bundle.status = new_status;
+
+        tracing::info!(
+            bundle_id = ?bundle.bundle.id,
+            new_tx_count = bundle.bundle.refund_txs.len(),
+            "Built, queued, and sent refund transactions"
+        );
 
         Ok(())
     }
@@ -660,54 +697,12 @@ impl InteropServiceInner {
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Monitoring refund transactions");
-
-        // Retry loop for monitoring and rebuilding failed refunds
-        let mut retry_count: u32 = 0;
-
-        loop {
-            // Wait for retry transactions
-            let failed_tx_ids =
-                self.refund_processor.monitor_refund_completion(&bundle.bundle.refund_txs).await?;
-
-            if failed_tx_ids.is_empty() {
-                tracing::info!(
-                    bundle_id = ?bundle.bundle.id,
-                    "All refund transactions succeeded"
-                );
-                break;
-            }
-
-            retry_count += 1;
-            if retry_count >= MAX_REFUND_RETRY_ATTEMPTS {
-                tracing::error!(
-                    bundle_id = ?bundle.bundle.id,
-                    retry_count,
-                    "Maximum refund retry attempts reached"
-                );
-                return Err(InteropBundleError::RefundProcessor(
-                    crate::interop::RefundProcessorError::MaxRetriesReached {
-                        bundle_id: bundle.bundle.id,
-                        attempts: retry_count,
-                    },
-                ));
-            }
-
-            // Some refunds failed, rebuild them
-            tracing::info!(
-                bundle_id = ?bundle.bundle.id,
-                failed_count = failed_tx_ids.len(),
-                "Some refund transactions failed, rebuilding them"
-            );
-
-            let update = self.refund_processor.queue_refunds(bundle).await?;
-            bundle.apply_refund_update(&update);
-        }
-
-        tracing::info!(
-            bundle_id = ?bundle.bundle.id,
-            refund_tx_count = bundle.bundle.refund_txs.len(),
-            "All refund transactions succeeded, keeping successful transactions and marking bundle as failed"
-        );
+        let _failed_tx_ids = self
+            .monitor_bundle_transactions(
+                &bundle.bundle,
+                SettlementTransactions::Refund(&bundle.bundle.refund_txs),
+            )
+            .await?;
 
         self.update_bundle_status(bundle, BundleStatus::Failed).await?;
 
@@ -716,7 +711,7 @@ impl InteropServiceInner {
 
     /// Handle the SettlementsQueued status - wait for settlement transactions
     ///
-    /// Transitions to: [`BundleStatus::SettlementsConfirmed`] OR [`BundleStatus::Failed`]
+    /// Transitions to: [`BundleStatus::SettlementsProcessing`] OR [`BundleStatus::Failed`]
     async fn on_settlements_queued(
         &self,
         bundle: &mut BundleWithStatus,
@@ -724,8 +719,12 @@ impl InteropServiceInner {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Monitoring settlement transactions");
 
         // Monitor settlement completion (transactions were already sent in queue_settlements)
-        let failed_ids =
-            self.settlement_processor.monitor_settlement_completion(&bundle.bundle).await?;
+        let failed_ids = self
+            .monitor_bundle_transactions(
+                &bundle.bundle,
+                SettlementTransactions::ExecuteSend(&bundle.bundle.settlement_txs),
+            )
+            .await?;
 
         if !failed_ids.is_empty() {
             tracing::error!(
@@ -735,21 +734,137 @@ impl InteropServiceInner {
             );
             self.update_bundle_status(bundle, BundleStatus::Failed).await?;
         } else {
-            tracing::info!(bundle_id = ?bundle.bundle.id, "All settlement transactions confirmed");
-            self.update_bundle_status(bundle, BundleStatus::SettlementsConfirmed).await?;
+            tracing::info!(bundle_id = ?bundle.bundle.id, "All settlement transactions confirmed, transitioning to processing");
+            self.update_bundle_status(bundle, BundleStatus::SettlementsProcessing).await?;
         }
 
         Ok(())
     }
 
-    /// Handle the SettlementsConfirmed status - finalize the bundle
+    /// Handle the SettlementsProcessing status - perform settler-specific processing
     ///
-    /// Transitions to: [`BundleStatus::Done`]
-    async fn on_settlements_confirmed(
+    /// Transitions to: [`BundleStatus::ExecuteReceiveQueued`] OR
+    /// [`BundleStatus::SettlementsComplete`]
+    async fn on_settlements_processing(
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Settlements confirmed, marking bundle as done");
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing settler-specific verification");
+
+        // Wait for verifications with timeout
+        let timeout = self.interop_config.settler.wait_verification_timeout;
+
+        match self.settlement_processor.wait_for_verifications(&bundle.bundle, timeout).await {
+            Ok(verification_success) => {
+                if verification_success {
+                    tracing::info!(bundle_id = ?bundle.bundle.id, "Verification successful");
+
+                    // Build execute receive transactions
+                    let execute_receive_txs = self
+                        .settlement_processor
+                        .build_execute_receive_transactions(&bundle.bundle)
+                        .await?;
+
+                    tracing::info!(
+                        bundle_id = ?bundle.bundle.id,
+                        tx_count = execute_receive_txs.len(),
+                        "Built execute receive transactions"
+                    );
+
+                    // Update status, queue and send transactions atomically
+                    let new_status = self
+                        .queue_and_send_bundle_transactions(
+                            &bundle.bundle,
+                            SettlementTransactions::ExecuteReceive(&execute_receive_txs),
+                        )
+                        .await?;
+
+                    bundle.bundle.execute_receive_txs = execute_receive_txs;
+                    bundle.status = new_status;
+                } else {
+                    tracing::warn!(bundle_id = ?bundle.bundle.id, "Verification failed, proceeding to complete");
+                    self.update_bundle_status(bundle, BundleStatus::Failed).await?;
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    bundle_id = ?bundle.bundle.id,
+                    error = %e,
+                    "Verification error, proceeding to complete"
+                );
+                self.update_bundle_status(bundle, BundleStatus::Failed).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle the ExecuteReceiveQueued status - monitor execute receive transactions
+    ///
+    /// Transitions to: [`BundleStatus::SettlementsComplete`] OR [`BundleStatus::Failed`]
+    async fn on_execute_receive_queued(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Monitoring execute receive transactions");
+
+        let execute_receive_txs = &bundle.bundle.execute_receive_txs;
+        if execute_receive_txs.is_empty() {
+            tracing::info!(
+                bundle_id = ?bundle.bundle.id,
+                "No execute receive transactions to monitor, proceeding to complete"
+            );
+            self.update_bundle_status(bundle, BundleStatus::SettlementsComplete).await?;
+            return Ok(());
+        }
+
+        // Monitor execute receive transaction completion
+        match self
+            .monitor_bundle_transactions(
+                &bundle.bundle,
+                SettlementTransactions::ExecuteReceive(&bundle.bundle.execute_receive_txs),
+            )
+            .await
+        {
+            Ok(failed_tx_ids) => {
+                if !failed_tx_ids.is_empty() {
+                    tracing::error!(
+                        bundle_id = ?bundle.bundle.id,
+                        failed_count = failed_tx_ids.len(),
+                        total_count = execute_receive_txs.len(),
+                        "Some execute receive transactions failed, but continuing"
+                    );
+                } else {
+                    tracing::info!(
+                        bundle_id = ?bundle.bundle.id,
+                        tx_count = execute_receive_txs.len(),
+                        "All execute receive transactions succeeded"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    bundle_id = ?bundle.bundle.id,
+                    error = %e,
+                    "Failed to monitor execute receive transactions, but continuing"
+                );
+            }
+        }
+
+        // Transition to complete regardless of failures
+        self.update_bundle_status(bundle, BundleStatus::SettlementsComplete).await?;
+
+        Ok(())
+    }
+
+    /// Handle the SettlementsComplete status - finalize the bundle
+    ///
+    /// Transitions to: [`BundleStatus::Done`]
+    async fn on_settlements_complete(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "All settlements complete, marking bundle as done");
 
         // Transition directly to done
         self.update_bundle_status(bundle, BundleStatus::Done).await?;
@@ -783,12 +898,14 @@ impl InteropServiceInner {
         &self,
         transactions: &[RelayTransaction],
     ) -> Result<(), InteropBundleError> {
-        for tx in transactions {
+        try_join_all(transactions.iter().map(async |tx| {
             self.tx_service_handles
                 .get(&tx.chain_id())
                 .ok_or(InteropBundleError::NoTransactionService(tx.chain_id()))?
                 .send_transaction_no_queue(tx.clone());
-        }
+            Ok::<(), InteropBundleError>(())
+        }))
+        .await?;
 
         Ok(())
     }
@@ -867,6 +984,144 @@ impl InteropServiceInner {
         Ok((status, receipts))
     }
 
+    /// Monitors bundle transaction completion for a specific transaction type.
+    ///
+    /// # Arguments
+    /// * `bundle` - The bundle containing the transactions to monitor
+    /// * `tx_type` - The type of interop ransactions to monitor
+    ///
+    /// # Returns
+    /// The IDs of any failed transactions.
+    async fn monitor_bundle_transactions(
+        &self,
+        bundle: &InteropBundle,
+        tx_type: SettlementTransactions<'_>,
+    ) -> Result<Vec<TxId>, InteropBundleError> {
+        // Get the appropriate transaction list based on type
+        let transactions = match &tx_type {
+            SettlementTransactions::ExecuteSend(_) => &bundle.settlement_txs,
+            SettlementTransactions::ExecuteReceive(_) => &bundle.execute_receive_txs,
+            SettlementTransactions::Refund(_) => &bundle.refund_txs,
+        };
+
+        tracing::info!(
+            bundle_id = ?bundle.id,
+            tx_type = ?tx_type,
+            num_transactions = transactions.len(),
+            "Monitoring bundle transaction completion"
+        );
+
+        // Wait for all transactions to complete
+        let results = try_join_all(transactions.iter().map(async |tx| {
+            let tx_service = self
+                .tx_service_handles
+                .get(&tx.chain_id())
+                .ok_or_else(|| InteropBundleError::NoTransactionService(tx.chain_id()))?;
+
+            let status = tx_service.wait_for_tx(tx.id).await?;
+            Ok::<_, InteropBundleError>((tx.id, status))
+        }))
+        .await?;
+
+        // Process results and collect failed transaction IDs
+        let failed_ids = results
+            .into_iter()
+            .filter_map(|(tx_id, status)| match status {
+                TransactionStatus::Confirmed(_) => {
+                    tracing::info!(tx_id = ?tx_id, tx_type = ?tx_type, "Bundle transaction confirmed");
+                    None
+                }
+                TransactionStatus::Failed(e) => {
+                    tracing::warn!(tx_id = ?tx_id, tx_type = ?tx_type, error = %e, "Bundle transaction failed");
+                    Some(tx_id)
+                }
+                _ => unreachable!("wait_for_tx only returns finalized statuses"),
+            })
+            .collect();
+
+        Ok(failed_ids)
+    }
+
+    /// Atomically stores the bundle with the new status, queues the appropriate transactions
+    /// based on type, and sends them via the transaction services.
+    ///
+    /// This is a common pattern used throughout the codebase:
+    /// 1. Clone the bundle and add the new transactions to it
+    /// 2. Update bundle status and queue transactions atomically in storage
+    /// 3. Send the queued transactions via transaction services
+    ///
+    /// # Arguments
+    /// * `bundle` - The bundle to process (immutable reference)
+    /// * `tx_type` - The type of transactions to queue and send (contains the transactions)
+    ///
+    /// # Returns
+    /// * `Ok(BundleStatus)` - The new status that was applied to the bundle
+    /// * `Err(InteropBundleError)` - If any operation fails
+    async fn queue_and_send_bundle_transactions(
+        &self,
+        bundle: &InteropBundle,
+        tx_type: SettlementTransactions<'_>,
+    ) -> Result<BundleStatus, InteropBundleError> {
+        // Extract transactions and determine next status using the type's methods
+        let transactions = tx_type.transactions();
+        let next_status = tx_type.next_status();
+
+        // First validate we have all required transaction services
+        self.validate_transaction_services(transactions)?;
+
+        debug!(
+            bundle_id = ?bundle.id,
+            new_status = ?next_status,
+            tx_count = transactions.len(),
+            "Queueing and sending bundle transactions"
+        );
+
+        // Clone the bundle and add the new transactions using the type's method
+        let mut updated_bundle = bundle.clone();
+        tx_type.add_to_bundle(&mut updated_bundle);
+
+        // Atomically update bundle and queue transactions
+        self.storage
+            .update_bundle_and_queue_transactions(&updated_bundle, next_status, transactions)
+            .await?;
+
+        // Send the transactions (now that DB is updated)
+        self.send_transactions(transactions).await?;
+
+        debug!(
+            bundle_id = ?bundle.id,
+            tx_count = transactions.len(),
+            "Successfully queued and sent bundle transactions"
+        );
+
+        Ok(next_status)
+    }
+
+    /// Validates that transaction services exist for all transactions in the list.
+    ///
+    /// # Arguments
+    /// * `transactions` - The transactions to validate
+    ///
+    /// # Returns
+    /// * `Ok(())` - If all required transaction services exist
+    /// * `Err(InteropBundleError)` - If any required transaction service is missing
+    fn validate_transaction_services(
+        &self,
+        transactions: &[RelayTransaction],
+    ) -> Result<(), InteropBundleError> {
+        for tx in transactions {
+            if !self.tx_service_handles.contains_key(&tx.chain_id()) {
+                error!(
+                    chain_id = tx.chain_id(),
+                    tx_id = ?tx.id,
+                    "No transaction service found for chain"
+                );
+                return Err(InteropBundleError::NoTransactionService(tx.chain_id()));
+            }
+        }
+        Ok(())
+    }
+
     /// # Bundle State Machine
     ///
     /// ```text
@@ -893,7 +1148,14 @@ impl InteropServiceInner {
     ///           SettlementsQueued                        │
     ///                  │                                 │
     ///                  ▼                                 │
-    ///         SettlementsConfirmed                       │
+    ///         SettlementsProcessing                      │
+    ///              ╱      ╲                              │
+    ///             ╱        ╲                             │
+    ///            ▼          ▼                            │
+    ///    ExecuteReceiveQueued  SettlementsComplete       │
+    ///            │                    │                  │
+    ///            ▼                    │                  │
+    ///      SettlementsComplete ───────┘                  │
     ///                  │                                 │
     ///                  │                                 ▼
     ///                  │                           RefundsScheduled
@@ -930,8 +1192,14 @@ impl InteropServiceInner {
                 BundleStatus::RefundsReady => self.on_refunds_ready(&mut bundle).await?,
                 BundleStatus::RefundsQueued => self.on_refunds_queued(&mut bundle).await?,
                 BundleStatus::SettlementsQueued => self.on_settlements_queued(&mut bundle).await?,
-                BundleStatus::SettlementsConfirmed => {
-                    self.on_settlements_confirmed(&mut bundle).await?
+                BundleStatus::SettlementsProcessing => {
+                    self.on_settlements_processing(&mut bundle).await?
+                }
+                BundleStatus::ExecuteReceiveQueued => {
+                    self.on_execute_receive_queued(&mut bundle).await?
+                }
+                BundleStatus::SettlementsComplete => {
+                    self.on_settlements_complete(&mut bundle).await?
                 }
                 BundleStatus::Done => {
                     self.on_done(&mut bundle).await?;
@@ -979,6 +1247,7 @@ impl InteropService {
             storage.clone(),
             providers,
             Arc::clone(&settlement_processor),
+            interop_config.clone(),
         );
 
         let inner = Arc::new(inner);
@@ -1060,12 +1329,14 @@ impl Future for InteropService {
 mod tests {
     use super::*;
     use crate::{
+        config::InteropConfig,
         interop::{SettlementProcessor, Settler},
         storage::RelayStorage,
     };
     use alloy::{primitives::B256, providers::DynProvider};
     use async_trait::async_trait;
     use sqlx::PgPool;
+    use std::time::Duration;
 
     async fn get_test_storage() -> RelayStorage {
         if let Ok(db_url) = std::env::var("DATABASE_URL") {
@@ -1098,7 +1369,7 @@ mod tests {
             Address::default()
         }
 
-        async fn build_send_settlement(
+        async fn build_execute_send_transaction(
             &self,
             _settlement_id: B256,
             _current_chain_id: u64,
@@ -1113,6 +1384,21 @@ mod tests {
             _destination_chains: Vec<u64>,
         ) -> Result<alloy::primitives::Bytes, crate::interop::SettlementError> {
             Ok(alloy::primitives::Bytes::new())
+        }
+
+        async fn wait_for_verifications(
+            &self,
+            _bundle: &InteropBundle,
+            _timeout: Duration,
+        ) -> Result<bool, crate::interop::SettlementError> {
+            Ok(true)
+        }
+
+        async fn build_execute_receive_transactions(
+            &self,
+            _bundle: &InteropBundle,
+        ) -> Result<Vec<RelayTransaction>, crate::interop::SettlementError> {
+            Ok(vec![])
         }
     }
 
@@ -1140,8 +1426,13 @@ mod tests {
         assert!(DestinationFailures.can_transition_to(&RefundsScheduled));
         assert!(DestinationFailures.can_transition_to(&Failed));
         assert!(DestinationConfirmed.can_transition_to(&SettlementsQueued));
-        assert!(SettlementsQueued.can_transition_to(&SettlementsConfirmed));
-        assert!(SettlementsConfirmed.can_transition_to(&Done));
+        assert!(SettlementsQueued.can_transition_to(&SettlementsProcessing));
+        assert!(SettlementsQueued.can_transition_to(&Failed));
+        assert!(SettlementsProcessing.can_transition_to(&ExecuteReceiveQueued));
+        assert!(SettlementsProcessing.can_transition_to(&SettlementsComplete));
+        assert!(ExecuteReceiveQueued.can_transition_to(&SettlementsComplete));
+        assert!(ExecuteReceiveQueued.can_transition_to(&Failed));
+        assert!(SettlementsComplete.can_transition_to(&Done));
         assert!(RefundsScheduled.can_transition_to(&RefundsReady));
         assert!(RefundsReady.can_transition_to(&RefundsQueued));
         assert!(RefundsQueued.can_transition_to(&Failed));
@@ -1170,6 +1461,30 @@ mod tests {
         assert!(bundle.src_txs.is_empty());
         assert!(bundle.dst_txs.is_empty());
         assert!(bundle.asset_transfers.is_empty());
+        assert!(bundle.refund_txs.is_empty());
+        assert!(bundle.settlement_txs.is_empty());
+        assert!(bundle.execute_receive_txs.is_empty());
+    }
+
+    #[test]
+    fn test_settlement_state_transitions() {
+        use BundleStatus::*;
+
+        // Test settlement-specific transitions
+        assert!(DestinationConfirmed.can_transition_to(&SettlementsQueued));
+        assert!(SettlementsQueued.can_transition_to(&SettlementsProcessing));
+        assert!(SettlementsQueued.can_transition_to(&Failed));
+        assert!(SettlementsProcessing.can_transition_to(&ExecuteReceiveQueued));
+        assert!(SettlementsProcessing.can_transition_to(&SettlementsComplete));
+        assert!(ExecuteReceiveQueued.can_transition_to(&SettlementsComplete));
+        assert!(ExecuteReceiveQueued.can_transition_to(&Failed));
+        assert!(SettlementsComplete.can_transition_to(&Done));
+
+        // Invalid transitions
+        assert!(!SettlementsQueued.can_transition_to(&DestinationConfirmed));
+        assert!(!SettlementsProcessing.can_transition_to(&SettlementsQueued));
+        assert!(!ExecuteReceiveQueued.can_transition_to(&SettlementsProcessing));
+        assert!(!SettlementsComplete.can_transition_to(&SettlementsQueued));
     }
 
     #[tokio::test]
@@ -1230,6 +1545,7 @@ mod tests {
             storage,
             providers,
             Arc::new(settlement_processor),
+            InteropConfig::default(),
         );
 
         let bundle_id = BundleId::random();

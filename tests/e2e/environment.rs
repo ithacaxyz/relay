@@ -178,7 +178,7 @@ pub async fn setup_anvil_instances(
             // Spawn n-1 local anvils after the external one
             for i in 1..config.num_chains {
                 let anvil = spawn_local_anvil(i, config)?;
-                endpoints.push(anvil.endpoint_url());
+                endpoints.push(anvil.ws_endpoint_url());
                 anvils.push(Some(anvil));
             }
         }
@@ -186,7 +186,7 @@ pub async fn setup_anvil_instances(
         // No external anvil - spawn all local instances
         for i in 0..config.num_chains {
             let anvil = spawn_local_anvil(i, config)?;
-            endpoints.push(anvil.endpoint_url());
+            endpoints.push(anvil.ws_endpoint_url());
             anvils.push(Some(anvil));
         }
     }
@@ -456,8 +456,11 @@ impl Environment {
             .await?;
 
             // Configure relay to use LayerZero settler
-            interop_config.settler =
-                SettlerConfig { layer_zero: Some(lz_deployment.relay_config), simple: None };
+            interop_config.settler = SettlerConfig {
+                layer_zero: Some(lz_deployment.relay_config),
+                simple: None,
+                wait_verification_timeout: Duration::from_secs(300),
+            };
 
             layerzero_config = Some(lz_deployment.test_config);
         } else {
@@ -739,7 +742,7 @@ impl Environment {
 
         for anvil in &self.anvils {
             let url = if let Some(anvil_instance) = anvil {
-                anvil_instance.endpoint_url().to_string()
+                anvil_instance.ws_endpoint_url().to_string()
             } else {
                 std::env::var("TEST_EXTERNAL_ANVIL")
                     .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?

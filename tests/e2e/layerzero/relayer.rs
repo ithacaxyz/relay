@@ -13,7 +13,7 @@
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
 use super::{
-    interfaces::{IEndpointV2Mock, Packet},
+    interfaces::Packet,
     utils::{bytes32_to_address, create_origin, deliver_layerzero_message},
 };
 use alloy::{
@@ -24,6 +24,7 @@ use alloy::{
 };
 use eyre::Result;
 use parking_lot::Mutex;
+use relay::interop::settler::layerzero::contracts::ILayerZeroEndpointV2;
 use std::{
     collections::HashSet,
     sync::{
@@ -44,6 +45,7 @@ pub struct ChainEndpoint {
 struct LayerZeroRelayerInner {
     endpoints: Vec<ChainEndpoint>,
     providers: Vec<DynProvider>,
+    escrows: Vec<Address>,
     delivered_guids: Mutex<HashSet<B256>>,
     messages_seen: AtomicUsize,
     transactions_sent: AtomicUsize,
@@ -55,7 +57,11 @@ pub struct LayerZeroRelayer {
 }
 
 impl LayerZeroRelayer {
-    pub async fn new(endpoints: Vec<ChainEndpoint>, rpc_urls: Vec<String>) -> Result<Self> {
+    pub async fn new(
+        endpoints: Vec<ChainEndpoint>,
+        rpc_urls: Vec<String>,
+        escrows: Vec<Address>,
+    ) -> Result<Self> {
         // Build WebSocket providers that can handle both subscriptions and regular calls
         // Note: Provider order must match chain_index in endpoints
         let providers = futures_util::future::try_join_all(rpc_urls.iter().map(async |url| {
@@ -69,6 +75,7 @@ impl LayerZeroRelayer {
             inner: Arc::new(LayerZeroRelayerInner {
                 endpoints,
                 providers,
+                escrows,
                 delivered_guids: Mutex::new(HashSet::new()),
                 messages_seen: AtomicUsize::new(0),
                 transactions_sent: AtomicUsize::new(0),
@@ -105,7 +112,7 @@ impl LayerZeroRelayer {
 
         let filter = Filter::new()
             .address(chain_endpoint.endpoint)
-            .event_signature(IEndpointV2Mock::PacketSent::SIGNATURE_HASH);
+            .event_signature(ILayerZeroEndpointV2::PacketSent::SIGNATURE_HASH);
 
         let mut stream = provider.subscribe_logs(&filter).await?;
 
@@ -123,7 +130,7 @@ impl LayerZeroRelayer {
 
     /// Handles a PacketSent event by decoding and delivering the message
     async fn handle_packet_sent(&self, log: Log) -> Result<()> {
-        let event = IEndpointV2Mock::PacketSent::decode_log(&log.inner)?;
+        let event = ILayerZeroEndpointV2::PacketSent::decode_log(&log.inner)?;
         let packet = self.decode_packet(&event.encodedPayload)?;
 
         // Increment messages seen counter
@@ -160,6 +167,7 @@ impl LayerZeroRelayer {
             bytes32_to_address(&packet.receiver),
             packet.guid,
             packet.message,
+            &self.inner.escrows,
         )
         .await;
 

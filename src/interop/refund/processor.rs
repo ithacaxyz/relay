@@ -9,7 +9,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{
         RelayTransaction, TransactionServiceHandle, TxId,
-        interop::{BundleStatus, BundleWithStatus, InteropBundle},
+        interop::{BundleStatus, InteropBundle},
     },
     types::{IEscrow, rpc::BundleId},
 };
@@ -30,32 +30,12 @@ pub const MAX_REFUND_RETRY_ATTEMPTS: u32 = 5;
 /// This should be sufficient for most refund operations.
 const REFUND_FALLBACK_GAS_LIMIT: u64 = 1_000_000;
 
-/// Updates to apply to the in-memory bundle after queueing refunds
-#[derive(Debug, Clone)]
-#[must_use]
-pub struct RefundUpdate {
-    /// New refund transactions to add to the bundle
-    pub new_refund_txs: Vec<RelayTransaction>,
-    /// Transaction IDs to remove from refund_txs
-    pub failed_tx_ids: Vec<TxId>,
-    /// New bundle status
-    pub new_status: Option<BundleStatus>,
-}
-
 /// Errors that can occur during refund processing
 #[derive(Debug, thiserror::Error)]
 pub enum RefundProcessorError {
     /// Storage error
     #[error(transparent)]
     Storage(#[from] StorageError),
-
-    /// No transaction service found for chain
-    #[error("no transaction service for chain {0}")]
-    NoTransactionService(ChainId),
-
-    /// Failed to wait for transaction
-    #[error("failed to wait for transaction: {0}")]
-    WaitForTransaction(#[from] crate::transactions::TransactionServiceError),
 
     /// Execution failed with a specific error message
     #[error("execution failed: {0}")]
@@ -97,8 +77,6 @@ pub enum RefundProcessorError {
 pub struct RefundProcessor {
     /// Storage for accessing bundle and transaction data
     storage: RelayStorage,
-    /// Transaction service handles for sending transactions
-    tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
     /// Providers for each chain to estimate gas
     providers: HashMap<ChainId, DynProvider>,
 }
@@ -107,20 +85,10 @@ impl RefundProcessor {
     /// Creates a new refund processor
     pub fn new(
         storage: RelayStorage,
-        tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
+        _tx_service_handles: HashMap<ChainId, TransactionServiceHandle>,
         providers: HashMap<ChainId, DynProvider>,
     ) -> Self {
-        Self { storage, tx_service_handles, providers }
-    }
-
-    /// Get the transaction service handle for a specific chain.
-    fn tx_service(
-        &self,
-        chain_id: ChainId,
-    ) -> Result<&TransactionServiceHandle, RefundProcessorError> {
-        self.tx_service_handles
-            .get(&chain_id)
-            .ok_or(RefundProcessorError::NoTransactionService(chain_id))
+        Self { storage, providers }
     }
 
     /// Schedule refunds for confirmed escrows in a bundle
@@ -189,7 +157,7 @@ impl RefundProcessor {
         bundle_id = %bundle.id,
         escrow_count = escrow_details.len()
     ))]
-    async fn build_missing_refunds(
+    pub async fn build_missing_refunds(
         &self,
         bundle: &InteropBundle,
         escrow_details: &[EscrowDetails],
@@ -233,138 +201,8 @@ impl RefundProcessor {
         Ok(RefundTransactions { new_refund_txs, failed_tx_ids: existing_refunds.failed_tx_ids })
     }
 
-    /// Queue refunds by building and sending missing refund transactions
-    ///
-    /// Storage: Updates bundle with new refund transactions, queues them and updates status to
-    /// `RefundsQueued`.
-    ///
-    /// Returns `RefundUpdate` to apply to in-memory bundle.
-    pub async fn queue_refunds(
-        &self,
-        bundle: &BundleWithStatus,
-    ) -> Result<RefundUpdate, RefundProcessorError> {
-        // Get escrow details from confirmed source transactions
-        let escrow_details = self.get_confirmed_escrows(&bundle.bundle).await?;
-
-        if escrow_details.is_empty() {
-            return Err(RefundProcessorError::ExecutionFailed(
-                "No escrow details found for refund processing".to_string(),
-            ));
-        }
-
-        info!(
-            bundle_id = ?bundle.bundle.id,
-            escrow_count = escrow_details.len(),
-            "Processing ready refunds"
-        );
-
-        // Build and send missing refunds
-        self.build_and_send_missing_refunds(bundle, &escrow_details).await
-    }
-
-    /// Build and send refund transactions for escrows that don't have them yet
-    ///
-    /// Storage: Updates bundle with new refund transactions, queues them and updates status to
-    /// `RefundsQueued`.
-    ///
-    /// ### Returns
-    /// * `Ok(RefundUpdate)` - Updates to apply to the in-memory bundle
-    /// * `Err(RefundProcessorError)` - If any step in the flow fails
-    #[instrument(skip(self, bundle, escrow_details), fields(
-        bundle_id = %bundle.bundle.id,
-        escrow_count = escrow_details.len()
-    ))]
-    async fn build_and_send_missing_refunds(
-        &self,
-        bundle: &BundleWithStatus,
-        escrow_details: &[EscrowDetails],
-    ) -> Result<RefundUpdate, RefundProcessorError> {
-        // Build the refund transactions first
-        let refunds = self.build_missing_refunds(&bundle.bundle, escrow_details).await?;
-
-        if !refunds.new_refund_txs.is_empty() {
-            // Validate we have transaction services for all chains before touching storage
-            for tx in &refunds.new_refund_txs {
-                self.tx_service(tx.chain_id())?;
-            }
-
-            // Create updated bundle for storage
-            let mut updated_bundle = bundle.bundle.clone();
-            updated_bundle.refund_txs.retain(|tx| !refunds.failed_tx_ids.contains(&tx.id));
-            updated_bundle.refund_txs.extend(refunds.new_refund_txs.clone());
-
-            // Update storage with RefundsQueued status and queue transactions
-            self.storage
-                .update_bundle_and_queue_transactions(
-                    &updated_bundle,
-                    BundleStatus::RefundsQueued,
-                    &refunds.new_refund_txs,
-                )
-                .await?;
-
-            // Send the transactions after database is updated
-            // This is now infallible since we validated tx services above
-            for tx in &refunds.new_refund_txs {
-                if let Some(tx_service) = self.tx_service_handles.get(&tx.chain_id()) {
-                    tx_service.send_transaction_no_queue(tx.clone());
-                }
-            }
-
-            info!(
-                bundle_id = ?bundle.bundle.id,
-                new_tx_count = refunds.new_refund_txs.len(),
-                "Built, queued, and sent refund transactions"
-            );
-        } else {
-            // No new transactions but we might need to update status
-            // This handles the case where all refunds are already built
-            self.storage
-                .update_pending_bundle_status(bundle.bundle.id, BundleStatus::RefundsQueued)
-                .await?;
-
-            info!(
-                bundle_id = ?bundle.bundle.id,
-                "No new refund transactions needed, updated bundle status"
-            );
-        }
-
-        Ok(RefundUpdate {
-            new_refund_txs: refunds.new_refund_txs,
-            failed_tx_ids: refunds.failed_tx_ids,
-            new_status: Some(BundleStatus::RefundsQueued),
-        })
-    }
-
-    /// Monitor refund transactions until they complete and return failed tx IDs
-    #[instrument(skip(self, refund_txs), fields(tx_count = refund_txs.len()))]
-    pub async fn monitor_refund_completion(
-        &self,
-        refund_txs: &[RelayTransaction],
-    ) -> Result<Vec<TxId>, RefundProcessorError> {
-        let results = try_join_all(refund_txs.iter().map(async |tx| {
-            let tx_service = self.tx_service(tx.chain_id())?;
-            let status = tx_service.wait_for_tx(tx.id).await?;
-            Ok::<_, RefundProcessorError>((tx.id, status))
-        }))
-        .await?;
-
-        let failed_tx_ids: Vec<TxId> = results
-            .into_iter()
-            .filter_map(|(tx_id, status)| {
-                if status.is_failed() {
-                    error!(tx_id = ?tx_id, "Refund transaction failed");
-                    Some(tx_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(failed_tx_ids)
-    }
-
     /// Get escrow details from confirmed source transactions.
-    async fn get_confirmed_escrows(
+    pub async fn get_confirmed_escrows(
         &self,
         bundle: &InteropBundle,
     ) -> Result<Vec<EscrowDetails>, RefundProcessorError> {

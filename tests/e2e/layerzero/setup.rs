@@ -4,7 +4,6 @@
 //! including multi-chain deployment, endpoint configuration, and relayer integration.
 
 use super::{
-    interfaces::IEndpointV2Mock,
     relayer::{ChainEndpoint, LayerZeroRelayer},
     wire_oapps,
 };
@@ -22,7 +21,7 @@ use alloy::{
 };
 use eyre::{Result, WrapErr};
 use futures_util::{future::try_join_all, try_join};
-use relay::spawn::RETRY_LAYER;
+use relay::{interop::settler::layerzero::contracts::ILayerZeroEndpointV2, spawn::RETRY_LAYER};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -119,7 +118,9 @@ impl LayerZeroEnvironment for Environment {
             .collect();
 
         // Create and start the relayer
-        let relayer = LayerZeroRelayer::new(endpoints, self.get_rpc_urls()?).await?;
+        let relayer =
+            LayerZeroRelayer::new(endpoints, self.get_rpc_urls()?, lz_config.escrows.clone())
+                .await?;
         let handles = relayer.clone().start().await?;
 
         // Allow time for subscription setup
@@ -195,7 +196,7 @@ async fn configure_endpoint_libraries_for_all_chains<P: Provider>(
     current_eid: u32,
     all_eids: &[u32],
 ) -> Result<()> {
-    let endpoint_contract = IEndpointV2Mock::new(endpoint, provider);
+    let endpoint_contract = ILayerZeroEndpointV2::new(endpoint, provider);
 
     // Register the library
     endpoint_contract.registerLibrary(lib).send().await?.get_receipt().await?;

@@ -251,6 +251,9 @@ async fn deliver_and_verify_message(env: &Environment, ctx: &TestContext) -> Res
     let guid = compute_guid(1, ctx.src_eid, ctx.escrow1, ctx.dst_eid, ctx.escrow2);
     let provider = env.provider_for(1);
 
+    // Get escrows from LayerZero config
+    let lz_config = env.layerzero_config();
+
     // Deliver the message
     deliver_layerzero_message(
         provider,
@@ -260,6 +263,7 @@ async fn deliver_and_verify_message(env: &Environment, ctx: &TestContext) -> Res
         ctx.escrow2,
         guid,
         transfer_data.into(),
+        &lz_config.escrows,
     )
     .await?;
 

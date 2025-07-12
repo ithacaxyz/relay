@@ -3,7 +3,7 @@
 //! This module provides shared utilities used across LayerZero tests,
 //! including provider creation, address conversion, and message handling.
 
-use super::interfaces::{IEndpointV2Mock, IMessageLibManager};
+use super::interfaces::IMessageLibManager;
 use crate::e2e::send_impersonated_tx;
 use alloy::{
     network::Ethereum,
@@ -12,6 +12,7 @@ use alloy::{
     uint,
 };
 use eyre::Result;
+use relay::interop::settler::layerzero::contracts::{ILayerZeroEndpointV2, Origin};
 
 /// Default executor address for LayerZero messages
 pub const EXECUTOR_ADDRESS: Address = Address::new([3u8; 20]);
@@ -34,8 +35,8 @@ pub fn bytes32_to_address(bytes32: &B256) -> Address {
 }
 
 /// Creates an origin struct for LayerZero messages
-pub fn create_origin(src_eid: u32, sender: Address, nonce: u64) -> IEndpointV2Mock::Origin {
-    IEndpointV2Mock::Origin { srcEid: src_eid, sender: address_to_bytes32(sender), nonce }
+pub fn create_origin(src_eid: u32, sender: Address, nonce: u64) -> Origin {
+    Origin { srcEid: src_eid, sender: address_to_bytes32(sender), nonce }
 }
 
 /// Computes the GUID for a LayerZero message
@@ -65,7 +66,7 @@ pub async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
     provider: &P,
     dst_endpoint: Address,
     src_eid: u32,
-    origin: &IEndpointV2Mock::Origin,
+    origin: &Origin,
     dst_escrow: Address,
     payload_hash: B256,
 ) -> Result<()> {
@@ -76,7 +77,7 @@ pub async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
 
     send_impersonated_tx(
         provider,
-        IEndpointV2Mock::new(dst_endpoint, provider)
+        ILayerZeroEndpointV2::new(dst_endpoint, provider)
             .verify(origin.clone(), dst_escrow, payload_hash)
             .from(receive_lib)
             .into_transaction_request(),
@@ -89,14 +90,14 @@ pub async fn verify_message<P: Provider + AnvilApi<Ethereum>>(
 pub async fn execute_lz_receive<P: Provider + AnvilApi<Ethereum>>(
     provider: &P,
     dst_endpoint: Address,
-    origin: &IEndpointV2Mock::Origin,
+    origin: &Origin,
     dst_escrow: Address,
     guid: B256,
     message: Bytes,
 ) -> Result<()> {
     send_impersonated_tx(
         provider,
-        IEndpointV2Mock::new(dst_endpoint, provider)
+        ILayerZeroEndpointV2::new(dst_endpoint, provider)
             .lzReceive(origin.clone(), dst_escrow, guid, message, Bytes::new())
             .from(EXECUTOR_ADDRESS)
             .into_transaction_request(),
@@ -110,15 +111,17 @@ pub async fn execute_lz_receive<P: Provider + AnvilApi<Ethereum>>(
 /// This is the core message delivery function that:
 /// 1. Prepares the message payload
 /// 2. Verifies the message on destination
-/// 3. Executes the lzReceive function
+/// 3. Executes the lzReceive function (only for escrow contracts)
+#[expect(clippy::too_many_arguments)]
 pub async fn deliver_layerzero_message<P: Provider + AnvilApi<Ethereum>>(
     provider: &P,
     dst_endpoint: Address,
     src_eid: u32,
-    origin: &IEndpointV2Mock::Origin,
+    origin: &Origin,
     receiver: Address,
     guid: B256,
     message: Bytes,
+    escrows: &[Address],
 ) -> Result<()> {
     // Prepare payload and hash
     let payload = [guid.as_slice(), message.as_ref()].concat();
@@ -127,6 +130,12 @@ pub async fn deliver_layerzero_message<P: Provider + AnvilApi<Ethereum>>(
     // Verify the message
     verify_message(provider, dst_endpoint, src_eid, origin, receiver, payload_hash).await?;
 
-    // Execute lzReceive
-    execute_lz_receive(provider, dst_endpoint, origin, receiver, guid, message).await
+    // Only execute lzReceive if the receiver is an escrow contract
+    // This is necessary because only escrow contracts implement the lzReceive interface
+    // in our test setup.
+    if escrows.contains(&receiver) {
+        execute_lz_receive(provider, dst_endpoint, origin, receiver, guid, message).await?;
+    }
+
+    Ok(())
 }

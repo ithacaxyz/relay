@@ -7,7 +7,7 @@ use crate::{
     transactions::TransactionServiceHandle,
 };
 use alloy::{
-    primitives::{Address, ChainId},
+    primitives::{Address, ChainId, map::HashMap as AlloyHashMap},
     providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
     signers::local::coins_bip39::{English, Mnemonic},
 };
@@ -220,6 +220,16 @@ pub struct InteropConfig {
     pub settler: SettlerConfig,
 }
 
+impl Default for InteropConfig {
+    fn default() -> Self {
+        Self {
+            refund_check_interval: Duration::from_secs(60),
+            escrow_refund_threshold: 300,
+            settler: SettlerConfig::default(),
+        }
+    }
+}
+
 /// Configuration for the rebalance service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RebalanceServiceConfig {
@@ -235,7 +245,7 @@ pub struct RebalanceServiceConfig {
 }
 
 /// Configuration for the settler service.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlerConfig {
     /// LayerZero configuration for cross-chain settlement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -243,6 +253,24 @@ pub struct SettlerConfig {
     /// Simple settler configuration for testing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simple: Option<SimpleSettlerConfig>,
+    /// Timeout for waiting for settlement verification.
+    #[serde(with = "crate::serde::duration", default = "default_wait_verification_timeout")]
+    pub wait_verification_timeout: Duration,
+}
+
+/// Default timeout for waiting for settlement verification (5 minutes).
+fn default_wait_verification_timeout() -> Duration {
+    Duration::from_secs(300)
+}
+
+impl Default for SettlerConfig {
+    fn default() -> Self {
+        Self {
+            layer_zero: None,
+            simple: None,
+            wait_verification_timeout: default_wait_verification_timeout(),
+        }
+    }
 }
 
 impl SettlerConfig {
@@ -255,7 +283,7 @@ impl SettlerConfig {
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
         let settler: Box<dyn Settler> = if let Some(layer_zero) = &self.layer_zero {
-            Box::new(layer_zero.create_settler(providers.into_iter().collect()))
+            Box::new(layer_zero.create_settler(providers.into_iter().collect(), storage.clone()))
         } else if let Some(simple) = &self.simple {
             Box::new(simple.create_settler())
         } else {
@@ -296,13 +324,25 @@ pub struct LayerZeroConfig {
 }
 
 impl LayerZeroConfig {
-    /// Creates a new LayerZero settler instance with the given providers.
-    pub fn create_settler(&self, providers: HashMap<ChainId, DynProvider>) -> LayerZeroSettler {
+    /// Creates a new LayerZero settler instance with the given providers and storage.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+        storage: RelayStorage,
+    ) -> LayerZeroSettler {
+        // Convert std HashMap to alloy HashMap
+        let alloy_providers: AlloyHashMap<ChainId, DynProvider> = providers.into_iter().collect();
+        let alloy_endpoint_ids: AlloyHashMap<ChainId, u32> =
+            self.endpoint_ids.clone().into_iter().collect();
+        let alloy_endpoint_addresses: AlloyHashMap<ChainId, Address> =
+            self.endpoint_addresses.clone().into_iter().collect();
+
         LayerZeroSettler::new(
-            self.endpoint_ids.clone(),
-            self.endpoint_addresses.clone(),
-            providers,
+            alloy_endpoint_ids,
+            alloy_endpoint_addresses,
+            alloy_providers,
             self.settler_address,
+            storage,
         )
     }
 }

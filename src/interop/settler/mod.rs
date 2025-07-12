@@ -1,18 +1,19 @@
 /// LayerZero settler implementation.
-pub mod layer_zero;
+pub mod layerzero;
 /// Settlement processor for handling cross-chain settlements.
 pub mod processor;
 /// Simple settler implementation for testing and development.
 pub mod simple;
 
-pub use layer_zero::LayerZeroSettler;
-pub use processor::{SettlementError, SettlementProcessor, SettlementUpdate};
+pub use layerzero::LayerZeroSettler;
+pub use processor::{SettlementError, SettlementProcessor};
 pub use simple::SimpleSettler;
 
 use alloy::primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
+use std::time::Duration;
 
-use crate::transactions::RelayTransaction;
+use crate::transactions::{RelayTransaction, interop::InteropBundle};
 
 /// Trait for cross-chain settlement implementations.
 #[async_trait]
@@ -28,10 +29,10 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
     /// This is the address of the on-chain contract that handles settlement logic.
     fn address(&self) -> Address;
 
-    /// Builds a send settlement transaction for the given parameters.
+    /// Builds a execute send transaction for the given parameters.
     ///
     /// This method is only called after all the destination intents are confirmed.
-    async fn build_send_settlement(
+    async fn build_execute_send_transaction(
         &self,
         settlement_id: B256,
         current_chain_id: u64,
@@ -46,4 +47,22 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
         &self,
         destination_chains: Vec<u64>,
     ) -> Result<Bytes, SettlementError>;
+
+    /// Wait for settlement verifications with a timeout.
+    ///
+    /// For LayerZero, this waits for message verification on destination chains.
+    /// For simple settler, this immediately returns success.
+    ///
+    /// Returns true if verification succeeded, false otherwise.
+    async fn wait_for_verifications(
+        &self,
+        bundle: &InteropBundle,
+        timeout: Duration,
+    ) -> Result<bool, SettlementError>;
+
+    /// Build execute receive transactions needed after verification.
+    async fn build_execute_receive_transactions(
+        &self,
+        bundle: &InteropBundle,
+    ) -> Result<Vec<RelayTransaction>, SettlementError>;
 }
