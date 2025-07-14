@@ -37,7 +37,7 @@
 //! - **DVN**: Decentralized Verifier Network that attests to cross-chain messages
 //! - **Packet**: The unit of cross-chain communication containing routing info and payload
 
-use super::{SettlementError, Settler};
+use super::{SettlementError, Settler, SettlerId};
 use crate::{
     constants::MULTICALL3_ADDRESS,
     interop::{
@@ -45,7 +45,7 @@ use crate::{
         settler::layerzero::{
             contracts::{
                 ILayerZeroEndpointV2::{self, PacketSent},
-                ILayerZeroSettler, MessagingParams, Origin,
+                ILayerZeroSettler, MessagingParams,
             },
             types::{LayerZeroPacketInfo, LayerZeroPacketV1},
         },
@@ -55,7 +55,7 @@ use crate::{
     types::{Call3, IEscrow, aggregate3Call},
 };
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap as AlloyHashMap},
+    primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
     providers::{DynProvider, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolEvent, SolValue},
@@ -63,7 +63,7 @@ use alloy::{
 use async_trait::async_trait;
 use futures_util::future::try_join_all;
 use itertools::Itertools;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
@@ -94,21 +94,21 @@ pub struct LayerZeroSettler {
     /// Reverse mapping: endpoint ID to chain ID for efficient lookups.
     eid_to_chain: HashMap<u32, ChainId>,
     /// Chain ID to LayerZero endpoint address mapping.
-    endpoint_addresses: AlloyHashMap<ChainId, Address>,
+    endpoint_addresses: HashMap<ChainId, Address>,
     /// On-chain settler contract address.
     settler_address: Address,
     /// Storage backend for persisting data.
     storage: RelayStorage,
     /// Chain configurations.
-    chain_configs: Arc<AlloyHashMap<ChainId, LZChainConfig>>,
+    chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
 }
 
 impl LayerZeroSettler {
     /// Creates a new LayerZero settler instance for cross-chain settlement attestation.
     pub fn new(
-        endpoint_ids: AlloyHashMap<ChainId, u32>,
-        endpoint_addresses: AlloyHashMap<ChainId, Address>,
-        providers: AlloyHashMap<ChainId, DynProvider>,
+        endpoint_ids: HashMap<ChainId, u32>,
+        endpoint_addresses: HashMap<ChainId, Address>,
+        providers: HashMap<ChainId, DynProvider>,
         settler_address: Address,
         storage: RelayStorage,
     ) -> Self {
@@ -223,7 +223,7 @@ impl LayerZeroSettler {
         let src_config = self.get_chain_config(packet.src_chain_id)?;
 
         // Build the LayerZero receive call
-        let lz_receive_call = build_lz_receive_call(packet, src_config)?;
+        let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
 
         // Extract and filter escrows for this settlement
         let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
@@ -341,26 +341,6 @@ fn get_escrows(
     Ok((escrow_ids, escrow_address))
 }
 
-/// Builds the LayerZero receive call for message execution.
-fn build_lz_receive_call(
-    packet: &LayerZeroPacketInfo,
-    src_config: &LZChainConfig,
-) -> Result<ILayerZeroEndpointV2::lzReceiveCall, SettlementError> {
-    let origin = Origin {
-        srcEid: src_config.endpoint_id,
-        sender: B256::left_padding_from(packet.sender.as_slice()),
-        nonce: packet.nonce,
-    };
-
-    Ok(ILayerZeroEndpointV2::lzReceiveCall {
-        _origin: origin,
-        _receiver: packet.receiver,
-        _guid: packet.guid,
-        _message: packet.message.clone(),
-        _extraData: Bytes::new(),
-    })
-}
-
 /// Builds the multicall data for executing LayerZero receive and escrow settlement.
 ///
 /// This function creates a multicall that:
@@ -394,8 +374,8 @@ fn build_multicall_data(
 
 #[async_trait]
 impl Settler for LayerZeroSettler {
-    fn id(&self) -> &'static str {
-        "layer_zero"
+    fn id(&self) -> SettlerId {
+        SettlerId::LayerZero
     }
 
     fn address(&self) -> Address {
@@ -424,31 +404,24 @@ impl Settler for LayerZeroSettler {
         let endpoint =
             ILayerZeroEndpointV2::new(current_config.endpoint_address, &current_config.provider);
 
-        // Build all messaging params
-        let all_params = source_chains
-            .iter()
-            .map(|source_chain_id| {
-                let src_config = self.get_chain_config(*source_chain_id)?;
+        // Build multicall for fee quotes
+        let mut multicall = current_config.provider.multicall().dynamic();
 
-                Ok(MessagingParams {
-                    dstEid: src_config.endpoint_id,
-                    receiver: B256::left_padding_from(self.settler_address.as_slice()),
-                    message: (settlement_id, self.settler_address, U256::from(*source_chain_id))
-                        .abi_encode()
-                        .into(),
-                    options: Bytes::new(),
-                    payInLzToken: false,
-                })
-            })
-            .collect::<Result<Vec<_>, SettlementError>>()?;
+        for source_chain_id in &source_chains {
+            let src_config = self.get_chain_config(*source_chain_id)?;
 
-        // Quote for all chain fees.
-        let multicall = all_params.iter().fold(
-            current_config.provider.multicall().dynamic(),
-            |multicall, params| {
-                multicall.add_dynamic(endpoint.quote(params.clone(), self.settler_address))
-            },
-        );
+            let params = MessagingParams {
+                dstEid: src_config.endpoint_id,
+                receiver: B256::left_padding_from(self.settler_address.as_slice()),
+                message: (settlement_id, self.settler_address, U256::from(*source_chain_id))
+                    .abi_encode()
+                    .into(),
+                options: Bytes::new(),
+                payInLzToken: false,
+            };
+
+            multicall = multicall.add_dynamic(endpoint.quote(params, self.settler_address));
+        }
 
         let native_lz_fee: U256 =
             multicall.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();

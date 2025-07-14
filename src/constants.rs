@@ -1,7 +1,7 @@
 //! Relay constants.
 
 use alloy::{
-    primitives::{Address, U256},
+    primitives::{Address, U256, address},
     uint,
 };
 use std::time::Duration;
@@ -77,7 +77,4 @@ pub const ESCROW_SALT_LENGTH: usize = 12;
 ///
 /// Multicall3 is deployed at the same address on all chains.
 /// See: https://www.multicall3.com/deployments
-pub const MULTICALL3_ADDRESS: Address = Address::new([
-    0xca, 0x11, 0xbd, 0xe0, 0x59, 0x77, 0xb3, 0x63, 0x11, 0x67, 0x02, 0x88, 0x62, 0xbe, 0x2a, 0x17,
-    0x39, 0x76, 0xca, 0x11,
-]);
+pub const MULTICALL3_ADDRESS: Address = address!("0xcA11bde05977b3631167028862bE2a173976CA11");

@@ -6,7 +6,7 @@ use crate::{
     storage::RelayStorage,
 };
 use alloy::{
-    primitives::{Address, ChainId, map::HashMap as AlloyHashMap},
+    primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
     signers::local::coins_bip39::{English, Mnemonic},
 };
@@ -15,7 +15,7 @@ use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
@@ -325,7 +325,7 @@ impl LayerZeroConfig {
     /// Creates a new LayerZero settler instance with the given providers and storage.
     pub fn create_settler(
         &self,
-        providers: AlloyHashMap<ChainId, DynProvider>,
+        providers: HashMap<ChainId, DynProvider>,
         storage: RelayStorage,
     ) -> LayerZeroSettler {
         LayerZeroSettler::new(
@@ -376,7 +376,7 @@ impl Default for TransactionServiceConfig {
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
             max_queued_per_eoa: 1,
-            public_node_endpoints: HashMap::new(),
+            public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
         }
     }
@@ -393,7 +393,7 @@ impl Default for RelayConfig {
             },
             chain: ChainConfig {
                 endpoints: vec![],
-                sequencer_endpoints: HashMap::new(),
+                sequencer_endpoints: HashMap::default(),
                 fee_tokens: vec![],
                 interop_tokens: vec![],
                 fee_recipient: Address::ZERO,

@@ -21,7 +21,7 @@ use alloy::{
     sol_types::SolEvent,
 };
 use futures_util::future::try_join_all;
-use std::{collections::HashMap as StdHashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::time::{Duration, Instant, sleep_until};
 use tracing::{info, warn};
 
@@ -102,9 +102,9 @@ impl LayerZeroVerificationMonitor {
     pub fn group_packets_by_chain(
         &self,
         packets: Vec<LayerZeroPacketInfo>,
-    ) -> StdHashMap<u64, Vec<LayerZeroPacketInfo>> {
+    ) -> HashMap<u64, Vec<LayerZeroPacketInfo>> {
         // Use fold for a more functional approach that can be slightly more efficient
-        packets.into_iter().fold(StdHashMap::new(), |mut map, packet| {
+        packets.into_iter().fold(HashMap::default(), |mut map, packet| {
             map.entry(packet.dst_chain_id).or_default().push(packet);
             map
         })
@@ -113,7 +113,7 @@ impl LayerZeroVerificationMonitor {
     /// Sets up event monitors for tracking packet verification events across all chains.
     pub async fn setup_chain_monitors(
         &self,
-        packets_by_chain: StdHashMap<u64, Vec<LayerZeroPacketInfo>>,
+        packets_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>>,
     ) -> Result<Vec<ChainMonitor>, SettlementError> {
         let subscription_tasks: Vec<_> = packets_by_chain
             .into_iter()
@@ -169,9 +169,9 @@ impl LayerZeroVerificationMonitor {
     pub async fn check_initial_verification_status(
         &self,
         monitors: &[ChainMonitor],
-    ) -> Result<(usize, StdHashMap<u64, Vec<LayerZeroPacketInfo>>), SettlementError> {
+    ) -> Result<(usize, HashMap<u64, Vec<LayerZeroPacketInfo>>), SettlementError> {
         let mut already_verified_count = 0;
-        let mut pending_by_chain: StdHashMap<u64, Vec<LayerZeroPacketInfo>> = StdHashMap::new();
+        let mut pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>> = HashMap::default();
 
         for monitor in monitors {
             let mut pending = Vec::with_capacity(monitor.packets.len());
@@ -226,7 +226,7 @@ impl LayerZeroVerificationMonitor {
     /// operation, ensuring resilience in multi-chain scenarios.
     pub async fn monitor_pending_messages(
         &self,
-        pending_by_chain: &StdHashMap<ChainId, Vec<LayerZeroPacketInfo>>,
+        pending_by_chain: &HashMap<ChainId, Vec<LayerZeroPacketInfo>>,
         monitors: Vec<ChainMonitor>,
         deadline: Instant,
     ) -> Result<Vec<B256>, SettlementError> {
@@ -277,14 +277,14 @@ impl LayerZeroVerificationMonitor {
     pub async fn final_verification_check(
         &self,
         verified_guids: Vec<B256>,
-        pending_by_chain: &StdHashMap<u64, Vec<LayerZeroPacketInfo>>,
+        pending_by_chain: &HashMap<u64, Vec<LayerZeroPacketInfo>>,
         all_packets: &[LayerZeroPacketInfo],
     ) -> Result<VerificationResult, SettlementError> {
         let total_pending: usize = pending_by_chain.values().map(|v| v.len()).sum();
         let verified_via_events = verified_guids.len();
 
         // Build set of verified GUIDs for quick lookup
-        let mut verified_guid_set: StdHashMap<B256, ()> =
+        let mut verified_guid_set: HashMap<B256, ()> =
             verified_guids.into_iter().map(|g| (g, ())).collect();
 
         // If we haven't verified everything via events, check remaining
@@ -357,7 +357,7 @@ pub async fn monitor_packet_stream(
     packets: Vec<LayerZeroPacketInfo>,
     deadline: Instant,
 ) -> Result<Vec<B256>, SettlementError> {
-    let packet_lookup: StdHashMap<(u64, Address, B256), B256> = packets
+    let packet_lookup: HashMap<(u64, Address, B256), B256> = packets
         .iter()
         .map(|packet| {
             let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();

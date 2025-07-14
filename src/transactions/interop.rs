@@ -7,7 +7,9 @@ use crate::{
     error::StorageError,
     interop::{
         RefundMonitorService, RefundProcessor, RefundProcessorError, SettlementError,
-        settler::{layerzero::types::LayerZeroPacketInfo, processor::SettlementProcessor},
+        settler::{
+            SettlerId, layerzero::types::LayerZeroPacketInfo, processor::SettlementProcessor,
+        },
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
@@ -47,8 +49,8 @@ pub struct AssetTransfer {
 pub struct InteropBundle {
     /// Unique identifier for the bundle.
     pub id: BundleId,
-    /// Settler implementation ID (e.g., "layerzero", "simple")
-    pub settler_id: String,
+    /// Settler implementation ID
+    pub settler_id: SettlerId,
     /// Source chain transactions
     pub src_txs: Vec<RelayTransaction>,
     /// Destination chain transactions
@@ -74,7 +76,7 @@ pub struct InteropBundle {
 
 impl InteropBundle {
     /// Creates a new empty interop bundle with the given ID and settler
-    pub fn new(id: BundleId, settler_id: String) -> Self {
+    pub fn new(id: BundleId, settler_id: SettlerId) -> Self {
         Self {
             id,
             settler_id,
@@ -359,7 +361,7 @@ impl InteropServiceHandle {
     }
 
     /// Returns the settler ID.
-    pub fn settler_id(&self) -> &'static str {
+    pub fn settler_id(&self) -> SettlerId {
         self.settlement_processor.settler_id()
     }
 
@@ -1282,8 +1284,8 @@ mod tests {
 
     #[async_trait]
     impl Settler for MockSettler {
-        fn id(&self) -> &'static str {
-            "mock_settler"
+        fn id(&self) -> SettlerId {
+            SettlerId::Test
         }
 
         fn address(&self) -> Address {
@@ -1370,8 +1372,8 @@ mod tests {
     #[test]
     fn test_interop_bundle_creation() {
         let bundle_id = BundleId::random();
-        let settler_id = "test_settler".to_string();
-        let bundle = InteropBundle::new(bundle_id, settler_id.clone());
+        let settler_id = SettlerId::Test;
+        let bundle = InteropBundle::new(bundle_id, settler_id);
 
         assert_eq!(bundle.id, bundle_id);
         assert_eq!(bundle.settler_id, settler_id);
@@ -1406,7 +1408,7 @@ mod tests {
     async fn test_bundle_persistence_and_recovery() {
         let storage = get_test_storage().await;
         let bundle_id = BundleId::random();
-        let bundle = InteropBundle::new(bundle_id, "test_settler".to_string());
+        let bundle = InteropBundle::new(bundle_id, SettlerId::Test);
 
         // Store bundle with Init status
         storage.store_pending_bundle(&bundle, BundleStatus::Init).await.unwrap();
@@ -1463,7 +1465,7 @@ mod tests {
         );
 
         let bundle_id = BundleId::random();
-        let bundle = InteropBundle::new(bundle_id, "test_settler".to_string());
+        let bundle = InteropBundle::new(bundle_id, SettlerId::Test);
         let mut bundle_with_status = BundleWithStatus {
             bundle,
             status: BundleStatus::Done, // Terminal state

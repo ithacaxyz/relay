@@ -5,15 +5,28 @@ pub mod processor;
 /// Simple settler implementation for testing and development.
 pub mod simple;
 
-pub use layerzero::{LayerZeroSettler, verification::VerificationResult};
-pub use processor::{SettlementError, SettlementProcessor};
-pub use simple::SimpleSettler;
-
+use crate::transactions::{RelayTransaction, interop::InteropBundle};
 use alloy::primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
+pub use layerzero::{LayerZeroSettler, verification::VerificationResult};
+pub use processor::{SettlementError, SettlementProcessor};
+use serde::{Deserialize, Serialize};
+pub use simple::SimpleSettler;
 use std::time::Duration;
+use strum::Display;
 
-use crate::transactions::{RelayTransaction, interop::InteropBundle};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumString, Display)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerId {
+    /// LayerZero cross-chain messaging settler
+    LayerZero,
+    /// Simple direct settlement (for testing)
+    Simple,
+    /// Test settler (only for tests)
+    #[cfg(test)]
+    Test,
+}
 
 /// Trait for cross-chain settlement implementations.
 #[async_trait]
@@ -21,8 +34,7 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
     /// Returns a unique identifier for this settler implementation.
     ///
     /// This ID is used to match bundles with their corresponding settler.
-    /// Common values: "simple", "layer_zero"
-    fn id(&self) -> &'static str;
+    fn id(&self) -> SettlerId;
 
     /// Returns the settler contract address.
     ///

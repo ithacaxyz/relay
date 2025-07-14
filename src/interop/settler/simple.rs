@@ -1,4 +1,4 @@
-use super::{SettlementError, Settler, VerificationResult};
+use super::{SettlementError, Settler, SettlerId, VerificationResult};
 use crate::transactions::{RelayTransaction, interop::InteropBundle};
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
@@ -24,8 +24,8 @@ impl SimpleSettler {
 
 #[async_trait]
 impl Settler for SimpleSettler {
-    fn id(&self) -> &'static str {
-        "simple"
+    fn id(&self) -> SettlerId {
+        SettlerId::Simple
     }
 
     fn address(&self) -> Address {

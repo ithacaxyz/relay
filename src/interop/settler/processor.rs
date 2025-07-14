@@ -3,7 +3,7 @@ use futures_util::future::try_join_all;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, error, info};
 
-use super::{Settler, layerzero::verification::VerificationResult};
+use super::{Settler, SettlerId, layerzero::verification::VerificationResult};
 use crate::{
     error::StorageError,
     transactions::{RelayTransaction, TxId, interop::InteropBundle},
@@ -19,9 +19,9 @@ pub enum SettlementError {
     #[error("Expected settler '{expected}' but got '{got}'")]
     SettlerIdMismatch {
         /// The expected settler ID
-        expected: String,
+        expected: SettlerId,
         /// The settler ID we got
-        got: String,
+        got: SettlerId,
     },
     /// Settler address mismatch.
     #[error("Transaction {tx_id} expected settler '{expected}' but got '{got}'")]
@@ -85,7 +85,7 @@ impl SettlementProcessor {
     }
 
     /// Returns the settler ID.
-    pub fn settler_id(&self) -> &'static str {
+    pub fn settler_id(&self) -> SettlerId {
         self.settler.id()
     }
 
@@ -128,8 +128,8 @@ impl SettlementProcessor {
                 "Bundle settler ID does not match current settler"
             );
             return Err(SettlementError::SettlerIdMismatch {
-                expected: self.settler.id().to_string(),
-                got: bundle.settler_id.clone(),
+                expected: self.settler.id(),
+                got: bundle.settler_id,
             });
         }
 
@@ -212,7 +212,7 @@ impl SettlementProcessor {
                 debug!(
                     bundle_id = ?bundle.id,
                     settlement_id = ?settlement_id,
-                    settler_id = self.settler.id(),
+                    settler_id = %self.settler.id(),
                     "Settler did not produce a send settlement transaction"
                 );
                 Ok(None)
@@ -249,7 +249,7 @@ mod tests {
         let processor = SettlementProcessor::new(settler);
 
         // Create a bundle with a different settler ID
-        let bundle = InteropBundle::new(BundleId::random(), "different_settler".to_string());
+        let bundle = InteropBundle::new(BundleId::random(), SettlerId::Test);
 
         // Try to build settlements - should fail due to settler mismatch
         let result = processor.build_settlements(&bundle).await;
@@ -257,8 +257,8 @@ mod tests {
         assert!(result.is_err());
         match result.err().unwrap() {
             SettlementError::SettlerIdMismatch { expected, got } => {
-                assert_eq!(expected, "simple");
-                assert_eq!(got, "different_settler");
+                assert_eq!(expected, SettlerId::Simple);
+                assert_eq!(got, SettlerId::Test);
             }
             _ => panic!("Expected SettlerIdMismatch error"),
         }

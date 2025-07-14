@@ -1282,7 +1282,7 @@ impl Relay {
 
         // Create InteropBundle
         let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
-        let settler_id = interop.settler_id().to_string();
+        let settler_id = interop.settler_id();
         let mut bundle = InteropBundle::new(bundle_id, settler_id);
 
         // last quote is the output intent

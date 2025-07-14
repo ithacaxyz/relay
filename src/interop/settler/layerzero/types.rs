@@ -1,3 +1,4 @@
+use crate::interop::settler::layerzero::contracts::{ILayerZeroEndpointV2, Origin};
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256},
     sol_types::SolValue,
@@ -29,6 +30,26 @@ impl LayerZeroPacketInfo {
         let (settlement_id, _, _) = <(B256, Address, U256)>::abi_decode(&self.message)
             .map_err(|e| format!("Failed to decode settlement_id from message: {e}"))?;
         Ok(settlement_id)
+    }
+
+    /// Builds the LayerZero receive call for message execution.
+    pub fn build_lz_receive_call(
+        &self,
+        src_endpoint_id: u32,
+    ) -> ILayerZeroEndpointV2::lzReceiveCall {
+        let origin = Origin {
+            srcEid: src_endpoint_id,
+            sender: B256::left_padding_from(self.sender.as_slice()),
+            nonce: self.nonce,
+        };
+
+        ILayerZeroEndpointV2::lzReceiveCall {
+            _origin: origin,
+            _receiver: self.receiver,
+            _guid: self.guid,
+            _message: self.message.clone(),
+            _extraData: Bytes::new(),
+        }
     }
 }
 

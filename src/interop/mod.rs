@@ -10,4 +10,6 @@ pub mod settler;
 
 pub use escrow::EscrowDetails;
 pub use refund::{RefundMonitorService, RefundProcessor, RefundProcessorError};
-pub use settler::{LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SimpleSettler};
+pub use settler::{
+    LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SettlerId, SimpleSettler,
+};
