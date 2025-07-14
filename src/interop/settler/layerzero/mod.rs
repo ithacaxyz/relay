@@ -309,69 +309,6 @@ impl LayerZeroSettler {
     }
 }
 
-/// Extracts relevant escrowIds and escrowAddress for a specific settlement on a destination chain.
-fn get_escrows(
-    bundle: &InteropBundle,
-    dst_chain_id: ChainId,
-    settlement_id: B256,
-) -> Result<(Vec<B256>, Address), SettlementError> {
-    let escrow_details: Vec<EscrowDetails> =
-        bundle.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
-
-    // Filter escrows for this specific settlement and chain
-    let escrow_ids: Vec<B256> = escrow_details
-        .iter()
-        .filter(|escrow| {
-            escrow.chain_id == dst_chain_id && escrow.escrow.settlementId == settlement_id
-        })
-        .map(|escrow| escrow.escrow_id)
-        .collect();
-
-    // Find the escrow contract address for this chain
-    let escrow_address = escrow_details
-        .iter()
-        .find(|e| e.chain_id == dst_chain_id)
-        .map(|e| e.escrow_address)
-        .ok_or_else(|| {
-            SettlementError::InternalError(format!(
-                "No escrow address found for chain {dst_chain_id}"
-            ))
-        })?;
-
-    Ok((escrow_ids, escrow_address))
-}
-
-/// Builds the multicall data for executing LayerZero receive and escrow settlement.
-///
-/// This function creates a multicall that:
-/// 1. Executes the LayerZero receive call to process the cross-chain message
-/// 2. Settles the escrows to release funds
-fn build_multicall_data(
-    lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
-    endpoint_address: Address,
-    escrow_ids: &[B256],
-    escrow_address: Address,
-) -> Result<Bytes, SettlementError> {
-    // Encode the LayerZero receive call
-    let lz_receive_calldata = lz_receive_call.abi_encode();
-
-    // Encode the escrow settle call
-    let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
-
-    // Build the multicall
-    let calls = vec![
-        Call3 {
-            target: endpoint_address,
-            allowFailure: false,
-            callData: lz_receive_calldata.into(),
-        },
-        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
-    ];
-
-    let multicall_calldata = aggregate3Call { calls }.abi_encode();
-    Ok(multicall_calldata.into())
-}
-
 #[async_trait]
 impl Settler for LayerZeroSettler {
     fn id(&self) -> SettlerId {
@@ -551,4 +488,67 @@ impl Settler for LayerZeroSettler {
 
         Ok(execute_receive_txs)
     }
+}
+
+/// Extracts relevant escrowIds and escrowAddress for a specific settlement on a destination chain.
+fn get_escrows(
+    bundle: &InteropBundle,
+    dst_chain_id: ChainId,
+    settlement_id: B256,
+) -> Result<(Vec<B256>, Address), SettlementError> {
+    let escrow_details: Vec<EscrowDetails> =
+        bundle.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
+
+    // Filter escrows for this specific settlement and chain
+    let escrow_ids: Vec<B256> = escrow_details
+        .iter()
+        .filter(|escrow| {
+            escrow.chain_id == dst_chain_id && escrow.escrow.settlementId == settlement_id
+        })
+        .map(|escrow| escrow.escrow_id)
+        .collect();
+
+    // Find the escrow contract address for this chain
+    let escrow_address = escrow_details
+        .iter()
+        .find(|e| e.chain_id == dst_chain_id)
+        .map(|e| e.escrow_address)
+        .ok_or_else(|| {
+            SettlementError::InternalError(format!(
+                "No escrow address found for chain {dst_chain_id}"
+            ))
+        })?;
+
+    Ok((escrow_ids, escrow_address))
+}
+
+/// Builds the multicall data for executing LayerZero receive and escrow settlement.
+///
+/// This function creates a multicall that:
+/// 1. Executes the LayerZero receive call to process the cross-chain message
+/// 2. Settles the escrows to release funds
+fn build_multicall_data(
+    lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
+    endpoint_address: Address,
+    escrow_ids: &[B256],
+    escrow_address: Address,
+) -> Result<Bytes, SettlementError> {
+    // Encode the LayerZero receive call
+    let lz_receive_calldata = lz_receive_call.abi_encode();
+
+    // Encode the escrow settle call
+    let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
+
+    // Build the multicall
+    let calls = vec![
+        Call3 {
+            target: endpoint_address,
+            allowFailure: false,
+            callData: lz_receive_calldata.into(),
+        },
+        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
+    ];
+
+    let multicall_calldata = aggregate3Call { calls }.abi_encode();
+    Ok(multicall_calldata.into())
 }
