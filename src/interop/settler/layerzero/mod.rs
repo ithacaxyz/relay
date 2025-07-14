@@ -6,7 +6,7 @@
 //!
 //! ## Overview
 //!
-//! The LayerZero integration allows the Ithaca Relay to:
+//! The LayerZero integration allows the relay to:
 //! - Send cross-chain settlement attestations via LayerZero's messaging protocol
 //! - Monitor and verify message delivery across chains
 //! - Execute received messages to complete settlement flows
@@ -52,7 +52,7 @@ use crate::{
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
-    types::{Call3, IEscrow, aggregate3Call, rpc::BundleId},
+    types::{Call3, IEscrow, aggregate3Call},
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap as AlloyHashMap},
