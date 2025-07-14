@@ -1252,7 +1252,7 @@ impl Future for InteropService {
 mod tests {
     use super::*;
     use crate::{
-        config::InteropConfig,
+        config::{InteropConfig, SettlerConfig, SettlerImplementation, SimpleSettlerConfig},
         interop::{SettlementProcessor, Settler},
         storage::RelayStorage,
     };
@@ -1461,7 +1461,16 @@ mod tests {
             storage,
             providers,
             Arc::new(settlement_processor),
-            InteropConfig::default(),
+            InteropConfig {
+                refund_check_interval: Duration::from_secs(60),
+                escrow_refund_threshold: 300,
+                settler: SettlerConfig {
+                    implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
+                        settler_address: Address::ZERO,
+                    }),
+                    wait_verification_timeout: Duration::from_secs(1),
+                },
+            },
         );
 
         let bundle_id = BundleId::random();

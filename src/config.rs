@@ -219,16 +219,6 @@ pub struct InteropConfig {
     pub settler: SettlerConfig,
 }
 
-impl Default for InteropConfig {
-    fn default() -> Self {
-        Self {
-            refund_check_interval: Duration::from_secs(60),
-            escrow_refund_threshold: 300,
-            settler: SettlerConfig::default(),
-        }
-    }
-}
-
 /// Configuration for the rebalance service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RebalanceServiceConfig {
@@ -246,30 +236,22 @@ pub struct RebalanceServiceConfig {
 /// Configuration for the settler service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlerConfig {
-    /// LayerZero configuration for cross-chain settlement.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layer_zero: Option<LayerZeroConfig>,
-    /// Simple settler configuration for testing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub simple: Option<SimpleSettlerConfig>,
+    /// Settler implementation configuration.
+    #[serde(flatten)]
+    pub implementation: SettlerImplementation,
     /// Timeout for waiting for settlement verification.
-    #[serde(with = "crate::serde::duration", default = "default_wait_verification_timeout")]
+    #[serde(with = "crate::serde::duration")]
     pub wait_verification_timeout: Duration,
 }
 
-/// Default timeout for waiting for settlement verification (5 minutes).
-fn default_wait_verification_timeout() -> Duration {
-    Duration::from_secs(300)
-}
-
-impl Default for SettlerConfig {
-    fn default() -> Self {
-        Self {
-            layer_zero: None,
-            simple: None,
-            wait_verification_timeout: default_wait_verification_timeout(),
-        }
-    }
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
 }
 
 impl SettlerConfig {
@@ -280,12 +262,11 @@ impl SettlerConfig {
         providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
-        let settler: Box<dyn Settler> = if let Some(layer_zero) = &self.layer_zero {
-            Box::new(layer_zero.create_settler(providers, storage.clone()))
-        } else if let Some(simple) = &self.simple {
-            Box::new(simple.create_settler())
-        } else {
-            return Err(eyre::eyre!("No settler implementation configured"));
+        let settler: Box<dyn Settler> = match &self.implementation {
+            SettlerImplementation::LayerZero(config) => {
+                Box::new(config.create_settler(providers, storage.clone()))
+            }
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler()),
         };
 
         Ok(SettlementProcessor::new(settler))

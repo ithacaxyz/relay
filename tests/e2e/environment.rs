@@ -21,8 +21,8 @@ use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     config::{
-        InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig, SimpleSettlerConfig,
-        TransactionServiceConfig,
+        InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig, SettlerImplementation,
+        SimpleSettlerConfig, TransactionServiceConfig,
     },
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
@@ -83,7 +83,12 @@ impl Default for EnvironmentConfig {
             interop_config: InteropConfig {
                 refund_check_interval: Duration::from_millis(100),
                 escrow_refund_threshold: 60,
-                settler: Default::default(),
+                settler: SettlerConfig {
+                    implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
+                        settler_address: Address::ZERO,
+                    }),
+                    wait_verification_timeout: Duration::from_secs(10),
+                },
             },
             use_layerzero: false,
         }
@@ -457,16 +462,17 @@ impl Environment {
 
             // Configure relay to use LayerZero settler
             interop_config.settler = SettlerConfig {
-                layer_zero: Some(lz_deployment.relay_config),
-                simple: None,
+                implementation: SettlerImplementation::LayerZero(lz_deployment.relay_config),
                 wait_verification_timeout: Duration::from_secs(300),
             };
 
             layerzero_config = Some(lz_deployment.test_config);
         } else {
             // Default to simple settler for testing
-            interop_config.settler.simple =
-                Some(SimpleSettlerConfig { settler_address: contracts.settler });
+            interop_config.settler.implementation =
+                SettlerImplementation::Simple(SimpleSettlerConfig {
+                    settler_address: contracts.settler,
+                });
         }
 
         // Start relay service with all endpoints

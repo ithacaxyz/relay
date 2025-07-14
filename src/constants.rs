@@ -1,9 +1,6 @@
 //! Relay constants.
 
-use alloy::{
-    primitives::{Address, U256, address},
-    uint,
-};
+use alloy::{primitives::U256, uint};
 use std::time::Duration;
 
 /// Extra buffer added to Intent gas estimates signed by P256 keys to cover execution overhead
