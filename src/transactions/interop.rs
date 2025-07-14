@@ -1053,52 +1053,11 @@ impl InteropServiceInner {
 
     /// # Bundle State Machine
     ///
-    /// ```text
-    ///                              Init
-    ///                               │
-    ///                               ▼
-    ///                        LiquidityLocked
-    ///                               │
-    ///                               ▼
-    ///                          SourceQueued
-    ///                          ╱         ╲
-    ///                         ╱           ╲
-    ///                        ▼             ▼
-    ///                 SourceConfirmed   SourceFailures ─────────┐
-    ///                        │                                  │
-    ///                        ▼                                  │
-    ///                 DestinationQueued                         │
-    ///                    ╱         ╲                            │
-    ///                   ╱           ╲                           │
-    ///                  ▼             ▼                          │
-    ///           DestConfirmed   DestinationFailures ────────────┤
-    ///                  │                                        │
-    ///                  ▼                                        │
-    ///           SettlementsQueued ──────────────────────────┐   │
-    ///                  │                                    │   │
-    ///                  ▼                                    │   │
-    ///         SettlementsProcessing                         │   │
-    ///                  │                                    │   │
-    ///                  ▼                                    │   │
-    ///      SettlementCompletionQueued ──────────────────────┤   │
-    ///                  │                                    │   │
-    ///                  ▼                                    │   │
-    ///                Done                                   │   │
-    ///                                                       │   │
-    ///                                                       │   ▼
-    ///                                                       │  RefundsScheduled
-    ///                                                       │   │
-    ///                                                       │   ▼
-    ///                                                       │  RefundsReady
-    ///                                                       │   │
-    ///                                                       │   ▼
-    ///                                                       │  RefundsQueued
-    ///                                                       │   │
-    ///                                                       │   │
-    ///                                                       ▼   ▼
-    ///                                                       Failed
-    ///                                               (Terminal State)
-    /// ```
+    /// This function implements a state machine that manages the lifecycle of cross-chain
+    /// transaction bundles. Each state represents a specific phase in the bundle's execution,
+    /// with well-defined transitions based on transaction outcomes.
+    ///
+    /// ![Bundle State Machine](https://raw.githubusercontent.com/ithacaxyz/relay/main/docs/diagrams/bundle_state_machine.svg)
     #[instrument(skip(self, bundle), fields(bundle_id = %bundle.bundle.id))]
     async fn send_and_watch_bundle_with_status(
         &self,
