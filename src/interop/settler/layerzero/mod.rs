@@ -39,7 +39,6 @@
 
 use super::{SettlementError, Settler, SettlerId};
 use crate::{
-    constants::MULTICALL3_ADDRESS,
     interop::{
         EscrowDetails,
         settler::layerzero::{
@@ -56,7 +55,7 @@ use crate::{
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
-    providers::{DynProvider, Provider},
+    providers::{DynProvider, MULTICALL3_ADDRESS, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolEvent, SolValue},
 };

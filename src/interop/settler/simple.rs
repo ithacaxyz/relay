@@ -65,8 +65,8 @@ impl Settler for SimpleSettler {
         &self,
         _bundle: &InteropBundle,
     ) -> Result<Vec<RelayTransaction>, SettlementError> {
-        // currently broken, since the contract itself requires these transaction coming from a
-        // single owner, but we use random signers.
+        // todo(joshieDo): currently broken, since the contract itself requires these transaction
+        // coming from a single owner, but we use random signers.
         Ok(vec![])
     }
 }

@@ -13,17 +13,18 @@ pub use processor::{SettlementError, SettlementProcessor};
 use serde::{Deserialize, Serialize};
 pub use simple::SimpleSettler;
 use std::time::Duration;
-use strum::Display;
+use strum::{Display, EnumString};
 
+/// Identifier for different settler implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumString, Display)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SettlerId {
-    /// LayerZero cross-chain messaging settler
+    /// LayerZero.
     LayerZero,
-    /// Simple direct settlement (for testing)
+    /// SimpleSettler.
     Simple,
-    /// Test settler (only for tests)
+    /// Test settler used exclusively in unit tests.
     #[cfg(test)]
     Test,
 }
@@ -38,7 +39,8 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
 
     /// Returns the settler contract address.
     ///
-    /// This is the address of the on-chain contract that handles settlement logic.
+    /// This is the address of the on-chain contract that handles settlement logic and is expected
+    /// to be the same across chains.
     fn address(&self) -> Address;
 
     /// Builds a execute send transaction for the given parameters.

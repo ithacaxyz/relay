@@ -72,9 +72,3 @@ pub const ESCROW_REFUND_DURATION_SECS: u64 = 3600; // 1 hour
 ///
 /// This is used to generate unique escrow IDs.
 pub const ESCROW_SALT_LENGTH: usize = 12;
-
-/// The Multicall3 contract address.
-///
-/// Multicall3 is deployed at the same address on all chains.
-/// See: https://www.multicall3.com/deployments
-pub const MULTICALL3_ADDRESS: Address = address!("0xcA11bde05977b3631167028862bE2a173976CA11");

@@ -49,6 +49,15 @@ pub struct ChainMonitor {
     pub packets: Vec<LayerZeroPacketInfo>,
 }
 
+/// Result of initial verification status check
+#[derive(Debug)]
+pub struct InitialVerificationStatus {
+    /// Number of messages that were already verified
+    pub already_verified_count: usize,
+    /// Packets that still need verification, grouped by destination chain
+    pub pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>>,
+}
+
 /// Handles monitoring for LayerZero verification messages
 #[derive(Debug)]
 pub(super) struct LayerZeroVerificationMonitor {
@@ -81,19 +90,24 @@ impl LayerZeroVerificationMonitor {
 
         let packets_by_chain = self.group_packets_by_chain(packets.clone());
         let chain_monitors = self.setup_chain_monitors(packets_by_chain).await?;
-        let (already_verified_count, pending_by_chain) =
-            self.check_initial_verification_status(&chain_monitors).await?;
+        let initial_status = self.check_initial_verification_status(&chain_monitors).await?;
 
-        if pending_by_chain.is_empty() {
-            info!("All {} messages already verified", already_verified_count);
+        if initial_status.pending_by_chain.is_empty() {
+            info!("All {} messages already verified", initial_status.already_verified_count);
             return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
         }
 
-        let verified_via_events =
-            self.monitor_pending_messages(&pending_by_chain, chain_monitors, deadline).await?;
+        let verified_via_events = self
+            .monitor_pending_messages(&initial_status.pending_by_chain, chain_monitors, deadline)
+            .await?;
 
-        let final_result =
-            self.final_verification_check(verified_via_events, &pending_by_chain, &packets).await?;
+        let final_result = self
+            .final_verification_check(
+                verified_via_events,
+                &initial_status.pending_by_chain,
+                &packets,
+            )
+            .await?;
 
         Ok(final_result)
     }
@@ -163,13 +177,13 @@ impl LayerZeroVerificationMonitor {
     /// waiting for messages that are already available.
     /// ## Returns
     ///
-    /// Returns a tuple containing:
-    /// - Count of messages that are already verified
-    /// - HashMap of chain ID to packets that still need verification
+    /// Returns an `InitialVerificationStatus` struct containing:
+    /// - `already_verified_count`: Number of messages that were already verified
+    /// - `pending_by_chain`: HashMap of chain ID to packets that still need verification
     pub async fn check_initial_verification_status(
         &self,
         monitors: &[ChainMonitor],
-    ) -> Result<(usize, HashMap<u64, Vec<LayerZeroPacketInfo>>), SettlementError> {
+    ) -> Result<InitialVerificationStatus, SettlementError> {
         let mut already_verified_count = 0;
         let mut pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>> = HashMap::default();
 
@@ -196,7 +210,7 @@ impl LayerZeroVerificationMonitor {
             }
         }
 
-        Ok((already_verified_count, pending_by_chain))
+        Ok(InitialVerificationStatus { already_verified_count, pending_by_chain })
     }
 
     /// Monitors pending messages across all chains until the specified deadline.
@@ -384,7 +398,7 @@ pub async fn monitor_packet_stream(
         "Starting PacketVerified event monitoring"
     );
 
-    while remaining > 0 && Instant::now() < deadline {
+    while remaining > 0 {
         tokio::select! {
             result = stream.recv() => {
                 match result {
