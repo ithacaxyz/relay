@@ -5,6 +5,9 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
+/// LayerZero Endpoint ID (EID) - unique identifier for each blockchain in the LayerZero network.
+pub type EndpointId = u32;
+
 /// LayerZero packet information for cross-chain messaging
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LayerZeroPacketInfo {
@@ -59,11 +62,11 @@ pub struct LayerZeroPacketV1 {
     /// Packet nonce for ordering and uniqueness
     pub nonce: u64,
     /// Source endpoint ID
-    pub src_eid: u32,
+    pub src_eid: EndpointId,
     /// Sender address (32 bytes)
     pub sender: B256,
     /// Destination endpoint ID
-    pub dst_eid: u32,
+    pub dst_eid: EndpointId,
     /// Receiver address (32 bytes)
     pub receiver: B256,
     /// Globally unique identifier for the packet

@@ -69,6 +69,7 @@ use tracing::{debug, info, instrument};
 pub mod contracts;
 /// LayerZero-specific types.
 pub mod types;
+pub use types::EndpointId;
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
@@ -80,7 +81,7 @@ pub(super) const EMPTY_PAYLOAD_HASH: B256 = B256::ZERO;
 #[derive(Debug, Clone)]
 pub(super) struct LZChainConfig {
     /// LayerZero endpoint ID for this chain.
-    pub endpoint_id: u32,
+    pub endpoint_id: EndpointId,
     /// LayerZero endpoint address for this chain.
     pub endpoint_address: Address,
     /// Provider for this chain.
@@ -91,7 +92,7 @@ pub(super) struct LZChainConfig {
 #[derive(Debug)]
 pub struct LayerZeroSettler {
     /// Reverse mapping: endpoint ID to chain ID for efficient lookups.
-    eid_to_chain: HashMap<u32, ChainId>,
+    eid_to_chain: HashMap<EndpointId, ChainId>,
     /// Chain ID to LayerZero endpoint address mapping.
     endpoint_addresses: HashMap<ChainId, Address>,
     /// On-chain settler contract address.
@@ -105,7 +106,7 @@ pub struct LayerZeroSettler {
 impl LayerZeroSettler {
     /// Creates a new LayerZero settler instance for cross-chain settlement attestation.
     pub fn new(
-        endpoint_ids: HashMap<ChainId, u32>,
+        endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
         settler_address: Address,
@@ -153,7 +154,7 @@ impl LayerZeroSettler {
     }
 
     /// Converts a LayerZero endpoint ID to a chain ID.
-    fn eid_to_chain_id(&self, eid: u32) -> Result<u64, SettlementError> {
+    fn eid_to_chain_id(&self, eid: EndpointId) -> Result<u64, SettlementError> {
         self.eid_to_chain.get(&eid).copied().ok_or_else(|| SettlementError::UnknownEndpointId(eid))
     }
 

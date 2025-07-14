@@ -3,7 +3,10 @@ use futures_util::future::try_join_all;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, error, info};
 
-use super::{Settler, SettlerId, layerzero::verification::VerificationResult};
+use super::{
+    Settler, SettlerId,
+    layerzero::{EndpointId, verification::VerificationResult},
+};
 use crate::{
     error::StorageError,
     transactions::{RelayTransaction, TxId, interop::InteropBundle},
@@ -41,7 +44,7 @@ pub enum SettlementError {
     UnsupportedChain(ChainId),
     /// Unknown LayerZero endpoint ID.
     #[error("Unknown LayerZero endpoint ID: {0}")]
-    UnknownEndpointId(u32),
+    UnknownEndpointId(EndpointId),
     /// RPC error.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),

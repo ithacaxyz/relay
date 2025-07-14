@@ -1,7 +1,10 @@
 //! Relay configuration.
 use crate::{
     constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
-    interop::{LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler},
+    interop::{
+        LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler,
+        settler::layerzero::EndpointId,
+    },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
 };
@@ -294,7 +297,7 @@ pub struct LayerZeroConfig {
     /// Format: { chain_id: endpoint_id }
     /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
     #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_ids: HashMap<ChainId, u32>,
+    pub endpoint_ids: HashMap<ChainId, EndpointId>,
     /// Mapping of chain ID to LayerZero endpoint address.
     #[serde(with = "crate::serde::hash_map")]
     pub endpoint_addresses: HashMap<ChainId, Address>,
