@@ -101,3 +101,18 @@ pub struct Asset7811 {
 pub struct GetAssetsResponse(
     #[serde(with = "alloy::serde::quantity::hashmap")] pub HashMap<ChainId, Vec<Asset7811>>,
 );
+
+impl GetAssetsResponse {
+    /// Get the balance of a specific asset on the given chain.
+    pub fn balance_on_chain(&self, chain: ChainId, asset_address: AddressOrNative) -> U256 {
+        self.0
+            .get(&chain)
+            .and_then(|assets| {
+                assets
+                    .iter()
+                    .find(|asset| asset.address == asset_address)
+                    .map(|asset| asset.balance)
+            })
+            .unwrap_or_default()
+    }
+}

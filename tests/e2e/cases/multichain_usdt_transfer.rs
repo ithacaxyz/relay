@@ -34,7 +34,6 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
     // Set up the multichain transfer scenario
     let setup = MultichainTransferSetup::run().await?;
     let chain3_id = setup.env.chain_id_for(2);
-    let total_transfer_amount = setup.balances[0] + setup.balances[1] + setup.balances[2];
 
     // Send prepared calls on chain 3
     let bundle_id =
@@ -48,19 +47,24 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
         .relay_endpoint
         .get_assets(GetAssetsParameters::eoa(setup.target_recipient))
         .await?;
-    assert!(assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == total_transfer_amount));
+    assert!(
+        assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == setup.total_transfer_amount)
+    );
 
     Ok(())
 }
 
 /// Result of multichain transfer setup
 pub struct MultichainTransferSetup {
+    // todo: make these private
     pub env: Environment,
     pub key: KeyWith712Signer,
     pub target_recipient: Address,
     pub balances: Vec<U256>,
     pub context: PrepareCallsContext,
     pub signature: alloy::primitives::Bytes,
+    pub total_transfer_amount: U256,
+    pub fees: Vec<U256>,
 }
 
 impl MultichainTransferSetup {
@@ -120,7 +124,10 @@ impl MultichainTransferSetup {
         }
 
         // Calculate the total balance
-        let total_transfer_amount = balances[0] + balances[1] + balances[2];
+        //
+        // NOTE(onbjerg): We don't transfer the full balance because there has to be some left for
+        // fees. For input intents, the fee is currently always paid in the requested asset.
+        let total_transfer_amount = balances.iter().take(2).sum::<U256>();
 
         // Prepare the calls on chain 3 with required funds
         let prepare_result = env
@@ -148,6 +155,9 @@ impl MultichainTransferSetup {
             .await?;
 
         let PrepareCallsResponse { context, digest, .. } = prepare_result;
+        let quotes = context.quote().expect("should always return quotes");
+        let fees =
+            quotes.ty().quotes.iter().map(|quote| quote.intent.totalPaymentMaxAmount).collect();
 
         // Verify that the output intent has settler configured
         let quotes = context.quote().expect("should have quotes");
@@ -165,6 +175,15 @@ impl MultichainTransferSetup {
         // Sign the digest
         let signature = key.sign_payload_hash(digest).await?;
 
-        Ok(Self { env, key, target_recipient, balances, context, signature })
+        Ok(Self {
+            env,
+            key,
+            target_recipient,
+            balances,
+            context,
+            signature,
+            total_transfer_amount,
+            fees,
+        })
     }
 }

@@ -31,10 +31,24 @@ async fn test_multichain_refund() -> Result<()> {
     // Wait for source/origin transactions to be processed
     sleep(Duration::from_secs(1)).await;
 
-    // Check escrow balances on chains 1 & 2 before a refund can be processed
-    for i in 0..2 {
-        check_balances(&setup, i, wallet, U256::ZERO, setup.balances[i]).await?;
-    }
+    let initial_total_balance: U256 = setup.balances.iter().sum();
+    // We deduct the balance of the destination chain
+    let transfers_from_other_chains = setup.total_transfer_amount - setup.balances[2];
+    // We deduct the fees for the output intent since it won't be executed.
+    let fees = setup.fees.iter().sum::<U256>() - setup.fees[2];
+
+    // Check escrow and account balances.
+    //
+    // The total account balance across all chains should be the initial balance, minus transfers we
+    // had to do from other chains, and any fees. The escrow should contain all the transfers
+    // from other chains.
+    check_balances(
+        &setup,
+        wallet,
+        initial_total_balance - transfers_from_other_chains - fees,
+        transfers_from_other_chains,
+    )
+    .await?;
 
     // Force failure on the destination chain transaction and mine the block
     setup.env.provider_for(2).anvil_set_code(setup.env.orchestrator, Bytes::default()).await?;
@@ -51,10 +65,11 @@ async fn test_multichain_refund() -> Result<()> {
     // Wait for refund processing to have been triggered
     sleep(Duration::from_secs(2)).await;
 
-    // Check that refunds have been processed on chains 1 & 2
-    for i in 0..2 {
-        check_balances(&setup, i, wallet, setup.balances[i], U256::ZERO).await?;
-    }
+    // Check that refunds have been processed.
+    //
+    // In this state, the escrows should have no balance, and the account should have the initial
+    // total balance, minus any fees incurred from escrowing.
+    check_balances(&setup, wallet, initial_total_balance - fees, U256::ZERO).await?;
 
     // Verify target never received the funds on chain 3
     let assets = setup
@@ -81,41 +96,53 @@ async fn test_multichain_refund() -> Result<()> {
     Ok(())
 }
 
-/// Check wallet and escrow balances for a specific chain
 async fn check_balances(
     setup: &MultichainTransferSetup,
-    chain_index: usize,
     wallet: Address,
     expected_wallet_balance: U256,
     expected_escrow_balance: U256,
 ) -> Result<()> {
-    // Check wallet balance
-    let wallet_balance = IERC20::new(setup.env.erc20, setup.env.provider_for(chain_index))
-        .balanceOf(wallet)
-        .call()
-        .await?;
-    assert_eq!(
-        wallet_balance,
-        expected_wallet_balance,
-        "Wallet balance on chain {}: expected {}, got {}",
-        chain_index + 1,
-        expected_wallet_balance,
-        wallet_balance
-    );
+    let (wallet_balance, escrow_balance) = fetch_balances(setup, wallet).await?;
 
-    // Check escrow balance
-    let escrow_balance = IERC20::new(setup.env.erc20, setup.env.provider_for(chain_index))
-        .balanceOf(setup.env.escrow)
-        .call()
-        .await?;
     assert_eq!(
-        escrow_balance,
-        expected_escrow_balance,
-        "Escrow balance on chain {}: expected {}, got {}",
-        chain_index + 1,
-        expected_escrow_balance,
-        escrow_balance
+        escrow_balance, expected_escrow_balance,
+        "Escrow balance: expected {expected_escrow_balance}, got {escrow_balance}",
+    );
+    assert_eq!(
+        wallet_balance, expected_wallet_balance,
+        "Wallet balance: expected {expected_wallet_balance}, got {wallet_balance}",
     );
 
     Ok(())
+}
+
+/// Fetches balances for all chains and sums them up.
+///
+/// The return value is the total account balance across all chains, and then the total escrow
+/// balance across all chains.
+async fn fetch_balances(setup: &MultichainTransferSetup, wallet: Address) -> Result<(U256, U256)> {
+    let mut wallet_balance = U256::ZERO;
+    let mut escrow_balance = U256::ZERO;
+    for chain_index in 0..3 {
+        let chain_wallet_balance =
+            IERC20::new(setup.env.erc20, setup.env.provider_for(chain_index))
+                .balanceOf(wallet)
+                .call()
+                .await?;
+        wallet_balance += chain_wallet_balance;
+
+        let chain_escrow_balance =
+            IERC20::new(setup.env.erc20, setup.env.provider_for(chain_index))
+                .balanceOf(setup.env.escrow)
+                .call()
+                .await?;
+        escrow_balance += chain_escrow_balance;
+
+        // debug for if the test fails
+        eprintln!(
+            "balance on chain {chain_index}: account {chain_wallet_balance}, escrow: {chain_escrow_balance}"
+        );
+    }
+
+    Ok((wallet_balance, escrow_balance))
 }

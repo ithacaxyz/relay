@@ -371,14 +371,21 @@ impl Relay {
             intent_to_sign.funder = self.inner.contracts.funder.address;
         }
 
+        // If the fee has already been specified, we only simulate to get asset diffs. Otherwise, we
+        // simulate to get the fee.
+        //
+        // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
+        // reverting with a payment failure if the fee market shifts.
+        let compute_fee =
+            !matches!(context.intent_kind, IntentKind::MultiInput { fee: Some(_), .. });
+
         // todo: simulate with executeMultiChain if intent.is_multichain
-        // we estimate gas and fees
         let (asset_diff, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
                 context.account_key.keyType,
-                payment_per_gas,
+                if compute_fee { payment_per_gas } else { 0. },
                 self.inner.asset_info.clone(),
             )
             .await?;
@@ -1009,14 +1016,7 @@ impl Relay {
         requested_asset: AddressOrNative,
         amount: U256,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing = assets
-            .0
-            .get(&destination_chain_id)
-            .and_then(|assets| {
-                assets.iter().find(|a| a.address == requested_asset).map(|a| a.balance)
-            })
-            .unwrap_or(U256::ZERO);
-
+        let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
         let mut remaining = amount.saturating_sub(existing);
         if remaining.is_zero() {
             return Ok(Some(vec![]));
@@ -1073,7 +1073,8 @@ impl Relay {
                 Some(IntentKind::MultiInput { leaf_index: 0, fee: None }),
             ))
             .await
-            .map_err(RelayError::internal)?
+            .map_err(RelayError::internal)
+            .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
             .context
             .quote()
             .expect("should always be a quote")
@@ -1129,6 +1130,9 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
+        // todo(onbjerg): let's restrict this further to just the tokens we care about
+        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+
         // Simulate the output intent first to get the fees required to execute it.
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
@@ -1141,14 +1145,19 @@ impl Relay {
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 0,
-                    fund_transfers: vec![(requested_asset, funds)],
+                    fund_transfers: vec![(
+                        requested_asset,
+                        // Deduct funds that already exist on the destination chain.
+                        funds.saturating_sub(
+                            assets.balance_on_chain(request.chain_id, requested_asset.into()),
+                        ),
+                    )],
                     settler_context: Bytes::default(),
                 }),
             )
             .await?;
 
-        // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+        let source_fee = request.capabilities.meta.fee_token == requested_asset;
 
         // Figure out what chains to pull funds from, if any. This will pull the funds the user
         // requested from chains, minus the cost of transferring those funds out of the respective
@@ -1160,7 +1169,12 @@ impl Relay {
                 assets.clone(),
                 request.chain_id,
                 asset,
-                funds + output_intent.1.fees().map(|(_, fees)| fees).unwrap_or_default(),
+                funds
+                    + if source_fee {
+                        output_intent.1.fees().map(|(_, fees)| fees).unwrap_or_default()
+                    } else {
+                        U256::ZERO
+                    },
             )
             .await?
         else {
@@ -1174,7 +1188,10 @@ impl Relay {
 
         // No funding chains required to execute the intent
         if funding_chains.is_empty() {
-            return Ok(output_intent);
+            return self
+                .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
+                .await
+                .map_err(Into::into);
         }
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
@@ -1226,7 +1243,12 @@ impl Relay {
                     assets.clone(),
                     request.chain_id,
                     asset,
-                    funds + output_quote.intent.totalPaymentMaxAmount,
+                    funds
+                        + if source_fee {
+                            output_quote.intent.totalPaymentMaxAmount
+                        } else {
+                            U256::ZERO
+                        },
                 )
                 .await?
             {
@@ -1239,11 +1261,6 @@ impl Relay {
                 }
                 .into());
             };
-
-            // No funding chains required to execute the intent
-            if funding_chains.is_empty() {
-                return Ok(output_intent);
-            }
 
             // If the number of funding sources did not change, we are good (probably)
             if number_of_sources == funding_chains.len() {
