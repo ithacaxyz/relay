@@ -32,7 +32,6 @@ async fn test_multichain_layerzero_settlement() -> Result<()> {
     let (relayer, _handles) = setup.env.start_layerzero_relayer().await?;
 
     let chain3_id = setup.env.chain_id_for(2);
-    let total_transfer_amount = setup.balances[0] + setup.balances[1] + setup.balances[2];
 
     // Send prepared calls on chain 3
     let bundle_id =
@@ -46,7 +45,9 @@ async fn test_multichain_layerzero_settlement() -> Result<()> {
         .relay_endpoint
         .get_assets(GetAssetsParameters::eoa(setup.target_recipient))
         .await?;
-    assert!(assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == total_transfer_amount));
+    assert!(
+        assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == setup.total_transfer_amount)
+    );
 
     // Wait for settlement processing
     sleep(Duration::from_secs(1)).await;

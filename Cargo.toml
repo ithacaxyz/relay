@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.17", features = [
+alloy = { version = "1.0.22", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -102,13 +102,13 @@ resend-rs = { version = "0.15.0", default-features = false, features = [
 num-traits = "0.2"
 num-bigint = "0.4"
 ruint = { version = "1.1.0", features = ["num-bigint"] }
-binance-sdk = { version = "6", features = ["wallet"] }
+binance-sdk = { version = "8", features = ["wallet"] }
 rust_decimal = "1"
 strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.17", features = [
+alloy = { version = "1.0.22", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
