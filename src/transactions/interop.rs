@@ -7,16 +7,14 @@ use crate::{
     error::StorageError,
     interop::{
         RefundMonitorService, RefundProcessor, RefundProcessorError, SettlementError,
-        settler::{
-            SettlerId, layerzero::types::LayerZeroPacketInfo, processor::SettlementProcessor,
-        },
+        settler::{SettlerId, processor::SettlementProcessor},
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
     types::{InteropTransactionBatch, OrchestratorContract::IntentExecuted, rpc::BundleId},
 };
 use alloy::{
-    primitives::{Address, Bytes, ChainId, U256, map::HashMap},
+    primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
     providers::{DynProvider, MulticallError},
     rpc::types::TransactionReceipt,
 };
@@ -67,11 +65,11 @@ pub struct InteropBundle {
     ///
     /// These are populated after verification steps if needed.
     pub execute_receive_txs: Vec<RelayTransaction>,
-    /// Failed verification details for cross-chain messages
+    /// Failed verification GUIDs for cross-chain messages
     ///
-    /// If any verifications fail, this contains details about which messages couldn't be verified.
+    /// If any verifications fail, this contains the GUIDs of messages that couldn't be verified.
     /// When this is non-empty, the bundle should go to Failed state instead of Done.
-    pub failed_verifications: Vec<LayerZeroPacketInfo>,
+    pub failed_verifications: Vec<B256>,
 }
 
 impl InteropBundle {
@@ -692,7 +690,7 @@ impl InteropServiceInner {
             .monitor_bundle_transactions(bundle.bundle.id, &bundle.bundle.settlement_txs)
             .await?;
 
-        // todo(joshieDo): right now we only have one settlement tx, so no need to handle the
+        // todo(joshie): right now we only have one settlement tx, so no need to handle the
         // settlement transactions that did succeed.
         if !failed_ids.is_empty() {
             tracing::error!(
@@ -729,8 +727,11 @@ impl InteropServiceInner {
 
         if failed_count > 0 {
             // Store failure details in the bundle
-            bundle.bundle.failed_verifications =
-                verification_result.failed_packets.into_iter().map(|(packet, _)| packet).collect();
+            bundle.bundle.failed_verifications = verification_result
+                .failed_packets
+                .into_iter()
+                .map(|(packet, _)| packet.guid)
+                .collect();
 
             tracing::warn!(
                 bundle_id = ?bundle.bundle.id,

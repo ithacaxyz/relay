@@ -1,15 +1,14 @@
-use crate::interop::settler::layerzero::contracts::{ILayerZeroEndpointV2, Origin};
+use crate::interop::settler::layerzero::contracts::{ILayerZeroEndpointV2, Origin, UlnConfig};
 use alloy::{
-    primitives::{Address, B256, Bytes, ChainId, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256, keccak256},
     sol_types::SolValue,
 };
-use serde::{Deserialize, Serialize};
 
 /// LayerZero Endpoint ID (EID) - unique identifier for each blockchain in the LayerZero network.
 pub type EndpointId = u32;
 
 /// LayerZero packet information for cross-chain messaging
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct LayerZeroPacketInfo {
     /// Source chain ID
     pub src_chain_id: ChainId,
@@ -25,9 +24,52 @@ pub struct LayerZeroPacketInfo {
     pub guid: B256,
     /// Message payload containing (settlement_id, settler_address, source_chain_id)
     pub message: Bytes,
+    /// Encoded packet header (needed for commitVerification)
+    pub packet_header: Vec<u8>,
+    /// Header hash (needed for checking if it's verifiable)
+    pub header_hash: B256,
+    /// Payload hash (computed from guid + message, needed for both calls mentioned above)
+    pub payload_hash: B256,
+    /// Receive library address for this packet
+    pub receive_lib_address: Address,
+    /// ULN configuration for this packet
+    pub uln_config: UlnConfig,
 }
 
 impl LayerZeroPacketInfo {
+    /// Creates a new LayerZeroPacketInfo from a LayerZeroPacketV1 with computed fields
+    pub fn new(
+        packet: LayerZeroPacketV1,
+        src_chain_id: ChainId,
+        dst_chain_id: ChainId,
+        receive_lib_address: Address,
+        uln_config: UlnConfig,
+    ) -> Self {
+        let sender = Address::from_slice(&packet.sender[12..]);
+        let receiver = Address::from_slice(&packet.receiver[12..]);
+
+        let header = packet.encoded_packet_header();
+        let header_hash = keccak256(&header);
+
+        let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();
+        let payload_hash = keccak256(&payload);
+
+        Self {
+            src_chain_id,
+            dst_chain_id,
+            nonce: packet.nonce,
+            sender,
+            receiver,
+            guid: packet.guid,
+            message: packet.message.into(),
+            packet_header: header,
+            header_hash,
+            payload_hash,
+            receive_lib_address,
+            uln_config,
+        }
+    }
+
     /// Decodes and returns the settlement ID from the message
     pub fn settlement_id(&self) -> Result<B256, String> {
         let (settlement_id, _, _) = <(B256, Address, U256)>::abi_decode(&self.message)
@@ -76,6 +118,26 @@ pub struct LayerZeroPacketV1 {
 }
 
 impl LayerZeroPacketV1 {
+    /// Encodes the packet header in LayerZero V1 format.
+    ///
+    /// The packet header format is:
+    /// - version (1 byte): Always 0x01 for V1
+    /// - nonce (8 bytes)
+    /// - srcEid (4 bytes)
+    /// - sender (32 bytes)
+    /// - dstEid (4 bytes)
+    /// - receiver (32 bytes)
+    pub fn encoded_packet_header(&self) -> Vec<u8> {
+        let mut header = Vec::with_capacity(81); // Total header size
+        header.push(0x01);
+        header.extend_from_slice(&self.nonce.to_be_bytes());
+        header.extend_from_slice(&self.src_eid.to_be_bytes());
+        header.extend_from_slice(self.sender.as_slice());
+        header.extend_from_slice(&self.dst_eid.to_be_bytes());
+        header.extend_from_slice(self.receiver.as_slice());
+        header
+    }
+
     /// Decodes a LayerZero packet from its encoded payload format.
     ///
     /// LayerZero packets use `abi.encodePacked` format with the following structure:

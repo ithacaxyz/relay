@@ -25,7 +25,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant, sleep_until};
 use tracing::{info, warn};
 
-use super::{EMPTY_PAYLOAD_HASH, LZChainConfig, contracts::ILayerZeroEndpointV2};
+use super::{LZChainConfig, contracts::IReceiveUln302};
 
 /// Result of verification monitoring for LayerZero messages
 #[derive(Debug)]
@@ -47,6 +47,130 @@ pub struct ChainMonitor {
     pub stream: alloy::pubsub::Subscription<Log>,
     /// Packets to monitor on this chain
     pub packets: Vec<LayerZeroPacketInfo>,
+}
+
+impl ChainMonitor {
+    /// Monitors the WebSocket event stream for packet verification events.
+    ///
+    /// This method subscribes to `PayloadVerified` events on a destination chain and tracks
+    /// when specific packets are verified and the ReceiveLib reports them as verifiable.
+    ///
+    /// ## Returns
+    ///
+    /// Returns a vector of GUIDs for packets that were verified during monitoring.
+    async fn monitor_packet_stream(
+        mut self,
+        deadline: Instant,
+        chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+    ) -> Result<Vec<B256>, SettlementError> {
+        // Create lookup map using header hash as key
+        let packet_lookup: HashMap<B256, LayerZeroPacketInfo> = self
+            .packets
+            .iter()
+            .map(|packet| {
+                info!(
+                    guid = ?packet.guid,
+                    nonce = packet.nonce,
+                    receiver = ?packet.receiver,
+                    header_hash = ?packet.header_hash,
+                    "Prepared packet for monitoring"
+                );
+                (packet.header_hash, packet.clone())
+            })
+            .collect();
+
+        let mut verified_guids = Vec::with_capacity(self.packets.len());
+        let mut remaining = self.packets.len();
+
+        info!(
+            endpoint = ?self.endpoint_address,
+            num_packets = self.packets.len(),
+            timeout_secs = (deadline - Instant::now()).as_secs(),
+            "Starting PacketVerified event monitoring"
+        );
+
+        while remaining > 0 {
+            tokio::select! {
+                result = self.stream.recv() => {
+                    match result {
+                        Ok(log) => {
+                            info!(
+                                log_address = ?log.inner.address,
+                                "Received log event"
+                            );
+
+                            match IReceiveUln302::PayloadVerified::decode_log(&log.inner) {
+                                Ok(event) => {
+                                    info!(
+                                        dvn = ?event.dvn,
+                                        header_len = event.header.len(),
+                                        confirmations = ?event.confirmations,
+                                        proof_hash = ?event.proofHash,
+                                        "Decoded PayloadVerified event"
+                                    );
+
+                                    if let Some(packet) = packet_lookup.get(&keccak256(&event.header)) {
+                                        // Each DVN will emit its own PayloadVerified log, and only when we meet the configured threshold does the following call return true.
+                                        match is_message_available(packet, &chain_configs).await {
+                                            Ok(true) => {
+                                                verified_guids.push(packet.guid);
+                                                remaining -= 1;
+                                                info!(
+                                                    guid = ?packet.guid,
+                                                    nonce = packet.nonce,
+                                                    receiver = ?packet.receiver,
+                                                    remaining,
+                                                    "Message verified and ready"
+                                                );
+                                            }
+                                            Ok(false) => {
+                                                info!(
+                                                    guid = ?packet.guid,
+                                                    "Message not yet ready"
+                                                );
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    guid = ?packet.guid,
+                                                    error = ?e,
+                                                    "Failed to check message availability"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        error = ?e,
+                                        "Failed to decode PayloadVerified event"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = ?e,
+                                "Stream receive error"
+                            );
+                            break;
+                        }
+                    }
+                }
+                _ = sleep_until(deadline) => {
+                    info!(
+                        remaining,
+                        verified = verified_guids.len(),
+                        "Verification monitoring timed out"
+                    );
+                    break;
+                }
+            }
+        }
+
+        info!(verified_count = verified_guids.len(), remaining, "Completed event monitoring");
+
+        Ok(verified_guids)
+    }
 }
 
 /// Result of initial verification status check
@@ -80,6 +204,7 @@ impl LayerZeroVerificationMonitor {
             return Ok(VerificationResult { verified_packets: vec![], failed_packets: vec![] });
         }
 
+        // todo(joshiedo): deadline should be actually be "refundTimestamp - N minutes"
         let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
 
         info!(
@@ -139,9 +264,14 @@ impl LayerZeroVerificationMonitor {
                         .get(&chain_id)
                         .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
 
+                    // Get the receive library address for monitoring PayloadVerified events
+                    let first_packet = packets.first().ok_or_else(|| {
+                        SettlementError::InternalError("No packets for chain".to_string())
+                    })?;
+
                     let filter = Filter::new()
-                        .address(config.endpoint_address)
-                        .event_signature(ILayerZeroEndpointV2::PacketVerified::SIGNATURE_HASH);
+                        .address(first_packet.receive_lib_address)
+                        .event_signature(IReceiveUln302::PayloadVerified::SIGNATURE_HASH);
 
                     Ok::<_, SettlementError>(ChainMonitor {
                         chain_id,
@@ -252,15 +382,9 @@ impl LayerZeroVerificationMonitor {
                     continue;
                 }
 
-                let packets = pending_packets.clone();
+                let chain_configs = self.chain_configs.clone();
                 let task = tokio::spawn(async move {
-                    monitor_packet_stream(
-                        monitor.stream,
-                        monitor.endpoint_address,
-                        packets,
-                        deadline,
-                    )
-                    .await
+                    monitor.monitor_packet_stream(deadline, chain_configs).await
                 });
                 monitoring_tasks.push(task);
             }
@@ -357,120 +481,9 @@ impl LayerZeroVerificationMonitor {
     }
 }
 
-/// Monitors a WebSocket event stream for packet verification events.
-///
-/// This function subscribes to `PacketVerified` events on a destination chain and tracks
-/// when specific packets are verified.
-///
-/// ## Returns
-///
-/// Returns a vector of GUIDs for packets that were verified during monitoring.
-pub async fn monitor_packet_stream(
-    mut stream: alloy::pubsub::Subscription<Log>,
-    endpoint_address: Address,
-    packets: Vec<LayerZeroPacketInfo>,
-    deadline: Instant,
-) -> Result<Vec<B256>, SettlementError> {
-    let packet_lookup: HashMap<(u64, Address, B256), B256> = packets
-        .iter()
-        .map(|packet| {
-            let payload = [packet.guid.as_slice(), packet.message.as_ref()].concat();
-            let payload_hash = keccak256(&payload);
-
-            info!(
-                guid = ?packet.guid,
-                nonce = packet.nonce,
-                receiver = ?packet.receiver,
-                payload_hash = ?payload_hash,
-                "Prepared packet for monitoring"
-            );
-            ((packet.nonce, packet.receiver, payload_hash), packet.guid)
-        })
-        .collect();
-
-    let mut verified_guids = Vec::with_capacity(packets.len());
-    let mut remaining = packets.len();
-
-    info!(
-        endpoint = ?endpoint_address,
-        num_packets = packets.len(),
-        timeout_secs = (deadline - Instant::now()).as_secs(),
-        "Starting PacketVerified event monitoring"
-    );
-
-    while remaining > 0 {
-        tokio::select! {
-            result = stream.recv() => {
-                match result {
-                    Ok(log) => {
-                        info!(
-                            log_address = ?log.inner.address,
-                            "Received log event"
-                        );
-
-                        match ILayerZeroEndpointV2::PacketVerified::decode_log(&log.inner) {
-                            Ok(event) => {
-                                info!(
-                                    event_nonce = event.origin.nonce,
-                                    event_receiver = ?event.receiver,
-                                    event_payload_hash = ?event.payloadHash,
-                                    event_src_eid = event.origin.srcEid,
-                                    event_sender = ?event.origin.sender,
-                                    "Decoded PacketVerified event"
-                                );
-
-                                // Look up packet by event data
-                                let lookup_key = (event.origin.nonce, event.receiver, event.payloadHash);
-
-                                if let Some(guid) = packet_lookup.get(&lookup_key) {
-                                    verified_guids.push(*guid);
-                                    remaining -= 1;
-                                    info!(
-                                        ?guid,
-                                        nonce = event.origin.nonce,
-                                        receiver = ?event.receiver,
-                                        remaining,
-                                        "Message verified via event"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    error = ?e,
-                                    "Failed to decode PacketVerified event"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = ?e,
-                            "Stream receive error"
-                        );
-                        break;
-                    }
-                }
-            }
-            _ = sleep_until(deadline) => {
-                info!(
-                    remaining,
-                    verified = verified_guids.len(),
-                    "Verification monitoring timed out"
-                );
-                break;
-            }
-        }
-    }
-
-    info!(verified_count = verified_guids.len(), remaining, "Completed event monitoring");
-
-    Ok(verified_guids)
-}
-
 /// Checks if a LayerZero message is verified and available for execution.
 ///
-/// A message is considered available when the destination chain's LayerZero endpoint
-/// has received verification from the DVNs and stored the message payload hash.
+/// This checks if the ReceiveLib reports it as verifiable (DVN threshold met)
 pub(super) async fn is_message_available(
     packet: &LayerZeroPacketInfo,
     chain_configs: &HashMap<ChainId, LZChainConfig>,
@@ -479,31 +492,11 @@ pub(super) async fn is_message_available(
         .get(&packet.dst_chain_id)
         .ok_or(SettlementError::UnsupportedChain(packet.dst_chain_id))?;
 
-    let src_config = chain_configs
-        .get(&packet.src_chain_id)
-        .ok_or(SettlementError::UnsupportedChain(packet.src_chain_id))?;
+    let receive_lib = IReceiveUln302::new(packet.receive_lib_address, &dst_config.provider);
 
-    // Create endpoint contract instance
-    let endpoint = ILayerZeroEndpointV2::new(dst_config.endpoint_address, &dst_config.provider);
-
-    // Convert sender address to bytes32
-    let sender_bytes32 = B256::left_padding_from(packet.sender.as_slice());
-
-    // Check the inbound payload hash
-    let payload_hash = endpoint
-        .inboundPayloadHash(packet.receiver, src_config.endpoint_id, sender_bytes32, packet.nonce)
+    // Check if all required DVNs have verified.
+    Ok(receive_lib
+        .verifiable(packet.uln_config.clone(), packet.header_hash, packet.payload_hash)
         .call()
-        .await?;
-
-    // Message is available if the payload hash is not empty
-    let is_available = payload_hash != EMPTY_PAYLOAD_HASH;
-
-    tracing::debug!(
-        packet_guid = ?packet.guid,
-        payload_hash = ?payload_hash,
-        is_available,
-        "Checked message availability"
-    );
-
-    Ok(is_available)
+        .await?)
 }

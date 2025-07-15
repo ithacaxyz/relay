@@ -44,7 +44,7 @@ use crate::{
         settler::layerzero::{
             contracts::{
                 ILayerZeroEndpointV2::{self, PacketSent},
-                ILayerZeroSettler, MessagingParams,
+                ILayerZeroSettler, IReceiveUln302, MessagingParams,
             },
             types::{LayerZeroPacketInfo, LayerZeroPacketV1},
         },
@@ -73,9 +73,6 @@ pub use types::EndpointId;
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
-
-/// Empty payload hash constant used by LayerZero to indicate no message.
-pub(super) const EMPTY_PAYLOAD_HASH: B256 = B256::ZERO;
 
 /// Layerzero configuration for a specific chain.
 #[derive(Debug, Clone)]
@@ -159,41 +156,59 @@ impl LayerZeroSettler {
     }
 
     /// Extracts all packet information from a transaction receipt.
-    fn extract_packets_from_receipt(
+    async fn extract_packets_from_receipt(
         &self,
         receipt: &TransactionReceipt,
     ) -> Result<Vec<LayerZeroPacketInfo>, SettlementError> {
-        let mut packets = Vec::new();
+        let packets = try_join_all(
+            receipt
+                .inner
+                .logs()
+                .iter()
+                .filter_map(|log| {
+                    PacketSent::decode_raw_log(log.topics(), log.data().data.as_ref())
+                        .ok()
+                        .map(|ev| ev.encodedPayload)
+                })
+                .map(|encoded_payload| async move {
+                    // Decode the packet from the encoded payload
+                    let packet = LayerZeroPacketV1::decode(&encoded_payload)
+                        .map_err(SettlementError::InternalError)?;
 
-        // Look for PacketSent events in the logs
-        for log in receipt.inner.logs() {
-            // Check if this is a PacketSent event (topic[0] matches the event signature)
-            if log.topics().is_empty() {
-                continue;
-            }
+                    let src_chain_id = self.eid_to_chain_id(packet.src_eid)?;
+                    let dst_chain_id = self.eid_to_chain_id(packet.dst_eid)?;
 
-            if let Ok(event) = PacketSent::decode_raw_log(log.topics(), log.data().data.as_ref()) {
-                // Decode the packet from the encoded payload
-                let packet = LayerZeroPacketV1::decode(&event.encodedPayload)
-                    .map_err(SettlementError::InternalError)?;
+                    let receiver = Address::from_slice(&packet.receiver[12..]);
 
-                let src_chain_id = self.eid_to_chain_id(packet.src_eid)?;
-                let dst_chain_id = self.eid_to_chain_id(packet.dst_eid)?;
+                    let dst_config = self.get_chain_config(dst_chain_id)?;
+                    let src_config = self.get_chain_config(src_chain_id)?;
 
-                let sender = Address::from_slice(&packet.sender[12..]);
-                let receiver = Address::from_slice(&packet.receiver[12..]);
+                    // Get the receive library address and ULN config of the dst_chain
+                    // todo(joshie): unsure if in the future we can just assume that it's always
+                    // the same. for now just fetch for each individual receiver in each chain.
+                    let endpoint = ILayerZeroEndpointV2::new(
+                        dst_config.endpoint_address,
+                        &dst_config.provider,
+                    );
+                    let receive_lib_result =
+                        endpoint.getReceiveLibrary(receiver, src_config.endpoint_id).call().await?;
+                    let receive_lib_address = receive_lib_result.lib;
 
-                packets.push(LayerZeroPacketInfo {
-                    src_chain_id,
-                    dst_chain_id,
-                    nonce: packet.nonce,
-                    sender,
-                    receiver,
-                    guid: packet.guid,
-                    message: packet.message.into(),
-                });
-            }
-        }
+                    let receive_lib =
+                        IReceiveUln302::new(receive_lib_address, &dst_config.provider);
+                    let uln_config =
+                        receive_lib.getUlnConfig(receiver, src_config.endpoint_id).call().await?;
+
+                    Ok::<_, SettlementError>(LayerZeroPacketInfo::new(
+                        packet,
+                        src_chain_id,
+                        dst_chain_id,
+                        receive_lib_address,
+                        uln_config,
+                    ))
+                }),
+        )
+        .await?;
 
         Ok(packets)
     }
@@ -230,18 +245,16 @@ impl LayerZeroSettler {
         let (escrow_ids, escrow_address) = get_escrows(bundle, packet.dst_chain_id, settlement_id)?;
 
         let multicall_calldata = build_multicall_data(
+            packet,
             &lz_receive_call,
             dst_config.endpoint_address,
             &escrow_ids,
             escrow_address,
         )?;
 
-        let tx_request = TransactionRequest {
-            to: Some(MULTICALL3_ADDRESS.into()),
-            value: None,
-            input: multicall_calldata.clone().into(),
-            ..Default::default()
-        };
+        let tx_request = TransactionRequest::default()
+            .to(MULTICALL3_ADDRESS)
+            .input(multicall_calldata.clone().into());
 
         let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
 
@@ -298,7 +311,7 @@ impl LayerZeroSettler {
             };
 
             // Extract packet info from receipt logs
-            self.extract_packets_from_receipt(&receipt)
+            self.extract_packets_from_receipt(&receipt).await
         }))
         .await?;
 
@@ -372,13 +385,11 @@ impl Settler for LayerZeroSettler {
 
         // Create a transaction for the settlement with the calculated gas with native_lz_fee
         let from = Address::random();
-        let tx_request = TransactionRequest {
-            from: Some(from),
-            to: Some(self.settler_address.into()),
-            value: Some(native_lz_fee),
-            input: calldata.clone().into(),
-            ..Default::default()
-        };
+        let tx_request = TransactionRequest::default()
+            .from(from)
+            .to(self.settler_address)
+            .value(native_lz_fee)
+            .input(calldata.clone().into());
 
         let gas_limit = current_config
             .provider
@@ -525,22 +536,38 @@ fn get_escrows(
 /// Builds the multicall data for executing LayerZero receive and escrow settlement.
 ///
 /// This function creates a multicall that:
-/// 1. Executes the LayerZero receive call to process the cross-chain message
-/// 2. Settles the escrows to release funds
+/// 1. Commits the verification by calling ReceiveLib.commitVerification
+/// 2. Executes lzReceive to process the cross-chain message
+/// 3. Settles the escrows to release funds
 fn build_multicall_data(
+    packet: &LayerZeroPacketInfo,
     lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
     endpoint_address: Address,
     escrow_ids: &[B256],
     escrow_address: Address,
 ) -> Result<Bytes, SettlementError> {
+    let commit_verification_calldata = contracts::IReceiveUln302::commitVerificationCall {
+        _packetHeader: packet.packet_header.clone().into(),
+        _payloadHash: packet.payload_hash,
+    }
+    .abi_encode();
+
     // Encode the LayerZero receive call
     let lz_receive_calldata = lz_receive_call.abi_encode();
 
     // Encode the escrow settle call
     let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
 
-    // Build the multicall
+    // Build the multicall with the correct order:
+    // 1. commitVerification
+    // 2. lzReceive
+    // 3. settle
     let calls = vec![
+        Call3 {
+            target: packet.receive_lib_address,
+            allowFailure: false,
+            callData: commit_verification_calldata.into(),
+        },
         Call3 {
             target: endpoint_address,
             allowFailure: false,

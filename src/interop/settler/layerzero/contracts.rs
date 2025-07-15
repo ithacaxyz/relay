@@ -12,6 +12,28 @@ sol! {
             payable;
     }
 
+    /// ULN configuration structure
+    #[derive(Debug)]
+    struct UlnConfig {
+        uint64 confirmations;
+        uint8 requiredDVNCount;
+        uint8 optionalDVNCount;
+        uint8 optionalDVNThreshold;
+        address[] requiredDVNs;
+        address[] optionalDVNs;
+    }
+
+    /// ReceiveUln302 interface for committing verification
+    #[sol(rpc)]
+    interface IReceiveUln302 {
+        #[derive(Debug)]
+        event PayloadVerified(address dvn, bytes header, uint256 confirmations, bytes32 proofHash);
+
+        function commitVerification(bytes calldata _packetHeader, bytes32 _payloadHash) external;
+        function verifiable(UlnConfig memory _config, bytes32 _headerHash, bytes32 _payloadHash) external view returns (bool);
+        function getUlnConfig(address _oapp, uint32 _remoteEid) external view returns (UlnConfig memory);
+    }
+
     /// LayerZero messaging parameters
     struct MessagingParams {
         uint32 dstEid;
@@ -46,6 +68,8 @@ sol! {
 
         function quote(MessagingParams calldata _params, address _sender) external view returns (MessagingFee memory);
         function inboundPayloadHash(address _receiver, uint32 _srcEid, bytes32 _sender, uint64 _nonce) external view returns (bytes32 payloadHash);
+        function getReceiveLibrary(address _receiver, uint32 _eid) external view returns (address lib, bool isDefault);
+        function verifiable(Origin calldata _origin, address _receiver) external view returns (bool);
         function lzReceive(Origin calldata _origin, address _receiver, bytes32 _guid, bytes calldata _message, bytes calldata _extraData) external payable;
         function registerLibrary(address _lib) external;
         function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
