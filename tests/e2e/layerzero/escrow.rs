@@ -259,6 +259,7 @@ async fn deliver_and_verify_message(env: &Environment, ctx: &TestContext) -> Res
         provider,
         ctx.endpoint2,
         ctx.src_eid,
+        ctx.dst_eid,
         &origin,
         ctx.escrow2,
         guid,

@@ -23,7 +23,7 @@ pub use types::*;
 use alloy::{
     network::Ethereum,
     primitives::{Address, B256, Bytes, U256},
-    providers::{Provider, ext::AnvilApi},
+    providers::{PendingTransactionBuilder, Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
 };
 use eyre::{Context, Result};
@@ -199,12 +199,13 @@ pub async fn send_impersonated_tx<P: Provider + AnvilApi<Ethereum>>(
 
     // By using anvil_send_impersonated_transaction, we can use WalletProviders
     let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
+    let receipt =
+        PendingTransactionBuilder::new(provider.root().clone(), tx_hash).get_receipt().await?;
+    if !receipt.status() {
+        return Err(eyre::eyre!("receipt has failed status"));
+    }
 
-    // Get receipt and stop impersonation
-    let receipt_future = provider.get_transaction_receipt(tx_hash);
-    let stop_impersonate_future = provider.anvil_stop_impersonating_account(from);
-
-    try_join!(receipt_future, stop_impersonate_future)?;
+    provider.anvil_stop_impersonating_account(from).await?;
 
     Ok(())
 }

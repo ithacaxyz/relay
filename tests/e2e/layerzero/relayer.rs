@@ -12,19 +12,18 @@
 //! - **Message Delivery**: Executes lzReceive on destination endpoints
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
-use super::{
-    interfaces::Packet,
-    utils::{bytes32_to_address, create_origin, deliver_layerzero_message},
-};
+use super::utils::{bytes32_to_address, create_origin, deliver_layerzero_message};
 use alloy::{
-    primitives::{Address, B256, Bytes},
+    primitives::{Address, B256},
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     rpc::types::{Filter, Log},
     sol_types::SolEvent,
 };
 use eyre::Result;
 use parking_lot::Mutex;
-use relay::interop::settler::layerzero::contracts::ILayerZeroEndpointV2;
+use relay::interop::settler::layerzero::{
+    contracts::ILayerZeroEndpointV2, types::LayerZeroPacketV1,
+};
 use std::{
     collections::HashSet,
     sync::{
@@ -34,7 +33,7 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChainEndpoint {
     /// Index matching Environment.providers position
     pub chain_index: usize,
@@ -131,7 +130,7 @@ impl LayerZeroRelayer {
     /// Handles a PacketSent event by decoding and delivering the message
     async fn handle_packet_sent(&self, log: Log) -> Result<()> {
         let event = ILayerZeroEndpointV2::PacketSent::decode_log(&log.inner)?;
-        let packet = self.decode_packet(&event.encodedPayload)?;
+        let packet = LayerZeroPacketV1::decode(&event.encodedPayload).unwrap();
 
         // Increment messages seen counter
         self.inner.messages_seen.fetch_add(1, Ordering::Relaxed);
@@ -145,8 +144,8 @@ impl LayerZeroRelayer {
             .inner
             .endpoints
             .iter()
-            .find(|e| e.eid == packet.dstEid)
-            .ok_or_else(|| eyre::eyre!("Unknown destination eid: {}", packet.dstEid))?;
+            .find(|e| e.eid == packet.dst_eid)
+            .ok_or_else(|| eyre::eyre!("Unknown destination eid: {}", packet.dst_eid))?;
 
         self.deliver_message(dst_endpoint, packet).await
     }
@@ -158,15 +157,20 @@ impl LayerZeroRelayer {
     }
 
     /// Delivers a message to the destination chain
-    async fn deliver_message(&self, dst_endpoint: &ChainEndpoint, packet: Packet) -> Result<()> {
+    async fn deliver_message(
+        &self,
+        dst_endpoint: &ChainEndpoint,
+        packet: LayerZeroPacketV1,
+    ) -> Result<()> {
         let result = deliver_layerzero_message(
             &self.inner.providers[dst_endpoint.chain_index],
             dst_endpoint.endpoint,
-            packet.srcEid,
-            &create_origin(packet.srcEid, packet.sender, packet.nonce),
+            packet.src_eid,
+            packet.dst_eid,
+            &create_origin(packet.src_eid, bytes32_to_address(&packet.sender), packet.nonce),
             bytes32_to_address(&packet.receiver),
             packet.guid,
-            packet.message,
+            packet.message.clone().into(),
             &self.inner.escrows,
         )
         .await;
@@ -179,47 +183,6 @@ impl LayerZeroRelayer {
         result
     }
 
-    /// Decodes a LayerZero packet from encoded bytes
-    fn decode_packet(&self, encoded: &Bytes) -> Result<Packet> {
-        // PacketV1Codec field offsets
-        const OFFSETS: PacketOffsets = PacketOffsets {
-            version: 0,
-            nonce: 1,
-            src_eid: 9,
-            sender: 13,
-            dst_eid: 45,
-            receiver: 49,
-            guid: 81,
-            message: 113,
-        };
-
-        let data = encoded.as_ref();
-
-        if data.len() < OFFSETS.message {
-            return Err(eyre::eyre!(
-                "Encoded packet too short: {} bytes, need at least {}",
-                data.len(),
-                OFFSETS.message
-            ));
-        }
-
-        // Verify packet version
-        let version = data[OFFSETS.version];
-        if version != 1 {
-            return Err(eyre::eyre!("Unsupported packet version: {}", version));
-        }
-
-        Ok(Packet {
-            nonce: u64::from_be_bytes(data[OFFSETS.nonce..OFFSETS.src_eid].try_into()?),
-            srcEid: u32::from_be_bytes(data[OFFSETS.src_eid..OFFSETS.sender].try_into()?),
-            sender: bytes32_to_address(&B256::from_slice(&data[OFFSETS.sender..OFFSETS.dst_eid])),
-            dstEid: u32::from_be_bytes(data[OFFSETS.dst_eid..OFFSETS.receiver].try_into()?),
-            receiver: B256::from_slice(&data[OFFSETS.receiver..OFFSETS.guid]),
-            guid: B256::from_slice(&data[OFFSETS.guid..OFFSETS.message]),
-            message: Bytes::from(data[OFFSETS.message..].to_vec()),
-        })
-    }
-
     /// Gets the number of messages seen by the relayer
     pub fn messages_seen(&self) -> usize {
         self.inner.messages_seen.load(Ordering::Relaxed)
@@ -229,16 +192,4 @@ impl LayerZeroRelayer {
     pub fn transactions_sent(&self) -> usize {
         self.inner.transactions_sent.load(Ordering::Relaxed)
     }
-}
-
-/// Packet field offsets for decoding
-struct PacketOffsets {
-    version: usize,
-    nonce: usize,
-    src_eid: usize,
-    sender: usize,
-    dst_eid: usize,
-    receiver: usize,
-    guid: usize,
-    message: usize,
 }

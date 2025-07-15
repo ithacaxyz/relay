@@ -47,7 +47,6 @@ sol! {
         function quote(MessagingParams calldata _params, address _sender) external view returns (MessagingFee memory);
         function inboundPayloadHash(address _receiver, uint32 _srcEid, bytes32 _sender, uint64 _nonce) external view returns (bytes32 payloadHash);
         function lzReceive(Origin calldata _origin, address _receiver, bytes32 _guid, bytes calldata _message, bytes calldata _extraData) external payable;
-        function verify(Origin calldata origin, address receiver, bytes32 payloadHash) external;
         function registerLibrary(address _lib) external;
         function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
         function setDefaultReceiveLibrary(uint32 _eid, address _newLib, uint256 _timeout) external;

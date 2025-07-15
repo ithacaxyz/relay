@@ -5,11 +5,13 @@
 
 use super::{
     relayer::{ChainEndpoint, LayerZeroRelayer},
+    utils::configure_uln_for_endpoint,
     wire_oapps,
 };
 use crate::e2e::{
     constants::{LAYERZERO_DEPLOYER_ADDRESS, LAYERZERO_DEPLOYER_PRIVATE_KEY},
     environment::{Environment, deploy_contract},
+    layerzero::utils::EXECUTOR_ADDRESS,
 };
 use alloy::{
     network::EthereumWallet,
@@ -160,11 +162,11 @@ async fn deploy_layerzero_contracts<P: Provider>(
     // Deploy minimal send/receive library for the endpoint
     let lib = deploy_contract(
         provider,
-        &contracts_path.join("MinimalSendReceiveLib.sol/MinimalSendReceiveLib.json"),
-        None,
+        &contracts_path.join("ReceiveUln302Mock.sol/ReceiveUln302Mock.json"),
+        Some(SolValue::abi_encode(&(endpoint,)).into()),
     )
     .await
-    .wrap_err("Failed to deploy MinimalSendReceiveLib")?;
+    .wrap_err("Failed to deploy ReceiveUln302Mock")?;
 
     // Deploy MockEscrow with the endpoint address and owner
     let escrow = deploy_contract(
@@ -195,9 +197,9 @@ async fn configure_endpoint_libraries_for_all_chains<P: Provider>(
     lib: Address,
     current_eid: u32,
     all_eids: &[u32],
+    oapps: &[Address],
 ) -> Result<()> {
     let endpoint_contract = ILayerZeroEndpointV2::new(endpoint, provider);
-
     // Register the library
     endpoint_contract.registerLibrary(lib).send().await?.get_receipt().await?;
 
@@ -221,6 +223,8 @@ async fn configure_endpoint_libraries_for_all_chains<P: Provider>(
                 tx.get_receipt().await.map_err(eyre::Error::from)
             }
         )?;
+        configure_uln_for_endpoint(provider, endpoint, oapps, lib, dst_eid, EXECUTOR_ADDRESS)
+            .await?;
         Ok::<_, eyre::Error>(())
     }))
     .await?;
@@ -304,6 +308,7 @@ pub async fn deploy_layerzero_infrastructure(
                 deployment.library,
                 eid,
                 &all_eids,
+                &[deployment.escrow, deployment.settler],
             )
             .await
             .wrap_err(format!("Failed to configure endpoint libraries for chain {i}"))
