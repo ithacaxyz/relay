@@ -11,7 +11,10 @@ use crate::{
 use alloy::{
     primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
-    signers::local::coins_bip39::{English, Mnemonic},
+    signers::local::{
+        PrivateKeySigner,
+        coins_bip39::{English, Mnemonic},
+    },
 };
 use alloy_chains::Chain;
 use eyre::Context;
@@ -269,7 +272,7 @@ impl SettlerConfig {
             SettlerImplementation::LayerZero(config) => {
                 Box::new(config.create_settler(providers, storage.clone()))
             }
-            SettlerImplementation::Simple(config) => Box::new(config.create_settler()),
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
         };
 
         Ok(SettlementProcessor::new(settler))
@@ -281,12 +284,22 @@ impl SettlerConfig {
 pub struct SimpleSettlerConfig {
     /// The address of the simple settler contract.
     pub settler_address: Address,
+    /// Private key for signing settlement write operations.
+    pub private_key: String,
 }
 
 impl SimpleSettlerConfig {
     /// Creates a new simple settler instance.
-    pub fn create_settler(&self) -> SimpleSettler {
-        SimpleSettler::new(self.settler_address)
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SimpleSettler> {
+        let signer = self
+            .private_key
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+        Ok(SimpleSettler::new(self.settler_address, signer, providers))
     }
 }
 

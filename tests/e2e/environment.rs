@@ -86,6 +86,7 @@ impl Default for EnvironmentConfig {
                 settler: SettlerConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
                         settler_address: Address::ZERO,
+                        private_key: DEPLOYER_PRIVATE_KEY.to_string(),
                     }),
                     wait_verification_timeout: Duration::from_secs(10),
                 },
@@ -472,6 +473,7 @@ impl Environment {
             interop_config.settler.implementation =
                 SettlerImplementation::Simple(SimpleSettlerConfig {
                     settler_address: contracts.settler,
+                    private_key: DEPLOYER_PRIVATE_KEY.to_string(),
                 });
         }
 
@@ -984,7 +986,7 @@ async fn deploy_settler<P: Provider>(
     deploy_contract(
         provider,
         &contracts_path.join("SimpleSettler.sol/SimpleSettler.json"),
-        Some(owner.abi_encode().into()),
+        Some(dbg!(owner).abi_encode().into()),
     )
     .await
 }

@@ -6,7 +6,8 @@ use crate::{
     config::InteropConfig,
     error::StorageError,
     interop::{
-        RefundMonitorService, RefundProcessor, RefundProcessorError, SettlementError,
+        EscrowDetails, EscrowInfo, RefundMonitorService, RefundProcessor, RefundProcessorError,
+        SettlementError,
         settler::{SettlerId, processor::SettlementProcessor},
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
@@ -132,6 +133,40 @@ impl InteropBundle {
         }
 
         self.dst_txs.push(tx);
+    }
+
+    /// Extracts escrow information for a specific chain and settlement.
+    ///
+    /// Returns the escrow IDs and escrow contract address for the given chain and settlement.
+    pub fn get_escrows(
+        &self,
+        chain_id: ChainId,
+        settlement_id: B256,
+    ) -> Result<EscrowInfo, SettlementError> {
+        let escrow_details: Vec<EscrowDetails> =
+            self.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
+
+        // Filter escrows for this specific settlement and chain
+        let escrow_ids: Vec<B256> = escrow_details
+            .iter()
+            .filter(|escrow| {
+                escrow.chain_id == chain_id && escrow.escrow.settlementId == settlement_id
+            })
+            .map(|escrow| escrow.escrow_id)
+            .collect();
+
+        // Find the escrow contract address for this chain
+        let escrow_address = escrow_details
+            .iter()
+            .find(|e| e.chain_id == chain_id)
+            .map(|e| e.escrow_address)
+            .ok_or_else(|| {
+                SettlementError::InternalError(format!(
+                    "No escrow address found for chain {chain_id}"
+                ))
+            })?;
+
+        Ok(EscrowInfo { escrow_ids, escrow_address })
     }
 }
 
@@ -1065,7 +1100,7 @@ impl InteropServiceInner {
         mut bundle: BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         loop {
-            match bundle.status {
+            match dbg!(bundle.status) {
                 BundleStatus::Init => self.on_init(&mut bundle).await?,
                 BundleStatus::LiquidityLocked => self.on_liquidity_locked(&mut bundle).await?,
                 BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,
@@ -1427,6 +1462,7 @@ mod tests {
                 settler: SettlerConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
                         settler_address: Address::ZERO,
+                        private_key: B256::random().to_string(),
                     }),
                     wait_verification_timeout: Duration::from_secs(1),
                 },

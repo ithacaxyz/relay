@@ -8,7 +8,7 @@ pub mod refund;
 /// Settlement functionality for cross-chain bundles.
 pub mod settler;
 
-pub use escrow::EscrowDetails;
+pub use escrow::{EscrowDetails, EscrowInfo};
 pub use refund::{RefundMonitorService, RefundProcessor, RefundProcessorError};
 pub use settler::{
     LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SettlerId, SimpleSettler,
