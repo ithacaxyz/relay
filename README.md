@@ -1,4 +1,4 @@
-# Ithaca Relay
+# Ithaca RPC
 
 A transparent cross-chain transaction router for EIP-7702 accounts, specifically built for [Porto](https://github.com/ithacaxyz/porto).
 
@@ -11,13 +11,13 @@ A transparent cross-chain transaction router for EIP-7702 accounts, specifically
 
 ## Running
 
-To run the relay, you can either use Docker or run the binary directly.
+To run the RPC, you can either use Docker or run the binary directly.
 
 1. Deploy the [delegation and orchestrator contracts](https://github.com/ithacaxyz/account) on the destination chain.
 1. Deploy or identify at least one token to accept as fee token(s).
 1. Generate two private keys, one for transaction signing, and one for quote signing. You can do this with `cast wallet new`.
 
-Run the relay, passing in the following flags. In the example below, the binary will be run directly with `cargo`:
+Run the RPC, passing in the following flags. In the example below, the binary will be run directly with `cargo`:
 
 ```sh
 cargo run --bin relay -- \
