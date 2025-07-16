@@ -7,7 +7,7 @@
 //! - Unlike LayerZero, SimpleSettler records settlements directly without cross-chain messaging
 
 use crate::e2e::{cases::multichain_usdt_transfer::MultichainTransferSetup, *};
-use alloy::{rpc::types::Filter, sol, sol_types::SolEvent};
+use alloy::{rpc::types::Filter, sol_types::SolEvent};
 use eyre::Result;
 use relay::{
     rpc::RelayApiClient,
@@ -15,19 +15,6 @@ use relay::{
     types::{IEscrow, rpc::GetAssetsParameters},
 };
 use tokio::time::{Duration, sleep};
-
-// SimpleSettler contract interface
-sol! {
-    #[sol(rpc)]
-    interface ISimpleSettler {
-        function send(bytes32 settlementId, bytes calldata settlerContext) external payable;
-        function write(address sender, bytes32 settlementId, uint256 chainId, bytes calldata signature) external;
-        function write(address sender, bytes32 settlementId, uint256 chainId) external;
-        function read(bytes32 settlementId, address attester, uint256 chainId) external view returns (bool isSettled);
-
-        event Sent(address indexed sender, bytes32 indexed settlementId, uint256 receiverChainId);
-    }
-}
 
 /// Tests successful cross-chain transfer with SimpleSettler settlement.
 ///

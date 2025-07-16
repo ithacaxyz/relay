@@ -1100,7 +1100,7 @@ impl InteropServiceInner {
         mut bundle: BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         loop {
-            match dbg!(bundle.status) {
+            match bundle.status {
                 BundleStatus::Init => self.on_init(&mut bundle).await?,
                 BundleStatus::LiquidityLocked => self.on_liquidity_locked(&mut bundle).await?,
                 BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,

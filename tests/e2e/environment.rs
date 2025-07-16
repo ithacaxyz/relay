@@ -986,7 +986,7 @@ async fn deploy_settler<P: Provider>(
     deploy_contract(
         provider,
         &contracts_path.join("SimpleSettler.sol/SimpleSettler.json"),
-        Some(dbg!(owner).abi_encode().into()),
+        Some(owner.abi_encode().into()),
     )
     .await
 }

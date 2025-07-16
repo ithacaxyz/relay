@@ -205,12 +205,16 @@ impl Settler for SimpleSettler {
     }
 }
 
-// Contract interface
 sol! {
+    /// SimpleSettler interface
     #[sol(rpc)]
     interface ISimpleSettler {
+        /// Anyone can write settlement details with a valid signature from the owner.
+        /// This prevents the need for the owner to make on-chain transactions.
+        /// Replaying the signature is harmless as it only sets the value to true.
         function write(address sender, bytes32 settlementId, uint256 chainId, bytes calldata signature) external;
 
+        /// Returns the EIP712 domain separator information
         function eip712Domain()
             public
             view
@@ -225,10 +229,7 @@ sol! {
                 uint256[] memory extensions
             );
     }
-}
 
-// EIP712 types for SimpleSettler
-sol! {
     #[derive(Debug)]
     struct SettlementWrite {
         address sender;
