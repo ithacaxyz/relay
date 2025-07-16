@@ -1,4 +1,4 @@
-use super::{Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, OrchestratorContract};
+use super::{Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo, OrchestratorContract};
 use crate::{
     error::{IntentError, MerkleError},
     types::{
@@ -524,15 +524,6 @@ impl SignedCalls for Intent {
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         Ok(self.authorized_keys_from_execution_data()?.chain(self.pre_authorized_keys()?).collect())
     }
-}
-
-/// Information about a leaf in a merkle tree.
-#[derive(Debug, Clone, Copy)]
-pub struct MerkleLeafInfo {
-    /// Total number of leaves in the merkle tree.
-    pub total: usize,
-    /// Index of this leaf in the merkle tree.
-    pub index: usize,
 }
 
 /// Kind of intent to be simulated and created.
