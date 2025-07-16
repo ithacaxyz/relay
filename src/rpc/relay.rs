@@ -1023,6 +1023,7 @@ impl Relay {
     ///
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
+    #[expect(clippy::too_many_arguments)]
     async fn source_funds(
         &self,
         eoa: Address,
@@ -1031,7 +1032,7 @@ impl Relay {
         destination_chain_id: ChainId,
         requested_asset: AddressOrNative,
         amount: U256,
-        total_leaves: usize
+        total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
         let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
         let mut remaining = amount.saturating_sub(existing);
@@ -1195,7 +1196,7 @@ impl Relay {
                     } else {
                         U256::ZERO
                     },
-                2 // when it's at least one funding chain and one output/intent chain
+                2, // when it's at least one funding chain and one output/intent chain
             )
             .await?
         else {
@@ -1278,7 +1279,7 @@ impl Relay {
                         } else {
                             U256::ZERO
                         },
-                        funding_chains.len() + 1
+                    funding_chains.len() + 1,
                 )
                 .await?
             {

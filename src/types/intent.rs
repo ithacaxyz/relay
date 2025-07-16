@@ -1,4 +1,7 @@
-use super::{Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo, OrchestratorContract};
+use super::{
+    Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo,
+    OrchestratorContract,
+};
 use crate::{
     error::{IntentError, MerkleError},
     types::{
