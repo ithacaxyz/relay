@@ -15,6 +15,7 @@ mod paymaster;
 mod porto;
 mod relay;
 mod simple;
+mod simple_settlement;
 mod upgrade;
 pub use upgrade::{upgrade_account_eagerly, upgrade_account_lazily};
 mod fees;

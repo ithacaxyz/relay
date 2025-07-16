@@ -243,12 +243,14 @@ mod tests {
     use crate::{
         interop::SimpleSettler, transactions::interop::InteropBundle, types::rpc::BundleId,
     };
-    use alloy::primitives::Address;
+    use alloy::{primitives::Address, signers::local::PrivateKeySigner};
+    use alloy_primitives::B256;
 
     #[tokio::test]
     async fn test_settler_id_validation_in_build_settlements() {
         // Create a settlement processor with a simple settler
-        let settler = Box::new(SimpleSettler::new(Address::ZERO));
+        let signer = B256::random().to_string().parse::<PrivateKeySigner>().unwrap();
+        let settler = Box::new(SimpleSettler::new(Address::ZERO, signer, Default::default()));
         let processor = SettlementProcessor::new(settler);
 
         // Create a bundle with a different settler ID

@@ -86,6 +86,7 @@ impl Default for EnvironmentConfig {
                 settler: SettlerConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
                         settler_address: Address::ZERO,
+                        private_key: DEPLOYER_PRIVATE_KEY.to_string(),
                     }),
                     wait_verification_timeout: Duration::from_secs(10),
                 },
@@ -472,6 +473,7 @@ impl Environment {
             interop_config.settler.implementation =
                 SettlerImplementation::Simple(SimpleSettlerConfig {
                     settler_address: contracts.settler,
+                    private_key: DEPLOYER_PRIVATE_KEY.to_string(),
                 });
         }
 

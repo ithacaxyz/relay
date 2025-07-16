@@ -39,15 +39,12 @@
 
 use super::{SettlementError, Settler, SettlerId};
 use crate::{
-    interop::{
-        EscrowDetails,
-        settler::layerzero::{
-            contracts::{
-                ILayerZeroEndpointV2::{self, PacketSent},
-                ILayerZeroSettler, IReceiveUln302, MessagingParams,
-            },
-            types::{LayerZeroPacketInfo, LayerZeroPacketV1},
+    interop::settler::layerzero::{
+        contracts::{
+            ILayerZeroEndpointV2::{self, PacketSent},
+            ILayerZeroSettler, IReceiveUln302, MessagingParams,
         },
+        types::{LayerZeroPacketInfo, LayerZeroPacketV1},
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
@@ -242,14 +239,14 @@ impl LayerZeroSettler {
 
         // Extract and filter escrows for this settlement
         let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
-        let (escrow_ids, escrow_address) = get_escrows(bundle, packet.dst_chain_id, settlement_id)?;
+        let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
 
         let multicall_calldata = build_multicall_data(
             packet,
             &lz_receive_call,
             dst_config.endpoint_address,
-            &escrow_ids,
-            escrow_address,
+            &escrow_info.escrow_ids,
+            escrow_info.escrow_address,
         )?;
 
         let tx_request = TransactionRequest::default()
@@ -268,7 +265,7 @@ impl LayerZeroSettler {
         debug!(
             packet_guid = ?packet.guid,
             dst_chain = packet.dst_chain_id,
-            num_escrows = escrow_ids.len(),
+            num_escrows = escrow_info.escrow_ids.len(),
             gas_limit = gas_limit,
             "Built multicall execute receive transaction"
         );
@@ -499,38 +496,6 @@ impl Settler for LayerZeroSettler {
 
         Ok(execute_receive_txs)
     }
-}
-
-/// Extracts relevant escrowIds and escrowAddress for a specific settlement on a destination chain.
-fn get_escrows(
-    bundle: &InteropBundle,
-    dst_chain_id: ChainId,
-    settlement_id: B256,
-) -> Result<(Vec<B256>, Address), SettlementError> {
-    let escrow_details: Vec<EscrowDetails> =
-        bundle.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
-
-    // Filter escrows for this specific settlement and chain
-    let escrow_ids: Vec<B256> = escrow_details
-        .iter()
-        .filter(|escrow| {
-            escrow.chain_id == dst_chain_id && escrow.escrow.settlementId == settlement_id
-        })
-        .map(|escrow| escrow.escrow_id)
-        .collect();
-
-    // Find the escrow contract address for this chain
-    let escrow_address = escrow_details
-        .iter()
-        .find(|e| e.chain_id == dst_chain_id)
-        .map(|e| e.escrow_address)
-        .ok_or_else(|| {
-            SettlementError::InternalError(format!(
-                "No escrow address found for chain {dst_chain_id}"
-            ))
-        })?;
-
-    Ok((escrow_ids, escrow_address))
 }
 
 /// Builds the multicall data for executing LayerZero receive and escrow settlement.
