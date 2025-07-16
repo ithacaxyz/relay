@@ -1,8 +1,9 @@
 //! [`toml`] does not allow non-[`String`] keys for [`HashMap`], so we're working around this with a
 //! helepr that (de)serializes keys as strings via [`ToString`] and [`FromStr`] implementations.
 
+use alloy::primitives::map::HashMap;
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer, de::Error};
-use std::{collections::HashMap, fmt::Display, hash::Hash, str::FromStr};
+use std::{fmt::Display, hash::Hash, str::FromStr};
 
 /// Serializes [`Duration`] as seconds.
 pub fn serialize<S, K, V>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>

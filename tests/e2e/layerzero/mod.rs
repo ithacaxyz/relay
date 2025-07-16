@@ -1,19 +1,20 @@
 //! LayerZero cross-chain messaging test utilities
 //!
 //! This module provides utilities for testing LayerZero cross-chain communication,
-//! including escrow contracts and message relaying functionality.
+//! including mock escrow contracts and message relaying functionality.
 
 pub mod escrow;
 pub mod interfaces;
 pub mod relayer;
+pub mod settlement;
 pub mod setup;
 pub mod utils;
 
 // Re-export commonly used items
-pub use interfaces::IMockEscrow;
-pub use setup::{LayerZeroConfig, LayerZeroEnvironment};
+pub use setup::{LayerZeroEnvironment, LayerZeroTestConfig};
 pub use utils::address_to_bytes32;
 
+use crate::e2e::layerzero::interfaces::IOApp;
 use alloy::{
     primitives::{Address, Bytes},
     providers::Provider,
@@ -72,24 +73,24 @@ impl OptionsBuilder {
 /// # Arguments
 /// * `provider1` - Provider for chain 1 with wallet capabilities
 /// * `provider2` - Provider for chain 2 with wallet capabilities
-/// * `escrow1` - Address of escrow contract on chain 1
-/// * `escrow2` - Address of escrow contract on chain 2
+/// * `oapp1` - Address of oapp contract on chain 1
+/// * `oapp2` - Address of oapp contract on chain 2
 /// * `eid1` - Endpoint ID of chain 1
 /// * `eid2` - Endpoint ID of chain 2
-pub async fn wire_escrows<P1: Provider, P2: Provider>(
+pub async fn wire_oapps<P1: Provider, P2: Provider>(
     provider1: &P1,
     provider2: &P2,
-    escrow1: Address,
-    escrow2: Address,
+    oapp1: Address,
+    oapp2: Address,
     eid1: u32,
     eid2: u32,
 ) -> Result<()> {
-    let esc1 = IMockEscrow::new(escrow1, provider1);
-    let esc2 = IMockEscrow::new(escrow2, provider2);
+    let esc1 = IOApp::new(oapp1, provider1);
+    let esc2 = IOApp::new(oapp2, provider2);
 
     // Create peer addresses (32-byte padded)
-    let peer1 = address_to_bytes32(escrow1);
-    let peer2 = address_to_bytes32(escrow2);
+    let peer1 = address_to_bytes32(oapp1);
+    let peer2 = address_to_bytes32(oapp2);
 
     // Set peers bidirectionally in parallel
     try_join!(

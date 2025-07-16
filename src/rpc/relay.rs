@@ -327,7 +327,8 @@ impl Relay {
 
         // For MultiOutput intents, set the settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
-            intent_to_sign.settler = self.inner.contracts.settler.address;
+            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+            intent_to_sign.settler = interop.settler_address();
             intent_to_sign.settlerContext = settler_context.clone();
         }
 
@@ -497,17 +498,19 @@ impl Relay {
         // Fill Intent with the user signature.
         intent.signature = signature;
 
+        // Compute EIP-712 digest for the intent
+        let (eip712_digest, _) = intent
+            .compute_eip712_data(quote.orchestrator, &provider)
+            .await
+            .map_err(RelayError::from)?;
+
         // Sign fund transfers if any
         if !intent.encodedFundTransfers.is_empty() {
             // Set funder contract address and sign
-            let (digest, _) = intent
-                .compute_eip712_data(self.orchestrator(), &provider)
-                .await
-                .map_err(RelayError::from)?;
             intent.funderSignature = self
                 .inner
                 .funder_signer
-                .sign_payload_hash(digest)
+                .sign_payload_hash(eip712_digest)
                 .await
                 .map_err(RelayError::from)?;
             intent.funder = self.inner.contracts.funder.address;
@@ -566,7 +569,7 @@ impl Relay {
         // set our payment recipient
         quote.intent.paymentRecipient = self.inner.fee_recipient;
 
-        let tx = RelayTransaction::new(quote.clone(), authorization.clone());
+        let tx = RelayTransaction::new(quote.clone(), authorization.clone(), eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
@@ -1214,9 +1217,10 @@ impl Relay {
             let sourced_funds = funding_chains.iter().map(|source| source.amount).sum();
 
             // Encode the input chain IDs for the settler context
-            let input_chain_ids: Vec<U256> =
-                funding_chains.iter().map(|source| U256::from(source.chain_id)).collect();
-            let settler_context = input_chain_ids.abi_encode().into();
+            let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
+            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+            let settler_context =
+                interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
             // Simulate multi-chain
             let (asset_diffs, output_quote) = self
@@ -1232,6 +1236,13 @@ impl Relay {
                     },
                 )
                 .await?;
+
+            // Compute EIP-712 digest (settlement_id)
+            let (output_intent_digest, _) = output_quote
+                .intent
+                .compute_eip712_data(output_quote.orchestrator, &self.provider(request.chain_id)?)
+                .await
+                .map_err(RelayError::from)?;
 
             // Figure out what chains to pull funds from, if any. This will pull the funds the user
             // requested from chains, minus the cost of transferring those funds out of the
@@ -1266,7 +1277,6 @@ impl Relay {
             if number_of_sources == funding_chains.len() {
                 self.validate_multichain_contracts()?;
 
-                let output_intent_digest = output_quote.intent.digest();
                 let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
@@ -1438,7 +1448,8 @@ impl Relay {
         let bundle =
             self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
 
-        self.inner.chains.interop().send_bundle(bundle).await?;
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+        interop.send_bundle(bundle).await?;
 
         Ok(bundle_id)
     }
@@ -1464,7 +1475,9 @@ impl Relay {
         );
 
         // Create InteropBundle
-        let mut bundle = InteropBundle::new(bundle_id);
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+        let settler_id = interop.settler_id();
+        let mut bundle = InteropBundle::new(bundle_id, settler_id);
 
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
@@ -2051,18 +2064,17 @@ impl Relay {
     /// Returns an error if any of the required contracts (escrow, settler, funder)
     /// have zero addresses, indicating they are not properly configured.
     fn validate_multichain_contracts(&self) -> Result<(), RelayError> {
-        let required_contracts = &[
-            ("escrow", self.inner.contracts.escrow.address),
-            ("settler", self.inner.contracts.settler.address),
-            ("funder", self.inner.contracts.funder.address),
-        ];
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
-        for (name, address) in required_contracts {
-            if address.is_zero() {
-                return Err(RelayError::Quote(QuoteError::MultichainDisabled {
-                    reason: format!("{name} contract not configured"),
-                }));
-            }
+        if [
+            self.inner.contracts.escrow.address,
+            interop.settler_address(),
+            self.inner.contracts.funder.address,
+        ]
+        .iter()
+        .any(|addr| addr.is_zero())
+        {
+            return Err(QuoteError::MultichainDisabled.into());
         }
 
         Ok(())
@@ -2087,7 +2099,12 @@ impl Relay {
             depositor: context.eoa,
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
-            settler: self.inner.contracts.settler.address,
+            settler: self
+                .inner
+                .chains
+                .interop()
+                .ok_or(QuoteError::MultichainDisabled)?
+                .settler_address(),
             sender: self.orchestrator(),
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),

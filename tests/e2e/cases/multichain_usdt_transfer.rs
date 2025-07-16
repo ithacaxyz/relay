@@ -70,19 +70,28 @@ pub struct MultichainTransferSetup {
 impl MultichainTransferSetup {
     /// Run the multichain transfer setup with default configuration
     pub async fn run() -> Result<Self> {
-        Self::setup_with_config(None).await
+        Self::setup_with_config(None, false).await
     }
 
     /// Run the multichain transfer setup with a custom refund threshold
     pub async fn run_with_refund_threshold(seconds: u64) -> Result<Self> {
-        Self::setup_with_config(Some(seconds)).await
+        Self::setup_with_config(Some(seconds), false).await
     }
 
-    async fn setup_with_config(escrow_refund_threshold: Option<u64>) -> Result<Self> {
+    /// Run the multichain transfer setup with LayerZero
+    pub async fn run_with_layer_zero() -> Result<Self> {
+        Self::setup_with_config(None, true).await
+    }
+
+    async fn setup_with_config(
+        escrow_refund_threshold: Option<u64>,
+        use_layerzero: bool,
+    ) -> Result<Self> {
         let num_chains = 3;
         // Set up environment configuration
         let mut env_config = EnvironmentConfig {
             num_chains,
+            use_layerzero,
             transaction_service_config: TransactionServiceConfig {
                 num_signers: 1,
                 ..Default::default()

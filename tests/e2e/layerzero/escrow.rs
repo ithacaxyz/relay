@@ -46,7 +46,7 @@ async fn test_multichain_layerzero_escrow_with_automatic_delivery() -> Result<()
     let ctx = setup_test_context(&env).await?;
 
     // Start LayerZero relayer using the new integrated method
-    let _relayer_handles = env.start_layerzero_relayer().await?;
+    let (_relayer, _handles) = env.start_layerzero_relayer().await?;
 
     // Setup tokens and balances
     setup_test_balances(&env, &ctx).await?;
@@ -251,15 +251,20 @@ async fn deliver_and_verify_message(env: &Environment, ctx: &TestContext) -> Res
     let guid = compute_guid(1, ctx.src_eid, ctx.escrow1, ctx.dst_eid, ctx.escrow2);
     let provider = env.provider_for(1);
 
+    // Get escrows from LayerZero config
+    let lz_config = env.layerzero_config();
+
     // Deliver the message
     deliver_layerzero_message(
         provider,
         ctx.endpoint2,
         ctx.src_eid,
+        ctx.dst_eid,
         &origin,
         ctx.escrow2,
         guid,
         transfer_data.into(),
+        &lz_config.escrows,
     )
     .await?;
 

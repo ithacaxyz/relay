@@ -4,6 +4,9 @@
 
 use alloy::sol;
 
+/// Config type constant for ULN
+pub const ULN_CONFIG_TYPE: u32 = 2;
+
 sol! {
     /// LayerZero Escrow V2 contract interface
     ///
@@ -16,7 +19,6 @@ sol! {
             uint256 lzTokenFee;
         }
 
-        function setPeer(uint32 eid, bytes32 peer) external;
         function lockTokens(
             address token,
             uint256 amount,
@@ -34,45 +36,44 @@ sol! {
         function lockedBalances(address token, address user) external view returns (uint256);
     }
 
-    /// LayerZero EndpointV2Mock interface
-    #[sol(rpc)]
-    interface IEndpointV2Mock {
-        struct Origin {
-            uint32 srcEid;
-            bytes32 sender;
-            uint64 nonce;
-        }
-
-        event PacketSent(bytes encodedPayload, bytes options, address sendLibrary);
-
-        function verify(Origin calldata origin, address receiver, bytes32 payloadHash) external;
-        function lzReceive(
-            Origin calldata origin,
-            address receiver,
-            bytes32 guid,
-            bytes calldata message,
-            bytes calldata extraData
-        ) external payable;
-
-        function registerLibrary(address _lib) external;
-        function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
-        function setDefaultReceiveLibrary(uint32 _eid, address _newLib, uint256 _timeout) external;
-    }
-
     /// LayerZero MessageLibManager interface
     #[sol(rpc)]
     interface IMessageLibManager {
         function defaultReceiveLibrary(uint32 _eid) external view returns (address);
+        function setConfig(address _oapp, address _lib, SetConfigParam[] calldata _params) external;
     }
 
-    /// LayerZero packet structure
-    struct Packet {
-        uint64 nonce;
-        uint32 srcEid;
-        address sender;
-        uint32 dstEid;
-        bytes32 receiver;
-        bytes32 guid;
-        bytes message;
+    /// SetConfigParam struct for LayerZero configuration
+    struct SetConfigParam {
+        uint32 eid;
+        uint32 configType;
+        bytes config;
     }
+
+    /// OApp interface for LayerZero applications
+    #[sol(rpc)]
+    interface IOApp {
+        function setPeer(uint32 eid, bytes32 peer) external;
+    }
+
+    /// IReceiveUlnE2 interface for LayerZero ULN verification
+    #[sol(rpc)]
+    interface IReceiveUlnE2 {
+        /// For each DVN to verify the payload
+        function verify(bytes calldata _packetHeader, bytes32 _payloadHash, uint64 _confirmations) external;
+
+        /// Verify the payload at endpoint, will check if all DVNs verified
+        function commitVerification(bytes calldata _packetHeader, bytes32 _payloadHash) external;
+    }
+
+    // ULN config structure
+    struct UlnConfig {
+        uint64 confirmations;
+        uint8 requiredDVNCount;
+        uint8 optionalDVNCount;
+        uint8 optionalDVNThreshold;
+        address[] requiredDVNs;
+        address[] optionalDVNs;
+    }
+
 }

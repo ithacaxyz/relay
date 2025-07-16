@@ -12,22 +12,28 @@
 //! - **Message Delivery**: Executes lzReceive on destination endpoints
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
-use super::{
-    interfaces::{IEndpointV2Mock, Packet},
-    utils::{bytes32_to_address, create_origin, deliver_layerzero_message},
-};
+use super::utils::{bytes32_to_address, create_origin, deliver_layerzero_message};
 use alloy::{
-    primitives::{Address, B256, Bytes},
+    primitives::{Address, B256},
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
     rpc::types::{Filter, Log},
     sol_types::SolEvent,
 };
 use eyre::Result;
 use parking_lot::Mutex;
-use std::{collections::HashSet, sync::Arc};
+use relay::interop::settler::layerzero::{
+    contracts::ILayerZeroEndpointV2, types::LayerZeroPacketV1,
+};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tokio::task::JoinHandle;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChainEndpoint {
     /// Index matching Environment.providers position
     pub chain_index: usize,
@@ -35,14 +41,26 @@ pub struct ChainEndpoint {
     pub eid: u32,
 }
 
-pub struct LayerZeroRelayer {
+struct LayerZeroRelayerInner {
     endpoints: Vec<ChainEndpoint>,
     providers: Vec<DynProvider>,
-    delivered_guids: Arc<Mutex<HashSet<B256>>>,
+    escrows: Vec<Address>,
+    delivered_guids: Mutex<HashSet<B256>>,
+    messages_seen: AtomicUsize,
+    transactions_sent: AtomicUsize,
+}
+
+#[derive(Clone)]
+pub struct LayerZeroRelayer {
+    inner: Arc<LayerZeroRelayerInner>,
 }
 
 impl LayerZeroRelayer {
-    pub async fn new(endpoints: Vec<ChainEndpoint>, rpc_urls: Vec<String>) -> Result<Self> {
+    pub async fn new(
+        endpoints: Vec<ChainEndpoint>,
+        rpc_urls: Vec<String>,
+        escrows: Vec<Address>,
+    ) -> Result<Self> {
         // Build WebSocket providers that can handle both subscriptions and regular calls
         // Note: Provider order must match chain_index in endpoints
         let providers = futures_util::future::try_join_all(rpc_urls.iter().map(async |url| {
@@ -52,14 +70,23 @@ impl LayerZeroRelayer {
         }))
         .await?;
 
-        Ok(Self { endpoints, providers, delivered_guids: Arc::new(Mutex::new(HashSet::new())) })
+        Ok(Self {
+            inner: Arc::new(LayerZeroRelayerInner {
+                endpoints,
+                providers,
+                escrows,
+                delivered_guids: Mutex::new(HashSet::new()),
+                messages_seen: AtomicUsize::new(0),
+                transactions_sent: AtomicUsize::new(0),
+            }),
+        })
     }
 
     /// Starts monitoring tasks for all configured chains
-    pub async fn start(self: Arc<Self>) -> Result<Vec<JoinHandle<Result<()>>>> {
-        let mut handles = Vec::with_capacity(self.endpoints.len());
+    pub async fn start(self) -> Result<Vec<JoinHandle<Result<()>>>> {
+        let mut handles = Vec::with_capacity(self.inner.endpoints.len());
 
-        for endpoint in self.endpoints.iter().cloned() {
+        for endpoint in self.inner.endpoints.iter().cloned() {
             let relayer = self.clone();
             let chain_index = endpoint.chain_index;
             let handle = tokio::spawn(async move {
@@ -80,11 +107,11 @@ impl LayerZeroRelayer {
     /// Subscribes to the endpoint's PacketSent events and processes
     /// each one by delivering it to the appropriate destination.
     async fn monitor_chain(&self, chain_endpoint: ChainEndpoint) -> Result<()> {
-        let provider = &self.providers[chain_endpoint.chain_index];
+        let provider = &self.inner.providers[chain_endpoint.chain_index];
 
         let filter = Filter::new()
             .address(chain_endpoint.endpoint)
-            .event_signature(IEndpointV2Mock::PacketSent::SIGNATURE_HASH);
+            .event_signature(ILayerZeroEndpointV2::PacketSent::SIGNATURE_HASH);
 
         let mut stream = provider.subscribe_logs(&filter).await?;
 
@@ -102,8 +129,11 @@ impl LayerZeroRelayer {
 
     /// Handles a PacketSent event by decoding and delivering the message
     async fn handle_packet_sent(&self, log: Log) -> Result<()> {
-        let event = IEndpointV2Mock::PacketSent::decode_log(&log.inner)?;
-        let packet = self.decode_packet(&event.encodedPayload)?;
+        let event = ILayerZeroEndpointV2::PacketSent::decode_log(&log.inner)?;
+        let packet = LayerZeroPacketV1::decode(&event.encodedPayload).unwrap();
+
+        // Increment messages seen counter
+        self.inner.messages_seen.fetch_add(1, Ordering::Relaxed);
 
         // Check if already delivered
         if !self.mark_as_delivered(packet.guid) {
@@ -111,84 +141,55 @@ impl LayerZeroRelayer {
         }
 
         let dst_endpoint = self
+            .inner
             .endpoints
             .iter()
-            .find(|e| e.eid == packet.dstEid)
-            .ok_or_else(|| eyre::eyre!("Unknown destination eid: {}", packet.dstEid))?;
+            .find(|e| e.eid == packet.dst_eid)
+            .ok_or_else(|| eyre::eyre!("Unknown destination eid: {}", packet.dst_eid))?;
 
         self.deliver_message(dst_endpoint, packet).await
     }
 
     /// Marks a GUID as delivered, returns true if it's new
     fn mark_as_delivered(&self, guid: B256) -> bool {
-        let mut delivered = self.delivered_guids.lock();
+        let mut delivered = self.inner.delivered_guids.lock();
         delivered.insert(guid)
     }
 
     /// Delivers a message to the destination chain
-    async fn deliver_message(&self, dst_endpoint: &ChainEndpoint, packet: Packet) -> Result<()> {
-        deliver_layerzero_message(
-            &self.providers[dst_endpoint.chain_index],
+    async fn deliver_message(
+        &self,
+        dst_endpoint: &ChainEndpoint,
+        packet: LayerZeroPacketV1,
+    ) -> Result<()> {
+        let result = deliver_layerzero_message(
+            &self.inner.providers[dst_endpoint.chain_index],
             dst_endpoint.endpoint,
-            packet.srcEid,
-            &create_origin(packet.srcEid, packet.sender, packet.nonce),
+            packet.src_eid,
+            packet.dst_eid,
+            &create_origin(packet.src_eid, bytes32_to_address(&packet.sender), packet.nonce),
             bytes32_to_address(&packet.receiver),
             packet.guid,
-            packet.message,
+            packet.message.clone().into(),
+            &self.inner.escrows,
         )
-        .await
-    }
+        .await;
 
-    /// Decodes a LayerZero packet from encoded bytes
-    fn decode_packet(&self, encoded: &Bytes) -> Result<Packet> {
-        // PacketV1Codec field offsets
-        const OFFSETS: PacketOffsets = PacketOffsets {
-            version: 0,
-            nonce: 1,
-            src_eid: 9,
-            sender: 13,
-            dst_eid: 45,
-            receiver: 49,
-            guid: 81,
-            message: 113,
-        };
-
-        let data = encoded.as_ref();
-
-        if data.len() < OFFSETS.message {
-            return Err(eyre::eyre!(
-                "Encoded packet too short: {} bytes, need at least {}",
-                data.len(),
-                OFFSETS.message
-            ));
+        // Increment transactions sent counter on success
+        if result.is_ok() {
+            self.inner.transactions_sent.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Verify packet version
-        let version = data[OFFSETS.version];
-        if version != 1 {
-            return Err(eyre::eyre!("Unsupported packet version: {}", version));
-        }
-
-        Ok(Packet {
-            nonce: u64::from_be_bytes(data[OFFSETS.nonce..OFFSETS.src_eid].try_into()?),
-            srcEid: u32::from_be_bytes(data[OFFSETS.src_eid..OFFSETS.sender].try_into()?),
-            sender: bytes32_to_address(&B256::from_slice(&data[OFFSETS.sender..OFFSETS.dst_eid])),
-            dstEid: u32::from_be_bytes(data[OFFSETS.dst_eid..OFFSETS.receiver].try_into()?),
-            receiver: B256::from_slice(&data[OFFSETS.receiver..OFFSETS.guid]),
-            guid: B256::from_slice(&data[OFFSETS.guid..OFFSETS.message]),
-            message: Bytes::from(data[OFFSETS.message..].to_vec()),
-        })
+        result
     }
-}
 
-/// Packet field offsets for decoding
-struct PacketOffsets {
-    version: usize,
-    nonce: usize,
-    src_eid: usize,
-    sender: usize,
-    dst_eid: usize,
-    receiver: usize,
-    guid: usize,
-    message: usize,
+    /// Gets the number of messages seen by the relayer
+    pub fn messages_seen(&self) -> usize {
+        self.inner.messages_seen.load(Ordering::Relaxed)
+    }
+
+    /// Gets the number of transactions sent by the relayer
+    pub fn transactions_sent(&self) -> usize {
+        self.inner.transactions_sent.load(Ordering::Relaxed)
+    }
 }

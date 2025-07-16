@@ -34,6 +34,8 @@ pub enum RelayTransactionKind {
         quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
         authorization: Option<SignedAuthorization>,
+        /// The EIP-712 digest of the intent.
+        eip712_digest: B256,
     },
     /// An arbitrary internal relay transaction for maintenance purposes.
     Internal {
@@ -45,6 +47,8 @@ pub enum RelayTransactionKind {
         chain_id: ChainId,
         /// Gas limit of the transaction.
         gas_limit: u64,
+        /// Value to send with the transaction.
+        value: U256,
     },
 }
 
@@ -75,10 +79,18 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(quote: Quote, authorization: Option<SignedAuthorization>) -> Self {
+    pub fn new(
+        quote: Quote,
+        authorization: Option<SignedAuthorization>,
+        eip712_digest: B256,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
-            kind: RelayTransactionKind::Intent { quote: Box::new(quote), authorization },
+            kind: RelayTransactionKind::Intent {
+                quote: Box::new(quote),
+                authorization,
+                eip712_digest,
+            },
             trace_context: Context::current(),
             received_at: Utc::now(),
         }
@@ -91,6 +103,17 @@ impl RelayTransaction {
         chain_id: ChainId,
         gas_limit: u64,
     ) -> Self {
+        Self::new_internal_with_value(kind, input, chain_id, gas_limit, U256::ZERO)
+    }
+
+    /// Create a new [`RelayTransaction`] for an internal transaction with a value.
+    pub fn new_internal_with_value(
+        kind: impl Into<TxKind>,
+        input: impl Into<Bytes>,
+        chain_id: ChainId,
+        gas_limit: u64,
+        value: U256,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
             kind: RelayTransactionKind::Internal {
@@ -98,6 +121,7 @@ impl RelayTransaction {
                 input: input.into(),
                 chain_id,
                 gas_limit,
+                value,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),
@@ -155,18 +179,20 @@ impl RelayTransaction {
                     .into()
                 }
             }
-            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit } => TxEip1559 {
-                chain_id: *chain_id,
-                nonce,
-                to: *kind,
-                input: input.clone(),
-                gas_limit: *gas_limit,
-                max_fee_per_gas: fees.max_fee_per_gas,
-                max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                value: U256::ZERO,
-                access_list: Default::default(),
+            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit, value } => {
+                TxEip1559 {
+                    chain_id: *chain_id,
+                    nonce,
+                    to: *kind,
+                    input: input.clone(),
+                    gas_limit: *gas_limit,
+                    max_fee_per_gas: fees.max_fee_per_gas,
+                    max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+                    value: *value,
+                    access_list: Default::default(),
+                }
+                .into()
             }
-            .into(),
         }
     }
 
@@ -196,6 +222,15 @@ impl RelayTransaction {
     /// Returns the [`Quote`] of the transaction, if it's a [`RelayTransactionKind::Intent`].
     pub fn quote(&self) -> Option<&Quote> {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind { Some(quote) } else { None }
+    }
+
+    /// Returns the EIP-712 digest of the transaction, if it's a [`RelayTransactionKind::Intent`].
+    pub fn eip712_digest(&self) -> Option<B256> {
+        if let RelayTransactionKind::Intent { eip712_digest, .. } = &self.kind {
+            Some(*eip712_digest)
+        } else {
+            None
+        }
     }
 
     /// Whether the transaction is an intent.

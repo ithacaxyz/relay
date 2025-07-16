@@ -52,7 +52,7 @@ pub struct Chains {
     /// The providers for each chain.
     chains: HashMap<ChainId, Chain>,
     /// Handle to the interop service.
-    interop: InteropServiceHandle,
+    interop: Option<InteropServiceHandle>,
 }
 
 impl Chains {
@@ -137,14 +137,19 @@ impl Chains {
             tokio::spawn(service.into_future().await?);
         }
 
-        // Create and spawn the interop service
-        let (interop_service, interop_handle) =
-            InteropService::new(tx_handles, liquidity_tracker.clone(), config.interop.clone())
-                .await?;
+        // Create and spawn the interop service if configured
+        let interop = if let Some(interop_config) = &config.interop {
+            let (interop_service, interop_handle) =
+                InteropService::new(tx_handles, liquidity_tracker.clone(), interop_config.clone())
+                    .await?;
 
-        tokio::spawn(interop_service);
+            tokio::spawn(interop_service);
+            Some(interop_handle)
+        } else {
+            None
+        };
 
-        Ok(Self { chains, interop: interop_handle })
+        Ok(Self { chains, interop })
     }
 
     /// Get a provider for a given chain ID.
@@ -163,8 +168,8 @@ impl Chains {
     }
 
     /// Get the interop service handle.
-    pub fn interop(&self) -> &InteropServiceHandle {
-        &self.interop
+    pub fn interop(&self) -> Option<&InteropServiceHandle> {
+        self.interop.as_ref()
     }
 }
 

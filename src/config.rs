@@ -1,22 +1,27 @@
 //! Relay configuration.
 use crate::{
-    constants::{
-        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, ESCROW_REFUND_DURATION_SECS,
-        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+    constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
+    interop::{
+        LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler,
+        settler::layerzero::EndpointId,
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
+    storage::RelayStorage,
 };
 use alloy::{
-    primitives::Address,
-    providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-    signers::local::coins_bip39::{English, Mnemonic},
+    primitives::{Address, ChainId, map::HashMap},
+    providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
+    signers::local::{
+        PrivateKeySigner,
+        coins_bip39::{English, Mnemonic},
+    },
 };
 use alloy_chains::Chain;
 use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
@@ -40,8 +45,8 @@ pub struct RelayConfig {
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
     /// Interop configuration.
-    #[serde(default)]
-    pub interop: InteropConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interop: Option<InteropConfig>,
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
@@ -56,8 +61,6 @@ pub struct RelayConfig {
     pub funder: Address,
     /// Escrow address.
     pub escrow: Address,
-    /// Settler address.
-    pub settler: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -218,15 +221,8 @@ pub struct InteropConfig {
     pub refund_check_interval: Duration,
     /// Time threshold in seconds before refunds can be processed for escrows.
     pub escrow_refund_threshold: u64,
-}
-
-impl Default for InteropConfig {
-    fn default() -> Self {
-        Self {
-            refund_check_interval: Duration::from_secs(60),
-            escrow_refund_threshold: ESCROW_REFUND_DURATION_SECS,
-        }
-    }
+    /// Settler configuration.
+    pub settler: SettlerConfig,
 }
 
 /// Configuration for the rebalance service.
@@ -241,6 +237,102 @@ pub struct RebalanceServiceConfig {
     /// The private key of the funder account owner. Required for pulling funds from the funders.
     #[serde(default)]
     pub funder_owner_key: String,
+}
+
+/// Configuration for the settler service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettlerConfig {
+    /// Settler implementation configuration.
+    #[serde(flatten)]
+    pub implementation: SettlerImplementation,
+    /// Timeout for waiting for settlement verification.
+    #[serde(with = "crate::serde::duration")]
+    pub wait_verification_timeout: Duration,
+}
+
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
+}
+
+impl SettlerConfig {
+    /// Creates a settlement processor from this configuration.
+    pub fn settlement_processor(
+        &self,
+        storage: RelayStorage,
+        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SettlementProcessor> {
+        // Create the settler based on config
+        let settler: Box<dyn Settler> = match &self.implementation {
+            SettlerImplementation::LayerZero(config) => {
+                Box::new(config.create_settler(providers, storage.clone()))
+            }
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
+        };
+
+        Ok(SettlementProcessor::new(settler))
+    }
+}
+
+/// Simple settler configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleSettlerConfig {
+    /// The address of the simple settler contract.
+    pub settler_address: Address,
+    /// Private key for signing settlement write operations.
+    pub private_key: String,
+}
+
+impl SimpleSettlerConfig {
+    /// Creates a new simple settler instance.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SimpleSettler> {
+        let signer = self
+            .private_key
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+        Ok(SimpleSettler::new(self.settler_address, signer, providers))
+    }
+}
+
+/// LayerZero configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerZeroConfig {
+    /// Mapping of chain ID to LayerZero endpoint ID.
+    /// Format: { chain_id: endpoint_id }
+    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_ids: HashMap<ChainId, EndpointId>,
+    /// Mapping of chain ID to LayerZero endpoint address.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_addresses: HashMap<ChainId, Address>,
+    /// LayerZero settler contract address.
+    pub settler_address: Address,
+}
+
+impl LayerZeroConfig {
+    /// Creates a new LayerZero settler instance with the given providers and storage.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+        storage: RelayStorage,
+    ) -> LayerZeroSettler {
+        LayerZeroSettler::new(
+            self.endpoint_ids.clone().into_iter().collect(),
+            self.endpoint_addresses.clone().into_iter().collect(),
+            providers,
+            self.settler_address,
+            storage,
+        )
+    }
 }
 
 /// Configuration for transaction service.
@@ -281,7 +373,7 @@ impl Default for TransactionServiceConfig {
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
             max_queued_per_eoa: 1,
-            public_node_endpoints: HashMap::new(),
+            public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
         }
     }
@@ -298,7 +390,7 @@ impl Default for RelayConfig {
             },
             chain: ChainConfig {
                 endpoints: vec![],
-                sequencer_endpoints: HashMap::new(),
+                sequencer_endpoints: HashMap::default(),
                 fee_tokens: vec![],
                 interop_tokens: vec![],
                 fee_recipient: Address::ZERO,
@@ -313,7 +405,7 @@ impl Default for RelayConfig {
             onramp: OnrampConfig::default(),
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
-            interop: InteropConfig::default(),
+            interop: None,
             legacy_orchestrators: BTreeSet::new(),
             legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
@@ -321,7 +413,6 @@ impl Default for RelayConfig {
             simulator: Address::ZERO,
             funder: Address::ZERO,
             escrow: Address::ZERO,
-            settler: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -477,14 +568,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the settler address.
-    pub fn with_settler(mut self, settler: Option<Address>) -> Self {
-        if let Some(settler) = settler {
-            self.settler = settler;
-        }
-        self
-    }
-
     /// Sets the database URL.
     pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
         self.database_url = database_url;
@@ -553,7 +636,7 @@ impl RelayConfig {
 
     /// Sets the interop configuration.
     pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
-        self.interop = interop_config;
+        self.interop = Some(interop_config);
         self
     }
 

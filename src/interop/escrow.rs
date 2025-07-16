@@ -4,6 +4,15 @@ use crate::types::Escrow;
 use alloy::primitives::{Address, B256, ChainId};
 use serde::{Deserialize, Serialize};
 
+/// Information about escrows for a specific chain and settlement.
+#[derive(Debug, Clone)]
+pub struct EscrowInfo {
+    /// The escrow IDs associated with the settlement on this chain
+    pub escrow_ids: Vec<B256>,
+    /// The escrow contract address on this chain
+    pub escrow_address: Address,
+}
+
 /// Details of an escrow including metadata for tracking
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EscrowDetails {

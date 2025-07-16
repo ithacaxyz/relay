@@ -76,3 +76,6 @@ pub use escrow::*;
 
 mod funder;
 pub use funder::*;
+
+mod multicall;
+pub use multicall::*;

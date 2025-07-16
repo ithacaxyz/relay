@@ -134,6 +134,6 @@ impl MockAccount {
         .abi_encode_packed()
         .into();
 
-        RelayTransaction::new(quote, None)
+        RelayTransaction::new(quote, None, digest)
     }
 }
