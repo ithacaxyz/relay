@@ -181,4 +181,4 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 unused_must_use = "deny"
 
 [workspace]
-members = ["tools/*"]
+members = ["tools/xtask"]
