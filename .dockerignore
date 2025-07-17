@@ -11,6 +11,7 @@
 !deny.toml
 !Makefile
 !build.rs
+!/tools
 
 # include for vergen constants
 !/.git
