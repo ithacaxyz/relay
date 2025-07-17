@@ -58,7 +58,6 @@ interop:
     wait_verification_timeout: 600
     simple:
       settler_address: "0x1486b5677f2628cebe89b45265ca274fb2c3bacd"
-      private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
 email:
   portoBaseUrl: "dev.id.porto.sh"
 registry:
