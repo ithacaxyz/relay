@@ -41,3 +41,17 @@ impl AssetType {
         matches!(self, Self::ERC721)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serde_asset_type() {
+        let kind = AssetType::ERC20;
+        let value = serde_json::to_string(&kind).unwrap();
+        assert_eq!("\"erc20\"", value);
+        let kind = serde_json::from_str::<AssetType>(&value).unwrap();
+        assert_eq!(kind, AssetType::ERC20);
+    }
+}
