@@ -392,8 +392,7 @@ impl Relay {
         // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
         // reverting with a payment failure if the fee market shifts.
         let simulated_payment_per_gas =
-            if let IntentKind::MultiInput { fee: Some((_, amount)), .. } = context.intent_kind
-            {
+            if let IntentKind::MultiInput { fee: Some((_, amount)), .. } = context.intent_kind {
                 intent_to_sign.set_legacy_payment_amount(amount);
                 0.0
             } else {
@@ -1080,7 +1079,8 @@ impl Relay {
                 amount: U256::from(1),
                 // todo: map the requested asset here
                 fee_token: requested_asset.address(),
-                // note(onbjerg): it doesn't matter what the output intent digest is for simulation, as long as it's not zero. otherwise, the gas costs will differ a lot.
+                // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
+                // as long as it's not zero. otherwise, the gas costs will differ a lot.
                 output_intent_digest: B256::with_last_byte(1),
                 output_chain_id: destination_chain_id,
             };
