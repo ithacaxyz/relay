@@ -1462,7 +1462,7 @@ mod tests {
                 settler: SettlerConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
                         settler_address: Address::ZERO,
-                        private_key: B256::random().to_string(),
+                        private_key: Some(B256::random().to_string()),
                     }),
                     wait_verification_timeout: Duration::from_secs(1),
                 },
