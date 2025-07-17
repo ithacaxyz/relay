@@ -144,7 +144,6 @@ pub struct BalanceOverride {
     /// Currently this only supports ERC20, so it should be validated that this is equal to ERC20.
     kind: TokenKind,
     /// The balances to override.
-    #[serde(flatten)]
     balances: HashMap<Address, U256>,
 }
 
