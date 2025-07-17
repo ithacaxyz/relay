@@ -670,6 +670,18 @@ impl RelayConfig {
         self
     }
 
+    /// Set the simple settler owner key if interop is already configured for simple settler.
+    pub fn with_simple_settler_owner_key(mut self, settler_owner_key: Option<String>) -> Self {
+        let Some(pk) = settler_owner_key else { return self };
+
+        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler) {
+            if let SettlerImplementation::Simple(conf) = &mut conf.implementation {
+                conf.private_key = pk;
+            }
+        }
+        self
+    }
+
     /// Load from a YAML file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
         let path = path.as_ref();
