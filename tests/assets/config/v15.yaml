@@ -41,23 +41,21 @@ transactions:
   priority_fee_percentile: 20
 
 # Contract addresses
-orchestrator:
-legacy_orchestrators:
-legacy_delegation_proxies:
-delegation_proxy:
-simulator:
-escrow:
-funder:
-
+orchestrator: "0xfefc610254ffedd5f87b83d3ec87449dbd34c952"
+legacy_orchestrators: []
+legacy_delegation_proxies: []
+delegation_proxy: "0xb674bce35ab68fa003a4b0b95ec2b0aa8c779c3d"
+simulator: "0x9220dc2c789f2e52a7a5adae99cb1706213d42f4"
+escrow: "0xab0775f9f3dc69a348d3843fa55e870503e1b50e"
+funder: "0xb55fb21a7e8aa8b722d230d4d7155a8f14115468"
 # Interop configuration
 interop:
-  # Refund monitoring settings
-  refund_check_interval: 60
-  escrow_refund_threshold: 300
-  # Simple settler for devnet
-  settler:
-    simple:
-      settler_address:
+# Refund monitoring settings
+relay:
+     # Simple settler for devnet
+     settler:
+       simple:
+         settler_address: "0x4e01e794d096a05ce35a8cc9ff5e1f6e8af9ba6f"
 email:
   portoBaseUrl: "dev.id.porto.sh"
 registry:
