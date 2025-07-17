@@ -38,6 +38,7 @@ pub struct RelayConfig {
     /// Quote configuration.
     pub quote: QuoteConfig,
     /// Onramp configuration.
+    #[serde(default)]
     pub onramp: OnrampConfig,
     /// Email configuration.
     #[serde(default)]
@@ -148,6 +149,7 @@ impl QuoteConfig {
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
     /// Banxa API configuration.
+    #[serde(default)]
     pub banxa: BanxaConfig,
 }
 
@@ -697,5 +699,16 @@ impl RelayConfig {
         let content = serde_yaml::to_string(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_v15_yaml() {
+        let s = include_str!("../tests/assets/config/v15.yaml");
+        let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
     }
 }

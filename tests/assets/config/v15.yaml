@@ -1,0 +1,133 @@
+server:
+  address: 0.0.0.0
+  port: 9119
+  metrics_port: 9000
+  max_connections: 5000
+chain:
+  endpoints:
+    - http://op-reth-sequencer.porto-dev-leros.svc.cluster.local:8545/
+    - http://op-reth-sequencer.porto-dev-paros.svc.cluster.local:8545/
+    - http://op-reth-sequencer.porto-dev-tinos.svc.cluster.local:8545/
+  interop_tokens:
+    - 0xaf3b0a5b4becc4fa1dfafe74580efa19a2ea49fa # exp
+    - 0x88238d346cfb2391203f4f33b90f5ecce22b4165 # exp2
+  sequencer_endpoints:
+    base-sepolia: https://sepolia-sequencer.base.org/
+    base: https://mainnet-sequencer.base.org/
+  fee_tokens:
+    - 0xaf3b0a5b4becc4fa1dfafe74580efa19a2ea49fa # exp
+    - 0x88238d346cfb2391203f4f33b90f5ecce22b4165 # exp2
+    - "0x0000000000000000000000000000000000000000"
+  # deployment address
+  fee_recipient: "0x409213829cbBCa9BC84ecc79Dc606B6929Aec463"
+quote:
+  constantRate: null
+  gas:
+    intentBuffer: 100000
+    txBuffer: 100000
+  ttl: 30
+  rateTtl: 300
+transactions:
+  num_signers: 10
+  max_pending_transactions: 100
+  max_transactions_per_signer: 16
+  max_queued_per_eoa: 1
+  balance_check_interval: 5
+  nonce_check_interval: 60
+  transaction_timeout: 60
+  public_node_endpoints:
+    base-sepolia: https://sepolia.base.org/
+    base: https://mainnet.base.org/
+  priority_fee_percentile: 20
+
+# Contract addresses
+orchestrator: "0xfefc610254ffedd5f87b83d3ec87449dbd34c952"
+legacy_orchestrators: []
+legacy_delegation_proxies: []
+delegation_proxy: "0xb674bce35ab68fa003a4b0b95ec2b0aa8c779c3d"
+simulator: "0x9220dc2c789f2e52a7a5adae99cb1706213d42f4"
+escrow: "0xab0775f9f3dc69a348d3843fa55e870503e1b50e"
+funder: "0xb55fb21a7e8aa8b722d230d4d7155a8f14115468"
+# Interop configuration
+interop:
+  # Refund monitoring settings
+  refund_check_interval: 60
+  escrow_refund_threshold: 300
+  # Simple settler for devnet
+  settler:
+    wait_verification_timeout: 600
+    simple:
+      settler_address: "0x1486b5677f2628cebe89b45265ca274fb2c3bacd"
+      private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
+email:
+  portoBaseUrl: "dev.id.porto.sh"
+registry:
+  # odyssey devnet
+  28403:
+    - kind: "ETH"
+    - address: "0x541a5505620A658932e326D0dC996C460f5AcBE1"
+      kind: "USDT"
+    - address: "0x0Ee2d43FcaAF97e22E6Bfade9C7a9Cfcca309f25"
+      kind: "USDT"
+  # porto-dev
+  28404:
+    - kind: "ETH"
+    - address: "0x97870b32890d3f1f089489a29007863a5678089d"
+      kind: "USDT"
+    - address: "0x3a16de445711b203e472d1a04ac93ef7875cdf18"
+      kind: "USDT"
+  # porto-dev-paros
+  28405:
+    - kind: "ETH"
+    - address: "0x97870b32890d3f1f089489a29007863a5678089d"
+      kind: "USDT"
+    - address: "0x3a16de445711b203e472d1a04ac93ef7875cdf18"
+      kind: "USDT"
+  # porto-dev-tinos
+  28406:
+    - kind: "ETH"
+    - address: "0x97870b32890d3f1f089489a29007863a5678089d"
+      kind: "USDT"
+    - address: "0x3a16de445711b203e472d1a04ac93ef7875cdf18"
+      kind: "USDT"
+  # porto-dev-leros
+  28407:
+    - kind: "ETH"
+    - address: "0x97870b32890d3f1f089489a29007863a5678089d"
+      kind: "USDT"
+    - address: "0x3a16de445711b203e472d1a04ac93ef7875cdf18"
+      kind: "USDT"
+  # odyssey
+  911867:
+    - kind: "ETH"
+    - address: "0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c"
+      kind: "USDT"
+    - address: "0x238c8cd93ee9f8c7edf395548ef60c0d2e46665e"
+      kind: "USDT"
+  # base
+  8453:
+    - kind: "ETH"
+    - address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+      kind: "USDC"
+  # base sepolia
+  84532:
+    - kind: "ETH"
+    - address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+      kind: "USDC"
+    # symbol "USDT" signals that relay needs to get a price feed from USDT for this token
+    - address: "0x29f45fc3ed1d0ffafb5e2af9cc6c3ab1555cd5a2"
+      kind: "USDT"
+    - address: "0x62a9d6de963a5590f6fba5119e937f167677bfe7"
+      kind: "USDT"
+  # op mainnet
+  10:
+    - kind: "ETH"
+    - address: "0xdac17f958d2ee523a2206206994597c13d831ec7"
+      kind: "USDT"
+  # eth mainnet
+  1:
+    - kind: "ETH"
+    - address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+      kind: "USDC"
+    - address: "0xdac17f958d2ee523a2206206994597c13d831ec7"
+      kind: "USDT"
