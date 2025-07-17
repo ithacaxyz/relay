@@ -391,8 +391,14 @@ impl Relay {
         //
         // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
         // reverting with a payment failure if the fee market shifts.
-        let compute_fee =
-            !matches!(context.intent_kind, IntentKind::MultiInput { fee: Some(_), .. });
+        let simulated_payment_per_gas =
+            if let IntentKind::MultiInput { fee: Some((_, amount)), .. } = context.intent_kind
+            {
+                intent_to_sign.set_legacy_payment_amount(amount);
+                0.0
+            } else {
+                payment_per_gas
+            };
 
         // todo: simulate with executeMultiChain if intent.is_multichain
         let (asset_diff, sim_result) = orchestrator
@@ -400,7 +406,7 @@ impl Relay {
                 self.simulator(),
                 &intent_to_sign,
                 context.account_key.keyType,
-                if compute_fee { payment_per_gas } else { 0. },
+                simulated_payment_per_gas,
                 self.inner.asset_info.clone(),
             )
             .await?;
@@ -419,15 +425,10 @@ impl Relay {
         intent_to_sign.signature = bytes!("");
         intent_to_sign.funderSignature = bytes!("");
 
-        if let IntentKind::MultiInput { fee: Some((_, amount)), .. } = context.intent_kind {
-            // If we're here, we already simulated multi input previously and want to reuse that fee
-            // estimate
-            intent_to_sign.set_legacy_payment_amount(amount);
-        } else {
-            // Calculate amount with updated paymentPerGas
+        if !matches!(context.intent_kind, IntentKind::MultiInput { fee: Some((_, _)), .. }) {
             intent_to_sign.set_legacy_payment_amount(
                 extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-            )
+            );
         }
 
         let quote = Quote {
@@ -1079,8 +1080,8 @@ impl Relay {
                 amount: U256::from(1),
                 // todo: map the requested asset here
                 fee_token: requested_asset.address(),
-                // note(onbjerg): it doesn't matter what the output intent digest is for simulation
-                output_intent_digest: B256::default(),
+                // note(onbjerg): it doesn't matter what the output intent digest is for simulation, as long as it's not zero. otherwise, the gas costs will differ a lot.
+                output_intent_digest: B256::with_last_byte(1),
                 output_chain_id: destination_chain_id,
             };
             let escrow_cost = Box::pin(self.prepare_calls_inner(

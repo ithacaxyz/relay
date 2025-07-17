@@ -8,7 +8,7 @@ use alloy::{
     hex,
     network::{EthereumWallet, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, bytes},
+    primitives::{Address, Bytes, TxKind, U256, address, bytes},
     providers::{
         DynProvider, MULTICALL3_ADDRESS, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi,
     },
@@ -526,6 +526,17 @@ impl Environment {
         let relay_endpoint = HttpClientBuilder::default()
             .build(relay_handle.http_url())
             .wrap_err("Failed to build relay client")?;
+
+        // Sets the solady P256 canary to ensure we always use the P256 precompile.
+        try_join_all(providers.iter().map(async |provider| {
+            provider
+                .anvil_set_code(
+                    address!("0x0000000000001Ab2e8006Fd8B71907bf06a5BDEE"),
+                    B256::random().into(),
+                )
+                .await
+        }))
+        .await?;
 
         Ok(Self {
             anvils,
