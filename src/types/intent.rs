@@ -1,9 +1,15 @@
-use super::{Asset, Call, IDelegation::authorizeCall, Key, OrchestratorContract};
-use crate::types::{
-    CallPermission,
-    IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-    Orchestrator,
-    rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+use super::{
+    Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo,
+    OrchestratorContract,
+};
+use crate::{
+    error::{IntentError, MerkleError},
+    types::{
+        CallPermission,
+        IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
+        Orchestrator,
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+    },
 };
 use alloy::{
     dyn_abi::TypedData,
@@ -310,6 +316,47 @@ impl Intent {
             .abi_encode()
             .into()
     }
+
+    /// Adds a mocked merkle signature for fee estimation purposes.
+    ///
+    /// This creates a merkle tree with random leaves except for the current intent's position,
+    /// which uses the actual intent hash. It then signs the merkle root and sets the
+    /// properly formatted merkle signature on the intent.
+    pub async fn with_mock_merkle_signature<S: crate::signers::Eip712PayLoadSigner>(
+        mut self,
+        intent_kind: &IntentKind,
+        orchestrator: Address,
+        provider: &DynProvider,
+        signer: &S,
+    ) -> Result<Self, IntentError> {
+        let leaf_info = intent_kind.merkle_leaf_info()?;
+
+        // Calculate the leaf hash for the current intent
+        let (current_leaf_hash, _) = self
+            .compute_eip712_data(orchestrator, provider)
+            .await
+            .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
+
+        // Create mock leaves for the merkle tree
+        let mut leaves = vec![B256::random(); leaf_info.total];
+        leaves[leaf_info.index] = current_leaf_hash;
+
+        // Build the merkle tree
+        let mut tree =
+            LazyMerkleTree::from_leaves(leaves, leaf_info.total).map_err(IntentError::from)?;
+        let root = tree.root().map_err(IntentError::from)?;
+        let proof = tree.proof(leaf_info.index).map_err(IntentError::from)?;
+
+        // Sign the merkle root (treating it as if it were an intent digest)
+        let signature = signer
+            .sign_payload_hash(root)
+            .await
+            .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
+
+        // Build merkle signature format: (proof, root, signature)
+        self.signature = (proof, root, signature).abi_encode_params().into();
+        Ok(self)
+    }
 }
 
 impl SignedCall {
@@ -498,8 +545,8 @@ pub enum IntentKind {
     },
     /// Input of a multi chain intent.
     MultiInput {
-        /// The leaf index in the merkle tree.
-        leaf_index: usize,
+        /// The merkle leaf information.
+        leaf_info: MerkleLeafInfo,
         /// The fee to pay, if precomputed as `(token address, amount)`. If this is `None`, the
         /// fee will be estimated as normal.
         fee: Option<(Address, U256)>,
@@ -522,18 +569,6 @@ impl IntentKind {
         matches!(self, IntentKind::MultiInput { .. })
     }
 
-    /// Returns the nth leaf if dealing with a multi chain intent.
-    ///
-    /// # Panics
-    /// It will panic if self is of the single intent variant.
-    pub fn leaf_nth(&self) -> usize {
-        match self {
-            IntentKind::Single => panic!("Only multi chain intents have a leaf number."),
-            IntentKind::MultiOutput { leaf_index, .. } => *leaf_index,
-            IntentKind::MultiInput { leaf_index, .. } => *leaf_index,
-        }
-    }
-
     /// Returns the fund transfers if dealing with a multi chain intent.
     pub fn fund_transfers(&self) -> Vec<(Address, U256)> {
         match self {
@@ -547,6 +582,21 @@ impl IntentKind {
         match self {
             IntentKind::MultiOutput { settler_context, .. } => settler_context.clone(),
             _ => Bytes::default(),
+        }
+    }
+
+    /// Returns the merkle leaf information for multichain intents.
+    ///
+    /// Returns an error for single chain intents.
+    pub fn merkle_leaf_info(&self) -> Result<MerkleLeafInfo, IntentError> {
+        match self {
+            IntentKind::MultiOutput { leaf_index, .. } => {
+                Ok(MerkleLeafInfo { total: *leaf_index + 1, index: *leaf_index })
+            }
+            IntentKind::MultiInput { leaf_info, .. } => Ok(*leaf_info),
+            IntentKind::Single => Err(IntentError::from(MerkleError::LeafHashError(
+                "Cannot build merkle tree for single chain intent".to_string(),
+            ))),
         }
     }
 }

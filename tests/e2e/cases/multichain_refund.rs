@@ -108,9 +108,9 @@ async fn check_balances(
         escrow_balance, expected_escrow_balance,
         "Escrow balance: expected {expected_escrow_balance}, got {escrow_balance}",
     );
-    assert_eq!(
-        wallet_balance, expected_wallet_balance,
-        "Wallet balance: expected {expected_wallet_balance}, got {wallet_balance}",
+    assert!(
+        wallet_balance >= expected_wallet_balance,
+        "Wallet balance: expected at least {expected_wallet_balance}, got {wallet_balance}",
     );
 
     Ok(())

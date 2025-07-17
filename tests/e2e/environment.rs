@@ -152,45 +152,51 @@ pub struct SettlementConfig {
 }
 
 /// Set up anvil instances based on configuration
+///
+/// Environment variables:
+/// - `TEST_EXTERNAL_ANVIL_N`: Use an external node for chain N (e.g., TEST_EXTERNAL_ANVIL_0,
+///   TEST_EXTERNAL_ANVIL_1)
+/// - `TEST_EXTERNAL_ANVIL`: Alias for TEST_EXTERNAL_ANVIL_0 (only applies to chain 0)
+///
+/// If both TEST_EXTERNAL_ANVIL_0 and TEST_EXTERNAL_ANVIL are set, TEST_EXTERNAL_ANVIL_0 takes
+/// precedence.
 pub async fn setup_anvil_instances(
     config: &EnvironmentConfig,
 ) -> eyre::Result<(Vec<Option<AnvilInstance>>, Vec<Url>)> {
     let mut anvils = Vec::with_capacity(config.num_chains);
     let mut endpoints = Vec::with_capacity(config.num_chains);
 
-    let external_endpoint = std::env::var("TEST_EXTERNAL_ANVIL").ok();
+    // Check for legacy TEST_EXTERNAL_ANVIL
+    let legacy_external = std::env::var("TEST_EXTERNAL_ANVIL").ok();
 
-    if let Some(endpoint) = &external_endpoint {
-        if config.block_time.is_some() {
-            eyre::bail!("Cannot specify both block time and external anvil node");
-        }
+    for i in 0..config.num_chains {
+        // Check for TEST_EXTERNAL_ANVIL_N
+        let specific_var = format!("TEST_EXTERNAL_ANVIL_{i}");
+        let specific_endpoint = std::env::var(&specific_var).ok();
 
-        if config.num_chains == 1 {
-            // Single chain mode - only use external
+        // For chain 0, fall back to TEST_EXTERNAL_ANVIL if TEST_EXTERNAL_ANVIL_0 not set
+        let (external_endpoint, var_name) = match specific_endpoint {
+            Some(endpoint) => (Some(endpoint), specific_var),
+            None if i == 0 => match legacy_external.clone() {
+                Some(endpoint) => (Some(endpoint), "TEST_EXTERNAL_ANVIL".to_string()),
+                None => (None, String::new()),
+            },
+            None => (None, String::new()),
+        };
+
+        if let Some(endpoint) = external_endpoint {
+            if config.block_time.is_some() {
+                eyre::bail!("Cannot specify both block time and external anvil node");
+            }
+
+            // Use external endpoint
             endpoints.push(
-                Url::from_str(endpoint).wrap_err("Invalid endpoint on $TEST_EXTERNAL_ANVIL")?,
+                Url::from_str(&endpoint).wrap_err(format!("Invalid endpoint on ${var_name}"))?,
             );
-            // Add None to anvils to maintain count
+            // Add None to anvils to indicate external instance
             anvils.push(None);
         } else {
-            // Multi-chain mode - external as first, then spawn n-1 local anvils
-            // Add external as first endpoint
-            endpoints.push(
-                Url::from_str(endpoint).wrap_err("Invalid endpoint on $TEST_EXTERNAL_ANVIL")?,
-            );
-            // Add None to maintain anvils.len() == num_chains
-            anvils.push(None);
-
-            // Spawn n-1 local anvils after the external one
-            for i in 1..config.num_chains {
-                let anvil = spawn_local_anvil(i, config)?;
-                endpoints.push(anvil.ws_endpoint_url());
-                anvils.push(Some(anvil));
-            }
-        }
-    } else {
-        // No external anvil - spawn all local instances
-        for i in 0..config.num_chains {
+            // Spawn local anvil
             let anvil = spawn_local_anvil(i, config)?;
             endpoints.push(anvil.ws_endpoint_url());
             anvils.push(Some(anvil));
@@ -331,7 +337,10 @@ impl Environment {
     /// Sets up the test environment including Anvil, contracts, and the relay service.
     ///
     /// Available environment variables:
-    /// - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
+    /// - `TEST_EXTERNAL_ANVIL`: Use an external node for chain 0 (alias for TEST_EXTERNAL_ANVIL_0).
+    /// - `TEST_EXTERNAL_ANVIL_N`: Use an external node for chain N (e.g., TEST_EXTERNAL_ANVIL_0,
+    ///   TEST_EXTERNAL_ANVIL_1). Note: TEST_EXTERNAL_ANVIL_0 takes precedence over
+    ///   TEST_EXTERNAL_ANVIL if both are set.
     /// - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for inprocess spawned Anvil.
     /// - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
@@ -354,6 +363,14 @@ impl Environment {
     /// ```
     pub async fn setup_with_config(config: EnvironmentConfig) -> eyre::Result<Self> {
         dotenvy::dotenv().ok();
+
+        // Initialize tracing for tests only if RUST_LOG is set
+        if std::env::var("RUST_LOG").is_ok() {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_test_writer()
+                .try_init();
+        }
 
         // Early validation
         if config.num_chains == 0 {

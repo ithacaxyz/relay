@@ -91,13 +91,25 @@ cargo e2e -- --nocapture --test-threads=1
 
 Both approaches support the following environment variables with `.env` support:
 - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
-- `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
-- `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for the Anvil spawned by the test.
+- `TEST_EXTERNAL_ANVIL`: Use an external node for chain 0 instead of spawning Anvil (alias for `TEST_EXTERNAL_ANVIL_0`).
+- `TEST_EXTERNAL_ANVIL_N`: Use an external node for chain N (e.g., `TEST_EXTERNAL_ANVIL_0`, `TEST_EXTERNAL_ANVIL_1`).
+  - Note: `TEST_EXTERNAL_ANVIL_0` takes precedence over `TEST_EXTERNAL_ANVIL` if both are set.
+- `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for locally spawned Anvil instances.
 - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
 - `TEST_ORCHESTRATOR`: Address for Orchestrator contract; deploys a mock if unset.
 - `TEST_PROXY`: Address for proxy contract; deploys a mock if unset.
 - `TEST_ERC20`: Address for the payment ERC20 token; deploys a mock if unset.
 - `TEST_ERC721`: Address for the ERC721 token; deploys a mock if unset.
+
+Example multi-chain test setup:
+```bash
+# Chain 0: External Anvil
+TEST_EXTERNAL_ANVIL_0="http://localhost:8545" \
+# Chain 1: Spawns locally (no external specified)
+# Chain 2: Different external Anvil
+TEST_EXTERNAL_ANVIL_2="http://localhost:8547" \
+cargo test test_multichain
+```
 
 ## Deploying
 

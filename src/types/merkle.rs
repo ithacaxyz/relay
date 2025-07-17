@@ -6,6 +6,15 @@
 use crate::error::MerkleError;
 use alloy::primitives::{B256, keccak256};
 
+/// Information about a leaf in a merkle tree.
+#[derive(Debug, Clone, Copy)]
+pub struct MerkleLeafInfo {
+    /// Total number of leaves in the merkle tree.
+    pub total: usize,
+    /// Index of this leaf in the merkle tree.
+    pub index: usize,
+}
+
 /// Maximum supported tree size to prevent overflow
 #[cfg(target_pointer_width = "64")]
 const MAX_TREE_SIZE: usize = 1 << 30;

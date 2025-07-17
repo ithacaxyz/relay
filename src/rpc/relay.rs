@@ -19,7 +19,7 @@ use crate::{
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
         FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash,
-        KeyType, MULTICHAIN_NONCE_PREFIX,
+        KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -322,6 +322,7 @@ impl Relay {
                 .into_iter()
                 .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
                 .collect(),
+            isMultichain: !context.intent_kind.is_single(),
             ..Default::default()
         };
 
@@ -348,25 +349,38 @@ impl Relay {
 
         intent_to_sign.set_legacy_payment_amount(initial_payment);
 
-        // sign intent
-        let signature = mock_key
-            .sign_typed_data(
-                &intent_to_sign.as_eip712().map_err(RelayError::from)?,
-                &orchestrator
-                    .eip712_domain(intent_to_sign.is_multichain())
-                    .await
-                    .map_err(RelayError::from)?,
-            )
-            .await
-            .map_err(RelayError::from)?;
+        if intent_to_sign.isMultichain {
+            // For multichain intents, add a mocked merkle signature
+            intent_to_sign = intent_to_sign
+                .with_mock_merkle_signature(
+                    &context.intent_kind,
+                    *orchestrator.address(),
+                    &provider,
+                    &mock_key,
+                )
+                .await
+                .map_err(RelayError::from)?;
+        } else {
+            // For single chain intents, sign the intent directly
+            let signature = mock_key
+                .sign_typed_data(
+                    &intent_to_sign.as_eip712().map_err(RelayError::from)?,
+                    &orchestrator
+                        .eip712_domain(intent_to_sign.is_multichain())
+                        .await
+                        .map_err(RelayError::from)?,
+                )
+                .await
+                .map_err(RelayError::from)?;
 
-        intent_to_sign.signature = Signature {
-            innerSignature: signature,
-            keyHash: context.account_key.key_hash(),
-            prehash,
+            intent_to_sign.signature = Signature {
+                innerSignature: signature,
+                keyHash: context.account_key.key_hash(),
+                prehash,
+            }
+            .abi_encode_packed()
+            .into();
         }
-        .abi_encode_packed()
-        .into();
 
         if !intent_to_sign.encodedFundTransfers.is_empty() {
             intent_to_sign.funder = self.inner.contracts.funder.address;
@@ -390,9 +404,6 @@ impl Relay {
                 self.inner.asset_info.clone(),
             )
             .await?;
-
-        // todo: set it before we simulate once we support multichain simulations
-        intent_to_sign.isMultichain = !context.intent_kind.is_single();
 
         // todo: re-evaluate if this is still necessary
         let gas_estimate = GasEstimate::from_combined_gas(
@@ -1010,6 +1021,7 @@ impl Relay {
     ///
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
+    #[expect(clippy::too_many_arguments)]
     async fn source_funds(
         &self,
         eoa: Address,
@@ -1018,6 +1030,7 @@ impl Relay {
         destination_chain_id: ChainId,
         requested_asset: AddressOrNative,
         amount: U256,
+        total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
         let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
         let mut remaining = amount.saturating_sub(existing);
@@ -1073,7 +1086,10 @@ impl Relay {
             let escrow_cost = Box::pin(self.prepare_calls_inner(
                 self.build_funding_intent(funding_context, request_key.clone())?,
                 // note(onbjerg): its ok the leaf isnt correct here for simulation
-                Some(IntentKind::MultiInput { leaf_index: 0, fee: None }),
+                Some(IntentKind::MultiInput {
+                    leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
+                    fee: None,
+                }),
             ))
             .await
             .map_err(RelayError::internal)
@@ -1147,7 +1163,7 @@ impl Relay {
                 calls.clone(),
                 nonce,
                 Some(IntentKind::MultiOutput {
-                    leaf_index: 0,
+                    leaf_index: 1,
                     fund_transfers: vec![(
                         requested_asset,
                         // Deduct funds that already exist on the destination chain.
@@ -1155,7 +1171,7 @@ impl Relay {
                             assets.balance_on_chain(request.chain_id, requested_asset.into()),
                         ),
                     )],
-                    settler_context: Bytes::default(),
+                    settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
             )
             .await?;
@@ -1178,6 +1194,7 @@ impl Relay {
                     } else {
                         U256::ZERO
                     },
+                2, // when it's at least one funding chain and one output/intent chain
             )
             .await?
         else {
@@ -1260,6 +1277,7 @@ impl Relay {
                         } else {
                             U256::ZERO
                         },
+                    funding_chains.len() + 1,
                 )
                 .await?
             {
@@ -1283,7 +1301,7 @@ impl Relay {
                         self.simulate_funding_intent(
                             eoa,
                             request_key.clone(),
-                            leaf_index,
+                            MerkleLeafInfo { total: funding_chains.len() + 1, index: leaf_index },
                             source,
                             output_intent_digest,
                             request.chain_id,
@@ -1337,7 +1355,7 @@ impl Relay {
         &self,
         eoa: Address,
         request_key: CallKey,
-        leaf_index: usize,
+        leaf_info: MerkleLeafInfo,
         source: &FundSource,
         output_intent_digest: B256,
         output_chain_id: ChainId,
@@ -1356,7 +1374,7 @@ impl Relay {
         self.prepare_calls_inner(
             self.build_funding_intent(funding_context, request_key)?,
             Some(IntentKind::MultiInput {
-                leaf_index,
+                leaf_info,
                 // we override the fees here to avoid re-estimating. if we
                 // re-estimate, we might end up with
                 // a higher fee, which will invalidate the entire call.
