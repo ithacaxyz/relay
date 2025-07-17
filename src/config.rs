@@ -27,6 +27,7 @@ use std::{
     str::FromStr,
     time::Duration,
 };
+use tracing::warn;
 
 /// Relay configuration.
 #[derive(Debug, Serialize, Deserialize)]
@@ -285,7 +286,8 @@ pub struct SimpleSettlerConfig {
     /// The address of the simple settler contract.
     pub settler_address: Address,
     /// Private key for signing settlement write operations.
-    pub private_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
 }
 
 impl SimpleSettlerConfig {
@@ -296,6 +298,8 @@ impl SimpleSettlerConfig {
     ) -> eyre::Result<SimpleSettler> {
         let signer = self
             .private_key
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("no settler private key"))?
             .parse::<PrivateKeySigner>()
             .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
 
@@ -672,11 +676,14 @@ impl RelayConfig {
 
     /// Set the simple settler owner key if interop is already configured for simple settler.
     pub fn with_simple_settler_owner_key(mut self, settler_owner_key: Option<String>) -> Self {
-        let Some(pk) = settler_owner_key else { return self };
+        let Some(pk) = settler_owner_key else {
+            warn!("no simple settler owner private key provided");
+            return self;
+        };
 
         if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler) {
             if let SettlerImplementation::Simple(conf) = &mut conf.implementation {
-                conf.private_key = pk;
+                conf.private_key = Some(pk);
             }
         }
         self
