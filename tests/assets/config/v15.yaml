@@ -50,14 +50,15 @@ escrow: "0xab0775f9f3dc69a348d3843fa55e870503e1b50e"
 funder: "0xb55fb21a7e8aa8b722d230d4d7155a8f14115468"
 # Interop configuration
 interop:
-   # Simple settler for devnet
-   settler:
-     simple:
-       settler_address: "0x4e01e794d096a05ce35a8cc9ff5e1f6e8af9ba6f"
-       private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
-     wait_verification_timeout: 10
-   refund_check_interval: 10
-   escrow_refund_threshold: 10
+  # Refund monitoring settings
+  refund_check_interval: 60
+  escrow_refund_threshold: 300
+  # Simple settler for devnet
+  settler:
+    wait_verification_timeout: 600
+    simple:
+      settler_address: "0x1486b5677f2628cebe89b45265ca274fb2c3bacd"
+      private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
 email:
   portoBaseUrl: "dev.id.porto.sh"
 registry:
