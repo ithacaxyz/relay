@@ -179,6 +179,7 @@ pub struct PrepareCallsParameters {
     #[serde(default)]
     pub key: Option<CallKey>,
     /// Required funds on the target chain.
+    #[serde(default)]
     pub required_funds: Vec<(Address, U256)>,
 }
 
