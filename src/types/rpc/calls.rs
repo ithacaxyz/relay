@@ -577,7 +577,11 @@ mod tests {
     "requiredFunds": []
 }"#;
         let params = serde_json::from_str::<PrepareCallsParameters>(s).unwrap();
-        let balance_override = params.balance_overrides.balances.get(&address!("0x7ddb34adbf9a11d3fe365349c607fc7b09954a41")).unwrap();
+        let balance_override = params
+            .balance_overrides
+            .balances
+            .get(&address!("0x7ddb34adbf9a11d3fe365349c607fc7b09954a41"))
+            .unwrap();
         let expected = BalanceOverride {
             kind: AssetType::ERC20,
             balances: HashMap::from([(
