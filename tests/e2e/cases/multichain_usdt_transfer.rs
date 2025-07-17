@@ -165,7 +165,9 @@ impl MultichainTransferSetup {
 
         let PrepareCallsResponse { context, digest, .. } = prepare_result;
         let quotes = context.quote().expect("should always return quotes");
-        // todo(joshie): this is wrong. it works for now, since we ignore the output fees in the refund test, but we're essentially collecting fees for different tokens. (eg. the refund test fee token on the output is native, while the fees on the input chains are env.erc20)
+        // todo(joshie): this is wrong. it works for now, since we ignore the output fees in the
+        // refund test, but we're essentially collecting fees for different tokens. (eg. the refund
+        // test fee token on the output is native, while the fees on the input chains are env.erc20)
         let fees =
             quotes.ty().quotes.iter().map(|quote| quote.intent.totalPaymentMaxAmount).collect();
 

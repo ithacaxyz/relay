@@ -350,7 +350,6 @@ impl Relay {
         intent_to_sign.set_legacy_payment_amount(initial_payment);
 
         if intent_to_sign.isMultichain {
-            tracing::debug!("estimate_fee: Adding mock merkle signature for multichain intent");
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
                 .with_mock_merkle_signature(
@@ -361,7 +360,6 @@ impl Relay {
                 )
                 .await
                 .map_err(RelayError::from)?;
-            tracing::debug!("estimate_fee: Mock merkle signature added");
         } else {
             // For single chain intents, sign the intent directly
             let signature = mock_key
