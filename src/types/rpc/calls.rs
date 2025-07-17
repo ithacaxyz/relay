@@ -135,7 +135,7 @@ impl BalanceOverrides {
 }
 
 /// A balance override.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BalanceOverride {
     /// The kind of asset this is.
     ///
@@ -144,7 +144,6 @@ pub struct BalanceOverride {
     /// Currently this only supports ERC20, so it should be validated that this is equal to ERC20.
     kind: AssetType,
     /// The balances to override.
-    #[serde(flatten)]
     balances: HashMap<Address, U256>,
 }
 
@@ -518,4 +517,74 @@ pub struct CallsStatus {
     pub status: CallStatusCode,
     /// The receipts for the call bundle.
     pub receipts: Vec<CallReceipt>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+    use std::str::FromStr;
+
+    #[test]
+    fn serde_balance_overrides() {
+        let s = r#"{
+            "balances": {
+                "0x97870b32890d3F1f089489A29007863A5678089D": "0x56bc75e2d63100000"
+            },
+            "kind": "erc20"
+        }"#;
+        let params = serde_json::from_str::<BalanceOverride>(s).unwrap();
+        let balance_override = BalanceOverride {
+            kind: AssetType::ERC20,
+            balances: HashMap::from([(
+                address!("0x97870b32890d3F1f089489A29007863A5678089D"),
+                U256::from_str("0x56bc75e2d63100000").unwrap(),
+            )]),
+        };
+        assert_eq!(params, balance_override);
+    }
+
+    #[test]
+    fn serde_prepare_params() {
+        let s = r#"{
+    "balanceOverrides": {
+        "0x7ddb34adbf9a11d3fe365349c607fc7b09954a41": {
+            "balances": {
+                "0x97870b32890d3F1f089489A29007863A5678089D": "0x56bc75e2d63100000"
+            },
+            "kind": "erc20"
+        }
+    },
+    "calls": [
+        {
+            "data": "0x40c10f190000000000000000000000007ddb34adbf9a11d3fe365349c607fc7b09954a410000000000000000000000000000000000000000000000000de0b6b3a7640000",
+            "to": "0x97870b32890d3F1f089489A29007863A5678089D",
+            "value": "0x0"
+        }
+    ],
+    "capabilities": {
+        "meta": {
+            "feeToken": "0x97870b32890d3F1f089489A29007863A5678089D"
+        }
+    },
+    "chainId": 28404,
+    "from": "0x7ddb34adbf9a11d3fe365349c607fc7b09954a41",
+    "key": {
+        "prehash": false,
+        "publicKey": "0x4bc484680a02b7edba11d82f320c968e08a896f24130eca04b8dea6538ae5d5d4de1da458be057268f4164f8a44d95afc8ec0991836c8397c5c6146fcba5fa99",
+        "type": "webauthnp256"
+    },
+    "requiredFunds": []
+}"#;
+        let params = serde_json::from_str::<PrepareCallsParameters>(s).unwrap();
+        let balance_override = params.balance_overrides.balances.get(&address!("0x7ddb34adbf9a11d3fe365349c607fc7b09954a41")).unwrap();
+        let expected = BalanceOverride {
+            kind: AssetType::ERC20,
+            balances: HashMap::from([(
+                address!("0x97870b32890d3F1f089489A29007863A5678089D"),
+                U256::from_str("0x56bc75e2d63100000").unwrap(),
+            )]),
+        };
+        assert_eq!(*balance_override, expected);
+    }
 }
