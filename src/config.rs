@@ -699,3 +699,14 @@ impl RelayConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_v15_yaml() {
+        let s = include_str!("../tests/assets/config/v15.yaml");
+        let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+    }
+}
