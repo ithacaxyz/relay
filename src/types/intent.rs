@@ -578,6 +578,14 @@ impl IntentKind {
     }
 
     /// Returns the settler context if this is a MultiOutput intent.
+    pub fn multi_input_fee(&self) -> Option<U256> {
+        match self {
+            IntentKind::MultiInput { fee: Some((_, amount)), .. } => Some(*amount),
+            _ => None,
+        }
+    }
+
+    /// Returns the settler context if this is a MultiOutput intent.
     pub fn settler_context(&self) -> Bytes {
         match self {
             IntentKind::MultiOutput { settler_context, .. } => settler_context.clone(),
