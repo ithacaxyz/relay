@@ -88,7 +88,9 @@ pub async fn try_spawn_with_args(
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
         config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
-        config.with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
+        config
+            .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
+            .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
     };
 
     let registry = if !registry_path.exists() {
