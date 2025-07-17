@@ -391,13 +391,13 @@ impl Relay {
         //
         // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
         // reverting with a payment failure if the fee market shifts.
-        let simulated_payment_per_gas =
-            if let IntentKind::MultiInput { fee: Some((_, amount)), .. } = context.intent_kind {
-                intent_to_sign.set_legacy_payment_amount(amount);
-                0.0
-            } else {
-                payment_per_gas
-            };
+        let simulated_payment_per_gas = if let Some(amount) = context.intent_kind.multi_input_fee()
+        {
+            intent_to_sign.set_legacy_payment_amount(amount);
+            0.0
+        } else {
+            payment_per_gas
+        };
 
         // todo: simulate with executeMultiChain if intent.is_multichain
         let (asset_diff, sim_result) = orchestrator
@@ -424,7 +424,7 @@ impl Relay {
         intent_to_sign.signature = bytes!("");
         intent_to_sign.funderSignature = bytes!("");
 
-        if !matches!(context.intent_kind, IntentKind::MultiInput { fee: Some((_, _)), .. }) {
+        if context.intent_kind.multi_input_fee().is_none() {
             intent_to_sign.set_legacy_payment_amount(
                 extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
             );
