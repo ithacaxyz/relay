@@ -38,6 +38,7 @@ pub struct RelayConfig {
     /// Quote configuration.
     pub quote: QuoteConfig,
     /// Onramp configuration.
+    #[serde(default)]
     pub onramp: OnrampConfig,
     /// Email configuration.
     #[serde(default)]
@@ -148,6 +149,7 @@ impl QuoteConfig {
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
     /// Banxa API configuration.
+    #[serde(default)]
     pub banxa: BanxaConfig,
 }
 
