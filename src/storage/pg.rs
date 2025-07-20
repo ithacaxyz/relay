@@ -9,13 +9,13 @@ use crate::{
     },
     storage::api::LockLiquidityInput,
     transactions::{
-        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
-    consensus::TxEnvelope,
+    consensus::{Transaction, TxEnvelope},
     primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
@@ -1121,5 +1121,104 @@ impl StorageApi for PgStorage {
 
         tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn lock_liquidity_for_pull_gas(
+        &self,
+        transaction: &TxEnvelope,
+        signer: Address,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        let chain_id = transaction.chain_id().unwrap_or(0);
+        self.try_lock_liquidity_with(
+            HashMap::from_iter([((chain_id, Address::ZERO), input)]),
+            &mut tx,
+        )
+        .await?;
+
+        let transaction_json = serde_json::to_value(transaction)?;
+        sqlx::query!(
+            r#"
+            INSERT INTO pull_gas_transactions 
+            (id, signer_address, chain_id, state, transaction_data) 
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            transaction.tx_hash().as_slice(),
+            signer.as_slice(),
+            chain_id as i64,
+            PullGasState::Pending.to_string() as _,
+            transaction_json,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn update_pull_gas_and_unlock_liquidity(
+        &self,
+        tx_hash: B256,
+        chain_id: ChainId,
+        amount: U256,
+        state: PullGasState,
+        at: BlockNumber,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        sqlx::query!(
+            r#"
+            UPDATE pull_gas_transactions 
+            SET state = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+            tx_hash.as_slice(),
+            state.to_string() as _,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        self.unlock_liquidity_with((chain_id, Address::ZERO), amount, at, &mut *tx).await?;
+
+        tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn load_pending_pull_gas_transactions(
+        &self,
+        signer: Address,
+        chain_id: ChainId,
+    ) -> Result<Vec<TxEnvelope>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT transaction_data
+            FROM pull_gas_transactions
+            WHERE signer_address = $1 
+            AND chain_id = $2
+            AND state = 'pending'
+            ORDER BY created_at
+            "#,
+            signer.as_slice(),
+            chain_id as i64,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut pending_transactions = Vec::new();
+        for row in rows {
+            let transaction: TxEnvelope = serde_json::from_value(row.transaction_data)?;
+            pending_transactions.push(transaction);
+        }
+
+        Ok(pending_transactions)
     }
 }

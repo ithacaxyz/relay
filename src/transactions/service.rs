@@ -165,6 +165,7 @@ impl TransactionService {
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
+        funder: Address,
     ) -> eyre::Result<(Self, TransactionServiceHandle)> {
         let chain_id = provider.get_chain_id().await?;
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
@@ -210,7 +211,7 @@ impl TransactionService {
 
         // create all the signers
         for signer in signers {
-            this.create_signer(signer, provider.clone(), monitor.clone()).await?;
+            this.create_signer(signer, provider.clone(), monitor.clone(), funder).await?;
         }
 
         // insert loaded queue, we need to do it after signers are created so that loaded pending
@@ -230,6 +231,7 @@ impl TransactionService {
         signer: DynSigner,
         provider: DynProvider,
         monitor: TransactionMonitoringHandle,
+        funder: Address,
     ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
@@ -244,6 +246,7 @@ impl TransactionService {
             metrics,
             self.config.clone(),
             monitor,
+            funder,
         )
         .await?;
         let (task, loaded_transactions) = signer.into_future().await?;

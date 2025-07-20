@@ -9,14 +9,14 @@ use crate::{
     },
     storage::api::LockLiquidityInput,
     transactions::{
-        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
-    consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    consensus::{Transaction, TxEnvelope},
+    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
@@ -41,6 +41,7 @@ pub struct InMemoryStorage {
     liquidity: RwLock<LiquidityTrackerInner>,
     transfers:
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
+    pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
 }
 
 #[async_trait]
@@ -421,6 +422,61 @@ impl StorageApi for InMemoryStorage {
 
         transfers.sort_by_key(|t| t.id);
         Ok(transfers)
+    }
+
+    async fn lock_liquidity_for_pull_gas(
+        &self,
+        transaction: &TxEnvelope,
+        signer: Address,
+        input: LockLiquidityInput,
+    ) -> Result<()> {
+        let chain_id = transaction.chain_id().unwrap_or(0);
+        self.liquidity
+            .write()
+            .await
+            .try_lock_liquidity(HashMap::from_iter([((chain_id, Address::ZERO), input)]))
+            .await?;
+
+        self.pull_gas_transactions
+            .insert(*transaction.tx_hash(), (PullGasState::Pending, transaction.clone(), signer));
+
+        Ok(())
+    }
+
+    async fn update_pull_gas_and_unlock_liquidity(
+        &self,
+        tx_hash: B256,
+        chain_id: ChainId,
+        amount: U256,
+        state: PullGasState,
+        at: BlockNumber,
+    ) -> Result<()> {
+        if let Some(mut entry) = self.pull_gas_transactions.get_mut(&tx_hash) {
+            entry.0 = state;
+        }
+
+        self.liquidity.write().await.unlock_liquidity((chain_id, Address::ZERO), amount, at);
+
+        Ok(())
+    }
+
+    async fn load_pending_pull_gas_transactions(
+        &self,
+        signer: Address,
+        chain_id: ChainId,
+    ) -> Result<Vec<TxEnvelope>> {
+        let mut pending_transactions = Vec::new();
+        for entry in self.pull_gas_transactions.iter() {
+            let (state, transaction, tx_signer) = entry.value();
+
+            let tx_chain_id = transaction.chain_id().unwrap_or(0);
+
+            if *state == PullGasState::Pending && *tx_signer == signer && tx_chain_id == chain_id {
+                pending_transactions.push(transaction.clone());
+            }
+        }
+
+        Ok(pending_transactions)
     }
 }
 

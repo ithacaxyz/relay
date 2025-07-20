@@ -16,3 +16,5 @@ pub use monitor::TransactionMonitoringHandle;
 /// Cross-chain interop bundle processing.
 pub mod interop;
 pub use interop::{InteropService, InteropServiceHandle};
+mod pull_gas;
+pub use pull_gas::PullGasState;

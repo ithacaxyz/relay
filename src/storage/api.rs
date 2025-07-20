@@ -7,14 +7,14 @@ use crate::{
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     transactions::{
-        PendingTransaction, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, BlockNumber, ChainId, U256, map::HashMap},
+    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
@@ -236,4 +236,29 @@ pub trait StorageApi: Debug + Send + Sync {
     /// - Pending: Initial state, waiting to be sent
     /// - Sent: Outbound transaction sent, monitoring for completion
     async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>>;
+
+    /// Atomically locks liquidity for a pull gas transaction and creates a tracking record.
+    async fn lock_liquidity_for_pull_gas(
+        &self,
+        transaction: &TxEnvelope,
+        signer: Address,
+        input: LockLiquidityInput,
+    ) -> Result<()>;
+
+    /// Updates pull gas transaction state and unlocks liquidity.
+    async fn update_pull_gas_and_unlock_liquidity(
+        &self,
+        tx_hash: B256,
+        chain_id: ChainId,
+        amount: U256,
+        state: PullGasState,
+        at: BlockNumber,
+    ) -> Result<()>;
+
+    /// Loads pending pull gas transactions for a signer.
+    async fn load_pending_pull_gas_transactions(
+        &self,
+        signer: Address,
+        chain_id: ChainId,
+    ) -> Result<Vec<TxEnvelope>>;
 }

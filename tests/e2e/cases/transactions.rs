@@ -618,6 +618,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
         signers,
         storage.clone(),
         config.transaction_service_config.clone(),
+        env.funder,
     )
     .await
     .unwrap();
