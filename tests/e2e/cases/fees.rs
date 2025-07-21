@@ -49,7 +49,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: (1..num_calls)
                 .map(|_| Call { to: Address::ZERO, value: U256::ZERO, data: Default::default() })
                 .collect(),

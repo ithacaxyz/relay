@@ -392,7 +392,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
@@ -421,7 +421,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
@@ -472,7 +472,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {

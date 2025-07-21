@@ -118,7 +118,7 @@ pub async fn prepare_calls(
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: tx.calls.clone(),
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
