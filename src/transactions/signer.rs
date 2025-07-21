@@ -893,40 +893,45 @@ impl Signer {
     /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
     /// lock liquidity before broadcasting the transaction.
     pub async fn pull_gas(&self, fees: &Eip1559Estimation) -> Result<(), SignerError> {
+        let funding_amount = SIGNER_GAS_TOP_UP * U256::from(fees.max_fee_per_gas);
+
         info!(
-            amount = %SIGNER_GAS_TOP_UP,
+            amount = %funding_amount,
             signer = %self.address(),
             "pulling gas from SimpleFunder"
         );
 
-        let call = ISimpleFunder::pullGasCall { amount: SIGNER_GAS_TOP_UP };
+        let call = ISimpleFunder::pullGasCall { amount: funding_amount }.abi_encode();
         let nonce = *self.nonce.lock().await;
 
-        let mut tx = TxEip1559 {
-            chain_id: self.chain_id,
-            nonce,
-            to: self.funder.into(),
-            input: call.abi_encode().into(),
-            value: U256::ZERO,
-            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-            max_fee_per_gas: fees.max_fee_per_gas,
-            ..Default::default()
-        };
+        let tx = TransactionRequest::default()
+            .to(self.funder)
+            .input(call.clone().into())
+            .from(self.address());
 
         let (balance, block_number, gas_limit) = try_join!(
             async { self.provider.get_balance(self.funder).await },
             async { self.provider.get_block_number().await },
-            async {
-                self.provider.estimate_gas(TypedTransaction::Eip1559(tx.clone()).into()).await
-            }
+            async { self.provider.estimate_gas(tx).await }
         )?;
 
         let lock_input = LockLiquidityInput {
             current_balance: balance,
             block_number,
-            lock_amount: SIGNER_GAS_TOP_UP,
+            lock_amount: funding_amount,
         };
-        tx.gas_limit = gas_limit;
+
+        let tx = TxEip1559 {
+            chain_id: self.chain_id,
+            nonce,
+            to: self.funder.into(),
+            input: call.into(),
+            value: U256::ZERO,
+            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+            max_fee_per_gas: fees.max_fee_per_gas,
+            gas_limit,
+            ..Default::default()
+        };
 
         let signed_tx = self.sign_transaction(TypedTransaction::Eip1559(tx)).await?;
         self.storage.lock_liquidity_for_pull_gas(&signed_tx, self.address(), lock_input).await?;
@@ -934,7 +939,7 @@ impl Signer {
         let result = self.broadcast_and_monitor_pull_gas(&signed_tx).await;
         self.update_pull_gas_state_and_unlock_liquidity(
             &signed_tx,
-            SIGNER_GAS_TOP_UP,
+            funding_amount,
             result.as_ref().ok(),
         )
         .await?;
