@@ -438,10 +438,9 @@ impl Signer {
             } else {
                 trace!(tx_hash=%best_tx.tx_hash(), "was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
+                    && !err.is_already_known()
                 {
-                    if !err.is_already_known() {
-                        debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
-                    }
+                    debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
                 }
             }
         }
@@ -470,11 +469,10 @@ impl Signer {
                 for sent in &tx.sent {
                     if let Ok(Some(receipt)) =
                         self.provider.get_transaction_receipt(*sent.tx_hash()).await
+                        && receipt.block_number.is_some()
                     {
-                        if receipt.block_number.is_some() {
-                            self.on_confirmed_transaction(tx, receipt).await?;
-                            return Ok(());
-                        }
+                        self.on_confirmed_transaction(tx, receipt).await?;
+                        return Ok(());
                     }
                 }
 
@@ -625,11 +623,11 @@ impl Signer {
 
             error!(%err, %nonce, "Failed to close nonce gap");
 
-            if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await {
-                if latest_nonce > nonce {
-                    warn!("nonce gap was closed by a different transaction");
-                    break;
-                }
+            if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
+                && latest_nonce > nonce
+            {
+                warn!("nonce gap was closed by a different transaction");
+                break;
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -700,64 +698,62 @@ impl Signer {
             return;
         }
 
-        if let Some(included_at_block) = receipt.block_number {
-            if let Some(block) =
+        if let Some(included_at_block) = receipt.block_number
+            && let Some(block) =
                 self.provider.get_block(included_at_block.into()).await.ok().flatten()
-            {
-                let submitted_at = tx.sent_at.timestamp() as u64;
-                let included_at = block.header.timestamp;
+        {
+            let submitted_at = tx.sent_at.timestamp() as u64;
+            let included_at = block.header.timestamp;
 
-                let submitted_at_block = async {
-                    let block_time = self.block_time.as_millis();
+            let submitted_at_block = async {
+                let block_time = self.block_time.as_millis();
 
-                    // Firsly try guessing the block based on block time.
-                    let first_guess = if block_time == 0 {
-                        included_at_block
-                    } else {
-                        included_at_block.saturating_sub(
-                            ((included_at.saturating_sub(submitted_at)) as u128 * 1000 / block_time)
-                                as u64,
-                        )
-                    };
+                // Firsly try guessing the block based on block time.
+                let first_guess = if block_time == 0 {
+                    included_at_block
+                } else {
+                    included_at_block.saturating_sub(
+                        ((included_at.saturating_sub(submitted_at)) as u128 * 1000 / block_time)
+                            as u64,
+                    )
+                };
 
-                    // Follow the chain until we find a block after the submission time.
-                    let mut block =
-                        self.provider.get_block(first_guess.into()).await.ok().flatten()?;
-                    while block.header.timestamp <= submitted_at {
-                        block = self
-                            .provider
-                            .get_block((block.header.number + 1).into())
-                            .await
-                            .ok()
-                            .flatten()?;
-                    }
+                // Follow the chain until we find a block after the submission time.
+                let mut block = self.provider.get_block(first_guess.into()).await.ok().flatten()?;
+                while block.header.timestamp <= submitted_at {
+                    block = self
+                        .provider
+                        .get_block((block.header.number + 1).into())
+                        .await
+                        .ok()
+                        .flatten()?;
+                }
 
-                    // Go back until there are earlier blocks mined after the submission time.
-                    let mut prev_block = self
+                // Go back until there are earlier blocks mined after the submission time.
+                let mut prev_block = self
+                    .provider
+                    .get_block((block.header.number - 1).into())
+                    .await
+                    .ok()
+                    .flatten()?;
+                while prev_block.header.timestamp > submitted_at {
+                    block = prev_block;
+                    prev_block = self
                         .provider
                         .get_block((block.header.number - 1).into())
                         .await
                         .ok()
                         .flatten()?;
-                    while prev_block.header.timestamp > submitted_at {
-                        block = prev_block;
-                        prev_block = self
-                            .provider
-                            .get_block((block.header.number - 1).into())
-                            .await
-                            .ok()
-                            .flatten()?;
-                    }
-
-                    Some(block.header.number)
                 }
-                .await;
 
-                if let Some(submitted_at_block) = submitted_at_block {
-                    self.metrics
-                        .blocks_until_inclusion
-                        .record((included_at_block - submitted_at_block + 1) as f64);
-                }
+                Some(block.header.number)
+            }
+            .await;
+
+            if let Some(submitted_at_block) = submitted_at_block {
+                self.metrics
+                    .blocks_until_inclusion
+                    .record((included_at_block - submitted_at_block + 1) as f64);
             }
         }
 
@@ -776,10 +772,10 @@ impl Signer {
         // Make sure that loaded transactions are not getting overriden by the new ones
         {
             let mut lock = self.nonce.lock().await;
-            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max() {
-                if nonce > *lock {
-                    *lock = nonce;
-                }
+            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max()
+                && nonce > *lock
+            {
+                *lock = nonce;
             }
         }
 

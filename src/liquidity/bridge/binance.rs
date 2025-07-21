@@ -160,8 +160,8 @@ impl BinanceBridge {
                 };
 
                 // If deposits are supported, fetch deposit address.
-                if network.deposit_enable.is_some_and(|enable| enable) {
-                    if let Some(deposit_address) = client
+                if network.deposit_enable.is_some_and(|enable| enable)
+                    && let Some(deposit_address) = client
                         .deposit_address(
                             DepositAddressParams::builder(coin_name.clone())
                                 .network(network_name.clone())
@@ -178,9 +178,8 @@ impl BinanceBridge {
                         .as_deref()
                         .map(Address::from_str)
                         .transpose()?
-                    {
-                        deposit_addresses.insert((chain.id(), contract_address), deposit_address);
-                    }
+                {
+                    deposit_addresses.insert((chain.id(), contract_address), deposit_address);
                 }
 
                 // If withdrawals are supported, fetch neccesary context.

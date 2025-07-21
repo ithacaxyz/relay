@@ -597,14 +597,11 @@ impl Relay {
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
                 // before its onchain commit.
-                if let RelayError::Auth(auth_err) = &err {
-                    if auth_err.is_eoa_not_delegated() {
-                        if let Some(account) =
-                            self.inner.storage.read_account(&request.address).await?
-                        {
-                            return account.authorized_keys();
-                        }
-                    }
+                if let RelayError::Auth(auth_err) = &err
+                    && auth_err.is_eoa_not_delegated()
+                    && let Some(account) = self.inner.storage.read_account(&request.address).await?
+                {
+                    return account.authorized_keys();
                 }
                 Err(err)
             }
@@ -829,7 +826,7 @@ impl Relay {
         nonce: U256,
         intent_kind: IntentKind,
     ) -> Result<(AssetDiffs, Quote), RelayError> {
-        let eoa = request.from;
+        let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
         let Some(request_key) = &request.key else {
             return Err(IntentError::MissingKey.into());
         };
@@ -912,16 +909,16 @@ impl Relay {
         // Find if the address is delegated or if we have a stored account in storage that can use
         // to delegate.
         let mut maybe_stored = None;
-        if !Account::new(request.from, provider.clone()).is_delegated().await? {
+        if let Some(from) = &request.from
+            && !Account::new(*from, provider.clone()).is_delegated().await?
+        {
             maybe_stored = Some(
                 self.inner
                     .storage
-                    .read_account(&request.from)
+                    .read_account(from)
                     .await
                     .map_err(|e| RelayError::InternalError(e.into()))?
-                    .ok_or_else(|| {
-                        RelayError::Auth(AuthError::EoaNotDelegated(request.from).boxed())
-                    })?,
+                    .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed()))?,
             );
         }
 
@@ -934,7 +931,7 @@ impl Relay {
         // If we're dealing with a PreCall do not estimate
         let (asset_diff, context) = if request.capabilities.pre_call {
             let precall = SignedCall {
-                eoa: request.from,
+                eoa: request.from.unwrap_or_default(),
                 executionData: calls.abi_encode().into(),
                 nonce,
                 signature: Bytes::new(),
@@ -958,7 +955,7 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), &provider)
+            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -1141,7 +1138,7 @@ impl Relay {
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
-        let eoa = request.from;
+        let eoa = request.from.ok_or(IntentError::MissingSender)?;
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1632,20 +1629,19 @@ impl RelayApiServer for Relay {
                     });
                 }
 
-                if request.asset_type_filter.is_empty()
-                    || request.asset_type_filter.contains(&AssetType::ERC20)
+                if (request.asset_type_filter.is_empty()
+                    || request.asset_type_filter.contains(&AssetType::ERC20))
+                    && let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain)
                 {
-                    if let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain) {
-                        for token in tokens {
-                            if token.address == Address::ZERO {
-                                continue;
-                            }
-
-                            items.push(AssetFilterItem {
-                                address: AddressOrNative::Address(token.address),
-                                asset_type: AssetType::ERC20,
-                            });
+                    for token in tokens {
+                        if token.address == Address::ZERO {
+                            continue;
                         }
+
+                        items.push(AssetFilterItem {
+                            address: AddressOrNative::Address(token.address),
+                            asset_type: AssetType::ERC20,
+                        });
                     }
                 }
 
@@ -2185,7 +2181,7 @@ impl Relay {
         Ok(PrepareCallsParameters {
             calls,
             chain_id: context.chain_id,
-            from: context.eoa,
+            from: Some(context.eoa),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },

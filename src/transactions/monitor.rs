@@ -45,16 +45,16 @@ impl TransactionMonitoringHandle {
                     false
                 };
 
-            if is_confirmed {
-                if let Ok(Some(receipt)) = provider.get_transaction_receipt(tx_hash).await {
-                    if is_external {
-                        self.metrics.external_confirmations.increment(1);
-                    } else {
-                        self.metrics.local_confirmations.increment(1);
-                    }
-
-                    return Some(receipt);
+            if is_confirmed
+                && let Ok(Some(receipt)) = provider.get_transaction_receipt(tx_hash).await
+            {
+                if is_external {
+                    self.metrics.external_confirmations.increment(1);
+                } else {
+                    self.metrics.local_confirmations.increment(1);
                 }
+
+                return Some(receipt);
             }
 
             None
