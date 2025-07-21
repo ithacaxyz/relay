@@ -140,7 +140,8 @@ impl StressAccount {
                 if chain_ids.len() == 1 { &chain_ids } else { &chain_ids[0..chain_ids.len() - 1] }
                     .iter()
                     .map(ToString::to_string)
-                    .collect::<String>();
+                    .collect::<Vec<_>>()
+                    .join(", ");
             info!(
                 %digest,
                 account = %self.address,
