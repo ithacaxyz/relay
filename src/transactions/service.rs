@@ -94,10 +94,10 @@ impl TransactionServiceHandle {
         let status_rx = status_rx.await.ok().flatten();
 
         // Now check the status in storage
-        if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await? {
-            if status.is_final() {
-                return Ok(status);
-            }
+        if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await?
+            && status.is_final()
+        {
+            return Ok(status);
         }
 
         // If transaction is not yet in final state, we should wait for a final status event.
@@ -572,12 +572,12 @@ impl TxQueue {
     /// and accounts for it.
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
-            if let Some(eoa) = tx.eoa() {
-                if let Some(ready) = self.ready_per_eoa.get_mut(eoa) {
-                    *ready -= 1;
-                    if *ready == 0 {
-                        self.ready_per_eoa.remove(eoa);
-                    }
+            if let Some(eoa) = tx.eoa()
+                && let Some(ready) = self.ready_per_eoa.get_mut(eoa)
+            {
+                *ready -= 1;
+                if *ready == 0 {
+                    self.ready_per_eoa.remove(eoa);
                 }
             }
 

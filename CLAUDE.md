@@ -96,7 +96,7 @@ The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 ac
 
 ### Development Notes
 
-- MSRV: 1.85
+- MSRV: 1.88
 - Rust Edition: 2024
 - Uses SQLx for compile-time checked SQL queries
 - Strict clippy linting with warnings as errors

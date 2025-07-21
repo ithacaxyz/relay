@@ -88,10 +88,10 @@ async fn await_calls_status(
     loop {
         let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
 
-        if let Some(status) = status {
-            if !status.status.is_pending() {
-                return Ok(status);
-            }
+        if let Some(status) = status
+            && !status.status.is_pending()
+        {
+            return Ok(status);
         }
 
         attempts += 1;

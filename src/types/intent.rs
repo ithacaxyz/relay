@@ -381,13 +381,12 @@ impl SignedCall {
             // if it wasn't a setSpendLimit, try decoding as a setCanExecute.
             if let Ok(setCanExecuteCall { keyHash, target: to, fnSel: selector, can }) =
                 setCanExecuteCall::abi_decode(&call.data)
+                && can
             {
-                if can {
-                    permissions
-                        .entry(keyHash)
-                        .or_default()
-                        .push(CallPermission { selector, to }.into());
-                }
+                permissions
+                    .entry(keyHash)
+                    .or_default()
+                    .push(CallPermission { selector, to }.into());
             }
         }
 

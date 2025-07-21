@@ -139,21 +139,21 @@ impl SettlementProcessor {
         // Validate settler address in all destination transactions
         let settler_address = self.settler.address();
         for dst_tx in &bundle.dst_txs {
-            if let Some(quote) = dst_tx.quote() {
-                if quote.intent.settler != settler_address {
-                    error!(
-                        bundle_id = ?bundle.id,
-                        tx_id = ?dst_tx.id,
-                        intent_settler = %quote.intent.settler,
-                        current_settler = %settler_address,
-                        "Destination transaction has incorrect settler address"
-                    );
-                    return Err(SettlementError::SettlerAddressMismatch {
-                        tx_id: dst_tx.id,
-                        expected: settler_address,
-                        got: quote.intent.settler,
-                    });
-                }
+            if let Some(quote) = dst_tx.quote()
+                && quote.intent.settler != settler_address
+            {
+                error!(
+                    bundle_id = ?bundle.id,
+                    tx_id = ?dst_tx.id,
+                    intent_settler = %quote.intent.settler,
+                    current_settler = %settler_address,
+                    "Destination transaction has incorrect settler address"
+                );
+                return Err(SettlementError::SettlerAddressMismatch {
+                    tx_id: dst_tx.id,
+                    expected: settler_address,
+                    got: quote.intent.settler,
+                });
             }
         }
 

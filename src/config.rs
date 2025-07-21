@@ -683,10 +683,10 @@ impl RelayConfig {
             return self;
         };
 
-        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler) {
-            if let SettlerImplementation::Simple(conf) = &mut conf.implementation {
-                conf.private_key = Some(pk);
-            }
+        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler)
+            && let SettlerImplementation::Simple(conf) = &mut conf.implementation
+        {
+            conf.private_key = Some(pk);
         }
         self
     }

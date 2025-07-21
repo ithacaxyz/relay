@@ -597,14 +597,11 @@ impl Relay {
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
                 // before its onchain commit.
-                if let RelayError::Auth(auth_err) = &err {
-                    if auth_err.is_eoa_not_delegated() {
-                        if let Some(account) =
-                            self.inner.storage.read_account(&request.address).await?
-                        {
-                            return account.authorized_keys();
-                        }
-                    }
+                if let RelayError::Auth(auth_err) = &err
+                    && auth_err.is_eoa_not_delegated()
+                    && let Some(account) = self.inner.storage.read_account(&request.address).await?
+                {
+                    return account.authorized_keys();
                 }
                 Err(err)
             }
@@ -1632,20 +1629,19 @@ impl RelayApiServer for Relay {
                     });
                 }
 
-                if request.asset_type_filter.is_empty()
-                    || request.asset_type_filter.contains(&AssetType::ERC20)
+                if (request.asset_type_filter.is_empty()
+                    || request.asset_type_filter.contains(&AssetType::ERC20))
+                    && let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain)
                 {
-                    if let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain) {
-                        for token in tokens {
-                            if token.address == Address::ZERO {
-                                continue;
-                            }
-
-                            items.push(AssetFilterItem {
-                                address: AddressOrNative::Address(token.address),
-                                asset_type: AssetType::ERC20,
-                            });
+                    for token in tokens {
+                        if token.address == Address::ZERO {
+                            continue;
                         }
+
+                        items.push(AssetFilterItem {
+                            address: AddressOrNative::Address(token.address),
+                            asset_type: AssetType::ERC20,
+                        });
                     }
                 }
 
