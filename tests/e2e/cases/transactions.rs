@@ -649,7 +649,8 @@ async fn restart_with_pending() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Ensures that when a signer can no longer execute MIN_SIGNER_GAS gas units, it will pull funds from the funder contract.
+/// Ensures that when a signer can no longer execute MIN_SIGNER_GAS gas units, it will pull funds
+/// from the funder contract.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_signer_pull_gas() -> eyre::Result<()> {
     let env = Environment::setup_with_config(EnvironmentConfig {
