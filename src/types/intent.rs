@@ -7,7 +7,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        Orchestrator,
+        Orchestrator, Signature,
         rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
     },
 };
@@ -328,6 +328,8 @@ impl Intent {
         orchestrator: Address,
         provider: &DynProvider,
         signer: &S,
+        key_hash: B256,
+        prehash: bool,
     ) -> Result<Self, IntentError> {
         let leaf_info = intent_kind.merkle_leaf_info()?;
 
@@ -348,13 +350,20 @@ impl Intent {
         let proof = tree.proof(leaf_info.index).map_err(IntentError::from)?;
 
         // Sign the merkle root (treating it as if it were an intent digest)
-        let signature = signer
-            .sign_payload_hash(root)
-            .await
-            .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
+        let signature: Bytes = Signature {
+            innerSignature: signer
+                .sign_payload_hash(root)
+                .await
+                .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?,
+            keyHash: key_hash,
+            prehash,
+        }
+        .abi_encode_packed()
+        .into();
 
         // Build merkle signature format: (proof, root, signature)
         self.signature = (proof, root, signature).abi_encode_params().into();
+
         Ok(self)
     }
 }

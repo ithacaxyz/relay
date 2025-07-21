@@ -357,6 +357,8 @@ impl Relay {
                     *orchestrator.address(),
                     &provider,
                     &mock_key,
+                    context.account_key.key_hash(),
+                    prehash,
                 )
                 .await
                 .map_err(RelayError::from)?;
