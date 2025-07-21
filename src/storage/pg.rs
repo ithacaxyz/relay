@@ -1149,7 +1149,7 @@ impl StorageApi for PgStorage {
             transaction.tx_hash().as_slice(),
             signer.as_slice(),
             chain_id as i64,
-            PullGasState::Pending.to_string() as _,
+            PullGasState::Pending as PullGasState,
             transaction_json,
         )
         .execute(&mut *tx)
@@ -1179,7 +1179,7 @@ impl StorageApi for PgStorage {
             WHERE id = $1
             "#,
             tx_hash.as_slice(),
-            state.to_string() as _,
+            state as PullGasState,
         )
         .execute(&mut *tx)
         .await

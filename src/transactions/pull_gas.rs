@@ -6,7 +6,7 @@ use strum::{Display, EnumString};
 
 /// States of a pull gas transaction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Display, EnumString)]
-#[sqlx(type_name = "pull_gas_state")]
+#[sqlx(type_name = "pull_gas_state", rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum PullGasState {
     /// Transaction is pending (created or sent to chain)
