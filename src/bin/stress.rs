@@ -25,7 +25,7 @@ use alloy::{
 use alloy_chains::Chain;
 use clap::Parser;
 use eyre::Context;
-use futures_util::{StreamExt, stream::FuturesUnordered};
+use futures_util::{StreamExt, future::try_join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     rpc::RelayApiClient,
@@ -57,7 +57,7 @@ alloy::sol! {
 
 const CREATE2_DEPLOYER: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct StressAccount {
     address: Address,
     key: KeyWith712Signer,
@@ -183,20 +183,15 @@ struct StressTester {
 
 impl StressTester {
     async fn new(args: Args) -> eyre::Result<Self> {
-        let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
+        let relay_client = HttpClientBuilder::new().build(
+            &args
+                .rpc_urls
+                .first()
+                .ok_or_else(|| eyre::eyre!("at least one rpc url must be specified"))?,
+        )?;
         let signer = DynSigner::from_signing_key(&args.private_key).await?;
-        let provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .filler(NonceFiller::new(CachedNonceManager::default()))
-            .filler(GasFiller)
-            .filler(ChainIdFiller::new(Some(args.chain_id.id())))
-            .wallet(EthereumWallet::from(signer.0.clone()))
-            .connect(args.rpc_url.as_str())
-            .await?
-            .erased();
-
         let version = relay_client.health().await?;
-        info!("Connected to relay at {}, version {}", &args.relay_url, version);
+        info!("Connected to relay at {}, version {}", &args.rpc_urls.first().unwrap(), version);
 
         let caps = relay_client.get_capabilities(vec![args.chain_id.id()]).await?;
 
@@ -252,50 +247,89 @@ impl StressTester {
 
         let disperse_address = CREATE2_DEPLOYER.create2(B256::ZERO, keccak256(&Disperse::BYTECODE));
 
-        if provider.get_code_at(disperse_address).await?.is_empty() {
-            info!("Deploying Disperse contract");
-            let receipt: alloy::rpc::types::TransactionReceipt = provider
-                .send_transaction(
-                    TransactionRequest::default()
-                        .to(CREATE2_DEPLOYER)
-                        .input((B256::ZERO, &Disperse::BYTECODE).abi_encode_packed().into()),
-                )
+        let mut providers = Vec::new();
+        for rpc_url in &args.rpc_urls {
+            let provider = ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .filler(NonceFiller::new(CachedNonceManager::default()))
+                .filler(GasFiller)
+                .filler(ChainIdFiller::new(Some(args.chain_id.id())))
+                .wallet(EthereumWallet::from(signer.0.clone()))
+                .connect(rpc_url.as_str())
                 .await?
-                .get_receipt()
-                .await?;
-            assert!(receipt.status());
-            info!("Deployed Disperse contract");
+                .erased();
+
+            providers.push(provider);
         }
 
-        let disperse = Disperse::new(disperse_address, &provider);
+        try_join_all(providers.iter().map(|provider| {
+            let accounts = accounts.clone();
+            let signer = signer.clone();
+            async move {
+                if provider.get_code_at(disperse_address).await?.is_empty() {
+                    info!("Deploying Disperse contract");
+                    let receipt: alloy::rpc::types::TransactionReceipt = provider
+                        .send_transaction(
+                            TransactionRequest::default().to(CREATE2_DEPLOYER).input(
+                                (B256::ZERO, &Disperse::BYTECODE).abi_encode_packed().into(),
+                            ),
+                        )
+                        .await?
+                        .get_receipt()
+                        .await?;
+                    assert!(receipt.status());
+                    info!("Deployed Disperse contract");
+                }
 
-        let fee_token = IERC20Instance::new(args.fee_token, &provider);
-        if fee_token.allowance(signer.address(), disperse_address).call().await?
-            < args.fee_token_amount * U256::from(accounts.len())
-        {
-            info!("Approving Disperse contract");
-            fee_token.approve(disperse_address, U256::MAX).send().await?.get_receipt().await?;
-            info!("Approved Disperse contract");
-        }
+                let disperse = Disperse::new(disperse_address, &provider);
 
-        let mut funded = 0;
-        for batch in accounts.chunks(50) {
-            info!("Funding accounts #{}..{}/{} ", funded, funded + batch.len(), accounts.len());
+                let fee_token = IERC20Instance::new(args.fee_token, &provider);
+                if fee_token.allowance(signer.address(), disperse_address).call().await?
+                    < args.fee_token_amount * U256::from(accounts.len())
+                {
+                    info!("Approving Disperse contract");
+                    fee_token
+                        .approve(disperse_address, U256::MAX)
+                        .send()
+                        .await?
+                        .get_receipt()
+                        .await?;
+                    info!("Approved Disperse contract");
+                }
 
-            disperse
-                .disperseToken(
-                    args.fee_token,
-                    batch.iter().map(|acc| acc.address).collect(),
-                    std::iter::repeat_n(args.fee_token_amount, batch.len()).collect(),
-                )
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
+                let mut funded = 0;
+                for batch in accounts.chunks(50) {
+                    info!(
+                        "Funding accounts #{}..{}/{} ",
+                        funded,
+                        funded + batch.len(),
+                        accounts.len()
+                    );
 
-            info!("Funded accounts #{}..{}/{} ", funded, funded + batch.len(), accounts.len());
-            funded += batch.len();
-        }
+                    disperse
+                        .disperseToken(
+                            args.fee_token,
+                            batch.iter().map(|acc| acc.address).collect(),
+                            std::iter::repeat_n(args.fee_token_amount, batch.len()).collect(),
+                        )
+                        .send()
+                        .await?
+                        .get_receipt()
+                        .await?;
+
+                    info!(
+                        "Funded accounts #{}..{}/{} ",
+                        funded,
+                        funded + batch.len(),
+                        accounts.len()
+                    );
+                    funded += batch.len();
+                }
+
+                Ok::<_, eyre::Error>(())
+            }
+        }))
+        .await?;
 
         Ok(Self { relay_client, args, accounts })
     }
@@ -331,12 +365,9 @@ impl StressTester {
 #[derive(Debug, Parser)]
 #[command(author, about = "Relay stress tester", long_about = None)]
 struct Args {
-    /// Relay URL to connect to.
-    #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
-    relay_url: String,
     /// RPC URL of the chain we are testing on.
     #[arg(long = "rpc-url", value_name = "RPC_URL", required = true)]
-    rpc_url: Url,
+    rpc_urls: Vec<Url>,
     /// Chain ID of the chain to test on.
     #[arg(long = "chain-id", value_name = "CHAIN_ID", required = true)]
     chain_id: Chain,
