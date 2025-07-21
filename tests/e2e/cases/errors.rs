@@ -1,11 +1,9 @@
-use crate::e2e::{
-    AuthKind, cases::upgrade_account_eagerly, common_calls as calls, environment::Environment,
-};
+use crate::e2e::{AuthKind, cases::upgrade_account_eagerly, environment::Environment};
 use alloy::primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer,
+        Call, KeyType, KeyWith712Signer,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -22,7 +20,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
             from: Some(env.eoa.address()),
-            calls: vec![calls::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
+            calls: vec![Call::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],

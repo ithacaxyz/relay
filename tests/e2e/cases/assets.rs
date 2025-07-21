@@ -151,7 +151,7 @@ async fn asset_diff() -> eyre::Result<()> {
     // test1: eoa should receive exactly one new ERC721, and spend the ERC20
     let resp1 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        common_calls::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
         mint_erc721.clone(),
     ])
     .await?;
@@ -165,7 +165,7 @@ async fn asset_diff() -> eyre::Result<()> {
 
     let resp2 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        common_calls::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
         mint_erc721,
         common_calls::transfer_721(env.erc721, env.eoa.address(), random_eoa, erc721_id),
     ])

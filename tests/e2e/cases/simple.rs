@@ -12,7 +12,7 @@ use eyre::Result;
 use relay::{
     signers::DynSigner,
     types::{
-        IERC20,
+        Call, IERC20,
         IthacaAccount::SpendPeriod,
         KeyType, KeyWith712Signer, Signature,
         rpc::{
@@ -39,7 +39,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                     ..Default::default()
                 },
                 TxContext {
-                    calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
+                    calls: vec![Call::transfer(env.erc20, to, transfer_amount)],
                     expected: ExpectedOutcome::Pass,
                     key: Some(&key),
                     post_tx: check!(|env, _tx| {
@@ -210,7 +210,7 @@ async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
             },
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10))],
                 key: Some(&key2),
                 ..Default::default()
             },
@@ -248,7 +248,7 @@ async fn spend_limits() -> Result<()> {
             // overspend transfer should fail
             TxContext {
                 expected: ExpectedOutcome::FailEstimate,
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(100))],
                 key: Some(&session_key),
                 ..Default::default()
             },
@@ -311,14 +311,14 @@ async fn spend_limits_bundled() -> Result<()> {
             // successful transfer that should decrease the daily allowance
             TxContext {
                 expected: ExpectedOutcome::Pass,
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10))],
                 key: Some(&session_key),
                 ..Default::default()
             },
             // overspend transfer should fail
             TxContext {
                 expected: ExpectedOutcome::FailEstimate,
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10))],
                 key: Some(&session_key),
                 ..Default::default()
             },
@@ -349,7 +349,7 @@ async fn spend_limits_bundle_failure() -> Result<()> {
                 ..Default::default()
             }],
             // Bundled overspend should fail
-            calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(20))],
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(20))],
             // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
@@ -372,7 +372,7 @@ async fn no_fee_tx() -> Result<()> {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailEstimate, // no balance on fee token
             fee_token: Some(env.erc20s[2]),          // has not been minted
-            calls: vec![calls::transfer(env.erc20, to, transfer_amount)],
+            calls: vec![Call::transfer(env.erc20, to, transfer_amount)],
             ..Default::default()
         }]
     })

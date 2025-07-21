@@ -3,7 +3,12 @@
 //! # Example
 //!
 //! ```sh
-//! cargo r --bin stress -- --relay-url https://relay-staging.ithaca.xyz --private-key $PRIVATE_KEY --chain-id 28403 --fee-token 0x541a5505620A658932e326D0dC996C460f5AcBE1 --rpc-url https://odyssey-devnet.ithaca.xyz --accounts 500
+//! cargo r --bin stress -- \
+//!     --rpc-url https://relay-staging.ithaca.xyz \
+//!     --rpc-url https://relay.ithaca.xyz \
+//!     --private-key $PRIVATE_KEY \
+//!     --fee-token 0x541a5505620A658932e326D0dC996C460f5AcBE1 \
+//!     --accounts 500
 //! ```
 //! The test script will transfer the fee token out of the account specified in --private-key, so it
 //! must have enough balance to cover for the accounts. The amount sent to each account is
@@ -13,8 +18,9 @@
 use std::time::Duration;
 
 use alloy::{
+    consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U256, address, bytes, keccak256},
+    primitives::{Address, B256, ChainId, U256, address, keccak256},
     providers::{
         Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -22,7 +28,6 @@ use alloy::{
     rpc::types::TransactionRequest,
     sol_types::SolValue,
 };
-use alloy_chains::Chain;
 use clap::Parser;
 use eyre::Context;
 use futures_util::{StreamExt, future::try_join_all, stream::FuturesUnordered};
@@ -82,8 +87,8 @@ impl StressAccount {
             let prepare_start = Instant::now();
             let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
-                    required_funds: vec![],
-                    calls: vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("") }],
+                    required_funds: vec![(fee_token, U256::from(ETH_TO_WEI))],
+                    calls: vec![Call::transfer(fee_token, Address::ZERO, U256::from(ETH_TO_WEI))],
                     chain_id,
                     from: Some(self.address),
                     capabilities: PrepareCallsCapabilities {
@@ -129,13 +134,20 @@ impl StressAccount {
 
             let signature =
                 self.key.sign_payload_hash(digest).await.expect("failed to sign bundle digest");
-
+            let chain_ids: Vec<_> =
+                context.quote().unwrap().ty().quotes.iter().map(|quote| quote.chain_id).collect();
+            let inputs =
+                if chain_ids.len() == 1 { &chain_ids } else { &chain_ids[0..chain_ids.len() - 1] }
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<String>();
             info!(
                 %digest,
                 account = %self.address,
                 total_elapsed = ?prepare_start.elapsed(),
                 elapsed = ?prepare_start.elapsed(),
-                "Prepared bundle"
+                "Prepared bundle ({} -> {})",
+                inputs, chain_id
             );
             let send_start = Instant::now();
             let bundle_id = relay_client
@@ -153,7 +165,8 @@ impl StressAccount {
                 bundle_id = %bundle_id.id,
                 total_elapsed = ?prepare_start.elapsed(),
                 elapsed = ?send_start.elapsed(),
-                "Sent bundle"
+                "Sent bundle ({} -> {})",
+                inputs, chain_id
             );
             loop {
                 let status = relay_client.get_calls_status(bundle_id.id).await;
@@ -169,7 +182,8 @@ impl StressAccount {
                 account = %self.address,
                 bundle_id = %bundle_id.id,
                 total_elapsed = ?prepare_start.elapsed(),
-                "Bundle confirmed"
+                "Bundle confirmed ({} -> {})",
+                inputs, chain_id
             );
         }
     }
@@ -179,13 +193,13 @@ struct StressTester {
     relay_client: HttpClient,
     args: Args,
     accounts: Vec<StressAccount>,
+    destination_chain_id: ChainId,
 }
 
 impl StressTester {
     async fn new(args: Args) -> eyre::Result<Self> {
         let relay_client = HttpClientBuilder::new().build(
-            &args
-                .rpc_urls
+            args.rpc_urls
                 .first()
                 .ok_or_else(|| eyre::eyre!("at least one rpc url must be specified"))?,
         )?;
@@ -193,12 +207,19 @@ impl StressTester {
         let version = relay_client.health().await?;
         info!("Connected to relay at {}, version {}", &args.rpc_urls.first().unwrap(), version);
 
-        let caps = relay_client.get_capabilities(vec![args.chain_id.id()]).await?;
+        let base_chain =
+            ProviderBuilder::new().connect(args.rpc_urls.first().unwrap().as_str()).await?.erased();
+        let destination_chain_id = base_chain.get_chain_id().await?;
+        info!("Output chain is {destination_chain_id}");
 
-        let supports_fee_token = caps.chain(args.chain_id.id()).has_token(&args.fee_token);
-
+        let caps = relay_client.get_capabilities(vec![destination_chain_id]).await?;
+        let supports_fee_token = caps.chain(destination_chain_id).has_token(&args.fee_token);
         if !supports_fee_token {
-            eyre::bail!("fee token {} is not supported on chain {}", args.fee_token, args.chain_id);
+            eyre::bail!(
+                "fee token {} is not supported on chain {}",
+                args.fee_token,
+                destination_chain_id,
+            );
         }
 
         info!("Initializing {} accounts", args.accounts);
@@ -215,10 +236,10 @@ impl StressTester {
                         capabilities: UpgradeAccountCapabilities {
                             authorize_keys: vec![key.to_authorized()],
                         },
-                        chain_id: Some(args.chain_id.id()),
+                        chain_id: Some(destination_chain_id),
                         address: eoa.address(),
                         delegation: caps
-                            .chain(args.chain_id.id())
+                            .chain(destination_chain_id)
                             .contracts
                             .delegation_proxy
                             .address,
@@ -253,7 +274,7 @@ impl StressTester {
                 .disable_recommended_fillers()
                 .filler(NonceFiller::new(CachedNonceManager::default()))
                 .filler(GasFiller)
-                .filler(ChainIdFiller::new(Some(args.chain_id.id())))
+                .filler(ChainIdFiller::new(None))
                 .wallet(EthereumWallet::from(signer.0.clone()))
                 .connect(rpc_url.as_str())
                 .await?
@@ -266,8 +287,9 @@ impl StressTester {
             let accounts = accounts.clone();
             let signer = signer.clone();
             async move {
+                let chain_id = provider.get_chain_id().await?;
                 if provider.get_code_at(disperse_address).await?.is_empty() {
-                    info!("Deploying Disperse contract");
+                    info!("Deploying Disperse contract on chain {chain_id}");
                     let receipt: alloy::rpc::types::TransactionReceipt = provider
                         .send_transaction(
                             TransactionRequest::default().to(CREATE2_DEPLOYER).input(
@@ -278,7 +300,7 @@ impl StressTester {
                         .get_receipt()
                         .await?;
                     assert!(receipt.status());
-                    info!("Deployed Disperse contract");
+                    info!("Deployed Disperse contract on chain {chain_id}");
                 }
 
                 let disperse = Disperse::new(disperse_address, &provider);
@@ -287,20 +309,20 @@ impl StressTester {
                 if fee_token.allowance(signer.address(), disperse_address).call().await?
                     < args.fee_token_amount * U256::from(accounts.len())
                 {
-                    info!("Approving Disperse contract");
+                    info!("Approving Disperse contract on chain {chain_id}");
                     fee_token
                         .approve(disperse_address, U256::MAX)
                         .send()
                         .await?
                         .get_receipt()
                         .await?;
-                    info!("Approved Disperse contract");
+                    info!("Approved Disperse contract on chain {chain_id}");
                 }
 
                 let mut funded = 0;
                 for batch in accounts.chunks(50) {
                     info!(
-                        "Funding accounts #{}..{}/{} ",
+                        "Funding accounts #{}..{}/{} on chain {chain_id}",
                         funded,
                         funded + batch.len(),
                         accounts.len()
@@ -318,7 +340,7 @@ impl StressTester {
                         .await?;
 
                     info!(
-                        "Funded accounts #{}..{}/{} ",
+                        "Funded accounts #{}..{}/{} on chain {chain_id}",
                         funded,
                         funded + batch.len(),
                         accounts.len()
@@ -331,7 +353,7 @@ impl StressTester {
         }))
         .await?;
 
-        Ok(Self { relay_client, args, accounts })
+        Ok(Self { destination_chain_id, relay_client, args, accounts })
     }
 
     async fn spawn(self) -> eyre::Result<()> {
@@ -346,13 +368,13 @@ impl StressTester {
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
             tasks.push(tokio::spawn(async move {
-                account.run(self.args.chain_id.id(), self.args.fee_token, client).await
+                account.run(self.destination_chain_id, self.args.fee_token, client).await
             }));
         }
 
         while let Some(finished) = tasks.next().await {
             match finished {
-                Ok(_) => info!("An account finished stress test"),
+                Ok(res) => info!("An account finished stress test (result: {res:?})"),
                 Err(err) => error!("an account failed stress test: {}", err),
             }
         }
@@ -368,9 +390,6 @@ struct Args {
     /// RPC URL of the chain we are testing on.
     #[arg(long = "rpc-url", value_name = "RPC_URL", required = true)]
     rpc_urls: Vec<Url>,
-    /// Chain ID of the chain to test on.
-    #[arg(long = "chain-id", value_name = "CHAIN_ID", required = true)]
-    chain_id: Chain,
     /// Private key of the account to use for testing.
     ///
     /// This account should have sufficient fee tokens to cover the gas costs of the intents.
@@ -380,7 +399,7 @@ struct Args {
     #[arg(long = "fee-token", value_name = "ADDRESS", required = true)]
     fee_token: Address,
     /// Amount of fee tokens to fund each account with in wei.
-    #[arg(long = "fee-token-amount", value_name = "AMOUNT", default_value_t = U256::from(1000000000000000000u128))]
+    #[arg(long = "fee-token-amount", value_name = "AMOUNT", default_value_t = U256::from(ETH_TO_WEI * 10))]
     fee_token_amount: U256,
     /// Number of accounts to create and test with.
     #[arg(long = "accounts", value_name = "COUNT", default_value_t = 1000)]
