@@ -902,12 +902,12 @@ impl Signer {
         );
 
         let call = IFunder::pullGasCall { amount: funding_amount }.abi_encode();
-        let nonce = { 
-            let mut nonce = self.nonce.lock().await; 
-            let current_nonce = *nonce; 
-            *nonce += 1; 
-            current_nonce 
-        }; 
+        let nonce = {
+            let mut nonce = self.nonce.lock().await;
+            let current_nonce = *nonce;
+            *nonce += 1;
+            current_nonce
+        };
 
         let tx = TransactionRequest::default()
             .to(self.funder)
