@@ -14,7 +14,7 @@ use crate::{
     transactions::{PullGasState, transaction::RelayTransactionKind},
     transport::error::TransportErrExt,
     types::{
-        ISimpleFunder, ORCHESTRATOR_NO_ERROR,
+        IFunder, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
     },
 };
@@ -901,7 +901,7 @@ impl Signer {
             "pulling gas from SimpleFunder"
         );
 
-        let call = ISimpleFunder::pullGasCall { amount: funding_amount }.abi_encode();
+        let call = IFunder::pullGasCall { amount: funding_amount }.abi_encode();
         let nonce = *self.nonce.lock().await;
 
         let tx = TransactionRequest::default()
@@ -955,7 +955,7 @@ impl Signer {
     /// - Resends the transaction if it wasn't broadcast
     async fn resume_pull_gas_transaction(&self, tx: TxEnvelope) -> Result<(), SignerError> {
         let tx_hash = *tx.tx_hash();
-        let amount = ISimpleFunder::pullGasCall::abi_decode(tx.input())
+        let amount = IFunder::pullGasCall::abi_decode(tx.input())
             .map(|call| call.amount)
             .unwrap_or_default();
 

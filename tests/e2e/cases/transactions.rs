@@ -25,7 +25,7 @@ use relay::{
     signers::DynSigner,
     storage::StorageApi,
     transactions::{MIN_SIGNER_GAS, RelayTransactionKind, TransactionService, TransactionStatus},
-    types::ISimpleFunder,
+    types::IFunder,
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::broadcast;
@@ -676,12 +676,9 @@ async fn test_signer_pull_gas() -> eyre::Result<()> {
         .send_transaction(TransactionRequest {
             from: Some(funder_owner),
             to: Some(TxKind::Call(env.funder)),
-            input: ISimpleFunder::setGasWalletCall {
-                wallets: vec![signer_address],
-                isGasWallet: true,
-            }
-            .abi_encode()
-            .into(),
+            input: IFunder::setGasWalletCall { wallets: vec![signer_address], isGasWallet: true }
+                .abi_encode()
+                .into(),
             ..Default::default()
         })
         .await?

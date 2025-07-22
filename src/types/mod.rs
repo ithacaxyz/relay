@@ -79,6 +79,3 @@ pub use funder::*;
 
 mod multicall;
 pub use multicall::*;
-
-mod simple_funder;
-pub use simple_funder::*;
