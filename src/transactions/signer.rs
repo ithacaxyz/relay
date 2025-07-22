@@ -991,9 +991,10 @@ impl Signer {
             .await
             .ok_or(SignerError::TxTimeout)?;
 
+        let nonce = signed_tx.nonce();
+        *self.nonce.lock().await = nonce + 1;
+
         if receipt.status() {
-            let nonce = signed_tx.nonce();
-            *self.nonce.lock().await = nonce + 1;
             Ok(receipt)
         } else {
             Err(SignerError::Other("pullGas reverted".into()))
