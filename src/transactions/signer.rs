@@ -996,9 +996,6 @@ impl Signer {
             .await
             .ok_or(SignerError::TxTimeout)?;
 
-        let nonce = signed_tx.nonce();
-        *self.nonce.lock().await = nonce + 1;
-
         if receipt.status() {
             Ok(receipt)
         } else {
