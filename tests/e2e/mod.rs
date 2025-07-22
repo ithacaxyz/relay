@@ -11,7 +11,7 @@ mod constants;
 pub use constants::*;
 
 mod environment;
-use environment::*;
+pub use environment::*;
 
 mod layerzero;
 
