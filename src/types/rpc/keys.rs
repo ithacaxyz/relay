@@ -12,10 +12,12 @@ use super::Permission;
 
 /// Request parameters for `wallet_getKeys`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetKeysParameters {
     /// Address of the account to get the keys for.
     pub address: Address,
     /// Target chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
 }
 
@@ -273,5 +275,18 @@ mod tests {
 
         let revoke = RevokeKey { hash };
         assert_eq!(revoke.into_calls(), vec![Call::revoke(hash)]);
+    }
+
+    #[test]
+    fn test_get_keys_parameters_roundtrip() {
+        let raw = r#"{"address":"0x0000000000000000000000000000000000000000","chainId":"0x1"}"#;
+        let params = super::GetKeysParameters { address: Address::ZERO, chain_id: 1 };
+
+        let json = serde_json::to_string(&params).unwrap();
+        assert_eq!(json, raw);
+        let deserialized: super::GetKeysParameters = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(params.address, deserialized.address);
+        assert_eq!(params.chain_id, deserialized.chain_id);
     }
 }
