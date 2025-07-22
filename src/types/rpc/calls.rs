@@ -110,7 +110,7 @@ impl BalanceOverrides {
                 .into_iter()
                 .collect();
 
-            Ok::<_, RelayError>(AccountOverride { state: Some(slots), ..Default::default() })
+            Ok::<_, RelayError>(AccountOverride { state_diff: Some(slots), ..Default::default() })
         }
 
         let account_overrides: Vec<(Address, AccountOverride)> =
