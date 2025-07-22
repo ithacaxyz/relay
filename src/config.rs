@@ -384,7 +384,7 @@ impl Default for TransactionServiceConfig {
             max_queued_per_eoa: 1,
             public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-            flashblocks_rpc_endpoints: HashMap::new(),
+            flashblocks_rpc_endpoints: HashMap::default(),
         }
     }
 }
