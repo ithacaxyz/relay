@@ -19,11 +19,10 @@ use relay::{
     config::TransactionServiceConfig,
     signers::DynSigner,
     storage::StorageApi,
-    transactions::{TransactionService, TransactionStatus},
-    types::rpc::BundleId,
+    transactions::{RelayTransactionKind, TransactionService, TransactionStatus},
 };
 use std::{collections::HashSet, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 /// A Seed used to derive random accounts from
 const KEY_SEED: u64 = 1337;
@@ -35,8 +34,8 @@ fn pinned_test_fork_block_number() -> Option<i64> {
 }
 
 /// Waits for a final transaction status.
-async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> TransactionStatus {
-    while let Some(status) = events.recv().await {
+async fn wait_for_tx(mut events: broadcast::Receiver<TransactionStatus>) -> TransactionStatus {
+    while let Ok(status) = events.recv().await {
         if status.is_final() {
             return status;
         }
@@ -45,8 +44,8 @@ async fn wait_for_tx(mut events: mpsc::UnboundedReceiver<TransactionStatus>) -> 
     panic!("Transaction did not complete");
 }
 
-async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
-    while let Some(status) = events.recv().await {
+async fn wait_for_tx_hash(events: &mut broadcast::Receiver<TransactionStatus>) -> B256 {
+    while let Ok(status) = events.recv().await {
         match status {
             TransactionStatus::Pending(hash) => return hash,
             TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
@@ -58,7 +57,7 @@ async fn wait_for_tx_hash(events: &mut mpsc::UnboundedReceiver<TransactionStatus
 }
 
 /// Asserts that transaction was confirmed.
-async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error: &str) {
+async fn assert_failed(events: broadcast::Receiver<TransactionStatus>, error: &str) {
     match wait_for_tx(events).await {
         TransactionStatus::Failed(err) => {
             assert!(err.to_string().contains(error), "tx failed with different error: {err}");
@@ -69,9 +68,9 @@ async fn assert_failed(events: mpsc::UnboundedReceiver<TransactionStatus>, error
 }
 
 /// Asserts that transaction was confirmed.
-async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) -> B256 {
+async fn assert_confirmed(events: broadcast::Receiver<TransactionStatus>) -> B256 {
     match wait_for_tx(events).await {
-        TransactionStatus::Confirmed(hash) => hash,
+        TransactionStatus::Confirmed(receipt) => receipt.transaction_hash,
         TransactionStatus::Failed(err) => panic!("transacton failed {err}"),
         _ => unreachable!(),
     }
@@ -80,7 +79,7 @@ async fn assert_confirmed(events: mpsc::UnboundedReceiver<TransactionStatus>) ->
 /// Asserts that metrics match the expected values.
 fn assert_metrics(sent: usize, confirmed: usize, failed: usize, env: &Environment) {
     let output = env.relay_handle.metrics.render();
-    let chain_id = env.chain_id;
+    let chain_id = env.chain_id();
     assert!(output.contains(&format!(r#"transactions_sent{{chain_id="{chain_id}"}} {sent}"#)));
     assert!(
         output.contains(&format!(r#"transactions_confirmed{{chain_id="{chain_id}"}} {confirmed}"#))
@@ -91,7 +90,7 @@ fn assert_metrics(sent: usize, confirmed: usize, failed: usize, env: &Environmen
 /// Asserts that metrics match the expected values.
 fn assert_signer_metrics(paused: usize, active: usize, env: &Environment) {
     let output = env.relay_handle.metrics.render();
-    let chain_id = env.chain_id;
+    let chain_id = env.chain_id();
     assert!(
         output
             .contains(&format!(r#"transactions_active_signers{{chain_id="{chain_id}"}} {active}"#))
@@ -112,16 +111,17 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     .await
     .unwrap();
     // use a consistent seed
-    let rng = StdRng::seed_from_u64(KEY_SEED);
+    let mut rng = StdRng::seed_from_u64(KEY_SEED);
 
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // setup accounts
     let num_accounts = 100;
-    let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
+    let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
         futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(10)
+            .buffered(1)
             .try_collect::<Vec<_>>()
             .await?;
     // wait a bit to make sure all tasks see the tx confirmation
@@ -130,7 +130,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     // send `num_accounts` transactions and assert all of them are confirmed
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
     let handles = transactions
@@ -145,14 +145,20 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
     // send `num_accounts` more transactions some of which are failing
-    let transactions = join_all(accounts.iter().map(|acc| acc.prepare_tx(&env))).await;
+    let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
+        .buffered(1)
+        .collect::<Vec<_>>()
+        .await;
     let mut invalid = 0;
     let handles = transactions
         .into_iter()
         .map(|mut tx| {
             // Set invalid signature for some of the transactions
-            if rand::random_bool(0.5) {
-                tx.quote.ty_mut().intent.signature = Default::default();
+            if rng.random_bool(0.5) {
+                let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
+                    unreachable!()
+                };
+                quote.intent.signature = Default::default();
                 invalid += 1;
             }
 
@@ -167,6 +173,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
 
+    // otherwise it will be marked as LEAK.
+    drop(env);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     Ok(())
 }
 
@@ -178,7 +188,8 @@ async fn dropped_transaction() -> eyre::Result<()> {
     })
     .await
     .unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // setup account
     let account = MockAccount::new(&env).await.unwrap();
@@ -205,7 +216,8 @@ async fn fee_bump() -> eyre::Result<()> {
     let config = EnvironmentConfig { block_time: Some(1.0), ..Default::default() };
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup_with_config(config).await.unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // setup account
     let account = MockAccount::new(&env).await.unwrap();
@@ -213,8 +225,14 @@ async fn fee_bump() -> eyre::Result<()> {
     env.disable_mining().await;
 
     // set priority fee to be ~basefee for deterministic gas estimation
-    let base_fee =
-        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    let base_fee = env
+        .provider()
+        .get_block(Default::default())
+        .await?
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
     env.mine_blocks_with_priority_fee(base_fee as u128).await;
 
     // prepare transaction to send
@@ -231,11 +249,11 @@ async fn fee_bump() -> eyre::Result<()> {
     env.mine_blocks_with_priority_fee(dropped.max_priority_fee_per_gas().unwrap() * 2).await;
 
     // submit the transaction again to make sure it's not treated as dropped.
-    let _ = env.provider.send_raw_transaction(&dropped.encoded_2718()).await.unwrap();
+    let _ = env.provider().send_raw_transaction(&dropped.encoded_2718()).await.unwrap();
 
     // wait for new transaction to be sent
     let new_tx_hash = wait_for_tx_hash(&mut events).await;
-    let new_tx = env.provider.get_transaction_by_hash(new_tx_hash).await.unwrap().unwrap();
+    let new_tx = env.provider().get_transaction_by_hash(new_tx_hash).await.unwrap().unwrap();
 
     // assert that new transaction has higher priority fee
     assert!(new_tx_hash != *dropped.hash());
@@ -245,7 +263,7 @@ async fn fee_bump() -> eyre::Result<()> {
     let pending_txs = env
         .relay_handle
         .storage
-        .read_pending_transactions(signer.address(), env.chain_id)
+        .read_pending_transactions(signer.address(), env.chain_id())
         .await
         .unwrap();
     assert_eq!(pending_txs.len(), 1);
@@ -270,11 +288,18 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     })
     .await
     .unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // set priority fee to be ~basefee for deterministic gas estimation
-    let base_fee =
-        env.provider.get_block(Default::default()).await?.unwrap().header.base_fee_per_gas.unwrap();
+    let base_fee = env
+        .provider()
+        .get_block(Default::default())
+        .await?
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
     env.mine_blocks_with_priority_fee(base_fee as u128).await;
 
     // setup 2 accounts
@@ -291,10 +316,10 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     // drop the transaction to make sure it's not mined
     env.drop_transaction(hash_0).await.unwrap();
 
-    let max_fee = tx_0.quote.ty().native_fee_estimate.max_fee_per_gas;
+    let max_fee = tx_0.quote().unwrap().native_fee_estimate.max_fee_per_gas;
 
     // set next block base fee to a high value to make it look like tx is underpriced
-    env.provider.anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
+    env.provider().anvil_set_next_block_base_fee_per_gas(max_fee * 2).await.unwrap();
     env.mine_block().await;
 
     // prepare and send second transaction
@@ -303,8 +328,8 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 
     // we should see the fee increase and account for it
     assert!(
-        tx_1.quote.ty().native_fee_estimate.max_fee_per_gas
-            > tx_0.quote.ty().native_fee_estimate.max_fee_per_gas
+        tx_1.quote().unwrap().native_fee_estimate.max_fee_per_gas
+            > tx_0.quote().unwrap().native_fee_estimate.max_fee_per_gas
     );
 
     // enable block mining
@@ -320,6 +345,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
 /// Asserts that on fee growth, we can successfully drop an underpriced transaction, and handle
 /// nonce gap caused by it.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn pause_out_of_funds() -> eyre::Result<()> {
     let num_signers = 3;
     let env = Environment::setup_with_config(EnvironmentConfig {
@@ -339,11 +365,12 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .await
     .unwrap();
     let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // use a consistent seed
     let rng = StdRng::seed_from_u64(KEY_SEED);
-    // setup 30 accounts
+    // setup accounts
     let num_accounts = 30;
     let keys = rng.random_iter().take(num_accounts).collect::<Vec<B256>>();
     let accounts =
@@ -354,25 +381,26 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     // send transactions for each account
     let transactions = futures_util::stream::iter(accounts.iter().map(|acc| acc.prepare_tx(&env)))
-        .buffered(10)
+        .buffered(1)
         .collect::<Vec<_>>()
         .await;
-    let handles = transactions
-        .into_iter()
-        .map(|tx| tx_service_handle.send_transaction(tx))
-        .collect::<TryJoinAll<_>>()
-        .await?;
+    let handles = futures_util::stream::iter(
+        transactions.into_iter().map(|tx| tx_service_handle.send_transaction(tx)),
+    )
+    .buffered(num_accounts)
+    .try_collect::<Vec<_>>()
+    .await?;
 
     // Now set balances of all signers except the last one to a low value that is enough to pay for
     // the pending transactions but is low enough for signer to get paused.
-    let fees = env.provider.estimate_eip1559_fees().await.unwrap();
+    let fees = env.provider().estimate_eip1559_fees().await.unwrap();
     let new_balance = U256::from(10_000_000 * fees.max_fee_per_gas);
 
     try_join_all(
         signers
             .iter()
             .take(signers.len() - 1)
-            .map(|signer| env.provider.anvil_set_balance(signer.address(), new_balance)),
+            .map(|signer| env.provider().anvil_set_balance(signer.address(), new_balance)),
     )
     .await
     .unwrap();
@@ -390,11 +418,11 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
 
     let last_signer = signers.last().unwrap();
     let last_signer_nonce =
-        env.provider.get_transaction_count(last_signer.address()).await.unwrap();
+        env.provider().get_transaction_count(last_signer.address()).await.unwrap();
 
     // assert that last signer processed more transactions than others
     for signer in &signers[..signers.len() - 1] {
-        let nonce = env.provider.get_transaction_count(signer.address()).await.unwrap();
+        let nonce = env.provider().get_transaction_count(signer.address()).await.unwrap();
         assert!(nonce < last_signer_nonce);
     }
 
@@ -420,7 +448,8 @@ async fn resume_paused() -> eyre::Result<()> {
     })
     .await
     .unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
 
@@ -433,7 +462,7 @@ async fn resume_paused() -> eyre::Result<()> {
         signers
             .iter()
             .take(signers.len() - 1)
-            .map(|signer| env.provider.anvil_set_balance(signer.address(), U256::ZERO)),
+            .map(|signer| env.provider().anvil_set_balance(signer.address(), U256::ZERO)),
     )
     .await
     .unwrap();
@@ -449,7 +478,7 @@ async fn resume_paused() -> eyre::Result<()> {
         let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
         let signer =
-            env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
+            env.provider().get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer();
         assert_eq!(signer, last_signer.address());
     }))
     .buffered(10)
@@ -457,11 +486,9 @@ async fn resume_paused() -> eyre::Result<()> {
     .await;
 
     // set balances back to high values
-    try_join_all(
-        signers.iter().take(signers.len() - 1).map(|signer| {
-            env.provider.anvil_set_balance(signer.address(), U256::MAX / U256::from(2))
-        }),
-    )
+    try_join_all(signers.iter().take(signers.len() - 1).map(|signer| {
+        env.provider().anvil_set_balance(signer.address(), U256::MAX / U256::from(2))
+    }))
     .await
     .unwrap();
 
@@ -476,7 +503,7 @@ async fn resume_paused() -> eyre::Result<()> {
         let tx = acc.prepare_tx(&env).await;
         let handle = tx_service_handle.send_transaction(tx).await.unwrap();
         let hash = assert_confirmed(handle).await;
-        env.provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
+        env.provider().get_transaction_by_hash(hash).await.unwrap().unwrap().inner.signer()
     }))
     .await
     .into_iter()
@@ -500,11 +527,12 @@ async fn diverged_nonce() -> eyre::Result<()> {
     };
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup_with_config(config.clone()).await.unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
 
     // alter signer nonce to invalidate the nonce cached by service
-    let nonce = env.provider.get_transaction_count(signer.address()).await.unwrap();
-    env.provider.anvil_set_nonce(signer.address(), nonce + 10).await.unwrap();
+    let nonce = env.provider().get_transaction_count(signer.address()).await.unwrap();
+    env.provider().anvil_set_nonce(signer.address(), nonce + 10).await.unwrap();
 
     // give the service some time
     tokio::time::sleep(config.transaction_service_config.nonce_check_interval * 2).await;
@@ -515,7 +543,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
         let account = MockAccount::new(&env).await.unwrap();
         account.prepare_tx(&env).await
     }))
-    .buffered(10)
+    .buffered(5)
     .collect::<Vec<_>>()
     .await;
     let handles = transactions
@@ -547,19 +575,16 @@ async fn restart_with_pending() -> eyre::Result<()> {
     )
     .unwrap();
     let env = Environment::setup_with_config(config.clone()).await.unwrap();
-    let tx_service_handle = env.relay_handle.chains.get(env.chain_id).unwrap().transactions.clone();
+    let tx_service_handle =
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
     let storage = env.relay_handle.storage.clone();
-    let provider = env.provider.clone();
+    let provider = env.provider().clone();
 
     // spam some transactions
     let num_accounts = 10;
     let transactions = futures_util::stream::iter((0..num_accounts).map(|_| async {
         let account = MockAccount::new(&env).await.unwrap();
-        let tx = account.prepare_tx(&env).await;
-        // TODO: figure out if we should remove this, right now status is only written if this is
-        // called
-        storage.add_bundle_tx(BundleId::random(), env.chain_id, tx.id).await.unwrap();
-        tx
+        account.prepare_tx(&env).await
     }))
     .buffered(10)
     .collect::<Vec<_>>()

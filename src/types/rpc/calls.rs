@@ -1,26 +1,34 @@
 //! RPC calls-related request and response types.
 
+use std::collections::HashMap;
+
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
-        Account, AssetDiffs, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuote,
+        Account, AssetDiffs, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
+        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
     consensus::Eip658Value,
+    contract::StorageSlotFinder,
     dyn_abi::TypedData,
     primitives::{
         Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
         aliases::{B192, U192},
+        map::B256HashMap,
         wrap_fixed_bytes,
     },
-    providers::DynProvider,
-    rpc::types::Log,
+    providers::{DynProvider, Provider},
+    rpc::types::{
+        Log,
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
+    },
     sol_types::SolEvent,
     uint,
 };
+use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
@@ -55,6 +63,90 @@ impl CallKey {
     }
 }
 
+/// A set of balance overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BalanceOverrides {
+    balances: HashMap<Address, BalanceOverride>,
+}
+
+impl BalanceOverrides {
+    /// Convert the balance overrides into state overrides.
+    ///
+    /// # Note
+    ///
+    /// This finds storage slots for the assets and might be slow since it fetches access lists for
+    /// each balance override.
+    pub async fn into_state_overrides<P: Provider + Clone>(
+        self,
+        provider: P,
+    ) -> Result<StateOverride, RelayError> {
+        async fn account_override_for_token<P: Provider + Clone>(
+            provider: P,
+            token_address: Address,
+            balances: HashMap<Address, U256>,
+        ) -> Result<AccountOverride, RelayError> {
+            let slots: B256HashMap<B256> =
+                try_join_all(balances.into_iter().map(|(account, balance)| {
+                    let provider = provider.clone();
+
+                    async move {
+                        let slot = StorageSlotFinder::balance_of(provider, token_address, account)
+                            .find_slot()
+                            .await?;
+
+                        Ok::<_, RelayError>((
+                            slot.ok_or_else(|| {
+                                eyre::eyre!(format!(
+                                    "could not determine balance slot for {}",
+                                    token_address
+                                ))
+                            })?,
+                            balance.into(),
+                        ))
+                    }
+                }))
+                .await?
+                .into_iter()
+                .collect();
+
+            Ok::<_, RelayError>(AccountOverride { state_diff: Some(slots), ..Default::default() })
+        }
+
+        let account_overrides: Vec<(Address, AccountOverride)> =
+            try_join_all(self.balances.into_iter().map(|(token_address, overrides)| {
+                let provider = provider.clone();
+                async move {
+                    Ok::<_, RelayError>((
+                        token_address,
+                        account_override_for_token(
+                            provider.clone(),
+                            token_address,
+                            overrides.balances,
+                        )
+                        .await?,
+                    ))
+                }
+            }))
+            .await?;
+
+        Ok(StateOverridesBuilder::default().extend(account_overrides).build())
+    }
+}
+
+/// A balance override.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BalanceOverride {
+    /// The kind of asset this is.
+    ///
+    /// # Note
+    ///
+    /// Currently this only supports ERC20, so it should be validated that this is equal to ERC20.
+    kind: AssetType,
+    /// The balances to override.
+    balances: HashMap<Address, U256>,
+}
+
 /// Request parameters for `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,10 +161,26 @@ pub struct PrepareCallsParameters {
     pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
+    /// State overrides for simulating the call bundle.
+    ///
+    /// This will only be applied to the intent on the output chain in multichain intents.
+    #[serde(default)]
+    pub state_overrides: StateOverride,
+    /// Balance overrides for simulating the call bundle.
+    ///
+    /// This will only be applied to the intent on the output chain in multichain intents.
+    ///
+    /// This uses heuristics to determine the balance slot, so it might be inaccurate in some
+    /// cases.
+    #[serde(default)]
+    pub balance_overrides: BalanceOverrides,
     /// Key that will be used to sign the call bundle. It can only be None, if we are handling a
     /// precall.
     #[serde(default)]
     pub key: Option<CallKey>,
+    /// Required funds on the target chain.
+    #[serde(default)]
+    pub required_funds: Vec<(Address, U256)>,
 }
 
 impl PrepareCallsParameters {
@@ -212,17 +320,17 @@ pub struct PrepareCallsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PrepareCallsContext {
-    /// The [`SignedQuote`] of the prepared call bundle.
+    /// The [`SignedQuotes`] of the prepared call bundle.
     #[serde(rename = "quote")]
-    Quote(Box<SignedQuote>),
+    Quote(Box<SignedQuotes>),
     /// The [`PreCall`] of the prepared call bundle.
     #[serde(rename = "preCall")]
     PreCall(SignedCall),
 }
 
 impl PrepareCallsContext {
-    /// Initializes [`PrepareCallsContext`] with a [`SignedQuote`].
-    pub fn with_quote(quote: SignedQuote) -> Self {
+    /// Initializes [`PrepareCallsContext`] with [`SignedQuotes`].
+    pub fn with_quotes(quote: SignedQuotes) -> Self {
         Self::Quote(Box::new(quote))
     }
 
@@ -231,24 +339,24 @@ impl PrepareCallsContext {
         Self::PreCall(precall)
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote(&self) -> Option<&SignedQuote> {
+    /// Returns quotes immutable reference if it exists.
+    pub fn quote(&self) -> Option<&SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Returns quote mutable reference if it exists.
-    pub fn quote_mut(&mut self) -> Option<&mut SignedQuote> {
+    /// Returns quotes mutable reference if it exists.
+    pub fn quote_mut(&mut self) -> Option<&mut SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
         }
     }
 
-    /// Consumes self and returns quote if it exists.
-    pub fn take_quote(self) -> Option<SignedQuote> {
+    /// Consumes self and returns quotes if it exists.
+    pub fn take_quote(self) -> Option<SignedQuotes> {
         match self {
             PrepareCallsContext::Quote(signed) => Some(*signed),
             PrepareCallsContext::PreCall(_) => None,
@@ -263,17 +371,43 @@ impl PrepareCallsContext {
         }
     }
 
-    /// Calculate the eip712 digest that the user will need to sign.
-    pub async fn compute_eip712_data(
+    /// Calculate the digest that the user will need to sign.
+    ///
+    /// It will be a eip712 signing hash in a single chain intent and a merkle root in a multi chain
+    /// intent.
+    pub async fn compute_signing_digest(
         &self,
-        orchestrator_address: Address,
+        maybe_stored: Option<&CreatableAccount>,
+        latest_orchestrator: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
-            PrepareCallsContext::Quote(quote) => {
-                quote.ty().intent.compute_eip712_data(orchestrator_address, provider).await
+            PrepareCallsContext::Quote(context) => {
+                let output_quote = context.ty().quotes.last().expect("should exist");
+                if let Some(root) = context.ty().multi_chain_root {
+                    Ok((root, TypedData::from_struct(&output_quote.intent, None)))
+                } else {
+                    output_quote
+                        .intent
+                        .compute_eip712_data(output_quote.orchestrator, provider)
+                        .await
+                }
             }
             PrepareCallsContext::PreCall(pre_call) => {
+                let orchestrator_address = if pre_call.eoa == Address::ZERO {
+                    // EOA is unknown so we assume that latest orchestrator should be used
+                    latest_orchestrator
+                } else {
+                    // fetch orchestrator address from the account
+                    Account::new(pre_call.eoa, provider)
+                        .with_delegation_override_opt(
+                            maybe_stored.map(|acc| &acc.signed_authorization.address),
+                        )
+                        .get_orchestrator()
+                        .await
+                        .map_err(RelayError::from)?
+                };
+
                 pre_call.compute_eip712_data(orchestrator_address, provider).await
             }
         }
@@ -391,4 +525,78 @@ pub struct CallsStatus {
     pub status: CallStatusCode,
     /// The receipts for the call bundle.
     pub receipts: Vec<CallReceipt>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+    use std::str::FromStr;
+
+    #[test]
+    fn serde_balance_overrides() {
+        let s = r#"{
+            "balances": {
+                "0x97870b32890d3F1f089489A29007863A5678089D": "0x56bc75e2d63100000"
+            },
+            "kind": "erc20"
+        }"#;
+        let params = serde_json::from_str::<BalanceOverride>(s).unwrap();
+        let balance_override = BalanceOverride {
+            kind: AssetType::ERC20,
+            balances: HashMap::from([(
+                address!("0x97870b32890d3F1f089489A29007863A5678089D"),
+                U256::from_str("0x56bc75e2d63100000").unwrap(),
+            )]),
+        };
+        assert_eq!(params, balance_override);
+    }
+
+    #[test]
+    fn serde_prepare_params() {
+        let s = r#"{
+    "balanceOverrides": {
+        "0x7ddb34adbf9a11d3fe365349c607fc7b09954a41": {
+            "balances": {
+                "0x97870b32890d3F1f089489A29007863A5678089D": "0x56bc75e2d63100000"
+            },
+            "kind": "erc20"
+        }
+    },
+    "calls": [
+        {
+            "data": "0x40c10f190000000000000000000000007ddb34adbf9a11d3fe365349c607fc7b09954a410000000000000000000000000000000000000000000000000de0b6b3a7640000",
+            "to": "0x97870b32890d3F1f089489A29007863A5678089D",
+            "value": "0x0"
+        }
+    ],
+    "capabilities": {
+        "meta": {
+            "feeToken": "0x97870b32890d3F1f089489A29007863A5678089D"
+        }
+    },
+    "chainId": 28404,
+    "from": "0x7ddb34adbf9a11d3fe365349c607fc7b09954a41",
+    "key": {
+        "prehash": false,
+        "publicKey": "0x4bc484680a02b7edba11d82f320c968e08a896f24130eca04b8dea6538ae5d5d4de1da458be057268f4164f8a44d95afc8ec0991836c8397c5c6146fcba5fa99",
+        "type": "webauthnp256"
+    },
+    "requiredFunds": []
+}"#;
+        let params = serde_json::from_str::<PrepareCallsParameters>(s).unwrap();
+        let balance_override = params
+            .balance_overrides
+            .balances
+            .get(&address!("0x7ddb34adbf9a11d3fe365349c607fc7b09954a41"))
+            .unwrap();
+        let expected = BalanceOverride {
+            kind: AssetType::ERC20,
+            balances: HashMap::from([(
+                address!("0x97870b32890d3F1f089489A29007863A5678089D"),
+                U256::from_str("0x56bc75e2d63100000").unwrap(),
+            )]),
+        };
+        assert_eq!(*balance_override, expected);
+    }
 }

@@ -170,3 +170,30 @@ pub struct ValidSignatureProof {
     /// been delegated.
     pub init_pre_call: Option<SignedCall>,
 }
+
+/// Parameters for `account_setEmail`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetEmailParameters {
+    /// The email to associate with the wallet.
+    pub email: String,
+    /// The wallet address.
+    pub wallet_address: Address,
+}
+
+/// Parameters for `account_verifyEmail`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyEmailParameters {
+    /// Chain ID that the account is on.
+    pub chain_id: ChainId,
+    /// The email to associate with the wallet.
+    pub email: String,
+    /// The wallet address.
+    pub wallet_address: Address,
+    /// The verification token.
+    pub token: String,
+    /// The signature over `keccak(email ++ token)` from the account the e-mail should be
+    /// associated with.
+    pub signature: Bytes,
+}

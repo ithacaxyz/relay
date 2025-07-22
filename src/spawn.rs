@@ -4,10 +4,10 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    constants::DEFAULT_POLL_INTERVAL,
+    constants::{DEFAULT_POLL_INTERVAL, ESCROW_REFUND_DURATION_SECS},
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
-    rpc::{Onramp, OnrampApiServer, Relay, RelayApiServer},
+    rpc::{AccountApiServer, AccountRpc, Onramp, OnrampApiServer, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
     transport::{SequencerLayer, create_transport},
@@ -31,6 +31,7 @@ use jsonrpsee::server::{
     middleware::{http::ProxyGetRequestLayer, rpc::RpcServiceBuilder},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
+use resend_rs::Resend;
 use sqlx::PgPool;
 use std::{net::SocketAddr, path::Path, str::FromStr, sync::Arc};
 use tower::ServiceBuilder;
@@ -58,6 +59,8 @@ pub struct RelayHandle {
     pub metrics: PrometheusHandle,
     /// Price oracle.
     pub price_oracle: PriceOracle,
+    /// Coin registry.
+    pub fee_tokens: Arc<FeeTokens>,
 }
 
 impl RelayHandle {
@@ -68,31 +71,34 @@ impl RelayHandle {
 }
 
 /// Attempts to spawn the relay service using CLI arguments and a configuration file.
-pub async fn try_spawn_with_args<P: AsRef<Path>>(
+pub async fn try_spawn_with_args(
     args: Args,
-    config_path: P,
-    registry_path: P,
+    config_path: &Path,
+    registry_path: &Path,
 ) -> eyre::Result<RelayHandle> {
-    let config = if !config_path.as_ref().exists() {
+    let config = if !config_path.exists() {
         let config = args.merge_relay_config(RelayConfig::default());
-        config.save_to_file(&config_path)?;
+        config.save_to_file(config_path)?;
         config
     } else if !args.config_only {
         // File exists: load and override with CLI values.
-        args.merge_relay_config(RelayConfig::load_from_file(&config_path)?)
+        args.merge_relay_config(RelayConfig::load_from_file(config_path)?)
     } else {
-        let mut config = RelayConfig::load_from_file(&config_path)?;
+        let mut config = RelayConfig::load_from_file(config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
+            .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
+            .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
     };
 
-    let registry = if !registry_path.as_ref().exists() {
+    let registry = if !registry_path.exists() {
         let registry = CoinRegistry::default();
-        registry.save_to_file(&registry_path)?;
+        registry.save_to_file(registry_path)?;
         registry
     } else {
-        CoinRegistry::load_from_file(&registry_path)?
+        CoinRegistry::load_from_file(registry_path)?
     };
 
     try_spawn(config, registry).await
@@ -121,9 +127,20 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
+    // setup funder signer
+    let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
+
     // setup providers
     let providers: Vec<DynProvider> = futures_util::future::try_join_all(
         config.chain.endpoints.iter().cloned().map(async |url| {
+            // Enforce WebSocket endpoints since we need to subscribe to logs in the interop service
+            if config.interop.is_some()
+                && !url.as_str().starts_with("ws://")
+                && !url.as_str().starts_with("wss://")
+            {
+                eyre::bail!("All endpoints must use WebSocket (ws:// or wss://). Got: {}", url);
+            }
+
             let chain_id =
                 RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
 
@@ -181,9 +198,18 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         );
     }
 
+    let fee_tokens = Arc::new(
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers.clone(),
+        )
+        .await?,
+    );
+
     let chains =
-        Chains::new(providers.clone(), signers, storage.clone(), config.transactions.clone())
-            .await?;
+        Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;
 
     // construct asset info service
     let asset_info = AssetInfoService::new(512);
@@ -196,20 +222,35 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             .await?;
 
     // todo: avoid all this darn cloning
-    let mut rpc = Relay::new(
+    let relay = Relay::new(
         contracts,
         chains.clone(),
         quote_signer,
+        funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        FeeTokens::new(&registry, &config.chain.fee_tokens, providers).await?,
+        fee_tokens.clone(),
         config.chain.fee_recipient,
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
-    )
-    .into_rpc();
+        config
+            .interop
+            .as_ref()
+            .map(|i| i.escrow_refund_threshold)
+            .unwrap_or(ESCROW_REFUND_DURATION_SECS),
+    );
     let onramp = Onramp::new(config.onramp.clone()).into_rpc();
+    let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
+        AccountRpc::new(
+            relay.clone(),
+            Resend::new(resend_api_key),
+            storage.clone(),
+            config.email.porto_base_url.unwrap_or("id.porto.sh".to_string()),
+        )
+        .into_rpc()
+    });
+    let mut rpc = relay.into_rpc();
 
     // http layers
     let cors = CorsLayer::new()
@@ -237,6 +278,7 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     info!(%addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
+    info!("Funder signer key: {}", funder_signer.address());
 
     // version and other information as a metric
     counter!(
@@ -245,11 +287,18 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         "orchestrator" => config.orchestrator.to_string(),
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
+        "funder" => config.funder.to_string(),
         "fee_recipient" => config.chain.fee_recipient.to_string()
     )
     .absolute(1);
 
     rpc.merge(onramp).expect("could not merge rpc modules");
+    if let Some(account_rpc) = account_rpc {
+        rpc.merge(account_rpc).expect("could not merge rpc modules");
+    } else {
+        warn!("No e-mail provider configured.");
+    }
+
     Ok(RelayHandle {
         local_addr: addr,
         server: server.start(rpc),
@@ -257,5 +306,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         storage,
         metrics,
         price_oracle,
+        fee_tokens,
     })
 }

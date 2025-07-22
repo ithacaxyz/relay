@@ -11,6 +11,7 @@ use crate::{
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
+    transactions::transaction::RelayTransactionKind,
     transport::error::TransportErrExt,
     types::{
         ORCHESTRATOR_NO_ERROR,
@@ -21,13 +22,13 @@ use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
     eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, Bytes, U256, uint},
+    primitives::{Address, Bytes, U256, uint},
     providers::{
         DynProvider, PendingTransactionError, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
-    rpc::types::TransactionRequest,
-    sol_types::{SolCall, SolEvent},
+    rpc::types::{TransactionReceipt, TransactionRequest},
+    sol_types::SolCall,
     transports::{RpcError, TransportErrorKind},
 };
 use chrono::Utc;
@@ -85,6 +86,10 @@ pub enum SignerError {
     /// Storage error.
     #[error(transparent)]
     Storage(#[from] StorageError),
+
+    /// ABI decoding error.
+    #[error(transparent)]
+    Abi(#[from] alloy::sol_types::Error),
 
     /// Other errors.
     #[error(transparent)]
@@ -251,9 +256,10 @@ impl Signer {
     async fn on_confirmed_transaction(
         &self,
         tx: PendingTransaction,
-        tx_hash: B256,
+        receipt: TransactionReceipt,
     ) -> Result<(), StorageError> {
-        self.update_tx_status(tx.id(), TransactionStatus::Confirmed(tx_hash)).await?;
+        self.update_tx_status(tx.id(), TransactionStatus::Confirmed(Box::new(receipt.clone())))
+            .await?;
         self.storage.remove_pending_transaction(tx.id()).await?;
 
         self.metrics
@@ -266,7 +272,7 @@ impl Signer {
 
         // Spawn a task to record metrics.
         let this = self.clone();
-        tokio::spawn(async move { this.record_confirmed_metrics(tx, tx_hash).await });
+        tokio::spawn(async move { this.record_confirmed_metrics(tx, receipt).await });
 
         Ok(())
     }
@@ -283,7 +289,7 @@ impl Signer {
         self.storage.remove_pending_transaction(tx).await?;
 
         // Update status
-        self.update_tx_status(tx, TransactionStatus::Failed(Arc::new(err))).await?;
+        self.update_tx_status(tx, TransactionStatus::failed(err)).await?;
 
         Ok(())
     }
@@ -316,10 +322,12 @@ impl Signer {
         tx: &mut RelayTransaction,
         fees: Eip1559Estimation,
     ) -> Result<(), SignerError> {
-        // Set payment recipient to us if it hasn't been set
-        let payment_recipient = &mut tx.quote.ty_mut().intent.paymentRecipient;
-        if payment_recipient.is_zero() {
-            *payment_recipient = self.address();
+        if let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind {
+            // Set payment recipient to us if it hasn't been set
+            let payment_recipient = &mut quote.intent.paymentRecipient;
+            if payment_recipient.is_zero() {
+                *payment_recipient = self.address();
+            }
         }
 
         let mut request: TransactionRequest = tx.build(0, fees).into();
@@ -329,18 +337,24 @@ impl Signer {
 
         // Try eth_call before committing to send the actual transaction
         self.provider
-            .call(request)
+            .call(request.clone())
             .await
-            .and_then(|res| {
-                OrchestratorContract::executeCall::abi_decode_returns(&res)
-                    .map_err(TransportErrorKind::custom)
-            })
             .map_err(SignerError::from)
-            .and_then(|result| {
-                if result != ORCHESTRATOR_NO_ERROR {
-                    return Err(SignerError::IntentRevert { revert_reason: result.into() });
+            .and_then(|res| {
+                if tx.is_intent() {
+                    let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
+
+                    if result != ORCHESTRATOR_NO_ERROR {
+                        return Err(SignerError::IntentRevert { revert_reason: result.into() });
+                    }
+
+                    Ok(())
+                } else {
+                    Ok(())
                 }
-                Ok(())
+            })
+            .inspect_err(|err| {
+                trace!(?err, ?request, "transaction simulation failed");
             })?;
 
         Ok(())
@@ -386,7 +400,7 @@ impl Signer {
     async fn watch_transaction_inner(
         &self,
         tx: &mut PendingTransaction,
-    ) -> Result<B256, SignerError> {
+    ) -> Result<TransactionReceipt, SignerError> {
         let mut last_sent_at = Instant::now();
 
         loop {
@@ -400,9 +414,9 @@ impl Signer {
                 handles.push(self.monitor.watch_transaction(*sent.tx_hash(), self.block_time * 2));
             }
 
-            while let Some(tx_hash) = handles.next().await {
-                if let Some(tx_hash) = tx_hash {
-                    return Ok(tx_hash);
+            while let Some(receipt_opt) = handles.next().await {
+                if let Some(receipt) = receipt_opt {
+                    return Ok(receipt);
                 }
             }
 
@@ -424,10 +438,9 @@ impl Signer {
             } else {
                 trace!(tx_hash=%best_tx.tx_hash(), "was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
+                    && !err.is_already_known()
                 {
-                    if !err.is_already_known() {
-                        debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
-                    }
+                    debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
                 }
             }
         }
@@ -441,8 +454,8 @@ impl Signer {
         // todo: set parent span to context in pendingtx
         self.metrics.pending.increment(1);
         match self.watch_transaction_inner(&mut tx).await {
-            Ok(tx_hash) => {
-                self.on_confirmed_transaction(tx, tx_hash).await?;
+            Ok(receipt) => {
+                self.on_confirmed_transaction(tx, receipt).await?;
             }
             Err(err) => {
                 error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
@@ -454,13 +467,12 @@ impl Signer {
                 // After making sure that the nonce is occupied, check if it was occupied by one of
                 // the transactions sent before.
                 for sent in &tx.sent {
-                    if let Ok(Some(sent)) =
-                        self.provider.get_transaction_by_hash(*sent.tx_hash()).await
+                    if let Ok(Some(receipt)) =
+                        self.provider.get_transaction_receipt(*sent.tx_hash()).await
+                        && receipt.block_number.is_some()
                     {
-                        if sent.block_number.is_some() {
-                            self.on_confirmed_transaction(tx, *sent.inner.tx_hash()).await?;
-                            return Ok(());
-                        }
+                        self.on_confirmed_transaction(tx, receipt).await?;
+                        return Ok(());
                     }
                 }
 
@@ -611,11 +623,11 @@ impl Signer {
 
             error!(%err, %nonce, "Failed to close nonce gap");
 
-            if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await {
-                if latest_nonce > nonce {
-                    warn!("nonce gap was closed by a different transaction");
-                    break;
-                }
+            if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
+                && latest_nonce > nonce
+            {
+                warn!("nonce gap was closed by a different transaction");
+                break;
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -656,13 +668,12 @@ impl Signer {
     }
 
     /// Fetches receipt of a confirmed transaction and records metrics.
-    async fn record_confirmed_metrics(&self, tx: PendingTransaction, tx_hash: B256) {
-        // Fetch receipt
-        let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await.ok().flatten()
-        else {
-            warn!(%tx_hash, "failed to fetch receipt of confirmed transaction");
+    async fn record_confirmed_metrics(&self, tx: PendingTransaction, receipt: TransactionReceipt) {
+        if !tx.tx.is_intent() {
             return;
-        };
+        }
+
+        let tx_hash = receipt.transaction_hash;
 
         self.metrics.gas_spent.increment(receipt.gas_used as f64);
         self.metrics.native_spent.increment(f64::from(
@@ -675,9 +686,7 @@ impl Signer {
             return;
         }
 
-        let Some(event) =
-            receipt.logs().iter().rev().find_map(|log| IntentExecuted::decode_log(&log.inner).ok())
-        else {
+        let Some(event) = IntentExecuted::try_from_receipt(&receipt) else {
             warn!(%tx_hash, "failed to find IntentExecuted event in receipt");
             self.metrics.failed_intents.increment(1);
             return;
@@ -689,62 +698,62 @@ impl Signer {
             return;
         }
 
-        if let Some(included_at_block) = receipt.block_number {
-            if let Some(block) =
+        if let Some(included_at_block) = receipt.block_number
+            && let Some(block) =
                 self.provider.get_block(included_at_block.into()).await.ok().flatten()
-            {
-                let submitted_at = tx.sent_at.timestamp() as u64;
-                let included_at = block.header.timestamp;
+        {
+            let submitted_at = tx.sent_at.timestamp() as u64;
+            let included_at = block.header.timestamp;
 
-                let submitted_at_block = async {
-                    let block_time = self.block_time.as_millis();
+            let submitted_at_block = async {
+                let block_time = self.block_time.as_millis();
 
-                    // Firsly try guessing the block based on block time.
-                    let first_guess = if block_time == 0 {
-                        included_at_block
-                    } else {
-                        included_at_block
-                            - ((included_at - submitted_at) as u128 * 1000 / block_time) as u64
-                    };
+                // Firsly try guessing the block based on block time.
+                let first_guess = if block_time == 0 {
+                    included_at_block
+                } else {
+                    included_at_block.saturating_sub(
+                        ((included_at.saturating_sub(submitted_at)) as u128 * 1000 / block_time)
+                            as u64,
+                    )
+                };
 
-                    // Follow the chain until we find a block after the submission time.
-                    let mut block =
-                        self.provider.get_block(first_guess.into()).await.ok().flatten()?;
-                    while block.header.timestamp <= submitted_at {
-                        block = self
-                            .provider
-                            .get_block((block.header.number + 1).into())
-                            .await
-                            .ok()
-                            .flatten()?;
-                    }
+                // Follow the chain until we find a block after the submission time.
+                let mut block = self.provider.get_block(first_guess.into()).await.ok().flatten()?;
+                while block.header.timestamp <= submitted_at {
+                    block = self
+                        .provider
+                        .get_block((block.header.number + 1).into())
+                        .await
+                        .ok()
+                        .flatten()?;
+                }
 
-                    // Go back until there are earlier blocks mined after the submission time.
-                    let mut prev_block = self
+                // Go back until there are earlier blocks mined after the submission time.
+                let mut prev_block = self
+                    .provider
+                    .get_block((block.header.number - 1).into())
+                    .await
+                    .ok()
+                    .flatten()?;
+                while prev_block.header.timestamp > submitted_at {
+                    block = prev_block;
+                    prev_block = self
                         .provider
                         .get_block((block.header.number - 1).into())
                         .await
                         .ok()
                         .flatten()?;
-                    while prev_block.header.timestamp > submitted_at {
-                        block = prev_block;
-                        prev_block = self
-                            .provider
-                            .get_block((block.header.number - 1).into())
-                            .await
-                            .ok()
-                            .flatten()?;
-                    }
-
-                    Some(block.header.number)
                 }
-                .await;
 
-                if let Some(submitted_at_block) = submitted_at_block {
-                    self.metrics
-                        .blocks_until_inclusion
-                        .record((included_at_block - submitted_at_block + 1) as f64);
-                }
+                Some(block.header.number)
+            }
+            .await;
+
+            if let Some(submitted_at_block) = submitted_at_block {
+                self.metrics
+                    .blocks_until_inclusion
+                    .record((included_at_block - submitted_at_block + 1) as f64);
             }
         }
 
@@ -763,10 +772,10 @@ impl Signer {
         // Make sure that loaded transactions are not getting overriden by the new ones
         {
             let mut lock = self.nonce.lock().await;
-            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max() {
-                if nonce > *lock {
-                    *lock = nonce;
-                }
+            if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max()
+                && nonce > *lock
+            {
+                *lock = nonce;
             }
         }
 

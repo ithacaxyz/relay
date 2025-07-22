@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "13.0.0"
+version = "15.0.2"
 edition = "2024"
 publish = false
 
@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.9", features = [
+alloy = { version = "1.0.22", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -37,9 +37,13 @@ alloy = { version = "1.0.9", features = [
     "json-rpc",
     "reqwest-rustls-tls",
     "signer-mnemonic",
+    "signer-aws",
+    "rand",
 ], default-features = false }
 alloy-chains = "0.2"
 async-trait = "0.1"
+aws-config = "1.8"
+aws-sdk-kms = { version = "1", default-features = false }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -59,13 +63,15 @@ opentelemetry_sdk = { version = "0.30.0", default-features = false, features = [
     "rt-tokio",
 ] }
 p256 = { version = "0.13", features = ["ecdsa"] }
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+] }
 schnellru = "0.2.4"
 serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
 thiserror = "2"
-tokio = { version = "1.45", features = ["sync", "rt", "macros"] }
+tokio = { version = "1.46", features = ["sync", "rt", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.0"
@@ -87,21 +93,32 @@ sqlx = { version = "0.8.5", features = [
     "postgres",
     "runtime-tokio",
     "macros",
+    "bigdecimal",
 ] }
 serde_yaml = "0.9.34"
+resend-rs = { version = "0.15.0", default-features = false, features = [
+    "rustls-tls",
+] }
+num-traits = "0.2"
+num-bigint = "0.4"
+ruint = { version = "1.1.0", features = ["num-bigint"] }
+binance-sdk = { version = "8", features = ["wallet"] }
+rust_decimal = "1"
+strum = "0.27"
+strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.9", features = [
+alloy = { version = "1.0.22", features = [
     "eips",
     "provider-anvil-node",
+    "reqwest-rustls-tls",
 ], default-features = false }
-alloy-primitives = { version = "1.1.0", features = ["rand"] }
+alloy-primitives = { version = "1.2.1", features = ["rand"] }
 derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
+parking_lot = "0.12"
 semver = "1.0.26"
-strum = "0.27"
-strum_macros = "0.27"
 tempfile = "3.20"
 
 [build-dependencies]
@@ -162,3 +179,6 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 # unnameable-types = "warn"
 # unreachable_pub = "warn"
 unused_must_use = "deny"
+
+[workspace]
+members = ["tools/xtask"]

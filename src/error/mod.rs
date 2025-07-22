@@ -1,5 +1,7 @@
 //! Relay error types.
 mod asset;
+use std::error::Error;
+
 pub use asset::AssetError;
 
 mod auth;
@@ -8,11 +10,17 @@ pub use auth::AuthError;
 mod contracts;
 pub use contracts::ContractErrors;
 
+mod email;
+pub use email::EmailError;
+
 mod keys;
 pub use keys::KeysError;
 
 mod intent;
 pub use intent::IntentError;
+
+mod merkle;
+pub use merkle::MerkleError;
 
 mod quote;
 pub use quote::QuoteError;
@@ -54,6 +62,24 @@ pub enum RelayError {
     /// The orchestrator is not supported.
     #[error("unsupported orchestrator {0}")]
     UnsupportedOrchestrator(Address),
+    /// The asset is not supported.
+    #[error("unsupported asset {asset} on chain {chain}")]
+    UnsupportedAsset {
+        /// The address of the asset that is not supported.
+        asset: Address,
+        /// The chain ID where the asset is not supported.
+        chain: ChainId,
+    },
+    /// Insufficient funds for the requested operation.
+    #[error("insufficient funds: required {required} of asset {asset} on chain {chain_id}")]
+    InsufficientFunds {
+        /// The amount of funds required for the operation.
+        required: alloy::primitives::U256,
+        /// The chain ID where the funds are insufficient.
+        chain_id: ChainId,
+        /// The address of the asset that has insufficient funds.
+        asset: Address,
+    },
     /// An error occurred during ABI encoding/decoding.
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
@@ -66,6 +92,16 @@ pub enum RelayError {
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
+    /// Settlement-related errors.
+    #[error(transparent)]
+    Settlement(#[from] crate::interop::SettlementError),
+}
+
+impl RelayError {
+    /// Creates an [`RelayError::InternalError`] from an error.
+    pub fn internal(err: impl Error + Send + Sync + 'static) -> Self {
+        Self::InternalError(err.into())
+    }
 }
 
 impl From<reqwest::Error> for RelayError {
@@ -110,7 +146,10 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::RpcError(_)
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
-            | RelayError::InternalError(_) => internal_rpc(err.to_string()),
+            | RelayError::InsufficientFunds { .. }
+            | RelayError::UnsupportedAsset { .. }
+            | RelayError::InternalError(_)
+            | RelayError::Settlement(_) => internal_rpc(err.to_string()),
         }
     }
 }

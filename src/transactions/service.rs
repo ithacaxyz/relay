@@ -22,14 +22,31 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::{broadcast, mpsc, oneshot},
+    task::JoinSet,
+};
 use tracing::{debug, error};
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
 pub enum TransactionServiceMessage {
     /// Message to send a transaction and receive events about the status of the transaction.
-    SendTransaction(RelayTransaction, mpsc::UnboundedSender<TransactionStatus>),
+    SendTransaction(Box<RelayTransaction>, broadcast::Sender<TransactionStatus>),
+    /// Subscribe to status updates for a specific transaction.
+    Subscribe(TxId, oneshot::Sender<Option<broadcast::Receiver<TransactionStatus>>>),
+}
+
+/// Errors that may occur when interacting with the [`TransactionService`].
+#[derive(Debug, thiserror::Error)]
+pub enum TransactionServiceError {
+    /// Error occurred while interacting with storage.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+
+    /// Failed to wait for transaction.
+    #[error("failed to wait for transaction")]
+    FailedToWaitForTransaction,
 }
 
 /// Handle to communicate with the [`TransactionService`].
@@ -44,11 +61,50 @@ impl TransactionServiceHandle {
     pub async fn send_transaction(
         &self,
         tx: RelayTransaction,
-    ) -> Result<mpsc::UnboundedReceiver<TransactionStatus>, StorageError> {
-        self.storage.write_queued_transaction(&tx).await?;
-        let (status_tx, status_rx) = mpsc::unbounded_channel();
-        let _ = self.command_tx.send(TransactionServiceMessage::SendTransaction(tx, status_tx));
-        Ok(status_rx)
+    ) -> Result<broadcast::Receiver<TransactionStatus>, StorageError> {
+        self.storage.queue_transaction(&tx).await?;
+        Ok(self.send_transaction_no_queue(tx))
+    }
+
+    /// Sends transaction to service without queuing (for pre-queued bundle transactions).
+    pub fn send_transaction_no_queue(
+        &self,
+        tx: RelayTransaction,
+    ) -> broadcast::Receiver<TransactionStatus> {
+        let (status_tx, status_rx) = broadcast::channel(100);
+        let _ = self
+            .command_tx
+            .send(TransactionServiceMessage::SendTransaction(Box::new(tx), status_tx));
+        status_rx
+    }
+
+    /// Waits for a transaction to be confirmed or failed.
+    pub async fn wait_for_tx(
+        &self,
+        tx_id: TxId,
+    ) -> Result<TransactionStatus, TransactionServiceError> {
+        // Firstly attempt to get the stream of status updates.
+        let (status_tx, status_rx) = oneshot::channel();
+        let _ = self.command_tx.send(TransactionServiceMessage::Subscribe(tx_id, status_tx));
+        let status_rx = status_rx.await.ok().flatten();
+
+        // Now check the status in storage
+        if let Some((_, status)) = self.storage.read_transaction_status(tx_id).await?
+            && status.is_final()
+        {
+            return Ok(status);
+        }
+
+        // If transaction is not yet in final state, we should wait for a final status event.
+        if let Some(mut events) = status_rx {
+            while let Ok(status) = events.recv().await {
+                if status.is_final() {
+                    return Ok(status);
+                }
+            }
+        }
+
+        Err(TransactionServiceError::FailedToWaitForTransaction)
     }
 }
 
@@ -81,7 +137,7 @@ pub struct TransactionService {
     ///
     /// This keeps a holistic view of all active transactions.
     // TODO: should we even maintain this here or directly wire it in the signer.
-    subscriptions: HashMap<TxId, mpsc::UnboundedSender<TransactionStatus>>,
+    subscriptions: HashMap<TxId, broadcast::Sender<TransactionStatus>>,
     /// Metrics of the service.
     metrics: Arc<TransactionServiceMetrics>,
     /// Queue of transactions waiting for signers capacity.
@@ -179,6 +235,7 @@ impl TransactionService {
         // insert loaded transactions
         for tx in loaded_transactions {
             self.queue.on_sent_transaction(&tx.tx);
+            self.subscriptions.insert(tx.tx.id, broadcast::channel(100).0);
         }
 
         Ok(())
@@ -289,7 +346,7 @@ impl TransactionService {
     fn send_transaction(
         &mut self,
         tx: RelayTransaction,
-        status_tx: mpsc::UnboundedSender<TransactionStatus>,
+        status_tx: broadcast::Sender<TransactionStatus>,
     ) {
         debug_assert!(
             !self.subscriptions.contains_key(&tx.id),
@@ -305,7 +362,7 @@ impl TransactionService {
     fn push_to_queue(&mut self, tx: RelayTransaction) {
         let tx_id = tx.id;
         if let Err(err) = self.queue.push_transaction(tx) {
-            let status = TransactionStatus::Failed(Arc::new(err));
+            let status = TransactionStatus::failed(err);
 
             // If we've failed to record transaction in internal queue, we need to remove it from
             // database.
@@ -344,8 +401,8 @@ impl Future for TransactionService {
                             debug!(tx_id = %id, %err, "transaction failed");
                             this.metrics.failed.increment(1);
                         }
-                        TransactionStatus::Confirmed(hash) => {
-                            debug!(tx_id = %id, %hash, "transaction confirmed");
+                        TransactionStatus::Confirmed(receipt) => {
+                            debug!(tx_id = %id, %receipt.transaction_hash, "transaction confirmed");
                             this.metrics.confirmed.increment(1);
                         }
                         _ => {}
@@ -374,7 +431,11 @@ impl Future for TransactionService {
             if let Some(action) = action_opt {
                 match action {
                     TransactionServiceMessage::SendTransaction(tx, status_tx) => {
-                        this.send_transaction(tx, status_tx);
+                        this.send_transaction(*tx, status_tx);
+                    }
+                    TransactionServiceMessage::Subscribe(tx_id, status_tx) => {
+                        let _ =
+                            status_tx.send(this.subscriptions.get(&tx_id).map(|s| s.subscribe()));
                     }
                 }
             } else {
@@ -451,20 +512,26 @@ impl TxQueue {
 
     /// Pushes a transaction to the queue. Returns false on error.
     fn push_transaction(&mut self, tx: RelayTransaction) -> Result<(), QueueError> {
-        if self.count_queued(tx.eoa()) >= self.max_queued_per_eoa {
+        let Some(eoa) = tx.eoa() else {
+            // fast path: internal transactions are never blocked
+            self.ready.push_back(tx);
+            return Ok(());
+        };
+
+        if self.count_queued(eoa) >= self.max_queued_per_eoa {
             return Err(QueueError::CapacityOverflow);
         }
 
         // if we have a pending transaction for this eoa, next transaction is blocked.
-        if self.eoa_to_pending.get(tx.eoa()).is_some_and(|p| !p.is_empty()) {
-            self.blocked.entry(*tx.eoa()).or_default().push_back(tx);
-        } else if self.ready_per_eoa.get(tx.eoa()).copied().unwrap_or_default() == 0 {
+        if self.eoa_to_pending.get(eoa).is_some_and(|p| !p.is_empty()) {
+            self.blocked.entry(*eoa).or_default().push_back(tx);
+        } else if self.ready_per_eoa.get(eoa).copied().unwrap_or_default() == 0 {
             // if there are no pending or ready transactions, push to ready queue
-            *self.ready_per_eoa.entry(*tx.eoa()).or_default() += 1;
+            *self.ready_per_eoa.entry(*eoa).or_default() += 1;
             self.ready.push_back(tx);
         } else {
             // otherwise, push to blocked queue
-            self.blocked.entry(*tx.eoa()).or_default().push_back(tx);
+            self.blocked.entry(*eoa).or_default().push_back(tx);
         }
 
         Ok(())
@@ -477,20 +544,24 @@ impl TxQueue {
 
     /// Invoked when a pending transaction is sent.
     fn on_sent_transaction(&mut self, tx: &RelayTransaction) {
-        self.eoa_to_pending.entry(*tx.eoa()).or_default().insert(tx.id);
-        self.pending_to_eoa.insert(tx.id, *tx.eoa());
+        let Some(eoa) = tx.eoa() else { return };
+        self.eoa_to_pending.entry(*eoa).or_default().insert(tx.id);
+        self.pending_to_eoa.insert(tx.id, *eoa);
     }
 
     /// Returns the next transaction from the ready queue. Assumes that it will be sent immediately
     /// and accounts for it.
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
-            if let Some(ready) = self.ready_per_eoa.get_mut(tx.eoa()) {
+            if let Some(eoa) = tx.eoa()
+                && let Some(ready) = self.ready_per_eoa.get_mut(eoa)
+            {
                 *ready -= 1;
                 if *ready == 0 {
-                    self.ready_per_eoa.remove(tx.eoa());
+                    self.ready_per_eoa.remove(eoa);
                 }
             }
+
             self.on_sent_transaction(tx)
         })
     }
@@ -507,7 +578,7 @@ impl TxQueue {
         // promote blocked, if any
         let Some(blocked) = self.blocked.get_mut(&eoa) else { return };
         if let Some(tx) = blocked.pop_front() {
-            *self.ready_per_eoa.entry(*tx.eoa()).or_default() += 1;
+            *self.ready_per_eoa.entry(eoa).or_default() += 1;
             self.ready.push_back(tx);
         };
         if blocked.is_empty() {
@@ -527,12 +598,11 @@ enum QueueError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Intent, Quote, SignedQuote};
+    use crate::types::{Intent, Quote};
     use alloy::{
         eips::eip1559::Eip1559Estimation,
-        primitives::{Signature, U256},
+        primitives::{B256, U256},
     };
-    use std::time::SystemTime;
 
     fn create_tx(sender: Address) -> RelayTransaction {
         let quote = Quote {
@@ -545,14 +615,11 @@ mod tests {
                 max_fee_per_gas: Default::default(),
                 max_priority_fee_per_gas: Default::default(),
             },
-            ttl: SystemTime::now(),
             authorization_address: Default::default(),
             orchestrator: Default::default(),
             intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
         };
-        let sig = Signature::new(Default::default(), Default::default(), Default::default());
-        let quote = SignedQuote::new_unchecked(quote, sig, Default::default());
-        RelayTransaction::new(quote, None)
+        RelayTransaction::new(quote, None, B256::random())
     }
 
     #[test]

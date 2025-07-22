@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select transfer_data from bridge_transfers where transfer_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "transfer_data",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c06938b08164158736e7afc354d5da2aadad2e003756b5bcb92af374a884c945"
+}

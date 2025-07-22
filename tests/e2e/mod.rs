@@ -13,14 +13,21 @@ pub use constants::*;
 mod environment;
 use environment::*;
 
+mod layerzero;
+
 mod eoa;
 
 mod types;
 pub use types::*;
 
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::{
+    network::Ethereum,
+    primitives::{Address, B256, Bytes, U256},
+    providers::{PendingTransactionBuilder, Provider, ext::AnvilApi},
+    rpc::types::TransactionRequest,
+};
 use eyre::{Context, Result};
-use futures_util::future::try_join_all;
+use futures_util::{future::try_join_all, try_join};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -81,10 +88,10 @@ async fn await_calls_status(
     loop {
         let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
 
-        if let Some(status) = status {
-            if !status.status.is_pending() {
-                return Ok(status);
-            }
+        if let Some(status) = status
+            && !status.status.is_pending()
+        {
+            return Ok(status);
         }
 
         attempts += 1;
@@ -107,16 +114,13 @@ pub async fn prepare_calls(
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     let pre_calls = build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
-    // Deliberately omit the `from` address for the very first Intent precalls
-    // to test the path where precalls are signed before the address is known.
-    let from = (tx_num != 0 || !pre_call).then_some(env.eoa.address());
-
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            from,
+            required_funds: vec![],
+            from: Some(env.eoa.address()),
             calls: tx.calls.clone(),
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: tx.authorization_keys(),
                 revoke_keys: tx.revoke_keys(),
@@ -128,6 +132,8 @@ pub async fn prepare_calls(
                 pre_calls,
                 pre_call,
             },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(signer.to_call_key()),
         })
         .await;
@@ -167,4 +173,39 @@ pub async fn send_prepared_calls(
         .map(|bundle| bundle.id);
 
     response.map_err(Into::into)
+}
+
+/// Executes a transaction request as an impersonated account
+pub async fn send_impersonated_tx<P: Provider + AnvilApi<Ethereum>>(
+    provider: &P,
+    tx_request: TransactionRequest,
+    fund_amount: Option<U256>,
+) -> Result<()> {
+    // Extract from address
+    let from = tx_request
+        .from
+        .ok_or_else(|| eyre::eyre!("Transaction request must have 'from' field set"))?;
+
+    // Fund the account (if needed) and impersonate
+    let fund_future = async {
+        if let Some(amount) = fund_amount {
+            return provider.anvil_set_balance(from, amount).await;
+        }
+        Ok(())
+    };
+    let impersonate_future = provider.anvil_impersonate_account(from);
+
+    try_join!(fund_future, impersonate_future)?;
+
+    // By using anvil_send_impersonated_transaction, we can use WalletProviders
+    let tx_hash = provider.anvil_send_impersonated_transaction(tx_request).await?;
+    let receipt =
+        PendingTransactionBuilder::new(provider.root().clone(), tx_hash).get_receipt().await?;
+    if !receipt.status() {
+        return Err(eyre::eyre!("receipt has failed status"));
+    }
+
+    provider.anvil_stop_impersonating_account(from).await?;
+
+    Ok(())
 }

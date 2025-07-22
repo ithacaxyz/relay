@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select * from pending_unlocks where (chain_id, asset_address) = ANY(SELECT unnest($1::bigint[]), unnest($2::bytea[])) for update",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "asset_address",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "block_number",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "amount",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "ByteaArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "768abd437f7b9f89622ba85c870a3cc92b8b3716a8b87b11e4bed13498ad4b30"
+}

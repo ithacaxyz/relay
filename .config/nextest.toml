@@ -1,3 +1,17 @@
 [profile.default]
 retries = { backoff = "exponential", count = 3, delay = "2s", jitter = true }
 slow-timeout = { period = "120s", terminate-after = 4 }
+
+[test-groups]
+sequential-tests = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = """
+    test(test_basic_concurrent) |
+    test(resume_paused) |
+    test(diverged_nonce) |
+    test(pause_out_of_funds)
+"""
+test-group = "sequential-tests"
+threads-required = 2
+slow-timeout = { period = "120s" }

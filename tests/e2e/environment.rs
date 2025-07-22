@@ -1,13 +1,14 @@
 //! Relay end-to-end test constants
 
 use super::*;
+use crate::e2e::layerzero::{LayerZeroTestConfig, setup::deploy_layerzero_infrastructure};
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
     hex,
     network::{EthereumWallet, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, bytes},
+    primitives::{Address, Bytes, TxKind, U256, address, bytes},
     providers::{
         DynProvider, MULTICALL3_ADDRESS, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi,
     },
@@ -16,10 +17,13 @@ use alloy::{
     sol_types::{SolConstructor, SolValue},
 };
 use eyre::{self, ContextCompat, WrapErr};
-use futures_util::future::join_all;
+use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    config::{RelayConfig, TransactionServiceConfig},
+    config::{
+        InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig, SettlerImplementation,
+        SimpleSettlerConfig, TransactionServiceConfig,
+    },
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
@@ -50,11 +54,18 @@ const MULTICALL3_BYTECODE: Bytes = bytes!(
 pub struct EnvironmentConfig {
     pub block_time: Option<f64>,
     pub transaction_service_config: TransactionServiceConfig,
+    pub rebalance_service_config: Option<RebalanceServiceConfig>,
     /// The default block number to use for forking.
     ///
     /// Negative value represents `latest - num`.
     pub fork_block_number: Option<i64>,
     pub fee_recipient: Address,
+    /// Number of chains to spawn. Defaults to 1.
+    pub num_chains: usize,
+    /// Interop configuration.
+    pub interop_config: InteropConfig,
+    /// If true, LayerZero contracts will be deployed and used for settlement
+    pub use_layerzero: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -65,18 +76,37 @@ impl Default for EnvironmentConfig {
                 num_signers: 1,
                 ..Default::default()
             },
+            rebalance_service_config: None,
             fork_block_number: None,
             fee_recipient: Address::ZERO,
+            num_chains: 1,
+            interop_config: InteropConfig {
+                refund_check_interval: Duration::from_millis(100),
+                escrow_refund_threshold: 60,
+                settler: SettlerConfig {
+                    implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
+                        settler_address: Address::ZERO,
+                        private_key: Some(DEPLOYER_PRIVATE_KEY.to_string()),
+                    }),
+                    wait_verification_timeout: Duration::from_secs(10),
+                },
+            },
+            use_layerzero: false,
         }
     }
 }
 
 pub struct Environment {
-    pub _anvil: Option<AnvilInstance>,
-    pub provider: DynProvider,
+    /// All anvil instances (None for external anvil)
+    pub anvils: Vec<Option<AnvilInstance>>,
+    /// Providers for each chain
+    pub providers: Vec<DynProvider>,
+    /// Chain IDs for each chain (populated during setup)
+    pub chain_ids: Vec<u64>,
     pub eoa: DynSigner,
     pub orchestrator: Address,
     pub delegation: Address,
+    pub funder: Address,
     /// Minted to the eoa.
     pub fee_token: Address,
     /// Minted to the eoa.
@@ -85,10 +115,16 @@ pub struct Environment {
     pub erc20s: Vec<Address>,
     /// Usable ERC721 contract.
     pub erc721: Address,
-    pub chain_id: u64,
+    /// Escrow contract for cross-chain intents.
+    pub escrow: Address,
+    /// Settler contract for cross-chain settlement.
+    pub settler: Address,
     pub relay_endpoint: HttpClient,
     pub relay_handle: RelayHandle,
     pub signers: Vec<DynSigner>,
+    /// Settlement configuration for cross-chain messaging
+    pub settlement: SettlementConfig,
+    pub deployer: DynSigner,
 }
 
 impl std::fmt::Debug for Environment {
@@ -99,10 +135,190 @@ impl std::fmt::Debug for Environment {
             .field("orchestrator", &self.orchestrator)
             .field("delegation", &self.delegation)
             .field("erc20", &self.erc20)
-            .field("chain_id", &self.chain_id)
+            .field("escrow", &self.escrow)
+            .field("settler", &self.settler)
+            .field("num_chains", &self.anvils.len())
+            .field("chain_ids", &self.chain_ids)
             .field("relay_endpoint", &self.relay_endpoint)
             .finish()
     }
+}
+
+/// Settlement configuration for cross-chain messaging
+#[derive(Debug, Clone, Default)]
+pub struct SettlementConfig {
+    /// LayerZero configuration
+    pub layerzero: Option<LayerZeroTestConfig>,
+}
+
+/// Set up anvil instances based on configuration
+///
+/// Environment variables:
+/// - `TEST_EXTERNAL_ANVIL_N`: Use an external node for chain N (e.g., TEST_EXTERNAL_ANVIL_0,
+///   TEST_EXTERNAL_ANVIL_1)
+/// - `TEST_EXTERNAL_ANVIL`: Alias for TEST_EXTERNAL_ANVIL_0 (only applies to chain 0)
+///
+/// If both TEST_EXTERNAL_ANVIL_0 and TEST_EXTERNAL_ANVIL are set, TEST_EXTERNAL_ANVIL_0 takes
+/// precedence.
+pub async fn setup_anvil_instances(
+    config: &EnvironmentConfig,
+) -> eyre::Result<(Vec<Option<AnvilInstance>>, Vec<Url>)> {
+    let mut anvils = Vec::with_capacity(config.num_chains);
+    let mut endpoints = Vec::with_capacity(config.num_chains);
+
+    // Check for legacy TEST_EXTERNAL_ANVIL
+    let legacy_external = std::env::var("TEST_EXTERNAL_ANVIL").ok();
+
+    for i in 0..config.num_chains {
+        // Check for TEST_EXTERNAL_ANVIL_N
+        let specific_var = format!("TEST_EXTERNAL_ANVIL_{i}");
+        let specific_endpoint = std::env::var(&specific_var).ok();
+
+        // For chain 0, fall back to TEST_EXTERNAL_ANVIL if TEST_EXTERNAL_ANVIL_0 not set
+        let (external_endpoint, var_name) = match specific_endpoint {
+            Some(endpoint) => (Some(endpoint), specific_var),
+            None if i == 0 => match legacy_external.clone() {
+                Some(endpoint) => (Some(endpoint), "TEST_EXTERNAL_ANVIL".to_string()),
+                None => (None, String::new()),
+            },
+            None => (None, String::new()),
+        };
+
+        if let Some(endpoint) = external_endpoint {
+            if config.block_time.is_some() {
+                eyre::bail!("Cannot specify both block time and external anvil node");
+            }
+
+            // Use external endpoint
+            endpoints.push(
+                Url::from_str(&endpoint).wrap_err(format!("Invalid endpoint on ${var_name}"))?,
+            );
+            // Add None to anvils to indicate external instance
+            anvils.push(None);
+        } else {
+            // Spawn local anvil
+            let anvil = spawn_local_anvil(i, config)?;
+            endpoints.push(anvil.ws_endpoint_url());
+            anvils.push(Some(anvil));
+        }
+    }
+
+    Ok((anvils, endpoints))
+}
+
+/// Helper function to spawn a local anvil instance
+fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<AnvilInstance> {
+    let mut args = vec![];
+    let chain_id = 31337 + index as u64;
+
+    // fork off a block a few blocks lower than `latest` by default
+    let fork_block_number = config.fork_block_number.unwrap_or(-3).to_string();
+    let fork_url = std::env::var("TEST_FORK_URL");
+    if let Ok(fork_url) = &fork_url {
+        args.extend(["--fork-url", fork_url]);
+        args.extend(["--fork-block-number", &fork_block_number]);
+    }
+    let block_time = config.block_time.map(|t| t.to_string());
+    if let Some(block_time) = &block_time {
+        args.extend(["--block-time", block_time]);
+    }
+
+    let fork_block_number = std::env::var("TEST_FORK_BLOCK_NUMBER");
+    if let Ok(fork_block_number) = &fork_block_number {
+        args.extend(["--fork-block-number", fork_block_number]);
+    }
+
+    Anvil::new()
+        .chain_id(chain_id)
+        .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
+        .try_spawn()
+        .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
+}
+
+/// Contract addresses for deployed contracts
+#[derive(Clone)]
+struct ContractAddresses {
+    simulator: Address,
+    delegation: Address,
+    #[allow(dead_code)]
+    delegation_implementation: Address,
+    orchestrator: Address,
+    funder: Address,
+    escrow: Address,
+    settler: Address,
+    erc20s: Vec<Address>,
+    erc721: Address,
+}
+
+/// Fund signers with ETH
+async fn fund_signers<P: Provider>(provider: &P, signers: &[DynSigner]) -> eyre::Result<()> {
+    try_join_all(
+        signers
+            .iter()
+            .map(|signer| provider.anvil_set_balance(signer.address(), U256::from(1000e18))),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Set up chain state after contracts are deployed
+async fn setup_chain_with_contracts<P: Provider>(
+    provider: &P,
+    contracts: &ContractAddresses,
+    signers: &[DynSigner],
+    eoa_address: Address,
+) -> eyre::Result<()> {
+    // Fund funder contract
+    provider.anvil_set_balance(contracts.funder, U256::from(1000e18)).await?;
+
+    // Fund EOA and mint tokens
+    let holders = &[eoa_address, contracts.funder]
+        .iter()
+        .copied()
+        .chain(signers.iter().map(|s| s.address()))
+        .collect::<Vec<_>>();
+
+    mint_erc20s(&contracts.erc20s[..2], holders, provider).await?;
+
+    // Fund EOA with ETH
+    provider
+        .send_transaction(TransactionRequest {
+            to: Some(TxKind::Call(eoa_address)),
+            value: Some(U256::from(1000e18)),
+            ..Default::default()
+        })
+        .await?
+        .get_receipt()
+        .await?;
+
+    Ok(())
+}
+
+/// Set up a chain with all contracts and initial state
+async fn setup_chain<P: Provider + WalletProvider>(
+    provider: &P,
+    signers: &[DynSigner],
+    eoa_address: Address,
+    is_primary: bool,
+) -> eyre::Result<ContractAddresses> {
+    // Fund signers
+    fund_signers(provider, signers).await?;
+
+    // Deploy all contracts - this will result in the same addresses across all chains
+    // because we use the same deployer account and nonce sequence
+    let contracts = deploy_all_contracts(provider).await?;
+
+    // Set up chain with deployed contracts
+    setup_chain_with_contracts(provider, &contracts, signers, eoa_address).await?;
+
+    // Additional minting for funder on secondary chains
+    if !is_primary {
+        for _ in 0..5 {
+            mint_erc20s(&contracts.erc20s[..2], &[contracts.funder], provider).await?;
+        }
+    }
+
+    Ok(contracts)
 }
 
 impl Environment {
@@ -113,10 +329,18 @@ impl Environment {
         Self::setup_with_config(EnvironmentConfig::default()).await
     }
 
+    /// Sets up a multi-chain test environment with N chains.
+    pub async fn setup_multi_chain(num_chains: usize) -> eyre::Result<Self> {
+        Self::setup_with_config(EnvironmentConfig { num_chains, ..Default::default() }).await
+    }
+
     /// Sets up the test environment including Anvil, contracts, and the relay service.
     ///
     /// Available environment variables:
-    /// - `TEST_EXTERNAL_ANVIL`: Use an external node instead of spawning Anvil.
+    /// - `TEST_EXTERNAL_ANVIL`: Use an external node for chain 0 (alias for TEST_EXTERNAL_ANVIL_0).
+    /// - `TEST_EXTERNAL_ANVIL_N`: Use an external node for chain N (e.g., TEST_EXTERNAL_ANVIL_0,
+    ///   TEST_EXTERNAL_ANVIL_1). Note: TEST_EXTERNAL_ANVIL_0 takes precedence over
+    ///   TEST_EXTERNAL_ANVIL if both are set.
     /// - `TEST_FORK_URL` / `TEST_FORK_BLOCK_NUMBER`: Fork settings for inprocess spawned Anvil.
     /// - `TEST_EOA_PRIVATE_KEY`: Private key for the EOA signer (defaults to `EOA_PRIVATE_KEY`).
     /// - `TEST_CONTRACTS`: Directory for contract artifacts (defaults to `tests/account/out`).
@@ -140,67 +364,32 @@ impl Environment {
     pub async fn setup_with_config(config: EnvironmentConfig) -> eyre::Result<Self> {
         dotenvy::dotenv().ok();
 
-        // Spawns a local Ethereum node if one is not specified.
-        let (endpoint, anvil) = if let Ok(endpoint) = std::env::var("TEST_EXTERNAL_ANVIL") {
-            if config.block_time.is_some() {
-                eyre::bail!("Cannot specify both block time and external anvil node");
-            }
-            (Url::from_str(&endpoint).wrap_err("Invalid endpoint on $TEST_EXTERNAL_ANVIL ")?, None)
-        } else {
-            let mut args = vec![];
+        // Initialize tracing for tests only if RUST_LOG is set
+        if std::env::var("RUST_LOG").is_ok() {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_test_writer()
+                .try_init();
+        }
 
-            // fork off a block a few blocks lower than `latest` by default
-            let fork_block_number = config.fork_block_number.unwrap_or(-3).to_string();
-            let fork_url = std::env::var("TEST_FORK_URL");
-            if let Ok(fork_url) = &fork_url {
-                args.extend(["--fork-url", fork_url]);
-                args.extend(["--fork-block-number", &fork_block_number]);
-            }
-            let block_time = config.block_time.map(|t| t.to_string());
-            if let Some(block_time) = &block_time {
-                args.extend(["--block-time", block_time]);
-            }
+        // Early validation
+        if config.num_chains == 0 {
+            eyre::bail!("Number of chains must be greater than 0");
+        }
 
-            let fork_block_number = std::env::var("TEST_FORK_BLOCK_NUMBER");
-            if let Ok(fork_block_number) = &fork_block_number {
-                args.extend(["--fork-block-number", fork_block_number]);
-            }
-
-            let anvil = Anvil::new()
-                .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args.into_iter()))
-                .try_spawn()
-                .wrap_err("Failed to spawn Anvil")?;
-
-            (anvil.endpoint_url(), Some(anvil))
-        };
+        // Set up anvil instances
+        let (anvils, endpoints) = setup_anvil_instances(&config).await?;
+        let mut providers = Vec::with_capacity(config.num_chains);
 
         // Load signers.
-        let deployer = DynSigner::from_signing_key(
-            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
-        )
-        .await
-        .wrap_err("Relay signer load failed")?;
-
-        // Build provider
-        let client =
-            ClientBuilder::default().layer(RETRY_LAYER.clone()).connect(endpoint.as_str()).await?;
-        let provider = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(deployer.0.clone()))
-            .connect_client(client);
+        let deployer = DynSigner::from_signing_key(&DEPLOYER_PRIVATE_KEY.to_string())
+            .await
+            .wrap_err("Relay signer load failed")?;
 
         let signers = DynSigner::derive_from_mnemonic(
             SIGNERS_MNEMONIC.parse()?,
             config.transaction_service_config.num_signers,
         )?;
-
-        // fund relay signers
-        for signer in &signers {
-            provider.anvil_set_balance(signer.address(), U256::from(1000e18)).await?;
-        }
-
-        // Get or deploy mock contracts.
-        let (simulator, delegation, orchestrator, erc20s, erc721) =
-            get_or_deploy_contracts(&provider).await?;
 
         let eoa = DynSigner::from_signing_key(
             &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
@@ -208,24 +397,60 @@ impl Environment {
         .await
         .wrap_err("EOA signer load failed")?;
 
-        // fund EOA
-        // mints erc20 and fee_token
-        mint_erc20s(&erc20s[..2], &[eoa.address()], &provider).await?;
-
-        provider
-            .send_transaction(TransactionRequest {
-                to: Some(TxKind::Call(eoa.address())),
-                value: Some(U256::from(1000e18)),
-                ..Default::default()
-            })
-            .await?
-            .get_receipt()
+        // Set up primary chain with contract deployments
+        let client = ClientBuilder::default()
+            .layer(RETRY_LAYER.clone())
+            .connect(endpoints[0].as_str())
             .await?;
+        let first_provider = ProviderBuilder::new()
+            .wallet(EthereumWallet::from(deployer.0.clone()))
+            .connect_client(client);
 
-        // Ensure our registry has our tokens
-        let chain_id = provider.get_chain_id().await?;
+        let contracts = setup_chain(&first_provider, &signers, eoa.address(), true).await?;
+
+        providers.push(first_provider.erased());
+
+        // Set up remaining chains with same contract addresses
+        if config.num_chains > 1 {
+            let setup_futures = (1..config.num_chains).map(|i| {
+                let endpoint = endpoints[i].clone();
+                let deployer = deployer.clone();
+                let eoa_address = eoa.address();
+                let signers = signers.clone();
+
+                async move {
+                    let client = ClientBuilder::default()
+                        .layer(RETRY_LAYER.clone())
+                        .connect(endpoint.as_str())
+                        .await
+                        .wrap_err(format!("Failed to connect to endpoint for chain index {i}"))?;
+                    let provider = ProviderBuilder::new()
+                        .wallet(EthereumWallet::from(deployer.0.clone()))
+                        .connect_client(client);
+
+                    setup_chain(&provider, &signers, eoa_address, false).await?;
+                    Ok::<DynProvider, eyre::Error>(provider.erased())
+                }
+            });
+
+            let additional_providers = try_join_all(setup_futures).await?;
+            providers.extend(additional_providers);
+        }
+
+        // Query chain IDs from all providers
+        let chain_ids =
+            try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
+
+        // Build registry with tokens from all chains
         let mut registry = CoinRegistry::default();
-        registry.extend(erc20s.iter().map(|erc20| ((chain_id, Some(*erc20)), CoinKind::USDT)));
+        for &chain_id in &chain_ids {
+            registry.extend(
+                contracts
+                    .erc20s
+                    .iter()
+                    .map(|contract| ((chain_id, Some(*contract)), CoinKind::USDT)),
+            );
+        }
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
             let opts = PgConnectOptions::from_str(&db_url)?;
@@ -240,24 +465,59 @@ impl Environment {
             None
         };
 
-        // Start relay service.
+        // Configure interop and potentially deploy LayerZero
+        let mut interop_config = config.interop_config;
+        let mut layerzero_config = None;
+
+        if config.use_layerzero {
+            // Deploy LayerZero contracts
+            let lz_deployment = deploy_layerzero_infrastructure(
+                &providers,
+                &chain_ids,
+                &endpoints.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+            )
+            .await?;
+
+            // Configure relay to use LayerZero settler
+            interop_config.settler = SettlerConfig {
+                implementation: SettlerImplementation::LayerZero(lz_deployment.relay_config),
+                wait_verification_timeout: Duration::from_secs(300),
+            };
+
+            layerzero_config = Some(lz_deployment.test_config);
+        } else {
+            // Default to simple settler for testing
+            interop_config.settler.implementation =
+                SettlerImplementation::Simple(SimpleSettlerConfig {
+                    settler_address: contracts.settler,
+                    private_key: Some(DEPLOYER_PRIVATE_KEY.to_string()),
+                });
+        }
+
+        // Start relay service with all endpoints
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(0)
                 .with_metrics_port(0)
-                .with_endpoints(std::slice::from_ref(&endpoint))
+                .with_endpoints(&endpoints)
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_quote_constant_rate(1.0)
-                .with_fee_tokens(&[erc20s.as_slice(), &[Address::ZERO]].concat())
+                .with_funder_key(DEPLOYER_PRIVATE_KEY.to_string())
+                .with_quote_constant_rate(Some(1.0))
+                .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
+                .with_interop_tokens(&[contracts.erc20s[0]])
                 .with_fee_recipient(config.fee_recipient)
-                .with_orchestrator(Some(orchestrator))
-                .with_delegation_proxy(Some(delegation))
-                .with_simulator(Some(simulator))
-                .with_intent_gas_buffer(0) // todo: temp
+                .with_orchestrator(Some(contracts.orchestrator))
+                .with_delegation_proxy(Some(contracts.delegation))
+                .with_simulator(Some(contracts.simulator))
+                .with_funder(Some(contracts.funder))
+                .with_escrow(Some(contracts.escrow))
+                .with_intent_gas_buffer(50_000) // todo: temp
                 .with_tx_gas_buffer(75_000) // todo: temp
                 .with_transaction_service_config(config.transaction_service_config)
+                .with_interop_config(interop_config)
+                .with_rebalance_service_config(config.rebalance_service_config)
                 .with_database_url(database_url),
             registry,
         )
@@ -267,22 +527,36 @@ impl Environment {
             .build(relay_handle.http_url())
             .wrap_err("Failed to build relay client")?;
 
-        let chain_id = provider.get_chain_id().await.wrap_err("Failed to get chain ID")?;
+        // Sets the solady P256 canary to ensure we always use the P256 precompile.
+        try_join_all(providers.iter().map(async |provider| {
+            provider
+                .anvil_set_code(
+                    address!("0x0000000000001Ab2e8006Fd8B71907bf06a5BDEE"),
+                    B256::random().into(),
+                )
+                .await
+        }))
+        .await?;
 
         Ok(Self {
-            _anvil: anvil,
-            provider: provider.erased(),
+            anvils,
+            providers,
+            chain_ids,
             eoa,
-            orchestrator,
-            delegation,
-            fee_token: erc20s[1],
-            erc20: erc20s[0],
-            erc20s: erc20s[2..].to_vec(),
-            erc721,
-            chain_id,
+            orchestrator: contracts.orchestrator,
+            delegation: contracts.delegation,
+            fee_token: contracts.erc20s[1],
+            funder: contracts.funder,
+            erc20: contracts.erc20s[0],
+            erc20s: contracts.erc20s[2..].to_vec(),
+            erc721: contracts.erc721,
+            escrow: contracts.escrow,
+            settler: contracts.settler,
             relay_endpoint,
             relay_handle,
             signers,
+            settlement: SettlementConfig { layerzero: layerzero_config },
+            deployer,
         })
     }
 
@@ -292,64 +566,156 @@ impl Environment {
         self
     }
 
-    /// Gets the on-chain EOA authorized keys.
-    pub async fn get_eoa_authorized_keys(&self) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
+    /// Get the chain ID for a specific chain index.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the chain index is out of bounds.
+    pub fn chain_id_for(&self, index: usize) -> u64 {
+        self.chain_ids
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| panic!("No chain ID for chain index {index}"))
+    }
+
+    /// Get the provider for a specific chain index.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the chain index is out of bounds.
+    pub fn provider_for(&self, index: usize) -> &DynProvider {
+        self.providers.get(index).unwrap_or_else(|| panic!("No provider for chain index {index}"))
+    }
+
+    /// Get the default provider (first chain).
+    pub fn provider_default(&self) -> &DynProvider {
+        &self.providers[0]
+    }
+
+    /// Get the number of chains.
+    pub fn num_chains(&self) -> usize {
+        self.anvils.len()
+    }
+
+    /// Get the first chain's provider
+    pub fn provider(&self) -> &DynProvider {
+        &self.providers[0]
+    }
+
+    /// Get the first chain's ID
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id_for(0)
+    }
+
+    /// Gets the on-chain EOA authorized keys for a specific chain.
+    pub async fn get_eoa_authorized_keys_on_chain(
+        &self,
+        chain_index: usize,
+    ) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
         Ok(self
             .relay_endpoint
-            .get_keys(GetKeysParameters { address: self.eoa.address(), chain_id: self.chain_id })
+            .get_keys(GetKeysParameters {
+                address: self.eoa.address(),
+                chain_id: self.chain_id_for(chain_index),
+            })
             .await?)
     }
 
-    /// Drops a transaction from the Anvil txpool and returns it.
-    pub async fn drop_transaction(&self, hash: B256) -> Option<TxEnvelope> {
-        let tx = self
-            .provider
-            .get_transaction_by_hash(hash)
-            .await
-            .unwrap()
-            .map(|tx| tx.inner.into_inner());
-        self.provider.anvil_drop_transaction(hash).await.unwrap();
-        assert!(self.provider.get_transaction_by_hash(hash).await.unwrap().is_none());
+    /// Gets the on-chain EOA authorized keys for the default chain.
+    pub async fn get_eoa_authorized_keys(&self) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
+        self.get_eoa_authorized_keys_on_chain(0).await
+    }
+
+    /// Drops a transaction from the Anvil txpool and returns it on a specific chain.
+    pub async fn drop_transaction_on_chain(
+        &self,
+        hash: B256,
+        chain_index: usize,
+    ) -> Option<TxEnvelope> {
+        let provider = self.provider_for(chain_index);
+        let tx =
+            provider.get_transaction_by_hash(hash).await.unwrap().map(|tx| tx.inner.into_inner());
+        provider.anvil_drop_transaction(hash).await.unwrap();
+        assert!(provider.get_transaction_by_hash(hash).await.unwrap().is_none());
         tx
     }
 
-    /// Disables mining of blocks.
+    /// Drops a transaction from the default chain.
+    pub async fn drop_transaction(&self, hash: B256) -> Option<TxEnvelope> {
+        self.drop_transaction_on_chain(hash, 0).await
+    }
+
+    /// Disables mining of blocks on a specific chain.
     ///
     /// Note: anvil does not expose API to disable mining so we're firstly switching it to auto
     /// mining and then disabling it. This means that this method would cause a block mined while
     /// executed.
+    pub async fn disable_mining_on_chain(&self, chain_index: usize) {
+        let provider = self.provider_for(chain_index);
+        provider.anvil_set_auto_mine(true).await.unwrap();
+        provider.anvil_set_auto_mine(false).await.unwrap();
+    }
+
+    /// Disables mining on the default chain.
     pub async fn disable_mining(&self) {
-        self.provider.anvil_set_auto_mine(true).await.unwrap();
-        self.provider.anvil_set_auto_mine(false).await.unwrap();
+        self.disable_mining_on_chain(0).await
     }
 
-    /// Enables mining of blocks.
+    /// Enables mining of blocks on a specific chain.
+    pub async fn enable_mining_on_chain(&self, chain_index: usize) {
+        let provider = self.provider_for(chain_index);
+        provider.anvil_set_auto_mine(true).await.unwrap();
+    }
+
+    /// Enables mining on the default chain.
     pub async fn enable_mining(&self) {
-        self.provider.anvil_set_auto_mine(true).await.unwrap();
+        self.enable_mining_on_chain(0).await
     }
 
-    /// Mines a single block.
+    /// Mines a single block on a specific chain.
+    pub async fn mine_block_on_chain(&self, chain_index: usize) {
+        let provider = self.provider_for(chain_index);
+        provider.anvil_mine(None, None).await.unwrap();
+    }
+
+    /// Mines a block on the default chain.
     pub async fn mine_block(&self) {
-        self.provider.anvil_mine(None, None).await.unwrap();
+        self.mine_block_on_chain(0).await
     }
 
-    /// Mines 10 blocks with dummy transactions with the given priority fee.
+    /// Mines 10 blocks with dummy transactions with the given priority fee on a specific chain.
     ///
     /// Can be used to inflate the priority fee market.
-    pub async fn mine_blocks_with_priority_fee(&self, priority_fee: u128) {
+    pub async fn mine_blocks_with_priority_fee_on_chain(
+        &self,
+        priority_fee: u128,
+        chain_index: usize,
+    ) {
+        let provider = self.provider_for(chain_index);
+
+        let chain_id = self.chain_id_for(chain_index);
+
+        // Use a funded account
+        let signer = if let Some(anvil) = self.anvils.get(chain_index).and_then(|a| a.as_ref()) {
+            PrivateKeySigner::from_signing_key(anvil.keys()[0].clone().into())
+        } else {
+            // Fallback to a default key for external anvil
+            PrivateKeySigner::from_signing_key(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                    .parse()
+                    .unwrap(),
+            )
+        };
+
         for _ in 0..10 {
-            let signer = PrivateKeySigner::from_signing_key(
-                self._anvil.as_ref().unwrap().keys()[0].clone().into(),
-            );
-            let nonce = self.provider.get_transaction_count(signer.address()).await.unwrap();
-            let max_fee_per_gas =
-                self.provider.estimate_eip1559_fees().await.unwrap().max_fee_per_gas;
+            let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
+            let max_fee_per_gas = provider.estimate_eip1559_fees().await.unwrap().max_fee_per_gas;
 
             join_all((0..10).map(|i| {
                 let signer = &signer;
                 async move {
                     let mut tx = TxEip1559 {
-                        chain_id: self.chain_id,
+                        chain_id,
                         nonce: nonce + i as u64,
                         to: Address::ZERO.into(),
                         gas_limit: 21000,
@@ -360,20 +726,26 @@ impl Environment {
                     let signature = (&signer).sign_transaction_sync(&mut tx).unwrap();
                     let tx = TxEnvelope::Eip1559(tx.into_signed(signature));
 
-                    let _ = self.provider.send_raw_transaction(&tx.encoded_2718()).await.unwrap();
+                    let _ = provider.send_raw_transaction(&tx.encoded_2718()).await.unwrap();
                 }
             }))
             .await;
 
-            self.mine_block().await;
+            self.mine_block_on_chain(chain_index).await;
         }
     }
 
-    /// Fetches the current base_fee_per_gas and spawns a task setting blocks basefee to it.
-    pub async fn freeze_basefee(&self) {
-        // spawn
-        let basefee = self
-            .provider
+    /// Mines blocks with priority fee on the default chain.
+    pub async fn mine_blocks_with_priority_fee(&self, priority_fee: u128) {
+        self.mine_blocks_with_priority_fee_on_chain(priority_fee, 0).await
+    }
+
+    /// Fetches the current base_fee_per_gas and spawns a task setting blocks basefee to it on a
+    /// specific chain.
+    pub async fn freeze_basefee_on_chain(&self, chain_index: usize) {
+        let provider = self.provider_for(chain_index).clone();
+
+        let basefee = provider
             .get_block(Default::default())
             .await
             .unwrap()
@@ -382,8 +754,6 @@ impl Environment {
             .base_fee_per_gas
             .unwrap() as u128;
 
-        let provider = self.provider.clone();
-
         // spawn a task setting basefee for next block to a fixed value.
         tokio::spawn(async move {
             loop {
@@ -391,6 +761,32 @@ impl Environment {
                 provider.anvil_set_next_block_base_fee_per_gas(basefee).await.unwrap();
             }
         });
+    }
+
+    /// Freezes basefee on the default chain.
+    pub async fn freeze_basefee(&self) {
+        self.freeze_basefee_on_chain(0).await
+    }
+
+    /// Extracts RPC URLs for all chains in the environment.
+    ///
+    /// Returns a vector of RPC URLs in the same order as the chains are indexed.
+    /// For local anvil instances, returns their endpoint URLs.
+    /// For external anvil instances, returns the TEST_EXTERNAL_ANVIL environment variable value.
+    pub fn get_rpc_urls(&self) -> eyre::Result<Vec<String>> {
+        let mut urls = Vec::with_capacity(self.anvils.len());
+
+        for anvil in &self.anvils {
+            let url = if let Some(anvil_instance) = anvil {
+                anvil_instance.ws_endpoint_url().to_string()
+            } else {
+                std::env::var("TEST_EXTERNAL_ANVIL")
+                    .wrap_err("TEST_EXTERNAL_ANVIL not set for external anvil")?
+            };
+            urls.push(url);
+        }
+
+        Ok(urls)
     }
 }
 
@@ -415,95 +811,215 @@ pub async fn mint_erc20s<P: Provider>(
     Ok(())
 }
 
-/// Gets the necessary contract addresses. If they do not exist, it returns the mocked ones.
-async fn get_or_deploy_contracts<P: Provider + WalletProvider>(
+/// Deploy all contracts in a deterministic way
+async fn deploy_all_contracts<P: Provider + WalletProvider>(
     provider: &P,
-) -> Result<(Address, Address, Address, Vec<Address>, Address), eyre::Error> {
+) -> Result<ContractAddresses, eyre::Error> {
     let contracts_path = PathBuf::from(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
 
-    let mut orchestrator = deploy_contract(
-        &provider,
+    // Deploy contracts using environment variables if provided, otherwise deploy new ones
+    let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
+        Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?
+    } else {
+        deploy_orchestrator(provider, &contracts_path).await?
+    };
+
+    let funder = deploy_funder(provider, &contracts_path, orchestrator).await?;
+
+    let (delegation_implementation, delegation_proxy) =
+        if let Ok(address) = std::env::var("TEST_PROXY") {
+            let delegation_implementation =
+                deploy_delegation_implementation(provider, &contracts_path, orchestrator).await?;
+            (
+                delegation_implementation,
+                Address::from_str(&address).wrap_err("Proxy address parse failed.")?,
+            )
+        } else {
+            deploy_delegation_contracts(provider, &contracts_path, orchestrator).await?
+        };
+
+    let simulator = if let Ok(address) = std::env::var("TEST_SIMULATOR") {
+        Address::from_str(&address).wrap_err("Simulator address parse failed.")?
+    } else {
+        deploy_simulator(provider, &contracts_path).await?
+    };
+
+    // Deploy ERC20 tokens
+    let erc20s = if let Ok(address) = std::env::var("TEST_ERC20") {
+        let mut erc20s = Vec::with_capacity(10);
+        erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
+        // Deploy remaining ERC20s
+        while erc20s.len() < 10 {
+            erc20s.push(deploy_erc20(provider, &contracts_path).await?);
+        }
+        erc20s
+    } else {
+        deploy_erc20_tokens(provider, &contracts_path, 10).await?
+    };
+
+    let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
+        Address::from_str(&address).wrap_err("ERC721 address parse failed.")?
+    } else {
+        deploy_erc721(provider, &contracts_path).await?
+    };
+
+    let escrow = if let Ok(address) = std::env::var("TEST_ESCROW") {
+        Address::from_str(&address).wrap_err("Escrow address parse failed.")?
+    } else {
+        deploy_escrow(provider, &contracts_path).await?
+    };
+
+    let settler = if let Ok(address) = std::env::var("TEST_SETTLER") {
+        Address::from_str(&address).wrap_err("Settler address parse failed.")?
+    } else {
+        deploy_settler(provider, &contracts_path, provider.default_signer_address()).await?
+    };
+
+    // Deploy Multicall3 if needed
+    if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
+        provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
+    }
+
+    Ok(ContractAddresses {
+        simulator,
+        delegation: delegation_proxy,
+        delegation_implementation,
+        orchestrator,
+        funder,
+        escrow,
+        settler,
+        erc20s,
+        erc721,
+    })
+}
+
+/// Deploy the Orchestrator contract
+async fn deploy_orchestrator<P: Provider + WalletProvider>(
+    provider: &P,
+    contracts_path: &Path,
+) -> eyre::Result<Address> {
+    deploy_contract(
+        provider,
         &contracts_path.join("Orchestrator.sol/Orchestrator.json"),
         Some(provider.default_signer_address().abi_encode().into()),
     )
-    .await?;
+    .await
+}
 
-    let delegation = deploy_contract(
-        &provider,
+/// Deploy the SimpleFunder contract
+async fn deploy_funder<P: Provider + WalletProvider>(
+    provider: &P,
+    contracts_path: &Path,
+    orchestrator: Address,
+) -> eyre::Result<Address> {
+    let funder_eoa = provider.default_signer_address();
+    deploy_contract(
+        provider,
+        &contracts_path.join("SimpleFunder.sol/SimpleFunder.json"),
+        Some((funder_eoa, orchestrator, funder_eoa).abi_encode().into()),
+    )
+    .await
+}
+
+/// Deploy the delegation implementation contract
+async fn deploy_delegation_implementation<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    orchestrator: Address,
+) -> eyre::Result<Address> {
+    deploy_contract(
+        provider,
         &contracts_path.join("IthacaAccount.sol/IthacaAccount.json"),
         Some(orchestrator.abi_encode().into()),
     )
-    .await?;
+    .await
+}
 
-    let mut delegation_proxy = deploy_contract(
-        &provider,
+/// Deploy both delegation contracts (implementation and proxy)
+async fn deploy_delegation_contracts<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    orchestrator: Address,
+) -> eyre::Result<(Address, Address)> {
+    let delegation =
+        deploy_delegation_implementation(provider, contracts_path, orchestrator).await?;
+
+    let delegation_proxy = deploy_contract(
+        provider,
         &contracts_path.join("EIP7702Proxy.sol/EIP7702Proxy.json"),
         Some((delegation, Address::ZERO).abi_encode().into()),
     )
     .await?;
 
-    let mut simulator =
-        deploy_contract(&provider, &contracts_path.join("Simulator.sol/Simulator.json"), None)
-            .await?;
-
-    // Orchestrator
-    if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
-        orchestrator =
-            Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?;
-    }
-
-    // Proxy
-    if let Ok(address) = std::env::var("TEST_PROXY") {
-        delegation_proxy = Address::from_str(&address).wrap_err("Proxy address parse failed.")?
-    }
-
-    // Simulator
-    if let Ok(address) = std::env::var("TEST_SIMULATOR") {
-        simulator = Address::from_str(&address).wrap_err("Simulator address parse failed.")?
-    }
-
-    // Have at least 2 erc20 deployed
-    let mut erc20s = Vec::with_capacity(2);
-    if let Ok(orchestrator) = std::env::var("TEST_ERC20") {
-        erc20s.push(Address::from_str(&orchestrator).wrap_err("ERC20 address parse failed.")?)
-    };
-
-    while erc20s.len() != 10 {
-        let erc20 = deploy_contract(
-            &provider,
-            &contracts_path.join("MockERC20.sol/MockERC20.json"),
-            Some(
-                MockErc20::constructorCall {
-                    name_: "mockName".to_string(),
-                    symbol_: "mockSymbol".to_string(),
-                    decimals_: 18,
-                }
-                .abi_encode()
-                .into(),
-            ),
-        )
-        .await?;
-
-        erc20s.push(erc20)
-    }
-
-    let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
-        Address::from_str(&address).wrap_err("ERC721 address parse failed.")?
-    } else {
-        deploy_contract(&provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None)
-            .await?
-    };
-
-    if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
-        provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
-    }
-
-    Ok((simulator, delegation_proxy, orchestrator, erc20s, erc721))
+    Ok((delegation, delegation_proxy))
 }
 
-async fn deploy_contract<P: Provider>(
+/// Deploy the Simulator contract
+async fn deploy_simulator<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+) -> eyre::Result<Address> {
+    deploy_contract(provider, &contracts_path.join("Simulator.sol/Simulator.json"), None).await
+}
+
+/// Deploy a single ERC20 token
+async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+    deploy_contract(
+        provider,
+        &contracts_path.join("MockERC20.sol/MockERC20.json"),
+        Some(
+            MockErc20::constructorCall {
+                name_: "mockName".into(),
+                symbol_: "mockSymbol".into(),
+                decimals_: 18,
+            }
+            .abi_encode()
+            .into(),
+        ),
+    )
+    .await
+}
+
+/// Deploy multiple ERC20 tokens
+async fn deploy_erc20_tokens<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    count: usize,
+) -> eyre::Result<Vec<Address>> {
+    let mut erc20s = Vec::with_capacity(count);
+    for _ in 0..count {
+        erc20s.push(deploy_erc20(provider, contracts_path).await?);
+    }
+    Ok(erc20s)
+}
+
+/// Deploy an ERC721 token
+async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+    deploy_contract(provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None).await
+}
+
+/// Deploy the Escrow contract
+async fn deploy_escrow<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+    deploy_contract(provider, &contracts_path.join("Escrow.sol/Escrow.json"), None).await
+}
+
+/// Deploy the Settler contract
+async fn deploy_settler<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    owner: Address,
+) -> eyre::Result<Address> {
+    deploy_contract(
+        provider,
+        &contracts_path.join("SimpleSettler.sol/SimpleSettler.json"),
+        Some(owner.abi_encode().into()),
+    )
+    .await
+}
+
+pub async fn deploy_contract<P: Provider>(
     provider: &P,
     artifact_path: &Path,
     args: Option<Bytes>,

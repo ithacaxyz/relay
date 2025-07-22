@@ -11,16 +11,22 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     provider::ProviderExt,
+    signers::Eip712PayLoadSigner,
+    transactions::interop::InteropBundle,
     types::{
-        AssetDiffs, Call, FeeTokens, GasEstimate, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
-        ORCHESTRATOR_NO_ERROR,
+        Asset, AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
+        FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash,
+        KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
-        SignedCall, SignedCalls, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
-            CallReceipt, CallStatusCode, ChainCapabilities, ChainFees, PrepareCallsContext,
-            PrepareUpgradeAccountResponse, RelayCapabilities, UpgradeAccountContext,
+            AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
+            ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
+            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
+            RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
     },
@@ -28,17 +34,14 @@ use crate::{
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
-    eips::eip7702::{
-        SignedAuthorization,
-        constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    },
-    primitives::{Address, B256, Bytes, ChainId, U256, bytes},
+    eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+    primitives::{Address, B256, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::{
-        Authorization, TransactionReceipt,
+        Authorization,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
@@ -53,7 +56,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{sync::Arc, time::SystemTime};
+use std::{iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
@@ -66,8 +69,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, Intent, KeyWith712Signer, Orchestrator, PartialAction,
-        PartialIntent, Quote, Signature, SignedQuote,
+        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
+        PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, GetKeysParameters,
             PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
@@ -93,6 +96,10 @@ pub trait RelayApi {
     #[method(name = "getKeys")]
     async fn get_keys(&self, parameters: GetKeysParameters)
     -> RpcResult<Vec<AuthorizeKeyResponse>>;
+
+    /// Get all assets for an account.
+    #[method(name = "getAssets")]
+    async fn get_assets(&self, parameters: GetAssetsParameters) -> RpcResult<GetAssetsResponse>;
 
     /// Prepares a call bundle for a user.
     #[method(name = "prepareCalls")]
@@ -136,7 +143,7 @@ pub trait RelayApi {
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Relay {
     inner: Arc<RelayInner>,
 }
@@ -148,13 +155,15 @@ impl Relay {
         contracts: VersionedContracts,
         chains: Chains,
         quote_signer: DynSigner,
+        funder_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
-        fee_tokens: FeeTokens,
+        fee_tokens: Arc<FeeTokens>,
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
+        escrow_refund_threshold: u64,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -162,11 +171,13 @@ impl Relay {
             fee_tokens,
             fee_recipient,
             quote_signer,
+            funder_signer,
             quote_config,
             price_oracle,
             storage,
             asset_info,
             priority_fee_percentile,
+            escrow_refund_threshold,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -210,24 +221,21 @@ impl Relay {
     #[instrument(skip_all)]
     async fn estimate_fee(
         &self,
-        request: PartialAction,
-        token: Address,
-        authorization_address: Option<Address>,
-        account_key: Key,
-        key_slot_override: bool,
-    ) -> Result<(AssetDiffs, SignedQuote), RelayError> {
-        let chain = self
-            .inner
-            .chains
-            .get(request.chain_id)
-            .ok_or(RelayError::UnsupportedChain(request.chain_id))?;
+        intent: PartialIntent,
+        chain_id: ChainId,
+        prehash: bool,
+        context: FeeEstimationContext,
+    ) -> Result<(AssetDiffs, Quote), RelayError> {
+        let chain =
+            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+
         let provider = chain.provider.clone();
-        let Some(token) = self.inner.fee_tokens.find(request.chain_id, &token) else {
-            return Err(QuoteError::UnsupportedFeeToken(token).into());
+        let Some(token) = self.inner.fee_tokens.find(chain_id, &context.fee_token) else {
+            return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
         };
 
         // create key
-        let mock_key = KeyWith712Signer::random_admin(account_key.keyType)
+        let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
@@ -238,22 +246,23 @@ impl Relay {
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
             .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
             .append(
-                request.intent.eoa,
+                intent.eoa,
                 AccountOverride::default()
                     .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
-                    .with_state_diff(if key_slot_override {
-                        account_key.storage_slots()
+                    .with_state_diff(if context.key_slot_override {
+                        context.account_key.storage_slots()
                     } else {
                         Default::default()
                     })
                     // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(authorization_address.map(|addr| {
+                    .with_code_opt(context.authorization_address.map(|addr| {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
+            .extend(context.state_overrides)
             .build();
 
-        let account = Account::new(request.intent.eoa, &provider).with_overrides(overrides.clone());
+        let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         let (orchestrator, delegation, fee_history, eth_price) = try_join4(
             // fetch orchestrator from the account and ensure it is supported
@@ -295,64 +304,110 @@ impl Relay {
             / f64::from(eth_price);
 
         // fill intent
-        let mut intent = Intent {
-            eoa: request.intent.eoa,
-            executionData: request.intent.execution_data.clone(),
-            nonce: request.intent.nonce,
-            payer: request.intent.payer.unwrap_or_default(),
+        let mut intent_to_sign = Intent {
+            eoa: intent.eoa,
+            executionData: intent.execution_data.clone(),
+            nonce: intent.nonce,
+            payer: intent.payer.unwrap_or_default(),
             paymentToken: token.address,
             paymentRecipient: self.inner.fee_recipient,
             supportedAccountImplementation: delegation,
-            encodedPreCalls: request
-                .intent
+            encodedPreCalls: intent
                 .pre_calls
                 .into_iter()
                 .map(|pre_call| pre_call.abi_encode().into())
                 .collect(),
+            encodedFundTransfers: intent
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
+            isMultichain: !context.intent_kind.is_single(),
             ..Default::default()
         };
 
-        // sign intent
-        let signature = mock_key
-            .sign_typed_data(
-                &intent.as_eip712().map_err(RelayError::from)?,
-                &orchestrator
-                    .eip712_domain(intent.is_multichain())
-                    .await
-                    .map_err(RelayError::from)?,
-            )
-            .await
-            .map_err(RelayError::from)?;
-
-        intent.signature = Signature {
-            innerSignature: signature,
-            keyHash: account_key.key_hash(),
-            prehash: request.prehash,
+        // For MultiOutput intents, set the settler address and context
+        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
+            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+            intent_to_sign.settler = interop.settler_address();
+            intent_to_sign.settlerContext = settler_context.clone();
         }
-        .abi_encode_packed()
-        .into();
 
-        let extra_payment = self.estimate_extra_fee(&chain, &intent).await?
+        let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
 
         let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall { encodedIntent: intent.abi_encode().into() }
-                .abi_encode(),
-            authorization_address.is_some(),
+            &OrchestratorContract::executeCall {
+                encodedIntent: intent_to_sign.abi_encode().into(),
+            }
+            .abi_encode(),
+            context.authorization_address.is_some(),
         );
 
         let initial_payment = U256::from(intrinsic_gas as f64 * payment_per_gas) + extra_payment;
 
-        intent.set_legacy_payment_amount(initial_payment);
+        intent_to_sign.set_legacy_payment_amount(initial_payment);
 
-        // we estimate gas and fees
+        if intent_to_sign.isMultichain {
+            // For multichain intents, add a mocked merkle signature
+            intent_to_sign = intent_to_sign
+                .with_mock_merkle_signature(
+                    &context.intent_kind,
+                    *orchestrator.address(),
+                    &provider,
+                    &mock_key,
+                    context.account_key.key_hash(),
+                    prehash,
+                )
+                .await
+                .map_err(RelayError::from)?;
+        } else {
+            // For single chain intents, sign the intent directly
+            let signature = mock_key
+                .sign_typed_data(
+                    &intent_to_sign.as_eip712().map_err(RelayError::from)?,
+                    &orchestrator
+                        .eip712_domain(intent_to_sign.is_multichain())
+                        .await
+                        .map_err(RelayError::from)?,
+                )
+                .await
+                .map_err(RelayError::from)?;
+
+            intent_to_sign.signature = Signature {
+                innerSignature: signature,
+                keyHash: context.account_key.key_hash(),
+                prehash,
+            }
+            .abi_encode_packed()
+            .into();
+        }
+
+        if !intent_to_sign.encodedFundTransfers.is_empty() {
+            intent_to_sign.funder = self.inner.contracts.funder.address;
+        }
+
+        // If the fee has already been specified, we only simulate to get asset diffs. Otherwise, we
+        // simulate to get the fee.
+        //
+        // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
+        // reverting with a payment failure if the fee market shifts.
+        let simulated_payment_per_gas = if let Some(amount) = context.intent_kind.multi_input_fee()
+        {
+            intent_to_sign.set_legacy_payment_amount(amount);
+            0.0
+        } else {
+            payment_per_gas
+        };
+
+        // todo: simulate with executeMultiChain if intent.is_multichain
         let (asset_diff, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
-                &intent,
-                account_key.keyType,
-                payment_per_gas,
+                &intent_to_sign,
+                context.account_key.keyType,
+                simulated_payment_per_gas,
                 self.inner.asset_info.clone(),
             )
             .await?;
@@ -364,69 +419,150 @@ impl Relay {
             &self.inner.quote_config,
         );
 
-        debug!(eoa = %request.intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
+        debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas and empty dummy signature
-        intent.combinedGas = U256::from(gas_estimate.intent);
-        intent.signature = bytes!("");
+        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
+        intent_to_sign.signature = bytes!("");
+        intent_to_sign.funderSignature = bytes!("");
 
-        // Calculate amount with updated paymentPerGas
-        intent.set_legacy_payment_amount(
-            extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-        );
+        if context.intent_kind.multi_input_fee().is_none() {
+            intent_to_sign.set_legacy_payment_amount(
+                extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
+            );
+        }
 
         let quote = Quote {
-            chain_id: request.chain_id,
+            chain_id,
             payment_token_decimals: token.decimals,
-            intent,
+            intent: intent_to_sign,
             extra_payment,
             eth_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
-            ttl: SystemTime::now()
-                .checked_add(self.inner.quote_config.ttl)
-                .expect("should never overflow"),
-            authorization_address,
+            authorization_address: context.authorization_address,
             orchestrator: *orchestrator.address(),
         };
-        let sig = self
-            .inner
-            .quote_signer
-            .sign_hash(&quote.digest())
-            .await
-            .map_err(|err| RelayError::InternalError(err.into()))?;
 
-        Ok((asset_diff, quote.into_signed(sig)))
+        Ok((asset_diff, quote))
     }
 
     #[instrument(skip_all)]
-    async fn send_action(
+    async fn send_intents(
         &self,
-        mut quote: SignedQuote,
-        authorization: Option<SignedAuthorization>,
+        quotes: SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        key: CallKey,
     ) -> RpcResult<BundleId> {
-        let chain_id = quote.ty().chain_id;
-        let Chain { provider, transactions, .. } =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        // if we do **not** get an error here, then the quote ttl must be in the past, which means
+        // it is expired
+        if SystemTime::now().duration_since(quotes.ty().ttl).is_ok() {
+            return Err(QuoteError::QuoteExpired.into());
+        }
+
+        // this can be done by just verifying the signature & intent hash against the rfq
+        // ticket from `relay_estimateFee`'
+        if !quotes
+            .recover_address()
+            .is_ok_and(|address| address == self.inner.quote_signer.address())
+        {
+            return Err(QuoteError::InvalidQuoteSignature.into());
+        }
+
+        let bundle_id = BundleId(*quotes.hash());
+
+        // compute real signature
+        let key_hash = key.key_hash();
+        let signature = Signature {
+            innerSignature: signature.clone(),
+            keyHash: key_hash,
+            prehash: key.prehash,
+        }
+        .abi_encode_packed()
+        .into();
+
+        // single chain workflow
+        if quotes.ty().multi_chain_root.is_none() {
+            self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
+        } else {
+            self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
+        }
+    }
+
+    #[instrument(skip_all)]
+    async fn prepare_tx(
+        &self,
+        bundle_id: BundleId,
+        mut quote: Quote,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+    ) -> RpcResult<RelayTransaction> {
+        let chain_id = quote.chain_id;
+        // todo: chain support should probably be checked before we send txs
+        let provider = self.provider(chain_id)?;
+
+        let authorization_address = quote.authorization_address;
+        let intent = &mut quote.intent;
+
+        // Fill Intent with the fee payment signature (if exists).
+        intent.paymentSignature = capabilities.fee_signature.clone();
+
+        // Fill Intent with the user signature.
+        intent.signature = signature;
+
+        // Compute EIP-712 digest for the intent
+        let (eip712_digest, _) = intent
+            .compute_eip712_data(quote.orchestrator, &provider)
+            .await
+            .map_err(RelayError::from)?;
+
+        // Sign fund transfers if any
+        if !intent.encodedFundTransfers.is_empty() {
+            // Set funder contract address and sign
+            intent.funderSignature = self
+                .inner
+                .funder_signer
+                .sign_payload_hash(eip712_digest)
+                .await
+                .map_err(RelayError::from)?;
+            intent.funder = self.inner.contracts.funder.address;
+        }
+
+        // Set non-eip712 payment fields. Since they are not included into the signature so we
+        // need to enforce it here.
+        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
+
+        // If there's an authorization address in the quote, we need to fetch the signed one
+        // from storage.
+        // todo: we should probably fetch this before sending any tx
+        let authorization = if authorization_address.is_some() {
+            self.inner
+                .storage
+                .read_account(&intent.eoa)
+                .await
+                .map(|opt| opt.map(|acc| acc.signed_authorization))?
+        } else {
+            None
+        };
 
         // check that the authorization item matches what's in the quote
-        if quote.ty().authorization_address != authorization.as_ref().map(|auth| auth.address) {
+        if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
             return Err(AuthError::InvalidAuthItem {
-                expected: quote.ty().authorization_address,
+                expected: quote.authorization_address,
                 got: authorization.map(|auth| auth.address),
             }
             .into());
         }
 
         if let Some(auth) = &authorization {
+            // todo: same as above
             if !auth.inner().chain_id().is_zero() {
                 return Err(AuthError::AuthItemNotChainAgnostic.into());
             }
 
-            let expected_nonce = provider
-                .get_transaction_count(quote.ty().intent.eoa)
-                .await
-                .map_err(RelayError::from)?;
+            let expected_nonce =
+                provider.get_transaction_count(quote.intent.eoa).await.map_err(RelayError::from)?;
 
             if expected_nonce != auth.nonce {
                 return Err(AuthError::AuthItemInvalidNonce {
@@ -436,50 +572,20 @@ impl Relay {
                 .into());
             }
         } else {
-            let account = Account::new(quote.ty().intent.eoa, provider);
+            let account = Account::new(quote.intent.eoa, provider);
+            // todo: same as above
             if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.ty().intent.eoa).into());
+                return Err(AuthError::EoaNotDelegated(quote.intent.eoa).into());
             }
         }
 
-        // this can be done by just verifying the signature & intent hash against the rfq
-        // ticket from `relay_estimateFee`'
-        if !quote
-            .recover_address()
-            .is_ok_and(|address| address == self.inner.quote_signer.address())
-        {
-            return Err(QuoteError::InvalidQuoteSignature.into());
-        }
-
-        // if we do **not** get an error here, then the quote ttl must be in the past, which means
-        // it is expired
-        if SystemTime::now().duration_since(quote.ty().ttl).is_ok() {
-            return Err(QuoteError::QuoteExpired.into());
-        }
-
         // set our payment recipient
-        quote.ty_mut().intent.paymentRecipient = self.inner.fee_recipient;
+        quote.intent.paymentRecipient = self.inner.fee_recipient;
 
-        let tx = RelayTransaction::new(quote, authorization);
+        let tx = RelayTransaction::new(quote.clone(), authorization.clone(), eip712_digest);
+        self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
-        // TODO: Right now we only support a single transaction per action and per bundle, so we can
-        // simply set BundleId to TxId. Eventually bundles might contain multiple transactions and
-        // this is already supported by current storage API.
-        let bundle_id = BundleId(*tx.id);
-        self.inner.storage.add_bundle_tx(bundle_id, chain_id, tx.id).await?;
-
-        let span = span!(
-            Level::INFO, "send tx",
-            otel.kind = ?SpanKind::Producer,
-            messaging.system = "pg",
-            messaging.destination.name = "tx",
-            messaging.operation.name = "send",
-            messaging.operation.type = "send",
-            messaging.message.id = %tx.id
-        );
-        transactions.send_transaction(tx).instrument(span).await?;
-
-        Ok(bundle_id)
+        Ok(tx)
     }
 
     /// Get keys from an account.
@@ -493,14 +599,11 @@ impl Relay {
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
                 // before its onchain commit.
-                if let RelayError::Auth(auth_err) = &err {
-                    if auth_err.is_eoa_not_delegated() {
-                        if let Some(account) =
-                            self.inner.storage.read_account(&request.address).await?
-                        {
-                            return account.authorized_keys();
-                        }
-                    }
+                if let RelayError::Auth(auth_err) = &err
+                    && auth_err.is_eoa_not_delegated()
+                    && let Some(account) = self.inner.storage.read_account(&request.address).await?
+                {
+                    return account.authorized_keys();
                 }
                 Err(err)
             }
@@ -581,6 +684,11 @@ impl Relay {
                 AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
             )
         })
+    }
+
+    /// Returns an iterator over all installed [`Chain`]s.
+    pub fn chains(&self) -> impl Iterator<Item = &Chain> {
+        self.inner.chains.chains()
     }
 
     /// Returns the chain [`DynProvider`].
@@ -687,42 +795,762 @@ impl Relay {
 
         // Ensures that initialization precall works
         self.estimate_fee(
-            PartialAction {
-                intent: PartialIntent {
-                    eoa: account.address,
-                    execution_data: Vec::<Call>::new().abi_encode().into(),
-                    nonce: U256::from_be_bytes(B256::random().into()) << 64,
-                    payer: None,
-                    pre_calls: vec![account.pre_call.clone()],
-                },
-                chain_id,
-                prehash: false,
+            PartialIntent {
+                eoa: account.address,
+                execution_data: Vec::<Call>::new().abi_encode().into(),
+                nonce: U256::from_be_bytes(B256::random().into()) << 64,
+                payer: None,
+                pre_calls: vec![account.pre_call.clone()],
+                fund_transfers: vec![],
             },
-            Address::ZERO,
-            Some(account.signed_authorization.address),
-            mock_key.key().clone(),
-            true,
+            chain_id,
+            false,
+            FeeEstimationContext {
+                fee_token: Address::ZERO,
+                authorization_address: Some(account.signed_authorization.address),
+                account_key: mock_key.key().clone(),
+                key_slot_override: true,
+                intent_kind: IntentKind::Single,
+                state_overrides: Default::default(),
+            },
         )
         .await?;
 
         Ok(())
+    }
+
+    /// Builds a chain intent.
+    async fn build_intent(
+        &self,
+        request: &PrepareCallsParameters,
+        maybe_stored: Option<&CreatableAccount>,
+        calls: Vec<Call>,
+        nonce: U256,
+        intent_kind: IntentKind,
+    ) -> Result<(AssetDiffs, Quote), RelayError> {
+        let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
+        let Some(request_key) = &request.key else {
+            return Err(IntentError::MissingKey.into());
+        };
+
+        let key_hash = request_key.key_hash();
+
+        // Find the key that authorizes this intent
+        let Some(key) = self
+            .try_find_key(eoa, key_hash, &request.capabilities.pre_calls, request.chain_id)
+            .await?
+        else {
+            return Err(KeysError::UnknownKeyHash(key_hash).into());
+        };
+
+        // We only apply client-supplied state overrides on intents on the destination chain
+        let overrides = match intent_kind {
+            IntentKind::Single | IntentKind::MultiOutput { .. } => {
+                let provider = self.provider(request.chain_id)?;
+
+                let mut overrides = request.state_overrides.clone();
+                overrides.extend(
+                    request.balance_overrides.clone().into_state_overrides(provider).await?,
+                );
+                overrides
+            }
+            _ => Default::default(),
+        };
+
+        // Call estimateFee to give us a quote with a complete intent that the user can sign
+        let (asset_diff, quote) = self
+            .estimate_fee(
+                PartialIntent {
+                    eoa,
+                    execution_data: calls.abi_encode().into(),
+                    nonce,
+                    payer: request.capabilities.meta.fee_payer,
+                    // stored PreCall should come first since it's been signed by the root
+                    // EOA key.
+                    pre_calls: maybe_stored
+                        .iter()
+                        .map(|acc| acc.pre_call.clone())
+                        .chain(request.capabilities.pre_calls.clone())
+                        .collect(),
+                    fund_transfers: intent_kind.fund_transfers(),
+                },
+                request.chain_id,
+                request_key.prehash,
+                FeeEstimationContext {
+                    fee_token: request.capabilities.meta.fee_token,
+                    authorization_address: maybe_stored
+                        .as_ref()
+                        .map(|acc| acc.signed_authorization.address),
+                    account_key: key,
+                    key_slot_override: false,
+                    intent_kind,
+                    state_overrides: overrides,
+                },
+            )
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to create a quote.",
+                );
+            })?;
+
+        Ok((asset_diff, quote))
+    }
+
+    async fn prepare_calls_inner(
+        &self,
+        request: PrepareCallsParameters,
+        intent_kind: Option<IntentKind>,
+    ) -> RpcResult<PrepareCallsResponse> {
+        // Checks calls and precall calls in the request
+        request.check_calls(self.delegation_implementation())?;
+
+        let provider = self.provider(request.chain_id)?;
+
+        // Find if the address is delegated or if we have a stored account in storage that can use
+        // to delegate.
+        let mut maybe_stored = None;
+        if let Some(from) = &request.from
+            && !Account::new(*from, provider.clone()).is_delegated().await?
+        {
+            maybe_stored = Some(
+                self.inner
+                    .storage
+                    .read_account(from)
+                    .await
+                    .map_err(|e| RelayError::InternalError(e.into()))?
+                    .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed()))?,
+            );
+        }
+
+        // Generate all requested calls.
+        let calls = self.generate_calls(&request).await?;
+
+        // Get next available nonce for DEFAULT_SEQUENCE_KEY
+        let nonce = request.get_nonce(maybe_stored.as_ref(), &provider).await?;
+
+        // If we're dealing with a PreCall do not estimate
+        let (asset_diff, context) = if request.capabilities.pre_call {
+            let precall = SignedCall {
+                eoa: request.from.unwrap_or_default(),
+                executionData: calls.abi_encode().into(),
+                nonce,
+                signature: Bytes::new(),
+            };
+
+            (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
+        } else {
+            let (asset_diffs, quotes) = self
+                .build_quotes(&request, calls, nonce, maybe_stored.as_ref(), intent_kind)
+                .await?;
+
+            let sig = self
+                .inner
+                .quote_signer
+                .sign_hash(&quotes.digest())
+                .await
+                .map_err(|err| RelayError::InternalError(err.into()))?;
+
+            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
+        };
+
+        // Calculate the digest that the user will need to sign.
+        let (digest, typed_data) = context
+            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
+            .await
+            .map_err(RelayError::from)?;
+
+        let response = PrepareCallsResponse {
+            context,
+            digest,
+            typed_data,
+            capabilities: PrepareCallsResponseCapabilities {
+                authorize_keys: request
+                    .capabilities
+                    .authorize_keys
+                    .into_iter()
+                    .map(|key| key.into_response())
+                    .collect::<Vec<_>>(),
+                revoke_keys: request.capabilities.revoke_keys,
+                asset_diff,
+            },
+            key: request.key,
+        };
+
+        Ok(response)
+    }
+
+    /// Build quote with optional funding chain detection
+    async fn build_quotes(
+        &self,
+        request: &PrepareCallsParameters,
+        calls: Vec<Call>,
+        nonce: U256,
+        maybe_stored: Option<&CreatableAccount>,
+        intent_kind: Option<IntentKind>,
+    ) -> RpcResult<(AssetDiffs, Quotes)> {
+        // todo(onbjerg): this is incorrect. we still want to also do multichain if you do not have
+        // enough funds to execute the intent, regardless of whether the user requested any funds
+        // specifically. i'm too dumb to figure out the exact call graph of this right now, so will
+        // leave this as an exercise for later.
+        // Check if funding is required
+        if let Some((requested_asset, funds)) = request.required_funds.first() {
+            self.determine_quote_strategy(
+                request,
+                *requested_asset,
+                *funds,
+                calls,
+                nonce,
+                maybe_stored,
+            )
+            .await
+        } else {
+            self.build_single_chain_quote(request, maybe_stored, calls, nonce, intent_kind)
+                .await
+                .map_err(Into::into)
+        }
+    }
+
+    /// Generates a list of chain and amounts that fund a target chain operation.
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if there were not enough funds across all chains.
+    ///
+    /// Returns `Some(vec![])` if the destination chain does not require any funding from other
+    /// chains.
+    #[expect(clippy::too_many_arguments)]
+    async fn source_funds(
+        &self,
+        eoa: Address,
+        request_key: &CallKey,
+        assets: GetAssetsResponse,
+        destination_chain_id: ChainId,
+        requested_asset: AddressOrNative,
+        amount: U256,
+        total_leaves: usize,
+    ) -> Result<Option<Vec<FundSource>>, RelayError> {
+        let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
+        let mut remaining = amount.saturating_sub(existing);
+        if remaining.is_zero() {
+            return Ok(Some(vec![]));
+        }
+
+        // collect (chain, balance) for all other chains that have >0 balance
+        let mut sources: Vec<(ChainId, U256)> = assets
+            .0
+            .iter()
+            .filter_map(|(&chain, assets)| {
+                if chain == destination_chain_id {
+                    return None;
+                }
+
+                let balance = assets
+                    .iter()
+                    // todo: map asset
+                    .find(|a| a.address == requested_asset)
+                    .map(|a| a.balance)
+                    .unwrap_or(U256::ZERO);
+
+                if balance.is_zero() { None } else { Some((chain, balance)) }
+            })
+            .collect();
+
+        // highest balances first
+        sources.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+        // todo(onbjerg): this is serial, so it can be pretty bad for performance for large
+        // multichain intents. we *could* optimistically query multiple chains at a time, even if we
+        // discard the result later
+        let mut plan = Vec::new();
+        for (chain, balance) in sources {
+            if remaining.is_zero() {
+                break;
+            }
+
+            // we simulate escrowing the smallest unit of the asset to get a sense of the fees
+            let funding_context = FundingIntentContext {
+                eoa,
+                chain_id: chain,
+                // todo: map the requested asset here
+                asset: requested_asset.into(),
+                amount: U256::from(1),
+                // todo: map the requested asset here
+                fee_token: requested_asset.address(),
+                // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
+                // as long as it's not zero. otherwise, the gas costs will differ a lot.
+                output_intent_digest: B256::with_last_byte(1),
+                output_chain_id: destination_chain_id,
+            };
+            let escrow_cost = Box::pin(self.prepare_calls_inner(
+                self.build_funding_intent(funding_context, request_key.clone())?,
+                // note(onbjerg): its ok the leaf isnt correct here for simulation
+                Some(IntentKind::MultiInput {
+                    leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
+                    fee: None,
+                }),
+            ))
+            .await
+            .map_err(RelayError::internal)
+            .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
+            .context
+            .quote()
+            .expect("should always be a quote")
+            .ty()
+            .fees()
+            .map(|(_, cost)| cost)
+            .unwrap_or_default();
+
+            let take = remaining.min(balance.saturating_sub(escrow_cost));
+            plan.push(FundSource {
+                chain_id: chain,
+                amount: take,
+                address: requested_asset.address(),
+                cost: escrow_cost,
+            });
+            remaining = remaining.saturating_sub(take);
+        }
+
+        if remaining.is_zero() {
+            return Ok(Some(plan));
+        }
+
+        Ok(None)
+    }
+
+    /// Determine quote strategy based on asset availability across chains.
+    ///
+    /// The inner algorithm is as follows:
+    ///
+    /// - Simulate the intent for the destination chain as if it was a single chain intent.
+    /// - If there are enough funds on the destination chain, return a single chain quote.
+    /// - Otherwise, try to fund the destination chain with assets from other chains.
+    /// - Since the output intent was simulated as a single chain intent, the fees are guaranteed to
+    ///   be off, so we simulate it again as a multi-chain intent, with the funds we sourced.
+    /// - Since simulating it as a multichain intent raises the fees, we need to source funds again;
+    ///   we continue this process a number of times, until the number of input chains stop
+    ///   changing, suggesting a stable fee.
+    async fn determine_quote_strategy(
+        &self,
+        request: &PrepareCallsParameters,
+        requested_asset: Address,
+        funds: U256,
+        calls: Vec<Call>,
+        nonce: U256,
+        maybe_stored: Option<&CreatableAccount>,
+    ) -> RpcResult<(AssetDiffs, Quotes)> {
+        let eoa = request.from.ok_or(IntentError::MissingSender)?;
+
+        // Only query inventory, if funds have been requested in the target chain.
+        let asset = if requested_asset.is_zero() {
+            AddressOrNative::Native
+        } else {
+            AddressOrNative::Address(requested_asset)
+        };
+
+        // todo(onbjerg): let's restrict this further to just the tokens we care about
+        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+
+        // Simulate the output intent first to get the fees required to execute it.
+        //
+        // Note: We execute it as a multichain output, but without fund sources. The assumption here
+        // is that the simulator will transfer the requested assets.
+        let output_intent = self
+            .build_single_chain_quote(
+                request,
+                maybe_stored,
+                calls.clone(),
+                nonce,
+                Some(IntentKind::MultiOutput {
+                    leaf_index: 1,
+                    fund_transfers: vec![(
+                        requested_asset,
+                        // Deduct funds that already exist on the destination chain.
+                        funds.saturating_sub(
+                            assets.balance_on_chain(request.chain_id, requested_asset.into()),
+                        ),
+                    )],
+                    settler_context: Vec::<ChainId>::new().abi_encode().into(),
+                }),
+            )
+            .await?;
+
+        let source_fee = request.capabilities.meta.fee_token == requested_asset;
+
+        // Figure out what chains to pull funds from, if any. This will pull the funds the user
+        // requested from chains, minus the cost of transferring those funds out of the respective
+        // chains.
+        let Some(mut funding_chains) = self
+            .source_funds(
+                eoa,
+                request.key.as_ref().ok_or(IntentError::MissingKey)?,
+                assets.clone(),
+                request.chain_id,
+                asset,
+                funds
+                    + if source_fee {
+                        output_intent.1.fees().map(|(_, fees)| fees).unwrap_or_default()
+                    } else {
+                        U256::ZERO
+                    },
+                2, // when it's at least one funding chain and one output/intent chain
+            )
+            .await?
+        else {
+            return Err(RelayError::InsufficientFunds {
+                required: funds,
+                chain_id: request.chain_id,
+                asset: requested_asset,
+            }
+            .into());
+        };
+
+        // No funding chains required to execute the intent
+        if funding_chains.is_empty() {
+            return self
+                .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
+                .await
+                .map_err(Into::into);
+        }
+
+        // We have to source funds from other chains. Since we estimated the output fees as if it
+        // was a single chain intent, we now have to build an estimate the multichain intent to get
+        // the true fees. After this, we do one more pass of finding funds on other chains.
+        //
+        // The issue here is that if we send even 1 unit too little of the fees required to execute
+        // the output intent, it will revert because of us, and we won't be able to claim
+        // the input funds, and we know for sure that validating a single chain intent !=
+        // validating a multichain intent.
+        //
+        // Since the cost of validating a multichain intent is proportional to the size of the
+        // merkle tree, we find funds in a loop until the number of input chains does not change.
+        //
+        // We constrain this to three attempts
+        let mut number_of_sources = funding_chains.len();
+        for _ in 0..3 {
+            // todo use funding chains from prev iter of loop
+            // Calculate total sourced funds
+            let sourced_funds = funding_chains.iter().map(|source| source.amount).sum();
+
+            // Encode the input chain IDs for the settler context
+            let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
+            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+            let settler_context =
+                interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
+
+            // Simulate multi-chain
+            let (asset_diffs, output_quote) = self
+                .build_intent(
+                    request,
+                    maybe_stored,
+                    calls.clone(),
+                    nonce,
+                    IntentKind::MultiOutput {
+                        leaf_index: funding_chains.len(),
+                        fund_transfers: vec![(requested_asset, sourced_funds)],
+                        settler_context,
+                    },
+                )
+                .await?;
+
+            // Compute EIP-712 digest (settlement_id)
+            let (output_intent_digest, _) = output_quote
+                .intent
+                .compute_eip712_data(output_quote.orchestrator, &self.provider(request.chain_id)?)
+                .await
+                .map_err(RelayError::from)?;
+
+            // Figure out what chains to pull funds from, if any. This will pull the funds the user
+            // requested from chains, minus the cost of transferring those funds out of the
+            // respective chains.
+            if let Some(new_chains) = self
+                .source_funds(
+                    eoa,
+                    request.key.as_ref().ok_or(IntentError::MissingKey)?,
+                    assets.clone(),
+                    request.chain_id,
+                    asset,
+                    funds
+                        + if source_fee {
+                            output_quote.intent.totalPaymentMaxAmount
+                        } else {
+                            U256::ZERO
+                        },
+                    funding_chains.len() + 1,
+                )
+                .await?
+            {
+                funding_chains = new_chains
+            } else {
+                return Err(RelayError::InsufficientFunds {
+                    required: funds,
+                    chain_id: request.chain_id,
+                    asset: requested_asset,
+                }
+                .into());
+            };
+
+            // If the number of funding sources did not change, we are good (probably)
+            if number_of_sources == funding_chains.len() {
+                self.validate_multichain_contracts()?;
+
+                let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
+                let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
+                    async |(leaf_index, source)| {
+                        self.simulate_funding_intent(
+                            eoa,
+                            request_key.clone(),
+                            MerkleLeafInfo { total: funding_chains.len() + 1, index: leaf_index },
+                            source,
+                            output_intent_digest,
+                            request.chain_id,
+                            requested_asset.into(),
+                        )
+                        .await
+                    },
+                ))
+                .await?;
+
+                // todo: assetdiffs should change
+                return Ok((
+                    asset_diffs,
+                    Quotes {
+                        quotes: funding_intents
+                            .iter()
+                            .flat_map(|resp| {
+                                resp.context.quote().expect("should exist").ty().quotes.clone()
+                            })
+                            .chain(std::iter::once(output_quote))
+                            .collect(),
+                        ttl: SystemTime::now()
+                            .checked_add(self.inner.quote_config.ttl)
+                            .expect("should never overflow"),
+                        multi_chain_root: None,
+                    }
+                    .with_merkle_payload(
+                        funding_chains
+                            .iter()
+                            .map(|source| source.chain_id)
+                            .chain(iter::once(request.chain_id))
+                            .map(|chain| self.provider(chain))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )
+                    .await?,
+                ));
+            }
+
+            // Try again
+            number_of_sources = funding_chains.len();
+        }
+
+        Err(RelayError::InternalError(eyre::eyre!(
+            "exhausted max attempts at estimating multichain action"
+        ))
+        .into())
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    async fn simulate_funding_intent(
+        &self,
+        eoa: Address,
+        request_key: CallKey,
+        leaf_info: MerkleLeafInfo,
+        source: &FundSource,
+        output_intent_digest: B256,
+        output_chain_id: ChainId,
+        requested_asset: Asset,
+    ) -> RpcResult<PrepareCallsResponse> {
+        let funding_context = FundingIntentContext {
+            eoa,
+            chain_id: source.chain_id,
+            asset: requested_asset,
+            amount: source.amount,
+            fee_token: source.address,
+            output_intent_digest,
+            output_chain_id,
+        };
+
+        self.prepare_calls_inner(
+            self.build_funding_intent(funding_context, request_key)?,
+            Some(IntentKind::MultiInput {
+                leaf_info,
+                // we override the fees here to avoid re-estimating. if we
+                // re-estimate, we might end up with
+                // a higher fee, which will invalidate the entire call.
+                fee: Some((source.address, source.cost)),
+            }),
+        )
+        .await
+    }
+
+    /// Build a single-chain quote
+    async fn build_single_chain_quote(
+        &self,
+        request: &PrepareCallsParameters,
+        maybe_stored: Option<&CreatableAccount>,
+        calls: Vec<Call>,
+        nonce: U256,
+        intent_kind: Option<IntentKind>,
+    ) -> Result<(AssetDiffs, Quotes), RelayError> {
+        let (asset_diffs, quote) = self
+            .build_intent(
+                request,
+                maybe_stored,
+                calls,
+                nonce,
+                intent_kind.unwrap_or(IntentKind::Single),
+            )
+            .await?;
+
+        Ok((
+            asset_diffs,
+            Quotes {
+                quotes: vec![quote],
+                ttl: SystemTime::now()
+                    .checked_add(self.inner.quote_config.ttl)
+                    .expect("should never overflow"),
+                multi_chain_root: None,
+            },
+        ))
+    }
+
+    /// Handle single-chain send intent
+    async fn send_single_chain_intent(
+        &self,
+        quotes: &SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        bundle_id: BundleId,
+    ) -> RpcResult<BundleId> {
+        // send intent
+        let tx = self
+            .prepare_tx(
+                bundle_id,
+                // safety: we know there is 1 element
+                quotes.ty().quotes.first().unwrap().clone(),
+                capabilities,
+                signature,
+            )
+            .await?;
+
+        let span = span!(
+            Level::INFO, "send tx",
+            otel.kind = ?SpanKind::Producer,
+            messaging.system = "pg",
+            messaging.destination.name = "tx",
+            messaging.operation.name = "send",
+            messaging.operation.type = "send",
+            messaging.message.id = %tx.id
+        );
+        self.inner
+            .chains
+            .get(tx.chain_id())
+            .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
+            .transactions
+            .send_transaction(tx)
+            .instrument(span)
+            .await?;
+
+        Ok(bundle_id)
+    }
+
+    /// Handle multichain send intents
+    async fn send_multichain_intents(
+        &self,
+        mut quotes: SignedQuotes,
+        capabilities: SendPreparedCallsCapabilities,
+        signature: Bytes,
+        bundle_id: BundleId,
+    ) -> RpcResult<BundleId> {
+        let bundle =
+            self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
+
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+        interop.send_bundle(bundle).await?;
+
+        Ok(bundle_id)
+    }
+
+    /// Creates a [`InteropBundle`] from signed quotes for multichain transactions.
+    async fn create_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+        quotes: &mut SignedQuotes,
+        capabilities: &SendPreparedCallsCapabilities,
+        signature: &Bytes,
+    ) -> Result<InteropBundle, RelayError> {
+        let mut intents = Intents::new(
+            quotes
+                .ty()
+                .quotes
+                .iter()
+                .map(|quote| {
+                    self.provider(quote.chain_id)
+                        .map(|provider| (quote.intent.clone(), provider, quote.orchestrator))
+                })
+                .collect::<Result<_, _>>()?,
+        );
+
+        // Create InteropBundle
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+        let settler_id = interop.settler_id();
+        let mut bundle = InteropBundle::new(bundle_id, settler_id);
+
+        // last quote is the output intent
+        let dst_idx = quotes.ty().quotes.len() - 1;
+
+        let root = intents.root().await?;
+        let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
+            let proof = intents.get_proof_immutable(idx)?;
+            let merkle_sig = (proof, root, signature.clone()).abi_encode_params().into();
+
+            self.prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig)
+                .await
+                .map(|tx| (idx, tx))
+                .map_err(|e| RelayError::InternalError(e.into()))
+        });
+
+        // Append transactions directly to bundle
+        for (idx, tx) in try_join_all(tx_futures).await? {
+            if idx == dst_idx {
+                bundle.append_dst(tx);
+            } else {
+                bundle.append_src(tx);
+            }
+        }
+
+        Ok(bundle)
     }
 }
 
 #[async_trait]
 impl RelayApiServer for Relay {
     async fn health(&self) -> RpcResult<String> {
-        let providers = self
+        let chains_ok = try_join_all(self.chains().map(|chain| async {
+            chain.provider().get_block_number().await.inspect_err(|err| {
+                error!(
+                    %err,
+                    chain_id=%chain.id(),
+                    "Failed to obtain block number for health check",
+                );
+            })
+        }))
+        .await
+        .is_ok();
+
+        let db_ok = self
             .inner
-            .chains
-            .chain_ids_iter()
-            .map(|chain_id| self.provider(*chain_id))
-            .collect::<Result<Vec<_>, RelayError>>()?;
-        let chains_ok =
-            try_join_all(providers.into_iter().map(|provider| provider.get_block_number()))
-                .await
-                .is_ok();
-        let db_ok = self.inner.storage.ping().await.is_ok();
+            .storage
+            .ping()
+            .await
+            .inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to ping database for health check",
+                );
+            })
+            .is_ok();
 
         if chains_ok && db_ok {
             Ok(RELAY_SHORT_VERSION.to_string())
@@ -778,124 +1606,99 @@ impl RelayApiServer for Relay {
         Ok(self.get_keys(request).await?)
     }
 
+    async fn get_assets(&self, mut request: GetAssetsParameters) -> RpcResult<GetAssetsResponse> {
+        // If no explicit asset_filter was provided, build it from the other filters, the supported
+        // chains and supported fee tokens
+        if request.asset_filter.is_empty() {
+            // If there is no chain filter provided, just use all chains that the relay supports.
+            let chains = if request.chain_filter.is_empty() {
+                self.inner.chains.chain_ids_iter().copied().collect()
+            } else {
+                request.chain_filter
+            };
+
+            for chain in chains {
+                // If there is no asset type filter provided, just use all assets that the relay
+                // supports on this chain.
+                let mut items = vec![];
+
+                if request.asset_type_filter.is_empty()
+                    || request.asset_type_filter.contains(&AssetType::Native)
+                {
+                    items.push(AssetFilterItem {
+                        address: AddressOrNative::Native,
+                        asset_type: AssetType::Native,
+                    });
+                }
+
+                if (request.asset_type_filter.is_empty()
+                    || request.asset_type_filter.contains(&AssetType::ERC20))
+                    && let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain)
+                {
+                    for token in tokens {
+                        if token.address == Address::ZERO {
+                            continue;
+                        }
+
+                        items.push(AssetFilterItem {
+                            address: AddressOrNative::Address(token.address),
+                            asset_type: AssetType::ERC20,
+                        });
+                    }
+                }
+
+                request.asset_filter.insert(chain, items);
+            }
+        }
+
+        let chain_details = request.asset_filter.iter().map(async |(chain, assets)| {
+            let chain_provider = self.provider(*chain)?;
+
+            let txs =
+                assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
+                    if asset.asset_type.is_native() {
+                        return Ok::<_, RelayError>(Asset7811 {
+                            address: AddressOrNative::Native,
+                            balance: chain_provider.get_balance(request.account).await?,
+                            asset_type: asset.asset_type,
+                            metadata: None,
+                        });
+                    }
+
+                    let erc20 = IERC20::new(asset.address.address(), &chain_provider);
+
+                    let (balance, decimals, name, symbol) = chain_provider
+                        .multicall()
+                        .add(erc20.balanceOf(request.account))
+                        .add(erc20.decimals())
+                        .add(erc20.name())
+                        .add(erc20.symbol())
+                        .aggregate()
+                        .await?;
+
+                    Ok(Asset7811 {
+                        address: asset.address,
+                        balance,
+                        asset_type: asset.asset_type,
+                        metadata: Some(AssetMetadata {
+                            name: Some(name),
+                            symbol: Some(symbol),
+                            decimals: Some(decimals),
+                            uri: None,
+                        }),
+                    })
+                });
+            Ok::<_, RelayError>((*chain, try_join_all(txs).await?))
+        });
+
+        Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
+    }
+
     async fn prepare_calls(
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
-        // Checks calls and precall calls in the request
-        request.check_calls(self.delegation_implementation())?;
-
-        let provider = self.provider(request.chain_id)?;
-
-        // Find if the address is delegated or if we have a stored account in storage that can use
-        // to delegate.
-        let mut maybe_stored = None;
-        if let Some(from) = &request.from {
-            if !Account::new(*from, provider.clone()).is_delegated().await? {
-                maybe_stored = Some(
-                    self.inner
-                        .storage
-                        .read_account(from)
-                        .await
-                        .map_err(|e| RelayError::InternalError(e.into()))?
-                        .ok_or_else(|| {
-                            RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed())
-                        })?,
-                );
-            }
-        }
-
-        // Generate all requested calls.
-        let calls = self.generate_calls(&request).await?;
-
-        // Get next available nonce for DEFAULT_SEQUENCE_KEY
-        let nonce = request.get_nonce(maybe_stored.as_ref(), &provider).await?;
-
-        // If we're dealing with a PreCall do not estimate
-        let (asset_diff, context) = if request.capabilities.pre_call {
-            let precall = SignedCall {
-                eoa: request.from.unwrap_or_default(),
-                executionData: calls.abi_encode().into(),
-                nonce,
-                signature: Bytes::new(),
-            };
-
-            (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
-        } else {
-            let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
-            let Some(request_key) = &request.key else {
-                return Err(IntentError::MissingKey.into());
-            };
-            let key_hash = request_key.key_hash();
-
-            // Find the key that authorizes this intent
-            let Some(key) = self
-                .try_find_key(eoa, key_hash, &request.capabilities.pre_calls, request.chain_id)
-                .await?
-            else {
-                return Err(KeysError::UnknownKeyHash(key_hash).into());
-            };
-
-            // Call estimateFee to give us a quote with a complete intent that the user can sign
-            let (asset_diff, quote) = self
-                .estimate_fee(
-                    PartialAction {
-                        intent: PartialIntent {
-                            eoa,
-                            execution_data: calls.abi_encode().into(),
-                            nonce,
-                            payer: request.capabilities.meta.fee_payer,
-                            // stored PreCall should come first since it's been signed by the root
-                            // EOA key.
-                            pre_calls: maybe_stored
-                                .iter()
-                                .map(|acc| acc.pre_call.clone())
-                                .chain(request.capabilities.pre_calls)
-                                .collect(),
-                        },
-                        chain_id: request.chain_id,
-                        prehash: request_key.prehash,
-                    },
-                    request.capabilities.meta.fee_token,
-                    maybe_stored.as_ref().map(|acc| acc.signed_authorization.address),
-                    key,
-                    false,
-                )
-                .await
-                .inspect_err(|err| {
-                    error!(
-                        %err,
-                        "Failed to create a quote.",
-                    );
-                })?;
-
-            (asset_diff, PrepareCallsContext::with_quote(quote))
-        };
-
-        // Calculate the eip712 digest that the user will need to sign.
-        let (digest, typed_data) = context
-            .compute_eip712_data(self.orchestrator(), &provider)
-            .await
-            .map_err(RelayError::from)?;
-
-        let response = PrepareCallsResponse {
-            context,
-            digest,
-            typed_data,
-            capabilities: PrepareCallsResponseCapabilities {
-                authorize_keys: request
-                    .capabilities
-                    .authorize_keys
-                    .into_iter()
-                    .map(|key| key.into_response())
-                    .collect::<Vec<_>>(),
-                revoke_keys: request.capabilities.revoke_keys,
-                asset_diff,
-            },
-            key: request.key,
-        };
-
-        Ok(response)
+        self.prepare_calls_inner(request, None).await
     }
 
     async fn prepare_upgrade_account(
@@ -974,51 +1777,20 @@ impl RelayApiServer for Relay {
         request: SendPreparedCallsParameters,
     ) -> RpcResult<SendPreparedCallsResponse> {
         let SendPreparedCallsParameters { capabilities, context, signature, key } = request;
-        let Some(mut quote) = context.take_quote() else {
+        let Some(quotes) = context.take_quote() else {
             return Err(QuoteError::QuoteNotFound.into());
         };
 
-        let authorization_address = quote.ty().authorization_address;
-        let intent = &mut quote.ty_mut().intent;
+        // broadcasts intents in transactions
+        let bundle_id =
+            self.send_intents(quotes, capabilities, signature, key).await.inspect_err(|err| {
+                error!(
+                    %err,
+                    "Failed to submit call bundle transaction.",
+                );
+            })?;
 
-        // Fill Intent with the fee payment signature (if exists).
-        intent.paymentSignature = capabilities.fee_signature;
-
-        // Fill Intent with the user signature.
-        let key_hash = key.key_hash();
-        intent.signature =
-            Signature { innerSignature: signature, keyHash: key_hash, prehash: key.prehash }
-                .abi_encode_packed()
-                .into();
-
-        // Set non-eip712 payment fields. Since they are not included into the signature so we need
-        // to enforce it here.
-        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
-
-        // If there's an authorization address in the quote, we need to fetch the signed one from
-        // storage.
-        let authorization = if authorization_address.is_some() {
-            self.inner
-                .storage
-                .read_account(&intent.eoa)
-                .await
-                .map(|opt| opt.map(|acc| acc.signed_authorization))?
-        } else {
-            None
-        };
-
-        // Broadcast transaction with Intent
-        let id = self.send_action(quote, authorization).await.inspect_err(|err| {
-            error!(
-                %err,
-                "Failed to submit call bundle transaction.",
-            );
-        })?;
-
-        // todo: for now it's fine, but this will change in the future.
-        let response = SendPreparedCallsResponse { id };
-
-        Ok(response)
+        Ok(SendPreparedCallsResponse { id: bundle_id })
     }
 
     async fn upgrade_account(&self, request: UpgradeAccountParameters) -> RpcResult<()> {
@@ -1111,40 +1883,19 @@ impl RelayApiServer for Relay {
             }))
             .await?;
 
-        let any_pending = tx_statuses.iter().flatten().any(|(_, status)| {
-            matches!(status, TransactionStatus::InFlight | TransactionStatus::Pending(_))
-        });
-        let any_failed = tx_statuses
+        let any_pending = tx_statuses
+            .iter()
+            .any(|status| status.as_ref().is_none_or(|(_, status)| status.is_pending()));
+        let any_failed = tx_statuses.iter().flatten().any(|(_, status)| status.is_failed());
+
+        let receipts = tx_statuses
             .iter()
             .flatten()
-            .any(|(_, status)| matches!(status, TransactionStatus::Failed(_)));
-
-        let receipts = try_join_all(
-            tx_statuses
-                .iter()
-                .flatten()
-                .flat_map(|(chain_id, status)| {
-                    Some((chain_id, TransactionStatus::tx_hash(status)?))
-                })
-                .map(|(chain_id, tx_hash)| async move {
-                    let provider = self.inner.chains.get(*chain_id).unwrap().provider;
-                    Ok::<_, RelayError>((
-                        chain_id,
-                        provider
-                            .get_transaction_receipt(tx_hash)
-                            .await
-                            .map_err(RelayError::from)?,
-                    ))
-                }),
-        )
-        .await?;
-
-        // filter out non existing receipts, as we can assume this means the tx is pending, which is
-        // handled separately
-        let receipts: Vec<(ChainId, TransactionReceipt)> = receipts
-            .into_iter()
-            .flat_map(|(chain_id, receipt)| Some((*chain_id, receipt?)))
-            .collect();
+            .filter_map(|(chain_id, status)| match status {
+                TransactionStatus::Confirmed(receipt) => Some((*chain_id, receipt.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
         // note(onbjerg): this currently rests on the assumption that there is only one intent per
         // transaction, and that each transaction in a bundle originates from a single user
@@ -1155,14 +1906,10 @@ impl RelayApiServer for Relay {
         // note that we also assume that failure to decode a log as `IntentExecuted` means the
         // intent failed
         let any_reverted = receipts.iter().any(|(_, receipt)| {
-            receipt
-                .decoded_log::<IntentExecuted>()
-                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
+            IntentExecuted::try_from_receipt(receipt).is_none_or(|e| e.has_error())
         });
         let all_reverted = receipts.iter().all(|(_, receipt)| {
-            receipt
-                .decoded_log::<IntentExecuted>()
-                .is_none_or(|evt| evt.err != ORCHESTRATOR_NO_ERROR)
+            IntentExecuted::try_from_receipt(receipt).is_none_or(|e| e.has_error())
         });
 
         let status = if any_failed {
@@ -1266,17 +2013,19 @@ impl RelayApiServer for Relay {
 
 /// Implementation of the Ithaca `relay_` namespace.
 #[derive(Debug)]
-struct RelayInner {
+pub(super) struct RelayInner {
     /// The contract addresses.
     contracts: VersionedContracts,
     /// The chains supported by the relay.
     chains: Chains,
     /// Supported fee tokens.
-    fee_tokens: FeeTokens,
+    fee_tokens: Arc<FeeTokens>,
     /// The fee recipient address.
     fee_recipient: Address,
     /// The signer used to sign quotes.
     quote_signer: DynSigner,
+    /// The signer used to sign fund transfers.
+    funder_signer: DynSigner,
     /// Quote related configuration.
     quote_config: QuoteConfig,
     /// Price oracle.
@@ -1287,6 +2036,8 @@ struct RelayInner {
     asset_info: AssetInfoServiceHandle,
     /// Percentile of the priority fees to use for the transactions.
     priority_fee_percentile: f64,
+    /// Escrow refund threshold in seconds
+    escrow_refund_threshold: u64,
 }
 
 impl Relay {
@@ -1318,6 +2069,133 @@ impl Relay {
     /// The simulator address.
     pub fn simulator(&self) -> Address {
         self.inner.contracts.simulator.address
+    }
+
+    /// The escrow address.
+    pub fn escrow(&self) -> Address {
+        self.inner.contracts.escrow.address
+    }
+
+    /// Validates that all required multichain contracts are properly configured.
+    ///
+    /// Returns an error if any of the required contracts (escrow, settler, funder)
+    /// have zero addresses, indicating they are not properly configured.
+    fn validate_multichain_contracts(&self) -> Result<(), RelayError> {
+        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+
+        if [
+            self.inner.contracts.escrow.address,
+            interop.settler_address(),
+            self.inner.contracts.funder.address,
+        ]
+        .iter()
+        .any(|addr| addr.is_zero())
+        {
+            return Err(QuoteError::MultichainDisabled.into());
+        }
+
+        Ok(())
+    }
+
+    /// Creates an escrow struct for funding intents.
+    fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
+        let salt = B192::random().as_slice()[..ESCROW_SALT_LENGTH].try_into().map_err(|_| {
+            RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
+        })?;
+
+        // Calculate refund timestamp
+        let current_timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(RelayError::internal)?
+            .as_secs();
+        let refund_timestamp =
+            U256::from(current_timestamp.saturating_add(self.inner.escrow_refund_threshold));
+
+        Ok(Escrow {
+            salt,
+            depositor: context.eoa,
+            recipient: self.inner.contracts.funder.address,
+            token: context.asset.address(),
+            settler: self
+                .inner
+                .chains
+                .interop()
+                .ok_or(QuoteError::MultichainDisabled)?
+                .settler_address(),
+            sender: self.orchestrator(),
+            settlementId: context.output_intent_digest,
+            senderChainId: U256::from(context.output_chain_id),
+            escrowAmount: context.amount,
+            refundAmount: context.amount,
+            refundTimestamp: refund_timestamp,
+        })
+    }
+
+    /// Builds the escrow calls based on the asset type.
+    ///
+    /// IMPORTANT: The escrow call is always placed last in the returned vector.
+    /// This ordering is critical as it's relied upon by other parts of the system
+    /// (e.g., extract_escrow_details) for efficient parsing.
+    fn build_escrow_calls(&self, escrow: Escrow, context: &FundingIntentContext) -> Vec<Call> {
+        let escrow_call = Call {
+            to: self.inner.contracts.escrow.address,
+            value: if context.asset.is_native() { context.amount } else { U256::ZERO },
+            data: IEscrow::escrowCall { _escrows: vec![escrow] }.abi_encode().into(),
+        };
+
+        // Build the transaction calls based on token type
+        if context.asset.is_native() {
+            // Native token: escrow call only (which is also the last call)
+            vec![escrow_call]
+        } else {
+            // ERC20 token: approve then escrow (escrow is last)
+            vec![
+                Call {
+                    to: context.asset.address(),
+                    value: U256::ZERO,
+                    data: IERC20::approveCall {
+                        spender: self.inner.contracts.escrow.address,
+                        amount: context.amount,
+                    }
+                    .abi_encode()
+                    .into(),
+                },
+                escrow_call,
+            ]
+        }
+    }
+
+    /// Builds a funding intent for multichain operations.
+    ///
+    /// Creates the necessary calls to escrow funds on an input chain that will
+    /// be used to fund a multichain intent execution on the output chain.
+    ///
+    /// Note: The escrow call is always placed last in the call sequence. This is
+    /// relied upon by the extract_escrow_details method for efficient parsing.
+    fn build_funding_intent(
+        &self,
+        context: FundingIntentContext,
+        request_key: CallKey,
+    ) -> Result<PrepareCallsParameters, RelayError> {
+        let escrow = self.create_escrow_struct(&context)?;
+        let calls = self.build_escrow_calls(escrow, &context);
+
+        Ok(PrepareCallsParameters {
+            calls,
+            chain_id: context.chain_id,
+            from: Some(context.eoa),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                revoke_keys: vec![],
+                pre_calls: vec![],
+                pre_call: false,
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(request_key),
+            required_funds: vec![],
+        })
     }
 }
 

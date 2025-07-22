@@ -51,6 +51,10 @@ pub struct VersionedContracts {
     pub delegation_proxy: VersionedContract,
     /// Simulator.
     pub simulator: VersionedContract,
+    /// Funder.
+    pub funder: VersionedContract,
+    /// Escrow.
+    pub escrow: VersionedContract,
 }
 
 impl VersionedContracts {
@@ -65,10 +69,16 @@ impl VersionedContracts {
             }));
 
         let legacy_delegations =
-            try_join_all(config.legacy_delegations.iter().map(async |&address| {
+            try_join_all(config.legacy_delegation_proxies.iter().map(async |&proxy_address| {
+                let implementation = DelegationProxyInstance::new(proxy_address, provider)
+                    .implementation()
+                    .call()
+                    .await
+                    .map_err(TransportErrorKind::custom)?;
+
                 Ok(VersionedContract::new(
-                    address,
-                    Account::new(address, provider).version().await?,
+                    implementation,
+                    Account::new(implementation, provider).version().await?,
                 ))
             }));
 
@@ -107,6 +117,8 @@ impl VersionedContracts {
             legacy_delegations,
             delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
             simulator: VersionedContract::no_version(config.simulator),
+            funder: VersionedContract::no_version(config.funder),
+            escrow: VersionedContract::no_version(config.escrow),
         })
     }
 }

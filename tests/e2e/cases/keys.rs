@@ -172,9 +172,10 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
 
     env.relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -182,6 +183,8 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(call_key),
         })
         .await?;

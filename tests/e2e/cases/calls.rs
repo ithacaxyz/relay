@@ -49,8 +49,9 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
+                required_funds: vec![],
                 calls: vec![erc20_transfer.clone()],
-                chain_id: env.chain_id,
+                chain_id: env.chain_id(),
                 from: Some(env.eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: Vec::new(), // todo: add test authorize "inline"
@@ -59,6 +60,8 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                     pre_calls: Vec::new(),
                     pre_call: false,
                 },
+                state_overrides: Default::default(),
+                balance_overrides: Default::default(),
                 key: Some(signer.to_call_key()),
             })
             .await?;

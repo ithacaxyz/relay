@@ -1,23 +1,33 @@
 //! Relay configuration.
-use crate::constants::{
-    DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+use crate::{
+    constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
+    interop::{
+        LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler,
+        settler::layerzero::EndpointId,
+    },
+    liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
+    storage::RelayStorage,
 };
 use alloy::{
-    primitives::Address,
-    providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-    signers::local::coins_bip39::{English, Mnemonic},
+    primitives::{Address, ChainId, map::HashMap},
+    providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
+    signers::local::{
+        PrivateKeySigner,
+        coins_bip39::{English, Mnemonic},
+    },
 };
 use alloy_chains::Chain;
 use eyre::Context;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
     time::Duration,
 };
+use tracing::warn;
 
 /// Relay configuration.
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,19 +39,30 @@ pub struct RelayConfig {
     /// Quote configuration.
     pub quote: QuoteConfig,
     /// Onramp configuration.
+    #[serde(default)]
     pub onramp: OnrampConfig,
+    /// Email configuration.
+    #[serde(default)]
+    pub email: EmailConfig,
     /// Transaction service configuration.
     pub transactions: TransactionServiceConfig,
+    /// Interop configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interop: Option<InteropConfig>,
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
     pub legacy_orchestrators: BTreeSet<Address>,
-    /// Previously deployed delegation implementations.
-    pub legacy_delegations: BTreeSet<Address>,
+    /// Previously deployed delegation proxies.
+    pub legacy_delegation_proxies: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
     /// Simulator address.
     pub simulator: Address,
+    /// Funder address.
+    pub funder: Address,
+    /// Escrow address.
+    pub escrow: Address,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -72,11 +93,18 @@ pub struct ChainConfig {
     pub sequencer_endpoints: HashMap<Chain, Url>,
     /// A fee token the relay accepts.
     pub fee_tokens: Vec<Address>,
+    /// A token that is supported for interop.
+    pub interop_tokens: Vec<Address>,
     /// The fee recipient address.
     ///
     /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
     /// contract.
     pub fee_recipient: Address,
+    /// Optional rebalance service configuration.
+    ///
+    /// If provided, this relay instance will handle rebalancing of liquidity across chains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebalance_service: Option<RebalanceServiceConfig>,
 }
 
 /// Quote configuration.
@@ -122,7 +150,18 @@ impl QuoteConfig {
 #[serde(rename_all = "camelCase")]
 pub struct OnrampConfig {
     /// Banxa API configuration.
+    #[serde(default)]
     pub banxa: BanxaConfig,
+}
+
+/// Email configuration.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailConfig {
+    /// Resend API key.
+    pub resend_api_key: Option<String>,
+    /// Porto base URL.
+    pub porto_base_url: Option<String>,
 }
 
 /// Banxa API configuration.
@@ -160,6 +199,8 @@ pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signers_mnemonic: Mnemonic<English>,
+    /// The funder KMS key or private key
+    pub funder_key: String,
 }
 
 impl Default for SecretsConfig {
@@ -169,7 +210,134 @@ impl Default for SecretsConfig {
                 "test test test test test test test test test test test junk",
             )
             .unwrap(),
+            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
         }
+    }
+}
+
+/// Interop configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteropConfig {
+    /// Interval for checking pending refunds.
+    #[serde(with = "crate::serde::duration")]
+    pub refund_check_interval: Duration,
+    /// Time threshold in seconds before refunds can be processed for escrows.
+    pub escrow_refund_threshold: u64,
+    /// Settler configuration.
+    pub settler: SettlerConfig,
+}
+
+/// Configuration for the rebalance service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebalanceServiceConfig {
+    /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binance: Option<BinanceBridgeConfig>,
+    /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simple: Option<SimpleBridgeConfig>,
+    /// The private key of the funder account owner. Required for pulling funds from the funders.
+    #[serde(default)]
+    pub funder_owner_key: String,
+}
+
+/// Configuration for the settler service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettlerConfig {
+    /// Settler implementation configuration.
+    #[serde(flatten)]
+    pub implementation: SettlerImplementation,
+    /// Timeout for waiting for settlement verification.
+    #[serde(with = "crate::serde::duration")]
+    pub wait_verification_timeout: Duration,
+}
+
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
+}
+
+impl SettlerConfig {
+    /// Creates a settlement processor from this configuration.
+    pub fn settlement_processor(
+        &self,
+        storage: RelayStorage,
+        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SettlementProcessor> {
+        // Create the settler based on config
+        let settler: Box<dyn Settler> = match &self.implementation {
+            SettlerImplementation::LayerZero(config) => {
+                Box::new(config.create_settler(providers, storage.clone()))
+            }
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
+        };
+
+        Ok(SettlementProcessor::new(settler))
+    }
+}
+
+/// Simple settler configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleSettlerConfig {
+    /// The address of the simple settler contract.
+    pub settler_address: Address,
+    /// Private key for signing settlement write operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+}
+
+impl SimpleSettlerConfig {
+    /// Creates a new simple settler instance.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SimpleSettler> {
+        let signer = self
+            .private_key
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("no settler private key"))?
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+        Ok(SimpleSettler::new(self.settler_address, signer, providers))
+    }
+}
+
+/// LayerZero configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerZeroConfig {
+    /// Mapping of chain ID to LayerZero endpoint ID.
+    /// Format: { chain_id: endpoint_id }
+    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_ids: HashMap<ChainId, EndpointId>,
+    /// Mapping of chain ID to LayerZero endpoint address.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_addresses: HashMap<ChainId, Address>,
+    /// LayerZero settler contract address.
+    pub settler_address: Address,
+}
+
+impl LayerZeroConfig {
+    /// Creates a new LayerZero settler instance with the given providers and storage.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+        storage: RelayStorage,
+    ) -> LayerZeroSettler {
+        LayerZeroSettler::new(
+            self.endpoint_ids.clone().into_iter().collect(),
+            self.endpoint_addresses.clone().into_iter().collect(),
+            providers,
+            self.settler_address,
+            storage,
+        )
     }
 }
 
@@ -214,7 +382,7 @@ impl Default for TransactionServiceConfig {
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
             max_queued_per_eoa: 1,
-            public_node_endpoints: HashMap::new(),
+            public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
             flashblocks_rpc_endpoints: HashMap::new(),
         }
@@ -232,9 +400,11 @@ impl Default for RelayConfig {
             },
             chain: ChainConfig {
                 endpoints: vec![],
-                sequencer_endpoints: HashMap::new(),
+                sequencer_endpoints: HashMap::default(),
                 fee_tokens: vec![],
+                interop_tokens: vec![],
                 fee_recipient: Address::ZERO,
+                rebalance_service: None,
             },
             quote: QuoteConfig {
                 constant_rate: None,
@@ -243,12 +413,16 @@ impl Default for RelayConfig {
                 rate_ttl: Duration::from_secs(300),
             },
             onramp: OnrampConfig::default(),
+            email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
+            interop: None,
             legacy_orchestrators: BTreeSet::new(),
-            legacy_delegations: BTreeSet::new(),
+            legacy_delegation_proxies: BTreeSet::new(),
             orchestrator: Address::ZERO,
             delegation_proxy: Address::ZERO,
             simulator: Address::ZERO,
+            funder: Address::ZERO,
+            escrow: Address::ZERO,
             secrets: SecretsConfig::default(),
             database_url: None,
         }
@@ -293,8 +467,8 @@ impl RelayConfig {
     }
 
     /// Sets a constant rate for the price oracle. Used for testing.
-    pub fn with_quote_constant_rate(mut self, constant_rate: f64) -> Self {
-        self.quote.constant_rate = Some(constant_rate);
+    pub fn with_quote_constant_rate(mut self, constant_rate: Option<f64>) -> Self {
+        self.quote.constant_rate = constant_rate.or(self.quote.constant_rate);
         self
     }
 
@@ -313,6 +487,12 @@ impl RelayConfig {
     /// Extends the list of fee tokens that the relay accepts.
     pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
         self.chain.fee_tokens.extend_from_slice(fee_tokens);
+        self
+    }
+
+    /// Extends the list of interop tokens that the relay accepts.
+    pub fn with_interop_tokens(mut self, interop_tokens: &[Address]) -> Self {
+        self.chain.interop_tokens.extend_from_slice(interop_tokens);
         self
     }
 
@@ -368,10 +548,32 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the legacy delegation proxy addresses.
+    pub fn with_legacy_delegation_proxies(mut self, legacy_delegation_proxies: &[Address]) -> Self {
+        self.legacy_delegation_proxies.extend(legacy_delegation_proxies);
+        self
+    }
+
     /// Sets the simulator address.
     pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
         if let Some(simulator) = simulator {
             self.simulator = simulator;
+        }
+        self
+    }
+
+    /// Sets the funder address.
+    pub fn with_funder(mut self, funder: Option<Address>) -> Self {
+        if let Some(funder) = funder {
+            self.funder = funder;
+        }
+        self
+    }
+
+    /// Sets the escrow address.
+    pub fn with_escrow(mut self, escrow: Option<Address>) -> Self {
+        if let Some(escrow) = escrow {
+            self.escrow = escrow;
         }
         self
     }
@@ -412,9 +614,84 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the maximum number of pending transactions that can be handled by a single signer.
+    /// Sets the Resend API key.
+    pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
+        self.email.resend_api_key = api_key.or(self.email.resend_api_key);
+        self
+    }
+
+    /// Sets the Porto base URL.
+    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
+        self.email.porto_base_url = value.or(self.email.porto_base_url);
+        self
+    }
+
+    /// Sets the configuration for the transaction service.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
+        self
+    }
+
+    /// Sets the rebalance service configuration.
+    pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
+        self.chain.rebalance_service = config;
+        self
+    }
+
+    /// Sets the funder signing key used to sign fund operations.
+    pub fn with_funder_key(mut self, funder_key: String) -> Self {
+        self.secrets.funder_key = funder_key;
+        self
+    }
+
+    /// Sets the interop configuration.
+    pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
+        self.interop = Some(interop_config);
+        self
+    }
+
+    /// Sets the funder owner key, and enables the rebalance service.
+    pub fn with_funder_owner_key(mut self, funder_owner_key: String) -> Self {
+        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        rebalance_service.funder_owner_key = funder_owner_key;
+        self
+    }
+
+    /// Sets the Binance API key and secret.
+    pub fn with_binance_keys(
+        mut self,
+        api_key: Option<String>,
+        api_secret: Option<String>,
+    ) -> Self {
+        let (api_key, api_secret) = match (api_key, api_secret) {
+            (Some(api_key), Some(api_secret)) => (api_key, api_secret),
+            (None, None) => return self,
+            _ => panic!("expected both Binance API key and secret"),
+        };
+        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+
+        if rebalance_service.binance.is_none() {
+            rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });
+        } else {
+            rebalance_service.binance.as_mut().unwrap().api_key = api_key;
+            rebalance_service.binance.as_mut().unwrap().api_secret = api_secret;
+        }
+
+        self
+    }
+
+    /// Set the simple settler owner key if interop is already configured for simple settler.
+    pub fn with_simple_settler_owner_key(mut self, settler_owner_key: Option<String>) -> Self {
+        let Some(pk) = settler_owner_key else {
+            warn!("no simple settler owner private key provided");
+            return self;
+        };
+
+        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler)
+            && let SettlerImplementation::Simple(conf) = &mut conf.implementation
+        {
+            conf.private_key = Some(pk);
+        }
         self
     }
 
@@ -433,5 +710,16 @@ impl RelayConfig {
         let content = serde_yaml::to_string(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_v15_yaml() {
+        let s = include_str!("../tests/assets/config/v15.yaml");
+        let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
     }
 }

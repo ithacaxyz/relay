@@ -59,3 +59,13 @@ pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;
 
 /// Default number of signers to derive from mnemonic and use for sending transactions.
 pub const DEFAULT_NUM_SIGNERS: usize = 16;
+
+/// Duration for escrow refunds in seconds.
+///
+/// After this duration, escrowed funds can be refunded if settlement hasn't occurred.
+pub const ESCROW_REFUND_DURATION_SECS: u64 = 3600; // 1 hour
+
+/// Length of the salt used for escrow operations.
+///
+/// This is used to generate unique escrow IDs.
+pub const ESCROW_SALT_LENGTH: usize = 12;

@@ -1,8 +1,11 @@
 use std::ops::Not;
 
+use crate::types::AssetMetadata;
+
 use super::{
+    AssetType,
     IERC20::{self},
-    IERC721, TokenKind,
+    IERC721,
 };
 use alloy::primitives::{
     Address, U256, address,
@@ -64,15 +67,10 @@ pub struct AssetDiff {
     pub address: Option<Address>,
     /// Token kind. ERC20 or ERC721.
     #[serde(rename = "type")]
-    pub token_kind: Option<TokenKind>,
-    /// Asset name.
-    pub name: Option<String>,
-    /// Asset symbol.
-    pub symbol: Option<String>,
-    /// TokenURI if it exists.
-    pub uri: Option<String>,
-    /// Asset decimals.
-    pub decimals: Option<u8>,
+    pub token_kind: Option<AssetType>,
+    /// Token metadata.
+    #[serde(flatten)]
+    pub metadata: AssetMetadata,
     /// Value or id.
     pub value: U256,
     /// Incoming or outgoing direction.
@@ -106,6 +104,14 @@ impl Asset {
             Asset::Token(address) => *address,
         }
     }
+
+    /// Creates an Asset from an optional address.
+    ///
+    /// If the address is `Some`, converts it to a token asset.
+    /// If the address is `None`, returns the native asset.
+    pub fn from_address(address: Option<Address>) -> Self {
+        if let Some(address) = address { Self::Token(address) } else { Self::Native }
+    }
 }
 
 impl From<Address> for Asset {
@@ -119,17 +125,19 @@ impl From<Address> for Asset {
     }
 }
 
+impl From<Option<Address>> for Asset {
+    fn from(asset: Option<Address>) -> Self {
+        if let Some(asset) = asset { asset.into() } else { Asset::Native }
+    }
+}
+
 /// Represents metadata for an asset.
 #[derive(Debug, Clone)]
 pub struct AssetWithInfo {
     /// Asset.
     pub asset: Asset,
-    /// Name.
-    pub name: Option<String>,
-    /// Symbol.
-    pub symbol: Option<String>,
-    /// Decimals.
-    pub decimals: Option<u8>,
+    /// Asset metadata.
+    pub metadata: AssetMetadata,
 }
 
 /// Builds a collapsed diff for both fungible & non-fungible tokens into [`AssetDiff`].
@@ -242,12 +250,9 @@ impl AssetDiffBuilder {
 
                 let info = &metadata[&asset];
                 account_diffs.push(AssetDiff {
-                    token_kind: asset.is_native().not().then_some(TokenKind::ERC20),
+                    token_kind: asset.is_native().not().then_some(AssetType::ERC20),
                     address: asset.is_native().not().then(|| asset.address()),
-                    name: info.name.clone(),
-                    symbol: info.symbol.clone(),
-                    decimals: info.decimals,
-                    uri: None,
+                    metadata: info.metadata.clone(),
                     value,
                     direction,
                 });
@@ -264,12 +269,9 @@ impl AssetDiffBuilder {
                     .flatten();
 
                 account_diffs.push(AssetDiff {
-                    token_kind: asset.is_native().not().then_some(TokenKind::ERC721),
+                    token_kind: asset.is_native().not().then_some(AssetType::ERC721),
                     address: asset.is_native().not().then(|| asset.address()),
-                    name: info.name.clone(),
-                    symbol: info.symbol.clone(),
-                    uri,
-                    decimals: info.decimals,
+                    metadata: AssetMetadata { uri, ..info.metadata.clone() },
                     value: id,
                     direction,
                 });

@@ -45,7 +45,7 @@ async fn auth_then_erc20_transfer() -> Result<()> {
                     post_tx: check!(|env, _tx| {
                         assert_eq!(
                             transfer_amount,
-                            IERC20::IERC20Instance::new(env.erc20, &env.provider)
+                            IERC20::IERC20Instance::new(env.erc20, env.provider())
                                 .balanceOf(to)
                                 .call()
                                 .await?
@@ -80,7 +80,7 @@ async fn invalid_auth_nonce() -> Result<()> {
     let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with wrong nonce
-    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
 
     let modified_nonce = 123;
     let authorization = AuthKind::modified_nonce(modified_nonce).sign(&env, nonce).await?;
@@ -126,7 +126,7 @@ async fn invalid_auth_signature() -> Result<()> {
     let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with wrong signer
-    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
     let authorization = AuthKind::modified_signer(dummy_signer).sign(&env, nonce).await?;
 
     // Upgrade account should return error
@@ -169,7 +169,7 @@ async fn invalid_precall_signature() -> Result<()> {
     let precall_signature = dummy_signer.sign_hash(&response.digests.exec).await?;
 
     // Sign 7702 delegation with env signer
-    let nonce = env.provider.get_transaction_count(env.eoa.address()).await?;
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
     let authorization = AuthKind::Auth.sign(&env, nonce).await?;
 
     // Upgrade account should return error
@@ -391,9 +391,10 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -401,6 +402,8 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: true,
             },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
@@ -417,9 +420,10 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -427,12 +431,15 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 pre_calls: vec![precall],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
         .await?;
 
     // Its 0 since the upgrade account intent uses a random nonce
-    assert!(response.context.take_quote().unwrap().ty().intent.nonce == uint!(0_U256));
+    // todo(onbjerg): this assumes a single intent
+    assert!(response.context.take_quote().unwrap().ty().quotes[0].intent.nonce == uint!(0_U256));
 
     Ok(())
 }
@@ -464,9 +471,10 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
-            chain_id: env.chain_id,
+            chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
@@ -474,6 +482,8 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 pre_calls: vec![],
                 pre_call: false,
             },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
             key: Some(session_key.to_call_key()),
         })
         .await?;

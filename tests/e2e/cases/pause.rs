@@ -21,12 +21,13 @@ use relay::{
 async fn pause() -> eyre::Result<()> {
     let env: Environment = Environment::setup().await?;
     let eoa = MockAccount::new(&env).await?;
-    let orchestrator = OrchestratorContractInstance::new(env.orchestrator, &env.provider);
+    let orchestrator = OrchestratorContractInstance::new(env.orchestrator, env.provider());
 
     let prepare_params = PrepareCallsParameters {
+        required_funds: vec![],
         from: Some(eoa.address),
         calls: vec![],
-        chain_id: env.chain_id,
+        chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             authorize_keys: vec![],
             revoke_keys: vec![],
@@ -34,6 +35,8 @@ async fn pause() -> eyre::Result<()> {
             pre_calls: vec![],
             pre_call: false,
         },
+        state_overrides: Default::default(),
+        balance_overrides: Default::default(),
         key: Some(eoa.key.to_call_key()),
     };
 
@@ -42,10 +45,10 @@ async fn pause() -> eyre::Result<()> {
 
     // Pause all
     let pauser = orchestrator.getPauseConfig().call().await?._0;
-    env.provider.anvil_set_balance(pauser, U256::MAX).await.unwrap();
-    env.provider.anvil_impersonate_account(pauser).await.unwrap();
+    env.provider().anvil_set_balance(pauser, U256::MAX).await.unwrap();
+    env.provider().anvil_impersonate_account(pauser).await.unwrap();
     let _tx_hash: B256 = env
-        .provider
+        .provider()
         .client()
         .request(
             "eth_sendTransaction",
@@ -84,7 +87,7 @@ async fn pause() -> eyre::Result<()> {
 
     // unpause
     let _tx_hash: B256 = env
-        .provider
+        .provider()
         .client()
         .request(
             "eth_sendTransaction",
