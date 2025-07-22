@@ -366,7 +366,7 @@ pub struct TransactionServiceConfig {
     #[serde(with = "crate::serde::hash_map")]
     pub public_node_endpoints: HashMap<Chain, Url>,
     /// Mapping of a chain to RPC endpoint streaming flashblocks.
-    #[serde(with = "crate::serde::hash_map")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
     pub flashblocks_rpc_endpoints: HashMap<Chain, Url>,
     /// Percentile of the priority fees to use for the transactions.
     pub priority_fee_percentile: f64,
