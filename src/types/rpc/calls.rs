@@ -110,7 +110,7 @@ impl BalanceOverrides {
                 .into_iter()
                 .collect();
 
-            Ok::<_, RelayError>(AccountOverride { state: Some(slots), ..Default::default() })
+            Ok::<_, RelayError>(AccountOverride { state_diff: Some(slots), ..Default::default() })
         }
 
         let account_overrides: Vec<(Address, AccountOverride)> =
@@ -158,7 +158,7 @@ pub struct PrepareCallsParameters {
     pub chain_id: ChainId,
     /// Address of the account to prepare the call bundle for. It can only be None, if we are
     /// handling a precall
-    pub from: Address,
+    pub from: Option<Address>,
     /// Request capabilities.
     pub capabilities: PrepareCallsCapabilities,
     /// State overrides for simulating the call bundle.
@@ -189,7 +189,7 @@ impl PrepareCallsParameters {
     pub fn check_calls(&self, latest_delegation: Address) -> Result<(), RelayError> {
         let has_unallowed = |calls: &[Call]| -> Result<bool, RelayError> {
             for call in calls {
-                if !call.is_whitelisted_precall(self.from, latest_delegation)? {
+                if !call.is_whitelisted_precall(self.from.unwrap_or_default(), latest_delegation)? {
                     return Ok(true);
                 }
             }
@@ -256,7 +256,8 @@ impl PrepareCallsParameters {
         } else if maybe_stored.is_some() {
             Ok(random_nonce)
         } else {
-            Account::new(self.from, &provider).get_nonce().await.map_err(RelayError::from)
+            let eoa = self.from.ok_or(IntentError::MissingSender)?;
+            Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
     }
 }
@@ -377,6 +378,7 @@ impl PrepareCallsContext {
     pub async fn compute_signing_digest(
         &self,
         maybe_stored: Option<&CreatableAccount>,
+        latest_orchestrator: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
@@ -392,14 +394,19 @@ impl PrepareCallsContext {
                 }
             }
             PrepareCallsContext::PreCall(pre_call) => {
-                // fetch orchestrator address from the account
-                let orchestrator_address = Account::new(pre_call.eoa, provider)
-                    .with_delegation_override_opt(
-                        maybe_stored.map(|acc| &acc.signed_authorization.address),
-                    )
-                    .get_orchestrator()
-                    .await
-                    .map_err(RelayError::from)?;
+                let orchestrator_address = if pre_call.eoa == Address::ZERO {
+                    // EOA is unknown so we assume that latest orchestrator should be used
+                    latest_orchestrator
+                } else {
+                    // fetch orchestrator address from the account
+                    Account::new(pre_call.eoa, provider)
+                        .with_delegation_override_opt(
+                            maybe_stored.map(|acc| &acc.signed_authorization.address),
+                        )
+                        .get_orchestrator()
+                        .await
+                        .map_err(RelayError::from)?
+                };
 
                 pre_call.compute_eip712_data(orchestrator_address, provider).await
             }

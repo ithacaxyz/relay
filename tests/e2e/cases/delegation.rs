@@ -48,7 +48,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     let params = PrepareCallsParameters {
         required_funds: vec![],
-        from: env.eoa.address(),
+        from: Some(env.eoa.address()),
         calls: vec![],
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
@@ -274,7 +274,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: vec![Call {
                 to: env.eoa.address(),
                 value: U256::ZERO,
@@ -316,7 +316,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {

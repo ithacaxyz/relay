@@ -76,14 +76,12 @@ fn test_lazy_compact_merkle_tree_with_murky_fixtures() {
         match test_case.name.as_str() {
             "single_leaf" => {
                 // Single leaf should return itself as root
-                if test_case.leaves.len() == 1 {
-                    if let Ok(root) = tree.root() {
-                        if root != test_case.leaves[0] {
-                            failures.push(format!(
-                                "Single leaf tree should return leaf as root, got {root:?}"
-                            ));
-                        }
-                    }
+                if test_case.leaves.len() == 1
+                    && let Ok(root) = tree.root()
+                    && root != test_case.leaves[0]
+                {
+                    failures
+                        .push(format!("Single leaf tree should return leaf as root, got {root:?}"));
                 }
             }
             "empty_tree" => {

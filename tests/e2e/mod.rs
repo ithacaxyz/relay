@@ -88,10 +88,10 @@ async fn await_calls_status(
     loop {
         let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
 
-        if let Some(status) = status {
-            if !status.status.is_pending() {
-                return Ok(status);
-            }
+        if let Some(status) = status
+            && !status.status.is_pending()
+        {
+            return Ok(status);
         }
 
         attempts += 1;
@@ -118,7 +118,7 @@ pub async fn prepare_calls(
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             required_funds: vec![],
-            from: env.eoa.address(),
+            from: Some(env.eoa.address()),
             calls: tx.calls.clone(),
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {

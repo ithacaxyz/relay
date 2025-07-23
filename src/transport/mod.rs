@@ -97,32 +97,32 @@ where
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         // TODO: simplify after <https://github.com/alloy-rs/alloy/pull/2304>
-        if let RequestPacket::Single(r) = &req {
-            if r.method() == ETH_SEND_RAW_TRANSACTION {
-                // This is raw transaction submission that we want to also route to the sequencer
-                let mut futures = FuturesUnordered::new();
-                futures.push(self.sequencer.call(r.clone().into()));
-                futures.push(self.inner.call(req));
-                return Box::pin(async move {
-                    let mut first_error = None;
-                    while let Some(output) = futures.next().await {
-                        if output.as_ref().map(|resp| resp.as_error().is_some()).unwrap_or(true) {
-                            // If first request already failed, return the error we got from it
-                            // because it's likely more informative
-                            if let Some(resp) = first_error {
-                                return resp;
-                            } else {
-                                // Otherwise, remember the error and await the next response
-                                first_error = Some(output);
-                            }
+        if let RequestPacket::Single(r) = &req
+            && r.method() == ETH_SEND_RAW_TRANSACTION
+        {
+            // This is raw transaction submission that we want to also route to the sequencer
+            let mut futures = FuturesUnordered::new();
+            futures.push(self.sequencer.call(r.clone().into()));
+            futures.push(self.inner.call(req));
+            return Box::pin(async move {
+                let mut first_error = None;
+                while let Some(output) = futures.next().await {
+                    if output.as_ref().map(|resp| resp.as_error().is_some()).unwrap_or(true) {
+                        // If first request already failed, return the error we got from it
+                        // because it's likely more informative
+                        if let Some(resp) = first_error {
+                            return resp;
                         } else {
-                            return output;
+                            // Otherwise, remember the error and await the next response
+                            first_error = Some(output);
                         }
+                    } else {
+                        return output;
                     }
+                }
 
-                    unreachable!()
-                });
-            }
+                unreachable!()
+            });
         }
 
         self.inner.call(req)

@@ -73,7 +73,7 @@ impl MockAccount {
                         .into(),
                 }],
                 chain_id: env.chain_id(),
-                from: eoa.address(),
+                from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
@@ -109,7 +109,7 @@ impl MockAccount {
                 required_funds: vec![],
                 calls: vec![],
                 chain_id: env.chain_id(),
-                from: self.address,
+                from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },

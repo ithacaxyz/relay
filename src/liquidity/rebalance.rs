@@ -239,11 +239,10 @@ impl RebalanceService {
                 tokio::select! {
                     // Wake up to find next rebalance.
                     _ = interval.tick() => {
-                        if let Ok(Some(rebalance)) = self.find_next_rebalance().await {
-                            if let Err(err) = self.bridge(rebalance).await {
+                        if let Ok(Some(rebalance)) = self.find_next_rebalance().await
+                            && let Err(err) = self.bridge(rebalance).await {
                                 warn!("failed to bridge: {}", err);
                             }
-                        }
                     }
                     // Handle bridge events.
                     Some(event) = self.bridges.next() => {
