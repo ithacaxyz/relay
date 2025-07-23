@@ -7,7 +7,7 @@ use crate::{
     constants::{DEFAULT_POLL_INTERVAL, ESCROW_REFUND_DURATION_SECS},
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
-    rpc::{AccountApiServer, AccountRpc, Onramp, OnrampApiServer, Relay, RelayApiServer},
+    rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
     transport::{SequencerLayer, create_transport},
@@ -240,7 +240,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
     );
-    let onramp = Onramp::new(config.onramp.clone()).into_rpc();
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
         AccountRpc::new(
             relay.clone(),
@@ -292,7 +291,6 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
     )
     .absolute(1);
 
-    rpc.merge(onramp).expect("could not merge rpc modules");
     if let Some(account_rpc) = account_rpc {
         rpc.merge(account_rpc).expect("could not merge rpc modules");
     } else {

@@ -36,9 +36,6 @@ pub use intents::*;
 mod interop;
 pub use interop::*;
 
-mod onramp;
-pub use onramp::*;
-
 mod signed;
 pub use signed::*;
 
