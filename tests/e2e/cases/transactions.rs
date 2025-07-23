@@ -654,7 +654,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_signer_pull_gas() -> eyre::Result<()> {
     let env = Environment::setup_with_config(EnvironmentConfig {
-        block_time: Some(0.1),
+        block_time: Some(0.5),
         transaction_service_config: TransactionServiceConfig {
             balance_check_interval: Duration::from_millis(100), // Check balance every 100ms
             num_signers: 1,
