@@ -71,6 +71,32 @@ pub struct BalanceOverrides {
 }
 
 impl BalanceOverrides {
+    /// Create a new balance override.
+    pub fn new(balances: HashMap<Address, BalanceOverride>) -> Self {
+        Self { balances }
+    }
+
+    /// Modifies the balance override for a token.
+    ///
+    /// If there is not an existing balance override, a new one will be created with
+    /// [`AssetType::ERC20`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # let account = Address::ZERO;
+    /// BalanceOverrides::default().modify_token(Address::ZERO, |bal| {
+    ///     bal.add_balance(account, U256::from(2));
+    /// })
+    /// ```
+    pub fn modify_token<F>(mut self, token: Address, f: F) -> Self
+    where
+        F: FnOnce(&mut BalanceOverride),
+    {
+        f(self.balances.entry(token).or_insert_with(|| BalanceOverride::new(AssetType::ERC20)));
+        self
+    }
+
     /// Convert the balance overrides into state overrides.
     ///
     /// # Note
@@ -145,6 +171,23 @@ pub struct BalanceOverride {
     kind: AssetType,
     /// The balances to override.
     balances: HashMap<Address, U256>,
+}
+
+impl BalanceOverride {
+    /// Create a new balance override
+    pub fn new(kind: AssetType) -> Self {
+        Self { kind, balances: Default::default() }
+    }
+
+    /// Adds the given balance to the given account.
+    ///
+    /// This operation is additive; if a balance override already exists for this account, the
+    /// passed balance is added onto the current override.
+    pub fn add_balance(&mut self, account: Address, balance: U256) -> &mut Self {
+        let current_balance = self.balances.entry(account).or_default();
+        *current_balance = current_balance.saturating_add(balance);
+        self
+    }
 }
 
 /// Request parameters for `wallet_prepareCalls`.

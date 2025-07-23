@@ -621,6 +621,7 @@ mod tests {
             authorization_address: Default::default(),
             orchestrator: Default::default(),
             intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            fee_token_deficit: Default::default(),
         };
         RelayTransaction::new(quote, None, B256::random())
     }

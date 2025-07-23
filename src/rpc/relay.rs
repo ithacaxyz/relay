@@ -239,8 +239,26 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
+        // Fetch the user's balance for the fee token.
+        let fee_token_balance = self
+            .get_assets(GetAssetsParameters {
+                account: intent.eoa,
+                asset_filter: [(
+                    chain_id,
+                    vec![AssetFilterItem::fungible(context.fee_token.into())],
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .await
+            .map_err(RelayError::internal)?
+            .balance_on_chain(chain_id, context.fee_token.into());
+        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
+        // simulation
+        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
+
         // mocking key storage for the eoa, and the balance for the mock signer
-        let overrides = StateOverridesBuilder::with_capacity(2)
+        let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
@@ -248,7 +266,8 @@ impl Relay {
             .append(
                 intent.eoa,
                 AccountOverride::default()
-                    .with_balance(U256::MAX.div_ceil(2.try_into().unwrap()))
+                    // If the fee token is the native token, we override it
+                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
                     .with_state_diff(if context.key_slot_override {
                         context.account_key.storage_slots()
                     } else {
@@ -259,9 +278,23 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
-            .extend(context.state_overrides)
-            .build();
+            .extend(context.state_overrides);
 
+        // If the fee token is an ERC20, we do a balance override, merging it with the client
+        // supplied balance override if necessary.
+        if !context.fee_token.is_zero() {
+            overrides = overrides.extend(
+                context
+                    .balance_overrides
+                    .modify_token(context.fee_token, |balance| {
+                        balance.add_balance(intent.eoa, new_fee_token_balance);
+                    })
+                    .into_state_overrides(&provider)
+                    .await?,
+            );
+        }
+
+        let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         let (orchestrator, delegation, fee_history, eth_price) = try_join4(
@@ -333,22 +366,6 @@ impl Relay {
             intent_to_sign.settlerContext = settler_context.clone();
         }
 
-        let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
-
-        let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall {
-                encodedIntent: intent_to_sign.abi_encode().into(),
-            }
-            .abi_encode(),
-            context.authorization_address.is_some(),
-        );
-
-        let initial_payment = U256::from(intrinsic_gas as f64 * payment_per_gas) + extra_payment;
-
-        intent_to_sign.set_legacy_payment_amount(initial_payment);
-
         if intent_to_sign.isMultichain {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
@@ -388,37 +405,40 @@ impl Relay {
             intent_to_sign.funder = self.inner.contracts.funder.address;
         }
 
-        // If the fee has already been specified, we only simulate to get asset diffs. Otherwise, we
-        // simulate to get the fee.
+        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
+        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
+        // ERC20s.
         //
-        // In the case we only simulate to get asset diffs, we set `paymentPerGas` to 0 to avoid
-        // reverting with a payment failure if the fee market shifts.
-        let simulated_payment_per_gas = if let Some(amount) = context.intent_kind.multi_input_fee()
-        {
-            intent_to_sign.set_legacy_payment_amount(amount);
-            0.0
-        } else {
-            payment_per_gas
-        };
-
-        // todo: simulate with executeMultiChain if intent.is_multichain
+        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
+        // which ensures the simulation never reverts. Whether the user can actually really
+        // pay for the intent execution or not is determined later and communicated to the
+        // client.
+        intent_to_sign.set_legacy_payment_amount(U256::from(1));
         let (asset_diff, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
                 context.account_key.keyType,
-                simulated_payment_per_gas,
                 self.inner.asset_info.clone(),
             )
             .await?;
 
-        // todo: re-evaluate if this is still necessary
+        // Calculate the real fee
+        let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
+            * U256::from(10u128.pow(token.decimals as u32))
+            / eth_price;
+        let intrinsic_gas = approx_intrinsic_cost(
+            &OrchestratorContract::executeCall {
+                encodedIntent: intent_to_sign.abi_encode().into(),
+            }
+            .abi_encode(),
+            context.authorization_address.is_some(),
+        );
         let gas_estimate = GasEstimate::from_combined_gas(
             sim_result.gCombined.to(),
             intrinsic_gas,
             &self.inner.quote_config,
         );
-
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas and empty dummy signature
@@ -426,12 +446,16 @@ impl Relay {
         intent_to_sign.signature = bytes!("");
         intent_to_sign.funderSignature = bytes!("");
 
-        if context.intent_kind.multi_input_fee().is_none() {
-            intent_to_sign.set_legacy_payment_amount(
-                extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-            );
-        }
+        // Fill payment information
+        //
+        // If the fee has already been specified (multichain inputs only), we only simulate to get
+        // asset diffs. Otherwise, we simulate to get the fee.
+        intent_to_sign.set_legacy_payment_amount(context.intent_kind.multi_input_fee().unwrap_or(
+            extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
+        ));
 
+        let fee_token_deficit =
+            fee_token_balance.saturating_sub(intent_to_sign.totalPaymentMaxAmount);
         let quote = Quote {
             chain_id,
             payment_token_decimals: token.decimals,
@@ -442,6 +466,7 @@ impl Relay {
             native_fee_estimate,
             authorization_address: context.authorization_address,
             orchestrator: *orchestrator.address(),
+            fee_token_deficit,
         };
 
         Ok((asset_diff, quote))
@@ -812,6 +837,7 @@ impl Relay {
                 key_slot_override: true,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
+                balance_overrides: Default::default(),
             },
         )
         .await?;
@@ -844,17 +870,11 @@ impl Relay {
         };
 
         // We only apply client-supplied state overrides on intents on the destination chain
-        let overrides = match intent_kind {
+        let (state_overrides, balance_overrides) = match intent_kind {
             IntentKind::Single | IntentKind::MultiOutput { .. } => {
-                let provider = self.provider(request.chain_id)?;
-
-                let mut overrides = request.state_overrides.clone();
-                overrides.extend(
-                    request.balance_overrides.clone().into_state_overrides(provider).await?,
-                );
-                overrides
+                (request.state_overrides.clone(), request.balance_overrides.clone())
             }
-            _ => Default::default(),
+            _ => (Default::default(), Default::default()),
         };
 
         // Call estimateFee to give us a quote with a complete intent that the user can sign
@@ -884,7 +904,8 @@ impl Relay {
                     account_key: key,
                     key_slot_override: false,
                     intent_kind,
-                    state_overrides: overrides,
+                    state_overrides,
+                    balance_overrides,
                 },
             )
             .await
