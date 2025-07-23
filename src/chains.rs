@@ -71,6 +71,7 @@ impl Chains {
                     tx_signers.clone(),
                     storage.clone(),
                     config.transactions.clone(),
+                    config.funder,
                 )
                 .await?;
                 tokio::spawn(service);

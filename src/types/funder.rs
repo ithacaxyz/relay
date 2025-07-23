@@ -46,6 +46,9 @@ sol! {
                 bytes32 salt,
                 uint256[] memory extensions
             );
+
+        function pullGas(uint256 amount) external;
+        function setGasWallet(address[] memory wallets, bool isGasWallet);
     }
 }
 

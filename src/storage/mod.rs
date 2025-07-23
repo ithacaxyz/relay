@@ -16,12 +16,12 @@ use crate::{
         ChainAddress,
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
-    transactions::{PendingTransaction, RelayTransaction, TransactionStatus, TxId},
+    transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{Address, B256, ChainId, map::HashMap},
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -278,5 +278,33 @@ impl StorageApi for RelayStorage {
 
     async fn load_pending_transfers(&self) -> api::Result<Vec<BridgeTransfer>> {
         self.inner.load_pending_transfers().await
+    }
+
+    async fn lock_liquidity_for_pull_gas(
+        &self,
+        transaction: &TxEnvelope,
+        signer: Address,
+        input: LockLiquidityInput,
+    ) -> api::Result<()> {
+        self.inner.lock_liquidity_for_pull_gas(transaction, signer, input).await
+    }
+
+    async fn update_pull_gas_and_unlock_liquidity(
+        &self,
+        tx_hash: B256,
+        chain_id: ChainId,
+        amount: U256,
+        state: PullGasState,
+        at: BlockNumber,
+    ) -> api::Result<()> {
+        self.inner.update_pull_gas_and_unlock_liquidity(tx_hash, chain_id, amount, state, at).await
+    }
+
+    async fn load_pending_pull_gas_transactions(
+        &self,
+        signer: Address,
+        chain_id: ChainId,
+    ) -> api::Result<Vec<TxEnvelope>> {
+        self.inner.load_pending_pull_gas_transactions(signer, chain_id).await
     }
 }
