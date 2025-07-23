@@ -476,7 +476,8 @@ impl Relay {
             .usd_price(self.get_fee_token_kind(chain_id, quote.intent.paymentToken)?)
             .await
             .map(|usd_price| {
-                let amount = quote.intent.totalPaymentMaxAmount / U256::from(10u128.pow(token.decimals as u32));
+                let amount = quote.intent.totalPaymentMaxAmount
+                    / U256::from(10u128.pow(token.decimals as u32));
                 amount.to::<u128>() as f64 * usd_price
             })
             .unwrap_or(0.0);

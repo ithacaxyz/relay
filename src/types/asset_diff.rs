@@ -342,9 +342,9 @@ pub struct AssetDiffResponse {
 impl AssetDiffResponse {
     /// Creates a new AssetDiffResponse with a single chain.
     pub fn new(chain_id: ChainId, chain_diffs: ChainAssetDiffs) -> Self {
-        Self { 
+        Self {
             aggregated_fee_usd: chain_diffs.fee_usd,
-            chains: HashMap::from_iter([(chain_id, chain_diffs)])
+            chains: HashMap::from_iter([(chain_id, chain_diffs)]),
         }
     }
 
