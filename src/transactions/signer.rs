@@ -902,13 +902,6 @@ impl Signer {
         );
 
         let call = IFunder::pullGasCall { amount: funding_amount }.abi_encode();
-        let nonce = {
-            let mut nonce = self.nonce.lock().await;
-            let current_nonce = *nonce;
-            *nonce += 1;
-            current_nonce
-        };
-
         let tx = TransactionRequest::default()
             .to(self.funder)
             .input(call.clone().into())
@@ -924,6 +917,13 @@ impl Signer {
             current_balance: balance,
             block_number,
             lock_amount: funding_amount,
+        };
+
+        let nonce = {
+            let mut nonce = self.nonce.lock().await;
+            let current_nonce = *nonce;
+            *nonce += 1;
+            current_nonce
         };
 
         let tx = TxEip1559 {
