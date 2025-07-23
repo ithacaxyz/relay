@@ -5,7 +5,6 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 ## Quick Links
 
 - **[Relay README](../README.md)** - Basic setup and running instructions
-- **[CLAUDE.md](../CLAUDE.md)** - Development commands and architectural overview
 
 ## Documentation Structure
 
