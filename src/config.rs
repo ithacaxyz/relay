@@ -365,6 +365,9 @@ pub struct TransactionServiceConfig {
     /// for querying transactions.
     #[serde(with = "crate::serde::hash_map")]
     pub public_node_endpoints: HashMap<Chain, Url>,
+    /// Mapping of a chain to RPC endpoint streaming flashblocks.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
+    pub flashblocks_rpc_endpoints: HashMap<Chain, Url>,
     /// Percentile of the priority fees to use for the transactions.
     pub priority_fee_percentile: f64,
 }
@@ -381,6 +384,7 @@ impl Default for TransactionServiceConfig {
             max_queued_per_eoa: 1,
             public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+            flashblocks_rpc_endpoints: HashMap::default(),
         }
     }
 }

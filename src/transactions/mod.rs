@@ -10,6 +10,7 @@ pub use transaction::{
     TransactionStatus, TxId,
 };
 mod fees;
+mod flashblocks;
 mod metrics;
 mod monitor;
 pub use monitor::TransactionMonitoringHandle;
