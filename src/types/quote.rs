@@ -111,6 +111,7 @@ impl Sealable for Quotes {
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
     /// The chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// The intent.
     pub intent: Intent,
