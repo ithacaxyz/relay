@@ -70,12 +70,10 @@ impl CoinGecko {
         let mut request_urls = vec![];
         let api_key = std::env::var("GECKO_API").unwrap_or_default();
         for (chain, tokens) in chains_with_tokens {
-            let (platform, currency) = Self::identifiers(chain);
             let url = format!(
-                "https://pro-api.coingecko.com/api/v3/simple/token_price/{}?contract_addresses={}&vs_currencies={}&x_cg_pro_api_key={}",
-                platform,
+                "https://pro-api.coingecko.com/api/v3/simple/token_price/{}?contract_addresses={}&vs_currencies=eth,usd&x_cg_pro_api_key={}",
+                Self::platform_identifier(chain),
                 tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
-                currency,
                 &api_key
             );
             request_urls.push((chain, url))
@@ -97,9 +95,9 @@ impl CoinGecko {
         });
     }
 
-    /// Returns the platform and native currency identifiers.
-    fn identifiers(chain: ChainId) -> (&'static str, &'static str) {
-        let platform = if chain == Chain::base_goerli().id()
+    /// Returns the platform identifier for the given chain.
+    fn platform_identifier(chain: ChainId) -> &'static str {
+        if chain == Chain::base_goerli().id()
             || chain == Chain::base_sepolia().id()
             || chain == Chain::base_mainnet().id()
         {
@@ -111,17 +109,7 @@ impl CoinGecko {
             "optimistic-ethereum"
         } else {
             "ethereum"
-        };
-
-        (platform, "eth")
-    }
-
-    /// Returns [`CoinKind`].
-    fn parse_currency(currency: &str) -> Option<CoinKind> {
-        if currency == "eth" {
-            return Some(CoinKind::ETH);
         }
-        None
     }
 
     /// Updates inner token prices.
@@ -143,33 +131,63 @@ impl CoinGecko {
             trace!(response=?resp, "CoinGecko response.");
 
             if let Ok(data) = serde_json::from_str::<HashMap<String, HashMap<String, f64>>>(&resp) {
-                let pairs = data.into_iter().filter_map(|(addr, inner)| {
-                    // We only query one currency
-                    let (currency, price) = inner.into_iter().next()?;
+                let mut eth_pairs = Vec::new();
+                let mut usd_prices = Vec::new();
 
-                    // todo validate price
+                for (addr, currencies) in data {
+                    let token_address = match Address::from_str(&addr) {
+                        Ok(addr) => addr,
+                        Err(_) => continue,
+                    };
 
-                    Some((
-                        CoinPair {
-                            from: CoinKind::get_token(
-                                &self.coin_registry,
-                                *chain,
-                                Address::from_str(&addr).ok()?,
-                            )?,
-                            to: Self::parse_currency(&currency)?,
-                        },
-                        price,
-                    ))
-                });
+                    let from_coin =
+                        match CoinKind::get_token(&self.coin_registry, *chain, token_address) {
+                            Some(coin) => coin,
+                            None => continue,
+                        };
+
+                    // Process all currency prices for this token
+                    for (currency, price) in currencies {
+                        match currency.as_str() {
+                            "eth" => {
+                                // todo validate price
+                                eth_pairs
+                                    .push((CoinPair { from: from_coin, to: CoinKind::ETH }, price));
+                            }
+                            "usd" => {
+                                trace!(
+                                    token = ?from_coin,
+                                    usd_price = price,
+                                    "Fetched USD price for token"
+                                );
+                                // todo validate price
+                                usd_prices.push((from_coin, price));
+                            }
+                            _ => {
+                                warn!(currency = ?currency, "Unknown currency in CoinGecko response.");
+                            }
+                        }
+                    }
+                }
 
                 counter!("coingecko.last_update")
                     .absolute(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 
-                let _ = self.update_tx.send(PriceOracleMessage::Update {
-                    fetcher: PriceFetcher::CoinGecko,
-                    prices: pairs.collect(),
-                    timestamp,
-                });
+                if !eth_pairs.is_empty() {
+                    let _ = self.update_tx.send(PriceOracleMessage::Update {
+                        fetcher: PriceFetcher::CoinGecko,
+                        prices: eth_pairs,
+                        timestamp,
+                    });
+                }
+
+                if !usd_prices.is_empty() {
+                    let _ = self.update_tx.send(PriceOracleMessage::UpdateUsd {
+                        fetcher: PriceFetcher::CoinGecko,
+                        prices: usd_prices,
+                        timestamp,
+                    });
+                }
 
                 continue;
             }

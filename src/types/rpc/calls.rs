@@ -6,8 +6,8 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
     types::{
-        Account, AssetDiffs, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
@@ -295,7 +295,7 @@ pub struct PrepareCallsResponseCapabilities {
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
     /// The [`AssetDiff`] of the prepared call bundle.
-    pub asset_diff: AssetDiffs,
+    pub asset_diff: AssetDiffResponse,
 }
 
 /// Response for `wallet_prepareCalls`.
@@ -317,7 +317,7 @@ pub struct PrepareCallsResponse {
 }
 
 /// Response context from `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PrepareCallsContext {
     /// The [`SignedQuotes`] of the prepared call bundle.
