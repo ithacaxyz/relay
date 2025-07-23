@@ -14,7 +14,7 @@ use alloy::{
 };
 use tracing::{debug, trace};
 
-use super::{Asset, KeyType, SimulationResult, Simulator::SimulatorInstance};
+use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::P256_GAS_BUFFER,
@@ -24,9 +24,6 @@ use crate::{
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
 pub const ORCHESTRATOR_NO_ERROR: FixedBytes<4> = fixed_bytes!("0x00000000");
-
-/// Precision for [`SimulatorInstance::simulateV1Logs`]
-const PAYMENT_PER_GAS_PRECISION: u8 = 9;
 
 sol! {
     #[sol(rpc)]
@@ -200,16 +197,11 @@ impl<P: Provider> Orchestrator<P> {
         simulator: Address,
         intent: &Intent,
         key_type: KeyType,
-        payment_per_gas: f64,
         asset_info_handle: AssetInfoServiceHandle,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
         // Allows to account for gas variation in P256 sig verification.
         let gas_validation_offset =
             if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
-
-        let payment_per_gas = U256::from(
-            (payment_per_gas * 10u128.pow(PAYMENT_PER_GAS_PRECISION as u32) as f64).ceil(),
-        );
 
         let simulate_block = SimBlock::default()
             .call(
@@ -217,8 +209,8 @@ impl<P: Provider> Orchestrator<P> {
                     .simulateV1Logs(
                         *self.address(),
                         true,
-                        PAYMENT_PER_GAS_PRECISION,
-                        payment_per_gas,
+                        0,
+                        U256::ZERO,
                         U256::from(11_000),
                         gas_validation_offset,
                         intent.abi_encode().into(),
@@ -267,17 +259,9 @@ impl<P: Provider> Orchestrator<P> {
             .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
-        let simulated_payment = intent.prePaymentAmount
-            + (payment_per_gas * simulation_result.gCombined)
-                / U256::from(10u128.pow(PAYMENT_PER_GAS_PRECISION as u32));
-        let payment_token = if intent.paymentToken.is_zero() {
-            Asset::Native
-        } else {
-            Asset::Token(intent.paymentToken)
-        };
         let payer = if intent.payer.is_zero() { intent.eoa } else { intent.payer };
-        if intent.payer == intent.eoa || intent.payer.is_zero() {
-            asset_diffs.remove_payer_fee(payer, payment_token, simulated_payment);
+        if payer == intent.eoa {
+            asset_diffs.remove_payer_fee(payer, intent.paymentToken.into(), U256::from(1));
         }
 
         Ok((asset_diffs, simulation_result))

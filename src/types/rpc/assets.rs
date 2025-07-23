@@ -56,6 +56,19 @@ pub struct AssetFilterItem {
     pub asset_type: AssetType,
 }
 
+impl AssetFilterItem {
+    /// Create a new asset filter item for a fungible token (native or ERC20).
+    pub fn fungible(asset: AddressOrNative) -> Self {
+        Self {
+            address: asset,
+            asset_type: match asset {
+                AddressOrNative::Native => AssetType::Native,
+                AddressOrNative::Address(_) => AssetType::ERC20,
+            },
+        }
+    }
+}
+
 /// Request parameters for `wallet_getAssets`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

@@ -8,7 +8,7 @@ use crate::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
         Orchestrator, Signature,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, Permission, SpendPermission},
+        rpc::{AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission, SpendPermission},
     },
 };
 use alloy::{
@@ -213,6 +213,8 @@ pub struct FeeEstimationContext {
     pub intent_kind: IntentKind,
     /// State overrides for simulation.
     pub state_overrides: alloy::rpc::types::state::StateOverride,
+    /// Balance overrides for simulation.
+    pub balance_overrides: BalanceOverrides,
 }
 
 mod eip712 {
@@ -585,7 +587,7 @@ impl IntentKind {
         }
     }
 
-    /// Returns the settler context if this is a MultiOutput intent.
+    /// Returns the fee for a multichain input if it is set.
     pub fn multi_input_fee(&self) -> Option<U256> {
         match self {
             IntentKind::MultiInput { fee: Some((_, amount)), .. } => Some(*amount),

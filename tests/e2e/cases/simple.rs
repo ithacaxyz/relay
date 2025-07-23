@@ -363,15 +363,16 @@ async fn spend_limits_bundle_failure() -> Result<()> {
 async fn no_fee_tx() -> Result<()> {
     let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
-    // User with no balance on the fee token should fail on prepareCalls.
+    // User with no balance on the fee token should not fail on prepareCalls, but it should fail to
+    // send.
     run_e2e_erc20(|env| {
         let to = Address::random();
         let transfer_amount = U256::from(10);
 
         vec![TxContext {
             authorization_keys: vec![&key],
-            expected: ExpectedOutcome::FailEstimate, // no balance on fee token
-            fee_token: Some(env.erc20s[2]),          // has not been minted
+            expected: ExpectedOutcome::FailSend, // no balance on fee token
+            fee_token: Some(env.erc20s[2]),      // has not been minted
             calls: vec![Call::transfer(env.erc20, to, transfer_amount)],
             ..Default::default()
         }]

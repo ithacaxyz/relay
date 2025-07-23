@@ -154,6 +154,7 @@ impl Fixtures {
             native_fee_estimate: r_fee,
             authorization_address: Some(r_address),
             orchestrator: r_address,
+            fee_token_deficit: r_u256,
         };
         let queued_id = B256::with_last_byte(1);
         let queued_tx = RelayTransaction {
