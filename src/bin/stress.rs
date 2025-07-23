@@ -132,6 +132,10 @@ impl StressAccount {
                 } else {
                     previous_nonce = Some(nonce);
                 }
+
+                if !quote.fee_token_deficit.is_zero() {
+                    return Ok(());
+                }
             }
 
             let signature =
@@ -387,8 +391,9 @@ impl StressTester {
 
         while let Some(finished) = tasks.next().await {
             match finished {
-                Ok(res) => info!("An account finished stress test (result: {res:?})"),
-                Err(err) => error!("an account failed stress test: {}", err),
+                Ok(Ok(())) => info!("An account finished stress test."),
+                Ok(Err(err)) => error!("An account failed stress test: {}", err),
+                Err(err) => error!("An account failed stress test: {}", err),
             }
         }
 
