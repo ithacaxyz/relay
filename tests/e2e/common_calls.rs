@@ -10,15 +10,6 @@ pub fn transfer_native(recipient: Address, amount: U256) -> Call {
     Call { to: recipient, value: amount, data: bytes!("") }
 }
 
-/// ERC20 transfer call.
-pub fn transfer(erc20: Address, recipient: Address, amount: U256) -> Call {
-    Call {
-        to: erc20,
-        value: U256::ZERO,
-        data: MockErc20::transferCall { recipient, amount }.abi_encode().into(),
-    }
-}
-
 /// ERC721 transfer call.
 pub fn transfer_721(erc721: Address, from: Address, to: Address, id: U256) -> Call {
     Call {

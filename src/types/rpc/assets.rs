@@ -56,6 +56,19 @@ pub struct AssetFilterItem {
     pub asset_type: AssetType,
 }
 
+impl AssetFilterItem {
+    /// Create a new asset filter item for a fungible token (native or ERC20).
+    pub fn fungible(asset: AddressOrNative) -> Self {
+        Self {
+            address: asset,
+            asset_type: match asset {
+                AddressOrNative::Native => AssetType::Native,
+                AddressOrNative::Address(_) => AssetType::ERC20,
+            },
+        }
+    }
+}
+
 /// Request parameters for `wallet_getAssets`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +83,7 @@ pub struct GetAssetsParameters {
     pub asset_type_filter: Vec<AssetType>,
     /// Restrict results to these chains.
     #[serde(default)]
+    #[serde(with = "alloy::serde::quantity::vec")]
     pub chain_filter: Vec<ChainId>,
 }
 
@@ -114,5 +128,27 @@ impl GetAssetsResponse {
                     .map(|asset| asset.balance)
             })
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy::primitives::Address;
+
+    #[test]
+    fn test_get_assets_parameters_roundtrip() {
+        let raw = r#"{"account":"0x0000000000000000000000000000000000000000","assetFilter":{},"assetTypeFilter":[],"chainFilter":["0x1"]}"#;
+        let params = super::GetAssetsParameters {
+            account: Address::ZERO,
+            chain_filter: vec![1],
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        assert_eq!(json, raw);
+        let deserialized: super::GetAssetsParameters = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(params.account, deserialized.account);
+        assert_eq!(params.chain_filter, deserialized.chain_filter);
     }
 }

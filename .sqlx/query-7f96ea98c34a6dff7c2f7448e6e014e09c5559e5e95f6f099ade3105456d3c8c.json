@@ -19,12 +19,16 @@
                 "destination_failures",
                 "destination_confirmed",
                 "refunds_queued",
+                "withdrawals_queued",
                 "done",
                 "failed",
+                "liquidity_locked",
                 "settlements_queued",
                 "settlements_confirmed",
                 "refunds_scheduled",
-                "refunds_ready"
+                "refunds_ready",
+                "settlements_processing",
+                "settlement_completion_queued"
               ]
             }
           }

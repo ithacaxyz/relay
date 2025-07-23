@@ -35,6 +35,8 @@ pub struct TransactionServiceMetrics {
     pub external_confirmations: Counter,
     /// Number of transaction confirmations received from local node provider.
     pub local_confirmations: Counter,
+    /// Number of transaction confirmations received from flashblocks.
+    pub flashblock_confirmations: Counter,
     /// Total time transaction took to land on chain, including time in queue.
     pub total_wait_time: Histogram,
     /// How many blocks were mined before the transaction was confirmed, including the block it was

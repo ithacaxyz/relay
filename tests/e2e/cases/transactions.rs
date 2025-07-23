@@ -6,9 +6,14 @@ use crate::e2e::{
 use alloy::{
     consensus::Transaction,
     eips::Encodable2718,
-    primitives::{B256, U256},
+    primitives::{B256, TxKind, U256},
     providers::{Provider, ext::AnvilApi},
-    signers::local::PrivateKeySigner,
+    rpc::types::TransactionRequest,
+    signers::local::{
+        PrivateKeySigner,
+        coins_bip39::{English, Mnemonic},
+    },
+    sol_types::SolCall,
 };
 use futures_util::{
     StreamExt, TryStreamExt,
@@ -19,7 +24,8 @@ use relay::{
     config::TransactionServiceConfig,
     signers::DynSigner,
     storage::StorageApi,
-    transactions::{RelayTransactionKind, TransactionService, TransactionStatus},
+    transactions::{MIN_SIGNER_GAS, RelayTransactionKind, TransactionService, TransactionStatus},
+    types::IFunder,
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::broadcast;
@@ -618,6 +624,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
         signers,
         storage.clone(),
         config.transaction_service_config.clone(),
+        env.funder,
     )
     .await
     .unwrap();
@@ -638,6 +645,55 @@ async fn restart_with_pending() -> eyre::Result<()> {
 
         break;
     }
+
+    Ok(())
+}
+
+/// Ensures that when a signer can no longer execute MIN_SIGNER_GAS gas units, it will pull funds
+/// from the funder contract.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_signer_pull_gas() -> eyre::Result<()> {
+    let env = Environment::setup_with_config(EnvironmentConfig {
+        block_time: Some(0.5),
+        transaction_service_config: TransactionServiceConfig {
+            balance_check_interval: Duration::from_millis(100), // Check balance every 100ms
+            num_signers: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .await?;
+
+    let provider = env.providers[0].clone();
+    let mnemonic = Mnemonic::<English>::new_from_phrase(SIGNERS_MNEMONIC)?;
+    let signers = DynSigner::derive_from_mnemonic(mnemonic, 1)?;
+    let signer_address = signers.into_iter().next().unwrap().address();
+    let funder_owner = env.deployer.address();
+
+    // Authorize signer as gas wallet in SimpleFunder
+    provider.anvil_impersonate_account(funder_owner).await?;
+    provider
+        .send_transaction(TransactionRequest {
+            from: Some(funder_owner),
+            to: Some(TxKind::Call(env.funder)),
+            input: IFunder::setGasWalletCall { wallets: vec![signer_address], isGasWallet: true }
+                .abi_encode()
+                .into(),
+            ..Default::default()
+        })
+        .await?
+        .get_receipt()
+        .await?;
+    provider.anvil_stop_impersonating_account(funder_owner).await?;
+
+    // set signer balance below threshold, and wait for it to pull it from the contract
+    let fees = provider.estimate_eip1559_fees().await?;
+    let min_balance = MIN_SIGNER_GAS * U256::from(fees.max_fee_per_gas);
+    let low_balance = min_balance.div_ceil(U256::from(2));
+    provider.anvil_set_balance(signer_address, low_balance).await?;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(provider.get_balance(signer_address).await? > min_balance);
 
     Ok(())
 }

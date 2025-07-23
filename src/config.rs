@@ -38,9 +38,6 @@ pub struct RelayConfig {
     pub chain: ChainConfig,
     /// Quote configuration.
     pub quote: QuoteConfig,
-    /// Onramp configuration.
-    #[serde(default)]
-    pub onramp: OnrampConfig,
     /// Email configuration.
     #[serde(default)]
     pub email: EmailConfig,
@@ -145,15 +142,6 @@ impl QuoteConfig {
     }
 }
 
-/// Onramp configuration.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OnrampConfig {
-    /// Banxa API configuration.
-    #[serde(default)]
-    pub banxa: BanxaConfig,
-}
-
 /// Email configuration.
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,35 +150,6 @@ pub struct EmailConfig {
     pub resend_api_key: Option<String>,
     /// Porto base URL.
     pub porto_base_url: Option<String>,
-}
-
-/// Banxa API configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BanxaConfig {
-    /// Base URL for Banxa API.
-    pub api_url: Url,
-    /// Blockchain identifier for Banxa requests.
-    pub blockchain: String,
-    /// Banxa Secrets (API key, Webhook secret, Webhook Key)
-    pub secrets: BanxaSecrets,
-}
-
-/// Banxa Secrets
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BanxaSecrets {
-    /// Banxa API key.
-    pub api_key: String,
-}
-
-impl Default for BanxaConfig {
-    fn default() -> Self {
-        Self {
-            api_url: "https://api.banxa-sandbox.com".parse().expect("valid URL"),
-            blockchain: "base".to_string(),
-            secrets: BanxaSecrets { api_key: "".to_string() },
-        }
-    }
 }
 
 /// Secrets (kept out of serialized output).
@@ -365,6 +324,9 @@ pub struct TransactionServiceConfig {
     /// for querying transactions.
     #[serde(with = "crate::serde::hash_map")]
     pub public_node_endpoints: HashMap<Chain, Url>,
+    /// Mapping of a chain to RPC endpoint streaming flashblocks.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
+    pub flashblocks_rpc_endpoints: HashMap<Chain, Url>,
     /// Percentile of the priority fees to use for the transactions.
     pub priority_fee_percentile: f64,
 }
@@ -381,6 +343,7 @@ impl Default for TransactionServiceConfig {
             max_queued_per_eoa: 1,
             public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+            flashblocks_rpc_endpoints: HashMap::default(),
         }
     }
 }
@@ -408,7 +371,6 @@ impl Default for RelayConfig {
                 ttl: Duration::from_secs(5),
                 rate_ttl: Duration::from_secs(300),
             },
-            onramp: OnrampConfig::default(),
             email: EmailConfig::default(),
             transactions: TransactionServiceConfig::default(),
             interop: None,
@@ -595,18 +557,6 @@ impl RelayConfig {
     /// Sets the percentile of the priority fees to use for the transactions.
     pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
         self.transactions.priority_fee_percentile = percentile;
-        self
-    }
-
-    /// Sets the Banxa API URL.
-    pub fn with_banxa_api_url(mut self, api_url: Url) -> Self {
-        self.onramp.banxa.api_url = api_url;
-        self
-    }
-
-    /// Sets the Banxa API key.
-    pub fn with_banxa_api_key(mut self, api_key: String) -> Self {
-        self.onramp.banxa.secrets.api_key = api_key;
         self
     }
 

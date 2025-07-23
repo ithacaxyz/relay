@@ -7,7 +7,10 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AuthError, RelayError};
+use crate::{
+    error::{AuthError, RelayError},
+    types::IERC20,
+};
 
 use super::{
     IDelegation::{authorizeCall, revokeCall},
@@ -121,6 +124,15 @@ impl Call {
         }
 
         Ok(())
+    }
+
+    /// ERC20 transfer call.
+    pub fn transfer(erc20: Address, to: Address, amount: U256) -> Self {
+        Self {
+            to: erc20,
+            value: U256::ZERO,
+            data: IERC20::transferCall { to, amount }.abi_encode().into(),
+        }
     }
 }
 

@@ -110,9 +110,10 @@ impl Sealable for Quotes {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
-    /// Chain id.
+    /// The chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
-    /// Intent.
+    /// The intent.
     pub intent: Intent,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
@@ -131,6 +132,11 @@ pub struct Quote {
     pub authorization_address: Option<Address>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
+    /// How much of the fee token the user is missing to pay for this intent.
+    ///
+    /// If it is 0, the user has enough balance to execute the call.
+    #[serde(default)]
+    pub fee_token_deficit: U256,
 }
 
 impl Quote {

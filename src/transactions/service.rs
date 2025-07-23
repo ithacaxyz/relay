@@ -5,19 +5,14 @@ use super::{
 };
 use crate::{
     config::TransactionServiceConfig,
-    constants::DEFAULT_POLL_INTERVAL,
     error::StorageError,
     signers::DynSigner,
-    spawn::RETRY_LAYER,
     storage::{RelayStorage, StorageApi},
-    transport::create_transport,
 };
 use alloy::{
     primitives::Address,
-    providers::{DynProvider, Provider, ProviderBuilder},
-    rpc::client::ClientBuilder,
+    providers::{DynProvider, Provider},
 };
-use alloy_chains::Chain;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rand::seq::SliceRandom;
 use std::{
@@ -165,6 +160,7 @@ impl TransactionService {
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
+        funder: Address,
     ) -> eyre::Result<(Self, TransactionServiceHandle)> {
         let chain_id = provider.get_chain_id().await?;
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
@@ -174,23 +170,9 @@ impl TransactionService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
-        let external_provider =
-            if let Some(endpoint) = config.public_node_endpoints.get(&Chain::from_id(chain_id)) {
-                let (transport, is_local) = create_transport(endpoint).await?;
-                let client = ClientBuilder::default()
-                    .layer(RETRY_LAYER)
-                    .transport(transport, is_local)
-                    .with_poll_interval(DEFAULT_POLL_INTERVAL);
-                Some(ProviderBuilder::new().connect_client(client).erased())
-            } else {
-                None
-            };
-
-        let monitor = TransactionMonitoringHandle::new(
-            provider.clone(),
-            external_provider.clone(),
-            metrics.clone(),
-        );
+        let monitor =
+            TransactionMonitoringHandle::new(provider.clone(), config.clone(), metrics.clone())
+                .await?;
 
         let mut this = Self {
             signers: Default::default(),
@@ -210,7 +192,7 @@ impl TransactionService {
 
         // create all the signers
         for signer in signers {
-            this.create_signer(signer, provider.clone(), monitor.clone()).await?;
+            this.create_signer(signer, provider.clone(), monitor.clone(), funder).await?;
         }
 
         // insert loaded queue, we need to do it after signers are created so that loaded pending
@@ -230,6 +212,7 @@ impl TransactionService {
         signer: DynSigner,
         provider: DynProvider,
         monitor: TransactionMonitoringHandle,
+        funder: Address,
     ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
@@ -244,6 +227,7 @@ impl TransactionService {
             metrics,
             self.config.clone(),
             monitor,
+            funder,
         )
         .await?;
         let (task, loaded_transactions) = signer.into_future().await?;
@@ -637,6 +621,7 @@ mod tests {
             authorization_address: Default::default(),
             orchestrator: Default::default(),
             intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            fee_token_deficit: Default::default(),
         };
         RelayTransaction::new(quote, None, B256::random())
     }

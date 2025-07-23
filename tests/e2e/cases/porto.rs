@@ -20,7 +20,7 @@ async fn behavior_delegation() -> Result<()> {
             },
             // Perform a transfer signed by the authorized key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -70,14 +70,14 @@ async fn execution_guard_spend_limit_and_guard() -> Result<()> {
             },
             // Successful transfer
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&session_key),
                 ..Default::default()
             },
             // Another transfer exceeds spend limit → fail
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(100u64))],
                 expected: ExpectedOutcome::FailEstimate,
                 key: Some(&session_key),
                 ..Default::default()
@@ -129,14 +129,14 @@ async fn execution_guard_target_scope() -> Result<()> {
             },
             // Valid transfer (target matches)
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&session_key),
                 ..Default::default()
             },
             // Failing transfer (different target)
             TxContext {
-                calls: vec![calls::transfer(env.erc20s[1], Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20s[1], Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
                 key: Some(&session_key),
                 ..Default::default()
@@ -187,7 +187,7 @@ async fn execution_guard_target_scope_selector() -> Result<()> {
             },
             // Valid transfer call using "transfer"
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&session_key),
                 ..Default::default()
@@ -220,7 +220,7 @@ async fn send_default() -> Result<()> {
             },
             // Transfer call: transfer 0.0001 ETH worth (using a placeholder value)
             TxContext {
-                calls: vec![calls::transfer(
+                calls: vec![Call::transfer(
                     env.erc20,
                     Address::ZERO,
                     U256::from(100000000000000u64),
@@ -274,7 +274,7 @@ async fn execution_guard_default() -> Result<()> {
             },
             // Transfer signed by the second key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&session_key),
                 ..Default::default()
@@ -300,7 +300,7 @@ async fn prepare_send_prepared_default() -> Result<()> {
             },
             // Prepared transfer call (simulating prepare then sendPrepared)
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -326,7 +326,7 @@ async fn delegated_false_eoa_key_to_authorize_p256() -> Result<()> {
             },
             // Transfer call signed by the newly authorized key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -352,7 +352,7 @@ async fn delegated_true_eoa_key_to_authorize_p256() -> Result<()> {
             },
             // Transfer call signed by the authorized key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&key),
                 ..Default::default()
@@ -386,7 +386,7 @@ async fn key_p256_key_to_authorize_p256() -> Result<()> {
             },
             // Transfer using the second key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&another_key),
                 ..Default::default()
@@ -438,7 +438,7 @@ async fn key_p256_key_to_authorize_p256_session() -> Result<()> {
             },
             // Transfer signed by the session key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&session_key),
                 ..Default::default()
@@ -472,7 +472,7 @@ async fn key_p256_key_to_authorize_webcryptop256() -> Result<()> {
             },
             // Transfer signed by the second key
             TxContext {
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::Pass,
                 key: Some(&another_key),
                 ..Default::default()
@@ -514,7 +514,7 @@ async fn session_key_pre_call() -> Result<()> {
                     ..Default::default()
                 }],
                 // Execute the transfer via session key in the same intent
-                calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
                 // The intent is signed by the session key itself
                 key: Some(&session_key),
                 ..Default::default()
@@ -549,7 +549,7 @@ async fn session_key_pre_call_prep_single_tx() -> Result<()> {
                 ..Default::default()
             }],
             // Execute the transfer via session key in the same intent
-            calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
             // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()
@@ -576,7 +576,7 @@ async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
                 ..Default::default()
             }],
             // Execute the transfer via session key in the same intent
-            calls: vec![calls::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
             // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()

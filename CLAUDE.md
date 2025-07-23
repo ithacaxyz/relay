@@ -57,7 +57,6 @@ The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 ac
 
 1. **RPC Server** (`src/rpc/`): JSON-RPC endpoints
    - `account.rs`: Account management endpoints
-   - `onramp.rs`: Onramp functionality
    - `relay.rs`: Main relay endpoints
 
 2. **Transaction Processing** (`src/transactions/`):

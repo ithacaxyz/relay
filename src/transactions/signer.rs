@@ -10,11 +10,11 @@ use crate::{
     config::TransactionServiceConfig,
     error::StorageError,
     signers::DynSigner,
-    storage::{RelayStorage, StorageApi},
-    transactions::transaction::RelayTransactionKind,
+    storage::{LockLiquidityInput, RelayStorage, StorageApi},
+    transactions::{PullGasState, transaction::RelayTransactionKind},
     transport::error::TransportErrExt,
     types::{
-        ORCHESTRATOR_NO_ERROR,
+        IFunder, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
     },
 };
@@ -33,7 +33,9 @@ use alloy::{
 };
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
-use futures_util::{StreamExt, lock::Mutex, stream::FuturesUnordered, try_join};
+use futures_util::{
+    StreamExt, future::try_join_all, lock::Mutex, stream::FuturesUnordered, try_join,
+};
 use opentelemetry::trace::{SpanKind, TraceContextExt};
 use std::{
     fmt::Display,
@@ -46,12 +48,15 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::JoinSet};
-use tracing::{Level, Span, debug, error, instrument, span, trace, warn};
+use tracing::{Level, Span, debug, error, info, instrument, span, trace, warn};
 use tracing_futures::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Lower bound of gas a signer should be able to afford before getting paused until being funded.
-const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
+pub const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
+
+/// Amount to top up when pulling gas (5 x MIN_SIGNER_GAS).
+pub const SIGNER_GAS_TOP_UP: U256 = uint!(150_000_000_U256);
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -150,6 +155,8 @@ pub struct SignerInner {
     config: TransactionServiceConfig,
     /// Handle for monitoring pending transactions.
     monitor: TransactionMonitoringHandle,
+    /// Funder contract address
+    funder: Address,
 }
 
 /// A signer responsible for signing and sending transactions on a single network.
@@ -171,6 +178,7 @@ impl Signer {
         tx_metrics: Arc<TransactionServiceMetrics>,
         config: TransactionServiceConfig,
         monitor: TransactionMonitoringHandle,
+        funder: Address,
     ) -> eyre::Result<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -209,6 +217,7 @@ impl Signer {
             paused: AtomicBool::new(false),
             config,
             monitor,
+            funder,
         };
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -657,6 +666,17 @@ impl Signer {
                 );
                 self.emit_event(SignerEvent::PauseSigner(self.id()));
                 self.paused.store(true, Ordering::Relaxed);
+
+                // try to pull gas after pausing
+                self.pull_gas(&fees).await.inspect_err(|err| {
+                    error!(
+                        signer = %self.address(),
+                        ?err,
+                        "Failed to pull gas"
+                    );
+                })?;
+
+                self.paused.store(false, Ordering::Relaxed);
             }
         } else if balance >= min_balance {
             debug!("signer balance is sufficient, re-activating");
@@ -779,6 +799,17 @@ impl Signer {
             }
         }
 
+        // wait for any pending pull gas transaction (should only be one at most)
+        let _ = try_join_all(
+            self.storage
+                .load_pending_pull_gas_transactions(self.address(), self.chain_id)
+                .await
+                .wrap_err("failed to load pending pull gas transactions")?
+                .into_iter()
+                .map(|tx| self.resume_pull_gas_transaction(tx)),
+        )
+        .await;
+
         let latest_nonce = self.provider.get_transaction_count(self.address()).await?;
         let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
             .filter(|nonce| {
@@ -853,6 +884,158 @@ impl Signer {
             SignerTask { signer: self, pending, _maintenance: maintenance, waker: None },
             loaded_transactions,
         ))
+    }
+
+    /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
+    /// lock liquidity before broadcasting the transaction.
+    pub async fn pull_gas(&self, fees: &Eip1559Estimation) -> Result<(), SignerError> {
+        let funding_amount = SIGNER_GAS_TOP_UP * U256::from(fees.max_fee_per_gas);
+
+        info!(
+            amount = %funding_amount,
+            signer = %self.address(),
+            "pulling gas from SimpleFunder"
+        );
+
+        let call = IFunder::pullGasCall { amount: funding_amount }.abi_encode();
+        let tx = TransactionRequest::default()
+            .to(self.funder)
+            .input(call.clone().into())
+            .from(self.address());
+
+        let (balance, block_number, gas_limit) = try_join!(
+            async { self.provider.get_balance(self.funder).await },
+            async { self.provider.get_block_number().await },
+            async { self.provider.estimate_gas(tx).await }
+        )?;
+
+        let lock_input = LockLiquidityInput {
+            current_balance: balance,
+            block_number,
+            lock_amount: funding_amount,
+        };
+
+        let nonce = {
+            let mut nonce = self.nonce.lock().await;
+            let current_nonce = *nonce;
+            *nonce += 1;
+            current_nonce
+        };
+
+        let tx = TxEip1559 {
+            chain_id: self.chain_id,
+            nonce,
+            to: self.funder.into(),
+            input: call.into(),
+            value: U256::ZERO,
+            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+            max_fee_per_gas: fees.max_fee_per_gas,
+            gas_limit,
+            ..Default::default()
+        };
+
+        let signed_tx = self.sign_transaction(TypedTransaction::Eip1559(tx)).await?;
+        self.storage.lock_liquidity_for_pull_gas(&signed_tx, self.address(), lock_input).await?;
+
+        let result = self.broadcast_and_monitor_pull_gas(&signed_tx).await;
+        self.update_pull_gas_state_and_unlock_liquidity(
+            &signed_tx,
+            funding_amount,
+            result.as_ref().ok(),
+        )
+        .await?;
+
+        result.map(|_| ())
+    }
+
+    /// Resumes a pending pull gas transaction by checking its on-chain status.
+    ///
+    /// This is used during startup to handle transactions that were interrupted
+    /// by a crash or restart. It either:
+    /// - Updates state if the transaction was already mined
+    /// - Resends the transaction if it wasn't broadcast
+    async fn resume_pull_gas_transaction(&self, tx: TxEnvelope) -> Result<(), SignerError> {
+        let tx_hash = *tx.tx_hash();
+        let amount = IFunder::pullGasCall::abi_decode(tx.input())
+            .map(|call| call.amount)
+            .unwrap_or_default();
+
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(receipt) => Some(receipt),
+            None => {
+                if self.provider.get_transaction_by_hash(tx_hash).await?.is_some() {
+                    info!(?tx_hash, "pull gas transaction found in pool, waiting for confirmation");
+                    self.monitor.watch_transaction(tx_hash, self.block_time * 2).await
+                } else {
+                    info!(?tx_hash, "pull gas transaction not found, attempting to send");
+                    self.broadcast_and_monitor_pull_gas(&tx).await.ok()
+                }
+            }
+        };
+
+        self.update_pull_gas_state_and_unlock_liquidity(&tx, amount, receipt.as_ref()).await
+    }
+
+    /// Broadcasts a pull gas transaction and monitors it until confirmed.
+    ///
+    /// This handles the actual transaction broadcast and monitoring,
+    /// updating the nonce on success.
+    async fn broadcast_and_monitor_pull_gas(
+        &self,
+        signed_tx: &TxEnvelope,
+    ) -> Result<TransactionReceipt, SignerError> {
+        self.send_transaction(signed_tx).await?;
+
+        let receipt = self
+            .monitor
+            .watch_transaction(*signed_tx.tx_hash(), self.block_time * 2)
+            .await
+            .ok_or(SignerError::TxTimeout)?;
+
+        if receipt.status() {
+            Ok(receipt)
+        } else {
+            Err(SignerError::Other("pullGas reverted".into()))
+        }
+    }
+
+    /// Updates the pull gas transaction state in storage and unlocks liquidity.
+    ///
+    /// This is the final step in any pull gas transaction flow, ensuring
+    /// that the storage state is consistent and liquidity is properly unlocked.
+    async fn update_pull_gas_state_and_unlock_liquidity(
+        &self,
+        signed_tx: &TxEnvelope,
+        amount: U256,
+        receipt: Option<&TransactionReceipt>,
+    ) -> Result<(), SignerError> {
+        let (state, block_number) = match receipt {
+            Some(r) if r.status() => (PullGasState::Completed, r.block_number.unwrap_or_default()),
+            Some(r) => (PullGasState::Failed, r.block_number.unwrap_or_default()),
+            None => {
+                (PullGasState::Failed, self.provider.get_block_number().await.unwrap_or_default())
+            }
+        };
+
+        self.storage
+            .update_pull_gas_and_unlock_liquidity(
+                *signed_tx.tx_hash(),
+                self.chain_id,
+                amount,
+                state,
+                block_number,
+            )
+            .await?;
+
+        info!(
+            tx_hash = %signed_tx.tx_hash(),
+            signer = %self.address(),
+            state = %state,
+            amount = %amount,
+            "pull gas transaction finalized"
+        );
+
+        Ok(())
     }
 }
 

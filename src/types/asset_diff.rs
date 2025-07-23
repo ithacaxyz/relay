@@ -116,8 +116,10 @@ impl Asset {
 
 impl From<Address> for Asset {
     fn from(asset: Address) -> Self {
-        // 0xee..ee is how `eth_simulateV1` represents the native asset.
-        if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
+        // 0xee..ee is how `eth_simulateV1` represents the native asset, and 0x00..00 is how we
+        // represent the native asset.
+        if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") || asset == Address::ZERO
+        {
             Asset::Native
         } else {
             Asset::Token(asset)
