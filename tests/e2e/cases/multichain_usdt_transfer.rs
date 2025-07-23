@@ -17,7 +17,7 @@ use relay::{
     config::TransactionServiceConfig,
     rpc::RelayApiClient,
     types::{
-        IERC20, KeyType, KeyWith712Signer,
+        Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             GetAssetsParameters, Meta, PrepareCallsCapabilities, PrepareCallsContext,
             PrepareCallsParameters, PrepareCallsResponse,
@@ -142,11 +142,7 @@ impl MultichainTransferSetup {
         let prepare_result = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
-                calls: vec![common_calls::transfer(
-                    env.erc20,
-                    target_recipient,
-                    total_transfer_amount,
-                )],
+                calls: vec![Call::transfer(env.erc20, target_recipient, total_transfer_amount)],
                 chain_id: chain3_id,
                 from: Some(wallet),
                 capabilities: PrepareCallsCapabilities {
