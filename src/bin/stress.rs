@@ -80,6 +80,8 @@ impl StressAccount {
         chain_id: ChainId,
         fee_token: Address,
         relay_client: HttpClient,
+        recipient: Address,
+        transfer_amount: U256,
     ) -> eyre::Result<()> {
         let mut previous_nonce = None;
         let mut retries = 5;
@@ -87,8 +89,8 @@ impl StressAccount {
             let prepare_start = Instant::now();
             let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
-                    required_funds: vec![(fee_token, U256::from(ETH_TO_WEI))],
-                    calls: vec![Call::transfer(fee_token, Address::ZERO, U256::from(ETH_TO_WEI))],
+                    required_funds: vec![(fee_token, transfer_amount)],
+                    calls: vec![Call::transfer(fee_token, recipient, transfer_amount)],
                     chain_id,
                     from: Some(self.address),
                     capabilities: PrepareCallsCapabilities {
@@ -195,6 +197,7 @@ struct StressTester {
     args: Args,
     accounts: Vec<StressAccount>,
     destination_chain_id: ChainId,
+    signer: DynSigner,
 }
 
 impl StressTester {
@@ -354,7 +357,7 @@ impl StressTester {
         }))
         .await?;
 
-        Ok(Self { destination_chain_id, relay_client, args, accounts })
+        Ok(Self { destination_chain_id, relay_client, args, accounts, signer })
     }
 
     async fn spawn(self) -> eyre::Result<()> {
@@ -366,10 +369,19 @@ impl StressTester {
         info!("Starting stress test");
 
         let mut tasks = FuturesUnordered::new();
+        let recipient = self.signer.address();
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
             tasks.push(tokio::spawn(async move {
-                account.run(self.destination_chain_id, self.args.fee_token, client).await
+                account
+                    .run(
+                        self.destination_chain_id,
+                        self.args.fee_token,
+                        client,
+                        recipient,
+                        self.args.transfer_amount,
+                    )
+                    .await
             }));
         }
 
@@ -405,6 +417,10 @@ struct Args {
     /// Number of accounts to create and test with.
     #[arg(long = "accounts", value_name = "COUNT", default_value_t = 1000)]
     accounts: usize,
+    /// The amount to transfer out from the EOA on every transfer. The amount will be transferred
+    /// to the signer.
+    #[arg(long = "transfer-amount", value_name = "AMOUNT", default_value_t = U256::from(ETH_TO_WEI))]
+    transfer_amount: U256,
 }
 
 impl Args {
