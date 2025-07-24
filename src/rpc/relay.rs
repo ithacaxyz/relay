@@ -35,7 +35,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, aliases::B192, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, U512, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -471,16 +471,13 @@ impl Relay {
 
         // Get approximate USD value of the fee
         let fee_usd = self
-            .inner
-            .price_oracle
-            .usd_price(self.get_fee_token_kind(chain_id, quote.intent.paymentToken)?)
-            .await
-            .map(|usd_price| {
-                let amount = quote.intent.totalPaymentMaxAmount
-                    / U256::from(10u128.pow(token.decimals as u32));
-                amount.to::<u128>() as f64 * usd_price
-            })
-            .unwrap_or(0.0);
+            .calculate_fee_usd(
+                chain_id,
+                quote.intent.paymentToken,
+                quote.intent.totalPaymentAmount,
+                token.decimals,
+            )
+            .await?;
 
         Ok((ChainAssetDiffs { fee_usd, asset_diffs }, quote))
     }
@@ -2086,6 +2083,25 @@ impl Relay {
     /// The orchestrator address.
     pub fn orchestrator(&self) -> Address {
         self.inner.contracts.orchestrator.address
+    }
+
+    /// Calculate the USD value of a fee amount in a given token.
+    async fn calculate_fee_usd(
+        &self,
+        chain_id: ChainId,
+        fee_token: Address,
+        amount: U256,
+        decimals: u8,
+    ) -> Result<f64, RelayError> {
+        let coin_kind = self.get_fee_token_kind(chain_id, fee_token)?;
+        let usd_price = self.inner.price_oracle.usd_price(coin_kind).await;
+        Ok(usd_price
+            .map(|price| {
+                let result = U512::from(amount).saturating_mul(U512::from(price * 1e18))
+                    / U512::from(10u128.pow(decimals as u32));
+                result.to::<u128>() as f64 / 1e18
+            })
+            .unwrap_or(0.0))
     }
 
     /// Get the coin kind for a fee token on a chain.
