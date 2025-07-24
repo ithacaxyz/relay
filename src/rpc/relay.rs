@@ -455,7 +455,7 @@ impl Relay {
         ));
 
         let fee_token_deficit =
-            fee_token_balance.saturating_sub(intent_to_sign.totalPaymentMaxAmount);
+            intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
         let quote = Quote {
             chain_id,
             payment_token_decimals: token.decimals,
