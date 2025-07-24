@@ -24,6 +24,13 @@ The relay depends on the followign things being available on the chains it conne
 - [Multicall3](https://www.multicall3.com/)
 - `PUSH0`
 
+Additionally, the relay can also leverage several things for faster confirmations and increased reliability, including:
+
+- [Flashblocks](https://docs.base.org/base-chain/flashblocks/apps)
+- Using sequencer endpoints
+
+These things must be enabled in the configuration.
+
 [^1]: If the secp256r1 precompile is enabled, the address `0x0000000000001Ab2e8006Fd8B71907bf06a5BDEE` must additionally be a contract. This acts as a canary signalling the Solady P256 library that the precompile exists. If the canary is not deployed, the shim will be tried first. See [Solady's P256 library](https://github.com/Vectorized/solady/blob/a096f4fb0f65d1c6d6677ea6b13e9d41cb0bf798/src/utils/P256.sol#L19-L25).
 
 ### Deployment
