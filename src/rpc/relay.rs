@@ -17,9 +17,9 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, CoinKind,
-        Escrow, FeeTokens, FundSource, FundingIntentContext, GasEstimate, IERC20, IEscrow,
-        IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
+        FeeTokens, FundSource, FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind,
+        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -35,7 +35,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, U512, aliases::B192, bytes},
+    primitives::{Address, B256, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -469,17 +469,16 @@ impl Relay {
             fee_token_deficit,
         };
 
-        // Get approximate USD value of the fee
-        let fee_usd = self
-            .calculate_fee_usd(
-                chain_id,
-                quote.intent.paymentToken,
-                quote.intent.totalPaymentAmount,
-                token.decimals,
-            )
-            .await?;
+        // Create ChainAssetDiffs with populated fiat values including fee
+        let chain_asset_diffs = ChainAssetDiffs::new(
+            asset_diffs,
+            &quote,
+            &self.inner.fee_tokens,
+            &self.inner.price_oracle,
+        )
+        .await?;
 
-        Ok((ChainAssetDiffs { fee_usd, asset_diffs }, quote))
+        Ok((chain_asset_diffs, quote))
     }
 
     #[instrument(skip_all)]
@@ -2083,38 +2082,6 @@ impl Relay {
     /// The orchestrator address.
     pub fn orchestrator(&self) -> Address {
         self.inner.contracts.orchestrator.address
-    }
-
-    /// Calculate the USD value of a fee amount in a given token.
-    async fn calculate_fee_usd(
-        &self,
-        chain_id: ChainId,
-        fee_token: Address,
-        amount: U256,
-        decimals: u8,
-    ) -> Result<f64, RelayError> {
-        let coin_kind = self.get_fee_token_kind(chain_id, fee_token)?;
-        let usd_price = self.inner.price_oracle.usd_price(coin_kind).await;
-        Ok(usd_price
-            .map(|price| {
-                let result = U512::from(amount).saturating_mul(U512::from(price * 1e18))
-                    / U512::from(10u128.pow(decimals as u32));
-                result.to::<u128>() as f64 / 1e18
-            })
-            .unwrap_or(0.0))
-    }
-
-    /// Get the coin kind for a fee token on a chain.
-    fn get_fee_token_kind(
-        &self,
-        chain_id: ChainId,
-        fee_token: Address,
-    ) -> Result<CoinKind, QuoteError> {
-        self.inner
-            .fee_tokens
-            .find(chain_id, &fee_token)
-            .map(|token| token.kind)
-            .ok_or(QuoteError::UnsupportedFeeToken(fee_token))
     }
 
     /// Previously deployed orchestrators.

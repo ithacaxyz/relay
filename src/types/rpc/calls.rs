@@ -337,7 +337,8 @@ pub struct PrepareCallsResponseCapabilities {
     /// Keys that were revoked from the account.
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
-    /// The [`AssetDiff`] of the prepared call bundle.
+    /// The [`AssetDiffResponse`] of the prepared call bundle, flattened.
+    #[serde(flatten)]
     pub asset_diff: AssetDiffResponse,
 }
 

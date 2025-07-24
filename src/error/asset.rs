@@ -10,14 +10,21 @@ pub enum AssetError {
     /// The asset info service is unavailable.
     #[error("the asset info service is unavailable.")]
     ServiceUnavailable,
+    /// The fee token is not known.
+    #[error("unknown fee token")]
+    UnknownFeeToken,
+    /// The price for the asset is unavailable.
+    #[error("price unavailable")]
+    PriceUnavailable,
 }
 
 impl From<AssetError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: AssetError) -> Self {
         match err {
-            AssetError::InvalidAssetInfoResponse | AssetError::ServiceUnavailable => {
-                internal_rpc(err.to_string())
-            }
+            AssetError::InvalidAssetInfoResponse
+            | AssetError::ServiceUnavailable
+            | AssetError::UnknownFeeToken
+            | AssetError::PriceUnavailable => internal_rpc(err.to_string()),
         }
     }
 }

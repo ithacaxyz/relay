@@ -1,17 +1,22 @@
-use std::ops::Not;
-
-use crate::types::AssetMetadata;
-
 use super::{
     AssetType,
     IERC20::{self},
     IERC721,
 };
+use crate::{
+    error::{AssetError, RelayError},
+    price::PriceOracle,
+    types::{AssetMetadata, FeeTokens, Quote},
+};
 use alloy::primitives::{
-    Address, ChainId, U256, address,
+    Address, ChainId, U256, U512, address,
     map::{HashMap, HashSet},
 };
+use futures_util::future::join_all;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
+use std::{ops::Not, str::FromStr};
 
 /// Net flow per account and asset based on simulated execution logs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,7 +66,8 @@ impl AssetDiffs {
 }
 
 /// Asset with metadata and value diff.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDiff {
     /// Asset address. `None` represents the native token.
     pub address: Option<Address>,
@@ -73,8 +79,25 @@ pub struct AssetDiff {
     pub metadata: AssetMetadata,
     /// Value or id.
     pub value: U256,
+    /// Human-readable value (value / 10^decimals).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_value: Option<String>,
     /// Incoming or outgoing direction.
     pub direction: DiffDirection,
+    /// Optional fiat value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fiat: Option<FiatValue>,
+}
+
+/// Fiat value representation
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FiatValue {
+    /// Currency code (e.g., "usd")
+    pub currency: String,
+    /// Value as f64
+    #[serde_as(as = "DisplayFromStr")]
+    pub value: f64,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
@@ -251,12 +274,22 @@ impl AssetDiffBuilder {
                 };
 
                 let info = &metadata[&asset];
+
+                let display_value = info.metadata.decimals.and_then(|decimals| {
+                    let value_decimal = Decimal::from_str(&value.to_string()).ok()?;
+                    let divisor = Decimal::from(10u64.pow(decimals as u32));
+                    let result = value_decimal / divisor;
+                    Some(result.to_string())
+                });
+
                 account_diffs.push(AssetDiff {
                     token_kind: asset.is_native().not().then_some(AssetType::ERC20),
                     address: asset.is_native().not().then(|| asset.address()),
                     metadata: info.metadata.clone(),
                     value,
+                    display_value,
                     direction,
+                    fiat: None,
                 });
             }
 
@@ -275,7 +308,9 @@ impl AssetDiffBuilder {
                     address: asset.is_native().not().then(|| asset.address()),
                     metadata: AssetMetadata { uri, ..info.metadata.clone() },
                     value: id,
+                    display_value: None, // NFTs don't have display values
                     direction,
+                    fiat: None,
                 });
             }
 
@@ -320,44 +355,137 @@ impl DiffDirection {
 }
 
 /// Chain-specific asset diffs and fee in USD.
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainAssetDiffs {
     /// USD value of the fee.
+    #[serde_as(as = "DisplayFromStr")]
     pub fee_usd: f64,
     /// Asset diffs for this chain.
     pub asset_diffs: AssetDiffs,
+}
+
+impl ChainAssetDiffs {
+    /// Creates a new ChainAssetDiffs with populated fiat values and calculated fee USD.
+    pub async fn new(
+        mut asset_diffs: AssetDiffs,
+        quote: &Quote,
+        fee_tokens: &FeeTokens,
+        price_oracle: &PriceOracle,
+    ) -> Result<Self, RelayError> {
+        let chain_id = quote.chain_id;
+        let fee_token = quote.intent.paymentToken;
+        let fee_amount = quote.intent.totalPaymentAmount;
+
+        // Calculate fee USD value
+        let token = fee_tokens
+            .find(chain_id, &fee_token)
+            .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken))?;
+
+        let usd_price = price_oracle
+            .usd_price(token.kind)
+            .await
+            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable))?;
+
+        let fee_usd = calculate_usd_value(fee_amount, usd_price, token.decimals);
+
+        // Populate fiat values for asset diffs
+        join_all(
+            asset_diffs
+                .0
+                .iter_mut()
+                .flat_map(|(_, diffs)| diffs.iter_mut())
+                .filter(|diff| diff.metadata.decimals.is_some())
+                .map(async |diff| {
+                    let Some(token) =
+                        fee_tokens.find(chain_id, &diff.address.unwrap_or(Address::ZERO))
+                    else {
+                        return;
+                    };
+                    let Some(usd_price) = price_oracle.usd_price(token.kind).await else { return };
+
+                    diff.fiat = Some(FiatValue {
+                        currency: "usd".to_string(),
+                        value: calculate_usd_value(
+                            diff.value,
+                            usd_price,
+                            diff.metadata.decimals.expect("qed"),
+                        ),
+                    });
+                }),
+        )
+        .await;
+        Ok(Self { fee_usd, asset_diffs })
+    }
+}
+
+/// Helper function to calculate USD value from token amount and price.
+pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
+    let result = U512::from(amount).saturating_mul(U512::from(usd_price * 1e18))
+        / U512::from(10u128.pow(decimals as u32));
+    result.to::<u128>() as f64 / 1e18
 }
 
 /// Complete asset diff response containing multi chain asset diffs and aggregated fees in USD.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDiffResponse {
-    /// Asset diffs per chain.
-    #[serde(default, with = "alloy::serde::quantity::hashmap")]
-    pub chains: HashMap<ChainId, ChainAssetDiffs>,
-    /// Total aggregated fee in USD.
-    pub aggregated_fee_usd: f64,
+    /// Fee totals by chain ID.
+    ///
+    /// Chain ID 0 represents the aggregated total of all chain fees.
+    #[serde(with = "alloy::serde::quantity::hashmap")]
+    pub fee_totals: HashMap<ChainId, FiatValue>,
+    /// Asset diffs by chain ID.
+    ///
+    /// Note: There is no aggregated entry for asset diffs (no chain ID 0).
+    #[serde(with = "alloy::serde::quantity::hashmap")]
+    pub asset_diffs: HashMap<ChainId, AssetDiffs>,
 }
 
 impl AssetDiffResponse {
-    /// Creates a new AssetDiffResponse with a single chain.
+    /// Creates a new instance with a single chain.
     pub fn new(chain_id: ChainId, chain_diffs: ChainAssetDiffs) -> Self {
-        Self {
-            aggregated_fee_usd: chain_diffs.fee_usd,
-            chains: HashMap::from_iter([(chain_id, chain_diffs)]),
-        }
+        let mut response = Self::default();
+        response.push(chain_id, chain_diffs);
+        response
     }
 
-    /// Extends this response with another AssetDiffResponse.
+    /// Extends this response with other.
     pub fn extend(&mut self, other: Self) {
-        self.chains.extend(other.chains);
-        self.aggregated_fee_usd += other.aggregated_fee_usd;
+        for (chain_id, chain_diffs) in other.asset_diffs {
+            self.asset_diffs.insert(chain_id, chain_diffs);
+        }
+
+        for (chain_id, fee) in other.fee_totals {
+            if chain_id != 0 {
+                self.fee_totals.insert(chain_id, fee);
+            }
+        }
+
+        self.update_aggregated_fee();
     }
 
     /// Adds a single chain's data to this response.
     pub fn push(&mut self, chain_id: ChainId, chain_diffs: ChainAssetDiffs) {
-        self.aggregated_fee_usd += chain_diffs.fee_usd;
-        self.chains.insert(chain_id, chain_diffs);
+        self.fee_totals.insert(
+            chain_id,
+            FiatValue { currency: "usd".to_string(), value: chain_diffs.fee_usd },
+        );
+        self.asset_diffs.insert(chain_id, chain_diffs.asset_diffs);
+
+        self.update_aggregated_fee();
+    }
+
+    /// Updates the aggregated fee total (chain ID 0) by summing all individual chain fees.
+    fn update_aggregated_fee(&mut self) {
+        let total: f64 = self
+            .fee_totals
+            .iter()
+            .filter(|(chain_id, _)| **chain_id != 0)
+            .map(|(_, fiat)| fiat.value)
+            .sum();
+
+        self.fee_totals.insert(0, FiatValue { currency: "usd".to_string(), value: total });
     }
 }
