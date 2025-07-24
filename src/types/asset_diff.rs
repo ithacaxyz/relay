@@ -334,6 +334,7 @@ pub struct ChainAssetDiffs {
 #[serde(rename_all = "camelCase")]
 pub struct AssetDiffResponse {
     /// Asset diffs per chain.
+    #[serde(default, with = "alloy::serde::quantity::hashmap")]
     pub chains: HashMap<ChainId, ChainAssetDiffs>,
     /// Total aggregated fee in USD.
     pub aggregated_fee_usd: f64,
