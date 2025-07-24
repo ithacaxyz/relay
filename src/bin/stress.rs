@@ -175,23 +175,35 @@ impl StressAccount {
                 "Sent bundle ({} -> {})",
                 inputs, chain_id
             );
-            loop {
+            let status = loop {
                 let status = relay_client.get_calls_status(bundle_id.id).await;
                 trace!("got bundle status: {:?}", status);
-                if status.is_ok_and(|status| status.status.is_final()) {
-                    break;
+                if status.as_ref().is_ok_and(|status| status.status.is_final()) {
+                    break status.unwrap();
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            };
 
-            info!(
-                %digest,
-                account = %self.address,
-                bundle_id = %bundle_id.id,
-                total_elapsed = ?prepare_start.elapsed(),
-                "Bundle confirmed ({} -> {})",
-                inputs, chain_id
-            );
+            if status.status.is_confirmed() {
+                info!(
+                    %digest,
+                    account = %self.address,
+                    bundle_id = %bundle_id.id,
+                    total_elapsed = ?prepare_start.elapsed(),
+                    "Bundle confirmed ({} -> {})",
+                    inputs, chain_id
+                );
+            } else {
+                error!(
+                    %digest,
+                    account = %self.address,
+                    bundle_id = %bundle_id.id,
+                    total_elapsed = ?prepare_start.elapsed(),
+                    "Bundle failed ({} -> {})",
+                    inputs, chain_id
+                );
+                return Err(eyre::eyre!("bundle failed: {:#?}", status.receipts));
+            }
         }
     }
 }
