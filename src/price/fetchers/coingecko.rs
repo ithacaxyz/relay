@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
-use futures_util::{FutureExt, future::try_join_all};
+use futures_util::{FutureExt, future::join_all};
 use metrics::counter;
 use reqwest::get;
 use std::{
@@ -127,6 +127,9 @@ impl CoinGecko {
             || chain == Chain::optimism_mainnet().id()
         {
             "optimistic-ethereum"
+        } else if chain == Chain::arbitrum_mainnet().id() || chain == Chain::arbitrum_sepolia().id()
+        {
+            "arbitrum-one"
         } else {
             "ethereum"
         }
@@ -149,7 +152,9 @@ impl CoinGecko {
 
     /// Fetches data from a URL and returns the response as text.
     async fn fetch_url(url: &str, chain: ChainId) -> Result<String, RelayError> {
-        async { get(url).await?.text().await }
+        get(url)
+            .await?
+            .text()
             .await
             .inspect_err(|err| {
                 error!(
@@ -198,15 +203,14 @@ impl CoinGecko {
             let mut usd_prices = Vec::new();
 
             for (addr, currencies) in data {
-                let token_address = match Address::from_str(&addr) {
-                    Ok(addr) => addr,
-                    Err(_) => continue,
+                let Ok(token_address) = Address::from_str(&addr) else {
+                    continue;
                 };
 
-                let from_coin = match CoinKind::get_token(&self.coin_registry, chain, token_address)
-                {
-                    Some(coin) => coin,
-                    None => continue,
+                let Some(from_coin) =
+                    CoinKind::get_token(&self.coin_registry, chain, token_address)
+                else {
+                    continue;
                 };
 
                 // Process all currency prices for this token
@@ -262,14 +266,16 @@ impl CoinGecko {
     async fn update_prices(&self) -> Result<(), RelayError> {
         let timestamp = Instant::now();
 
-        try_join_all(
+        join_all(
             std::iter::once(self.update_eth_price(timestamp).boxed()).chain(
                 self.request_urls
                     .iter()
                     .map(|(chain, url)| self.update_token_prices(*chain, url, timestamp).boxed()),
             ),
         )
-        .await?;
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
     }
