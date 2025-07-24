@@ -8,13 +8,13 @@ use super::{
     IERC721,
 };
 use alloy::primitives::{
-    Address, ChainId, U256, address,
+    Address, U256, address,
     map::{HashMap, HashSet},
 };
 use serde::{Deserialize, Serialize};
 
 /// Net flow per account and asset based on simulated execution logs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetDiffs(pub Vec<(Address, Vec<AssetDiff>)>);
 
 impl AssetDiffs {
@@ -316,48 +316,5 @@ impl DiffDirection {
     /// Whether it's outgoing.
     pub fn is_outgoing(&self) -> bool {
         matches!(self, Self::Outgoing)
-    }
-}
-
-/// Chain-specific asset diffs and fee in USD.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChainAssetDiffs {
-    /// USD value of the fee.
-    pub fee_usd: f64,
-    /// Asset diffs for this chain.
-    pub asset_diffs: AssetDiffs,
-}
-
-/// Complete asset diff response containing multi chain asset diffs and aggregated fees in USD.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct AssetDiffResponse {
-    /// Asset diffs per chain.
-    #[serde(default, with = "alloy::serde::quantity::hashmap")]
-    pub chains: HashMap<ChainId, ChainAssetDiffs>,
-    /// Total aggregated fee in USD.
-    pub aggregated_fee_usd: f64,
-}
-
-impl AssetDiffResponse {
-    /// Creates a new AssetDiffResponse with a single chain.
-    pub fn new(chain_id: ChainId, chain_diffs: ChainAssetDiffs) -> Self {
-        Self {
-            aggregated_fee_usd: chain_diffs.fee_usd,
-            chains: HashMap::from_iter([(chain_id, chain_diffs)]),
-        }
-    }
-
-    /// Extends this response with another AssetDiffResponse.
-    pub fn extend(&mut self, other: Self) {
-        self.chains.extend(other.chains);
-        self.aggregated_fee_usd += other.aggregated_fee_usd;
-    }
-
-    /// Adds a single chain's data to this response.
-    pub fn push(&mut self, chain_id: ChainId, chain_diffs: ChainAssetDiffs) {
-        self.aggregated_fee_usd += chain_diffs.fee_usd;
-        self.chains.insert(chain_id, chain_diffs);
     }
 }

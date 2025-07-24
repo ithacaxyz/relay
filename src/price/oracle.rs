@@ -26,12 +26,8 @@ struct RateTick {
 pub enum PriceOracleMessage {
     /// Message to update inner price registry.
     Update { fetcher: PriceFetcher, prices: Vec<(CoinPair, f64)>, timestamp: Instant },
-    /// Message to update USD prices.
-    UpdateUsd { fetcher: PriceFetcher, prices: Vec<(CoinKind, f64)>, timestamp: Instant },
     /// Message to lookup the conversion rate of [`CoinPair`].
     Lookup { pair: CoinPair, tx: oneshot::Sender<Option<f64>> },
-    /// Message to lookup the USD price of a coin.
-    LookupUsd { coin: CoinKind, tx: oneshot::Sender<Option<f64>> },
 }
 
 /// Configuration for the price oracle.
@@ -78,39 +74,11 @@ impl PriceOracle {
                             registry.insert(pair, RateTick { rate, timestamp });
                         }
                     }
-                    PriceOracleMessage::UpdateUsd { fetcher, prices, timestamp } => {
-                        trace!(?fetcher, ?timestamp, "Received USD price updates.");
-
-                        for (coin, rate) in prices {
-                            trace!(
-                                coin = ?coin,
-                                usd_price = rate,
-                                "USD price update"
-                            );
-                            registry.insert_usd(coin, RateTick { rate, timestamp });
-                        }
-                    }
                     PriceOracleMessage::Lookup { pair, tx } => {
                         trace!(?pair, "Received lookup request.");
                         let _ = tx.send(
                             registry
                                 .get(&pair)
-                                .filter(|info| {
-                                    if info.rate.timestamp.elapsed() > config.rate_ttl {
-                                        info.metrics.expired_hits.increment(1);
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                })
-                                .map(|info| info.rate.rate),
-                        );
-                    }
-                    PriceOracleMessage::LookupUsd { coin, tx } => {
-                        trace!(?coin, "Received USD lookup request.");
-                        let _ = tx.send(
-                            registry
-                                .get_usd(&coin)
                                 .filter(|info| {
                                     if info.rate.timestamp.elapsed() > config.rate_ttl {
                                         info.metrics.expired_hits.increment(1);
@@ -165,13 +133,6 @@ impl PriceOracle {
             .or(self.constant_rate)
             .map(|eth_price| U256::from((eth_price * 1e18) as u128))
     }
-
-    /// Returns the conversion rate from a coin to USD.
-    pub async fn usd_price(&self, coin: CoinKind) -> Option<f64> {
-        let (req_tx, req_rx) = oneshot::channel();
-        let _ = self.tx.send(PriceOracleMessage::LookupUsd { coin, tx: req_tx });
-        req_rx.await.ok().flatten().or(self.constant_rate)
-    }
 }
 
 /// Tracks values for the pair
@@ -187,7 +148,6 @@ struct CoinPairInfo {
 #[derive(Debug, Default)]
 struct PriceRegistry {
     inner: HashMap<CoinPair, CoinPairInfo>,
-    usd_prices: HashMap<CoinKind, CoinPairInfo>,
 }
 
 impl PriceRegistry {
@@ -212,29 +172,5 @@ impl PriceRegistry {
 
     fn get(&self, pair: &CoinPair) -> Option<&CoinPairInfo> {
         self.inner.get(pair)
-    }
-
-    /// Inserts or updates the USD rate for the given coin
-    fn insert_usd(&mut self, coin: CoinKind, rate: RateTick) {
-        match self.usd_prices.entry(coin) {
-            Entry::Occupied(mut e) => {
-                e.get().metrics.rate.set(rate.rate);
-                e.get_mut().rate = rate;
-            }
-            Entry::Vacant(e) => {
-                let pair_id = format!("{coin}/USD");
-                let info = CoinPairInfo {
-                    metrics: CoinPairMetrics::new_with_labels(&[("pair", pair_id)]),
-                    rate,
-                };
-                info.metrics.rate.set(rate.rate);
-                e.insert(info);
-            }
-        }
-    }
-
-    /// Gets the USD rate for the given coin
-    fn get_usd(&self, coin: &CoinKind) -> Option<&CoinPairInfo> {
-        self.usd_prices.get(coin)
     }
 }
