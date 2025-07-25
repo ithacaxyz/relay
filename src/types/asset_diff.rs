@@ -479,3 +479,74 @@ pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
         / U512::from(10u128.pow(decimals as u32));
     result.to::<u128>() as f64 / 1e18
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+    use serde_json::json;
+
+    #[test]
+    fn test_asset_diff_serialization() {
+        let asset_diff = AssetDiff {
+            address: Some(address!("0x1234567890123456789012345678901234567890")),
+            token_kind: Some(AssetType::ERC20),
+            metadata: AssetMetadata {
+                name: Some("Test Token".to_string()),
+                symbol: Some("TEST".to_string()),
+                decimals: Some(18),
+                uri: None,
+            },
+            value: U256::from(1000000000000000000u64), // 1e18
+            direction: DiffDirection::Incoming,
+            fiat: Some(FiatValue {
+                currency: "usd".to_string(),
+                value: 100.50,
+            }),
+        };
+
+        let serialized = serde_json::to_value(&asset_diff).unwrap();
+        
+        assert_eq!(serialized["address"], "0x1234567890123456789012345678901234567890");
+        assert_eq!(serialized["type"], "ERC20");
+        assert_eq!(serialized["name"], "Test Token");
+        assert_eq!(serialized["symbol"], "TEST");
+        assert_eq!(serialized["decimals"], 18);
+        assert_eq!(serialized["value"], "0xde0b6b3a7640000");
+        assert_eq!(serialized["direction"], "incoming");
+        assert_eq!(serialized["fiat"]["currency"], "usd");
+        assert_eq!(serialized["fiat"]["value"], "100.5");
+    }
+
+    #[test]
+    fn test_asset_diff_deserialization() {
+        let json = json!({
+            "address": "0x1234567890123456789012345678901234567890",
+            "type": "ERC20",
+            "name": "Test Token",
+            "symbol": "TEST",
+            "decimals": 18,
+            "value": "0xde0b6b3a7640000",
+            "direction": "outgoing",
+            "fiat": {
+                "currency": "usd",
+                "value": "50.25"
+            }
+        });
+
+        let asset_diff: AssetDiff = serde_json::from_value(json).unwrap();
+        
+        assert_eq!(
+            asset_diff.address,
+            Some(address!("0x1234567890123456789012345678901234567890"))
+        );
+        assert_eq!(asset_diff.token_kind, Some(AssetType::ERC20));
+        assert_eq!(asset_diff.metadata.name, Some("Test Token".to_string()));
+        assert_eq!(asset_diff.metadata.symbol, Some("TEST".to_string()));
+        assert_eq!(asset_diff.metadata.decimals, Some(18));
+        assert_eq!(asset_diff.value, U256::from(1000000000000000000u64));
+        assert_eq!(asset_diff.direction, DiffDirection::Outgoing);
+        assert_eq!(asset_diff.fiat.as_ref().unwrap().currency, "usd");
+        assert_eq!(asset_diff.fiat.as_ref().unwrap().value, 50.25);
+    }
+}
