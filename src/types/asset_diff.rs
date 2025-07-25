@@ -519,7 +519,7 @@ mod tests {
                 "value": "100.5"
             }
         });
-        
+
         assert_eq!(serialized, expected);
     }
 
