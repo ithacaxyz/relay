@@ -224,3 +224,13 @@ fn parse_chain_url(arg: &str) -> eyre::Result<(Chain, Url)> {
 
     Ok((chain_id.parse()?, url.parse()?))
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    #[test]
+    fn test_debug_asserts() {
+        super::Args::command().debug_assert();
+    }
+}
