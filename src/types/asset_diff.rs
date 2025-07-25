@@ -464,7 +464,9 @@ impl AssetDiffResponse {
         self.update_aggregated_fee();
     }
 
-    /// Updates the aggregated fee total (chain ID 0) by summing all individual chain fees.
+    /// Updates the aggregated fee total at chain ID 0 by summing all chain fees.
+    /// 
+    /// Chain ID 0 is reserved for the aggregated total, while individual chains use their actual IDs.
     fn update_aggregated_fee(&mut self) {
         let total: f64 = self
             .fee_totals
