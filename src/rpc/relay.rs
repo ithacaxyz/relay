@@ -58,7 +58,7 @@ use jsonrpsee::{
 use opentelemetry::trace::SpanKind;
 use std::{iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
-use tracing::{Instrument, Level, debug, error, instrument, span, trace};
+use tracing::{Instrument, Level, debug, error, instrument, span};
 
 use crate::{
     chains::{Chain, Chains},
@@ -1155,6 +1155,7 @@ impl Relay {
     /// - Since simulating it as a multichain intent raises the fees, we need to source funds again;
     ///   we continue this process a number of times, until `balance + funding - required_assets -
     ///   fee >= 0`.
+    #[instrument(skip(self, request, calls, maybe_stored), fields(chain_id = request.chain_id))]
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
@@ -1220,7 +1221,7 @@ impl Relay {
             })
             .is_some()
         {
-            trace!(
+            debug!(
                 %eoa,
                 chain_id = %request.chain_id,
                 %requested_asset,
@@ -1255,6 +1256,16 @@ impl Relay {
             // Figure out what chains to pull funds from, if any. This will pull the funds the user
             // requested from chains, minus the cost of transferring those funds out of the
             // respective chains.
+            debug!(
+                %eoa,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %requested_asset_balance_on_dst,
+                %source_fee,
+                fee = %output_quote.intent.totalPaymentMaxAmount,
+                "Trying to source funds"
+            );
             let (sourced_funds, funding_chains) = if let Some(new_chains) = self
                 .source_funds(
                     eoa,
@@ -1284,10 +1295,22 @@ impl Relay {
                 .into());
             };
             num_funding_chains = funding_chains.len();
-
-            // Encode the input chain IDs for the settler context
             let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
             let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+
+            debug!(
+                %eoa,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %requested_asset_balance_on_dst,
+                %source_fee,
+                fee = %output_quote.intent.totalPaymentMaxAmount,
+                ?input_chain_ids,
+                "Found potential fund sources"
+            );
+
+            // Encode the input chain IDs for the settler context
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
