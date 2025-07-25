@@ -103,7 +103,7 @@ pub struct Args {
     #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
     pub fee_tokens: Option<Vec<Address>>,
     /// A fee token the relay accepts.
-    #[arg(long = "interop-token", required_unless_present("config_only"), value_name = "ADDRESS")]
+    #[arg(long = "interop-token", value_name = "ADDRESS")]
     pub interop_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
@@ -128,7 +128,7 @@ pub struct Args {
         value_name = "KEY",
         env = "RELAY_FUNDER_KEY"
     )]
-    pub funder_key: String,
+    pub funder_key: Option<String>,
     /// The RPC endpoints of the sequencers for OP rollups.
     #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub sequencer_endpoints: Vec<(Chain, Url)>,
