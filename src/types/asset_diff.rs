@@ -418,9 +418,10 @@ pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetDiffResponse {
-    /// Fee totals by chain ID.
-    ///
-    /// Chain ID 0 represents the aggregated total of all chain fees.
+    /// Fee totals by chain ID:
+    /// 
+    /// - Individual chain fees: Each chain's fee is stored under its actual chain ID.
+    /// - Aggregated total: Chain ID 0 is a special key that stores the sum of all individual chain fees.
     #[serde(with = "alloy::serde::quantity::hashmap")]
     pub fee_totals: HashMap<ChainId, FiatValue>,
     /// Asset diffs by chain ID.
