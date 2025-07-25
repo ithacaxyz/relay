@@ -368,12 +368,12 @@ impl ChainAssetDiffs {
         // Calculate fee USD value
         let token = fee_tokens
             .find(chain_id, &fee_token)
-            .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken))?;
+            .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken(fee_token)))?;
 
         let usd_price = price_oracle
             .usd_price(token.kind)
             .await
-            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable))?;
+            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token.kind)))?;
 
         let fee_usd = calculate_usd_value(fee_amount, usd_price, token.decimals);
 
