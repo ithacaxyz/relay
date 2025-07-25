@@ -38,6 +38,35 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
     let setup = MultichainTransferSetup::run().await?;
     let chain3_id = setup.env.chain_id_for(2);
 
+    // Send prepared calls on chain 3
+    let bundle_id =
+        send_prepared_calls(&setup.env, &setup.key, setup.signature, setup.context).await?;
+    let status = await_calls_status(&setup.env, bundle_id).await?;
+    assert!(status.status.is_confirmed());
+
+    // Target has receive our full transfer
+    let assets = setup
+        .env
+        .relay_endpoint
+        .get_assets(GetAssetsParameters::eoa(setup.target_recipient))
+        .await?;
+    assert!(
+        assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == setup.total_transfer_amount)
+    );
+
+    Ok(())
+}
+
+/// Same as [test_multichain_usdt_transfer] but with inflated priority fee to ensure that even small
+/// underestimate matters.
+///
+/// See <https://github.com/ithacaxyz/relay/pull/957> for more context
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multichain_usdt_transfer_high_priority_fee() -> Result<()> {
+    // Set up the multichain transfer scenario
+    let setup = MultichainTransferSetup::run().await?;
+    let chain3_id = setup.env.chain_id_for(2);
+
     // inflate the priority fee to ensure that transaction is getting sent with max payment amount
     let base_fee = setup
         .env
