@@ -13,10 +13,9 @@ use alloy::primitives::{
     map::{HashMap, HashSet},
 };
 use futures_util::future::join_all;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
-use std::{ops::Not, str::FromStr};
+use std::ops::Not;
 
 /// Net flow per account and asset based on simulated execution logs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,9 +78,6 @@ pub struct AssetDiff {
     pub metadata: AssetMetadata,
     /// Value or id.
     pub value: U256,
-    /// Human-readable value (value / 10^decimals).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_value: Option<String>,
     /// Incoming or outgoing direction.
     pub direction: DiffDirection,
     /// Optional fiat value
@@ -275,19 +271,11 @@ impl AssetDiffBuilder {
 
                 let info = &metadata[&asset];
 
-                let display_value = info.metadata.decimals.and_then(|decimals| {
-                    let value_decimal = Decimal::from_str(&value.to_string()).ok()?;
-                    let divisor = Decimal::from(10u64.pow(decimals as u32));
-                    let result = value_decimal / divisor;
-                    Some(result.to_string())
-                });
-
                 account_diffs.push(AssetDiff {
                     token_kind: asset.is_native().not().then_some(AssetType::ERC20),
                     address: asset.is_native().not().then(|| asset.address()),
                     metadata: info.metadata.clone(),
                     value,
-                    display_value,
                     direction,
                     fiat: None,
                 });
@@ -308,7 +296,6 @@ impl AssetDiffBuilder {
                     address: asset.is_native().not().then(|| asset.address()),
                     metadata: AssetMetadata { uri, ..info.metadata.clone() },
                     value: id,
-                    display_value: None, // NFTs don't have display values
                     direction,
                     fiat: None,
                 });
