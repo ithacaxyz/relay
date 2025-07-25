@@ -17,7 +17,7 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
+        AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
         FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash,
         KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
@@ -1059,7 +1059,7 @@ impl Relay {
         }
 
         // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<(ChainId, U256)> = assets
+        let mut sources: Vec<(ChainId, Address, U256)> = assets
             .0
             .iter()
             .filter_map(|(&chain, assets)| {
@@ -1067,25 +1067,30 @@ impl Relay {
                     return None;
                 }
 
+                let mapped = self
+                    .inner
+                    .fee_tokens
+                    .map_interop_asset(destination_chain_id, requested_asset.address(), chain)?
+                    .address;
+
                 let balance = assets
                     .iter()
-                    // todo: map asset
-                    .find(|a| a.address == requested_asset)
+                    .find(|a| a.address.address() == mapped)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
-                if balance.is_zero() { None } else { Some((chain, balance)) }
+                if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
             })
             .collect();
 
         // highest balances first
-        sources.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
 
         // todo(onbjerg): this is serial, so it can be pretty bad for performance for large
         // multichain intents. we *could* optimistically query multiple chains at a time, even if we
         // discard the result later
         let mut plan = Vec::new();
-        for (chain, balance) in sources {
+        for (chain, asset, balance) in sources {
             if remaining.is_zero() {
                 break;
             }
@@ -1094,11 +1099,9 @@ impl Relay {
             let funding_context = FundingIntentContext {
                 eoa,
                 chain_id: chain,
-                // todo: map the requested asset here
-                asset: requested_asset.into(),
+                asset: asset.into(),
                 amount: U256::from(1),
-                // todo: map the requested asset here
-                fee_token: requested_asset.address(),
+                fee_token: asset,
                 // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
                 // as long as it's not zero. otherwise, the gas costs will differ a lot.
                 output_intent_digest: B256::with_last_byte(1),
@@ -1127,7 +1130,7 @@ impl Relay {
             plan.push(FundSource {
                 chain_id: chain,
                 amount: take,
-                address: requested_asset.address(),
+                address: asset,
                 cost: escrow_cost,
             });
             remaining = remaining.saturating_sub(take);
@@ -1345,7 +1348,6 @@ impl Relay {
                             source,
                             output_intent_digest,
                             request.chain_id,
-                            requested_asset.into(),
                         )
                         .await
                     },
@@ -1391,7 +1393,6 @@ impl Relay {
         .into())
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn simulate_funding_intent(
         &self,
         eoa: Address,
@@ -1400,12 +1401,11 @@ impl Relay {
         source: &FundSource,
         output_intent_digest: B256,
         output_chain_id: ChainId,
-        requested_asset: Asset,
     ) -> RpcResult<PrepareCallsResponse> {
         let funding_context = FundingIntentContext {
             eoa,
             chain_id: source.chain_id,
-            asset: requested_asset,
+            asset: source.address.into(),
             amount: source.amount,
             fee_token: source.address,
             output_intent_digest,
