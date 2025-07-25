@@ -506,22 +506,28 @@ mod tests {
 
         let serialized = serde_json::to_value(&asset_diff).unwrap();
 
-        assert_eq!(serialized["address"], "0x1234567890123456789012345678901234567890");
-        assert_eq!(serialized["type"], "ERC20");
-        assert_eq!(serialized["name"], "Test Token");
-        assert_eq!(serialized["symbol"], "TEST");
-        assert_eq!(serialized["decimals"], 18);
-        assert_eq!(serialized["value"], "0xde0b6b3a7640000");
-        assert_eq!(serialized["direction"], "incoming");
-        assert_eq!(serialized["fiat"]["currency"], "usd");
-        assert_eq!(serialized["fiat"]["value"], "100.5");
+        let expected = json!({
+            "address": "0x1234567890123456789012345678901234567890",
+            "type": "erc20",
+            "name": "Test Token",
+            "symbol": "TEST",
+            "decimals": 18,
+            "value": "0xde0b6b3a7640000",
+            "direction": "incoming",
+            "fiat": {
+                "currency": "usd",
+                "value": "100.5"
+            }
+        });
+        
+        assert_eq!(serialized, expected);
     }
 
     #[test]
     fn test_asset_diff_deserialization() {
         let json = json!({
             "address": "0x1234567890123456789012345678901234567890",
-            "type": "ERC20",
+            "type": "erc20",
             "name": "Test Token",
             "symbol": "TEST",
             "decimals": 18,
