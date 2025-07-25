@@ -1075,7 +1075,6 @@ impl Relay {
 
                 let balance = assets
                     .iter()
-                    // todo: map asset
                     .find(|a| a.address.address() == mapped)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
