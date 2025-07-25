@@ -33,7 +33,8 @@ async fn test_multichain_refund() -> Result<()> {
 
     let initial_total_balance: U256 = setup.balances.iter().sum();
     // We deduct the balance of the destination chain
-    let transfers_from_other_chains = setup.total_transfer_amount - setup.balances[2];
+    let transfers_from_other_chains =
+        (setup.total_transfer_amount + setup.fees[2]) - setup.balances[2];
     // We deduct the fees for the output intent since it won't be executed.
     let fees = setup.fees.iter().sum::<U256>() - setup.fees[2];
 

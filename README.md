@@ -13,6 +13,28 @@ A transparent cross-chain transaction router for EIP-7702 accounts, specifically
 
 To run the relay, you can either use Docker or run the binary directly.
 
+### Prerequisites
+
+The relay depends on the followign things being available on the chains it connects to:
+
+- [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) is enabled.
+- [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) is enabled.
+- [`eth_simulateV1`](https://docs.chainstack.com/reference/arbitrum-simulatev1) is enabled.
+- The [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile is available, *or* a [shim](https://vectorized.github.io/solady/#/utils/p256?id=p256) is deployed[^1].
+- [Multicall3](https://www.multicall3.com/)
+- `PUSH0`
+
+Additionally, the relay can also leverage several things for faster confirmations and increased reliability, including:
+
+- [Flashblocks](https://docs.base.org/base-chain/flashblocks/apps)
+- Using sequencer endpoints
+
+These things must be enabled in the configuration.
+
+[^1]: If the secp256r1 precompile is enabled, the address `0x0000000000001Ab2e8006Fd8B71907bf06a5BDEE` must additionally be a contract. This acts as a canary signalling the Solady P256 library that the precompile exists. If the canary is not deployed, the shim will be tried first. See [Solady's P256 library](https://github.com/Vectorized/solady/blob/a096f4fb0f65d1c6d6677ea6b13e9d41cb0bf798/src/utils/P256.sol#L19-L25).
+
+### Deployment
+
 1. Deploy the [delegation and orchestrator contracts](https://github.com/ithacaxyz/account) on the destination chain.
 1. Deploy or identify at least one token to accept as fee token(s).
 1. Generate two private keys, one for transaction signing, and one for quote signing. You can do this with `cast wallet new`.

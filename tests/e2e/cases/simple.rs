@@ -380,6 +380,42 @@ async fn no_fee_tx() -> Result<()> {
     .await
 }
 
+/// Check that fee token deficit works as expected
+#[tokio::test(flavor = "multi_thread")]
+async fn fee_token_deficit() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            required_funds: vec![],
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta {
+                    fee_payer: None,
+                    fee_token: env.erc20s[2], // this token has 0 balance
+                    nonce: None,
+                },
+                pre_calls: vec![],
+                pre_call: false,
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+    assert_ne!(response.context.quote().unwrap().ty().quotes[0].fee_token_deficit, U256::ZERO);
+
+    Ok(())
+}
+
 /// Ensures prepareCalls can handle two successive requests with an empty nonce.
 #[tokio::test(flavor = "multi_thread")]
 async fn empty_request_nonce() -> eyre::Result<()> {
