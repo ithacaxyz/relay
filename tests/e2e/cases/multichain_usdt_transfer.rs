@@ -11,7 +11,10 @@
 //! - Attempts to transfer N+N USDT to address 0xbeef
 
 use crate::e2e::{cases::upgrade_account_eagerly, *};
-use alloy::primitives::{Address, U256, address};
+use alloy::{
+    eips::BlockId,
+    primitives::{Address, U256, address},
+};
 use eyre::Result;
 use relay::{
     config::TransactionServiceConfig,
@@ -34,6 +37,18 @@ async fn test_multichain_usdt_transfer() -> Result<()> {
     // Set up the multichain transfer scenario
     let setup = MultichainTransferSetup::run().await?;
     let chain3_id = setup.env.chain_id_for(2);
+
+    // inflate the priority fee to ensure that transaction is getting sent with max payment amount
+    let base_fee = setup
+        .env
+        .provider_for(2)
+        .get_block(BlockId::latest())
+        .await?
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+    setup.env.mine_blocks_with_priority_fee_on_chain(base_fee as u128 * 100, 2).await;
 
     // Send prepared calls on chain 3
     let bundle_id =
@@ -148,7 +163,7 @@ impl MultichainTransferSetup {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                 },
