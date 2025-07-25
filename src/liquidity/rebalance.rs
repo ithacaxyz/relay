@@ -57,6 +57,8 @@ pub struct RebalanceService {
     bridges: SelectAll<Box<dyn Bridge>>,
     /// Transfers that are in progress.
     transfers_in_progress: HashMap<BridgeTransferId, BridgeTransfer>,
+    /// Rebalance thresholds.
+    thresholds: HashMap<CoinKind, U256>,
 }
 
 impl RebalanceService {
@@ -65,6 +67,7 @@ impl RebalanceService {
         tokens: &FeeTokens,
         tracker: LiquidityTracker,
         bridges: impl IntoIterator<Item = Box<dyn Bridge>>,
+        thresholds: HashMap<CoinKind, U256>,
     ) -> Self {
         let assets = tokens
             .iter()
@@ -82,6 +85,7 @@ impl RebalanceService {
             tracker,
             bridges: select_all(bridges),
             transfers_in_progress: Default::default(),
+            thresholds,
         }
     }
 }
@@ -89,10 +93,10 @@ impl RebalanceService {
 impl RebalanceService {
     /// Returns minimum balance that we need to hold for the given asset.
     fn get_threshold(&self, asset: &Asset) -> U256 {
-        match asset.kind {
+        self.thresholds.get(&asset.kind).copied().unwrap_or_else(|| match asset.kind {
             CoinKind::ETH => uint!(100_000_000_000_000_000_U256),
-            CoinKind::USDC | CoinKind::USDT => uint!(1_000_000_000_U256),
-        }
+            CoinKind::USDC | CoinKind::USDT => uint!(100_000_000_U256),
+        })
     }
 
     /// Returns minimum amount for rebalancing to be performed.

@@ -7,9 +7,10 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
+    types::CoinKind,
 };
 use alloy::{
-    primitives::{Address, ChainId, map::HashMap},
+    primitives::{Address, ChainId, U256, map::HashMap},
     providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
     signers::local::{
         PrivateKeySigner,
@@ -199,6 +200,9 @@ pub struct RebalanceServiceConfig {
     /// The private key of the funder account owner. Required for pulling funds from the funders.
     #[serde(default)]
     pub funder_owner_key: String,
+    /// Mapping of [`CoinKind`] to rebalance threshold.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
+    pub thresholds: HashMap<CoinKind, U256>,
 }
 
 /// Configuration for the settler service.

@@ -1246,6 +1246,17 @@ impl Relay {
                 .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
                 .await
                 .map_err(Into::into);
+        } else if !self
+            .inner
+            .fee_tokens
+            .find(request.chain_id, &requested_asset)
+            .is_some_and(|t| t.interop)
+        {
+            return Err(RelayError::UnsupportedAsset {
+                chain: request.chain_id,
+                asset: requested_asset,
+            }
+            .into());
         }
 
         // ensure interop has been configured, before proceeding

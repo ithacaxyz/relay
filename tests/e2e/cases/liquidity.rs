@@ -17,6 +17,7 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
             binance: None,
             simple: Some(SimpleBridgeConfig { signer_key: DEPLOYER_PRIVATE_KEY.to_string() }),
             funder_owner_key: DEPLOYER_PRIVATE_KEY.to_string(),
+            thresholds: Default::default(),
         }),
         ..Default::default()
     })
