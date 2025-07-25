@@ -5,6 +5,7 @@ use crate::{
     cli::Args,
     config::RelayConfig,
     constants::{DEFAULT_POLL_INTERVAL, ESCROW_REFUND_DURATION_SECS},
+    diagnostics::run_diagnostics,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
@@ -76,6 +77,7 @@ pub async fn try_spawn_with_args(
     config_path: &Path,
     registry_path: &Path,
 ) -> eyre::Result<RelayHandle> {
+    let skip_diagnostics = args.skip_diagnostics;
     let config = if !config_path.exists() {
         let config = args.merge_relay_config(RelayConfig::default());
         config.save_to_file(config_path)?;
@@ -101,11 +103,15 @@ pub async fn try_spawn_with_args(
         CoinRegistry::load_from_file(registry_path)?
     };
 
-    try_spawn(config, registry).await
+    try_spawn(config, registry, skip_diagnostics).await
 }
 
 /// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
-pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Result<RelayHandle> {
+pub async fn try_spawn(
+    config: RelayConfig,
+    registry: CoinRegistry,
+    skip_diagnostics: bool,
+) -> eyre::Result<RelayHandle> {
     let registry = Arc::new(registry);
 
     // construct db
@@ -170,6 +176,21 @@ pub async fn try_spawn(config: RelayConfig, registry: CoinRegistry) -> eyre::Res
         }),
     )
     .await?;
+
+    // Run pre-flight diagnostics
+    if skip_diagnostics {
+        warn!("Skipping pre-flight diagnostics.");
+    } else {
+        info!("Running pre-flight diagnostics.");
+        let report = run_diagnostics(&config, &providers, &signers, &registry).await?;
+        report.log();
+
+        if report.has_errors() {
+            eyre::bail!(
+                "Pre-flight diagnostics failed with errors. Please fix the issues before starting the relay."
+            );
+        }
+    }
 
     // setup metrics exporter and periodic metric collectors
     let metrics =

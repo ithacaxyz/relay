@@ -71,6 +71,9 @@ pub use types::EndpointId;
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
 
+/// ULN config type constant
+pub const ULN_CONFIG_TYPE: u32 = 2;
+
 /// Layerzero configuration for a specific chain.
 #[derive(Debug, Clone)]
 pub(super) struct LZChainConfig {

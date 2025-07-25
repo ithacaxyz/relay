@@ -59,6 +59,7 @@ async fn respawn_cli() -> eyre::Result<()> {
                 funder_owner_key: Default::default(),
                 binance_api_key: Default::default(),
                 binance_api_secret: Default::default(),
+                skip_diagnostics: true,
             },
             &config,
             &registry,

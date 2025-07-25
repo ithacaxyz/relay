@@ -495,6 +495,7 @@ impl Environment {
         }
 
         // Start relay service with all endpoints
+        let skip_diagnostics = false;
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(0)
@@ -520,6 +521,7 @@ impl Environment {
                 .with_rebalance_service_config(config.rebalance_service_config)
                 .with_database_url(database_url),
             registry,
+            skip_diagnostics,
         )
         .await?;
 
