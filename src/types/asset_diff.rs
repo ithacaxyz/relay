@@ -412,9 +412,10 @@ impl ChainAssetDiffs {
 #[serde(rename_all = "camelCase")]
 pub struct AssetDiffResponse {
     /// Fee totals by chain ID:
-    /// 
+    ///
     /// - Individual chain fees: Each chain's fee is stored under its actual chain ID.
-    /// - Aggregated total: Chain ID 0 is a special key that stores the sum of all individual chain fees.
+    /// - Aggregated total: Chain ID 0 is a special key that stores the sum of all individual chain
+    ///   fees.
     #[serde(with = "alloy::serde::quantity::hashmap")]
     pub fee_totals: HashMap<ChainId, FiatValue>,
     /// Asset diffs by chain ID.
@@ -459,8 +460,9 @@ impl AssetDiffResponse {
     }
 
     /// Updates the aggregated fee total at chain ID 0 by summing all chain fees.
-    /// 
-    /// Chain ID 0 is reserved for the aggregated total, while individual chains use their actual IDs.
+    ///
+    /// Chain ID 0 is reserved for the aggregated total, while individual chains use their actual
+    /// IDs.
     fn update_aggregated_fee(&mut self) {
         let total: f64 = self
             .fee_totals
@@ -499,14 +501,11 @@ mod tests {
             },
             value: U256::from(1000000000000000000u64), // 1e18
             direction: DiffDirection::Incoming,
-            fiat: Some(FiatValue {
-                currency: "usd".to_string(),
-                value: 100.50,
-            }),
+            fiat: Some(FiatValue { currency: "usd".to_string(), value: 100.50 }),
         };
 
         let serialized = serde_json::to_value(&asset_diff).unwrap();
-        
+
         assert_eq!(serialized["address"], "0x1234567890123456789012345678901234567890");
         assert_eq!(serialized["type"], "ERC20");
         assert_eq!(serialized["name"], "Test Token");
@@ -535,7 +534,7 @@ mod tests {
         });
 
         let asset_diff: AssetDiff = serde_json::from_value(json).unwrap();
-        
+
         assert_eq!(
             asset_diff.address,
             Some(address!("0x1234567890123456789012345678901234567890"))
