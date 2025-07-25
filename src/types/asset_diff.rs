@@ -407,13 +407,6 @@ impl ChainAssetDiffs {
     }
 }
 
-/// Helper function to calculate USD value from token amount and price.
-pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
-    let result = U512::from(amount).saturating_mul(U512::from(usd_price * 1e18))
-        / U512::from(10u128.pow(decimals as u32));
-    result.to::<u128>() as f64 / 1e18
-}
-
 /// Complete asset diff response containing multi chain asset diffs and aggregated fees in USD.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -478,4 +471,11 @@ impl AssetDiffResponse {
 
         self.fee_totals.insert(0, FiatValue { currency: "usd".to_string(), value: total });
     }
+}
+
+/// Helper function to calculate USD value from token amount and price.
+pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
+    let result = U512::from(amount).saturating_mul(U512::from(usd_price * 1e18))
+        / U512::from(10u128.pow(decimals as u32));
+    result.to::<u128>() as f64 / 1e18
 }
