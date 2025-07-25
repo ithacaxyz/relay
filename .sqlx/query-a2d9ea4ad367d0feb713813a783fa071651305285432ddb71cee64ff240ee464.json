@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT bundle_id, status as \"status: BundleStatus\", bundle_data, created_at\n            FROM finished_bundles\n            WHERE bundle_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bundle_id",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "status: BundleStatus",
+        "type_info": {
+          "Custom": {
+            "name": "bundle_status",
+            "kind": {
+              "Enum": [
+                "init",
+                "source_queued",
+                "source_confirmed",
+                "source_failures",
+                "destination_queued",
+                "destination_failures",
+                "destination_confirmed",
+                "refunds_queued",
+                "withdrawals_queued",
+                "done",
+                "failed",
+                "liquidity_locked",
+                "settlements_queued",
+                "settlements_confirmed",
+                "refunds_scheduled",
+                "refunds_ready",
+                "settlements_processing",
+                "settlement_completion_queued"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "bundle_data",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a2d9ea4ad367d0feb713813a783fa071651305285432ddb71cee64ff240ee464"
+}
