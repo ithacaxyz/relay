@@ -135,6 +135,19 @@ impl FeeTokens {
     pub fn chain_tokens(&self, chain_id: ChainId) -> Option<&Vec<Token>> {
         self.0.get(&chain_id)
     }
+
+    /// Maps a source asset to an interop-enabled asset on other chain.
+    pub fn map_interop_asset(
+        &self,
+        source_chain: ChainId,
+        source_asset: Address,
+        target_chain: ChainId,
+    ) -> Option<&Token> {
+        let kind = self.find(source_chain, &source_asset)?.kind;
+        self.0
+            .get(&target_chain)
+            .and_then(|tokens| tokens.iter().find(|t| t.kind == kind && t.interop))
+    }
 }
 
 impl FromIterator<(ChainId, Vec<Token>)> for FeeTokens {
