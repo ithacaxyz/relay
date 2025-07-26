@@ -1042,6 +1042,7 @@ impl Relay {
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
     #[expect(clippy::too_many_arguments)]
+    #[instrument(skip(self, request_key, assets))]
     async fn source_funds(
         &self,
         eoa: Address,
