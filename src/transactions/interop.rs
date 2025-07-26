@@ -297,6 +297,11 @@ pub enum BundleStatus {
 }
 
 impl BundleStatus {
+    /// Whether status is [`Self::Done`].
+    pub fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
+    }
+
     /// Whether status is [`Self::DestinationConfirmed`].
     pub fn is_destination_confirmed(&self) -> bool {
         matches!(self, Self::DestinationConfirmed)

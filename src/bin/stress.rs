@@ -482,7 +482,7 @@ impl StressTester {
     }
 }
 
-/// Checks the interop status of a settlement and handles it accordingly:
+/// Checks the settlement status of an interop bundle and handles it accordingly:
 /// - Done: logs success
 /// - Failed: logs error and increments failure counter
 /// - Pending: re-queues the settlement for later checking
