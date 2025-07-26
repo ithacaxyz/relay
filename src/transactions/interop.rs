@@ -225,7 +225,7 @@ enum InteropBundleError {
     SettlementProcessor(#[from] crate::interop::SettlementError),
 }
 
-/// Status of a pending interop bundle.
+/// Status of a interop bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "bundle_status", rename_all = "snake_case")]
 pub enum BundleStatus {

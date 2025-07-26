@@ -215,6 +215,18 @@ impl StorageApi for InMemoryStorage {
         }
     }
 
+    async fn get_interop_status(&self, bundle_id: BundleId) -> Result<Option<BundleStatus>> {
+        if let Some(bundle) = self.pending_bundles.get(&bundle_id) {
+            return Ok(Some(bundle.status));
+        }
+
+        if let Some(bundle) = self.finished_bundles.get(&bundle_id) {
+            return Ok(Some(bundle.status));
+        }
+
+        Ok(None)
+    }
+
     async fn store_pending_refund(
         &self,
         bundle_id: BundleId,

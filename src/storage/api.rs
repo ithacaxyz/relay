@@ -138,6 +138,8 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Moves a bundle from pending_bundles to finished_bundles table.
     /// This is called when a bundle reaches a terminal state (Done or Failed).
     async fn move_bundle_to_finished(&self, bundle_id: BundleId) -> Result<()>;
+    /// Gets the interop status for a bundle by checking both pending and finished tables.
+    async fn get_interop_status(&self, bundle_id: BundleId) -> Result<Option<BundleStatus>>;
 
     /// Stores a pending refund for a bundle with the maximum refund timestamp and atomically
     /// updates the bundle status.

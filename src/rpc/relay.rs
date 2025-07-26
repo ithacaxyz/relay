@@ -72,11 +72,11 @@ use crate::{
         Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
-            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, GetKeysParameters,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
-            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
-            SendPreparedCallsResponse, UpgradeAccountParameters, VerifySignatureParameters,
-            VerifySignatureResponse,
+            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
+            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
+            VerifySignatureParameters, VerifySignatureResponse,
         },
     },
 };
@@ -1989,6 +1989,24 @@ impl RelayApiServer for Relay {
             CallStatusCode::Confirmed
         };
 
+        // Check if this is an interop bundle and get its status if so
+        let is_multichain = tx_statuses
+            .iter()
+            .filter_map(|o| o.as_ref().map(|(chain_id, _)| *chain_id))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|w| w[0] != w[1]);
+
+        let capabilities = if is_multichain {
+            self.inner
+                .storage
+                .get_interop_status(id)
+                .await?
+                .map(|status| CallsStatusCapabilities { interop_status: Some(status) })
+        } else {
+            None
+        };
+
         Ok(CallsStatus {
             id,
             status,
@@ -2004,6 +2022,7 @@ impl RelayApiServer for Relay {
                     transaction_hash: receipt.transaction_hash,
                 })
                 .collect(),
+            capabilities,
         })
     }
 

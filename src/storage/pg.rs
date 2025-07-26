@@ -803,6 +803,26 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    async fn get_interop_status(&self, bundle_id: BundleId) -> Result<Option<BundleStatus>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT status as "status: BundleStatus"
+            FROM (
+                SELECT status FROM pending_bundles WHERE bundle_id = $1
+                UNION ALL
+                SELECT status FROM finished_bundles WHERE bundle_id = $1
+            ) AS combined
+            LIMIT 1
+            "#,
+            bundle_id.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(row.and_then(|r| r.status))
+    }
+
     async fn store_pending_refund(
         &self,
         bundle_id: BundleId,
