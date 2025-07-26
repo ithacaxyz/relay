@@ -17,7 +17,7 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
+        AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
         FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash,
         KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
@@ -1042,6 +1042,7 @@ impl Relay {
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
     #[expect(clippy::too_many_arguments)]
+    #[instrument(skip(self, request_key, assets))]
     async fn source_funds(
         &self,
         eoa: Address,
@@ -1059,7 +1060,7 @@ impl Relay {
         }
 
         // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<(ChainId, U256)> = assets
+        let mut sources: Vec<(ChainId, Address, U256)> = assets
             .0
             .iter()
             .filter_map(|(&chain, assets)| {
@@ -1067,25 +1068,30 @@ impl Relay {
                     return None;
                 }
 
+                let mapped = self
+                    .inner
+                    .fee_tokens
+                    .map_interop_asset(destination_chain_id, requested_asset.address(), chain)?
+                    .address;
+
                 let balance = assets
                     .iter()
-                    // todo: map asset
-                    .find(|a| a.address == requested_asset)
+                    .find(|a| a.address.address() == mapped)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
-                if balance.is_zero() { None } else { Some((chain, balance)) }
+                if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
             })
             .collect();
 
         // highest balances first
-        sources.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
 
         // todo(onbjerg): this is serial, so it can be pretty bad for performance for large
         // multichain intents. we *could* optimistically query multiple chains at a time, even if we
         // discard the result later
         let mut plan = Vec::new();
-        for (chain, balance) in sources {
+        for (chain, asset, balance) in sources {
             if remaining.is_zero() {
                 break;
             }
@@ -1094,11 +1100,9 @@ impl Relay {
             let funding_context = FundingIntentContext {
                 eoa,
                 chain_id: chain,
-                // todo: map the requested asset here
-                asset: requested_asset.into(),
+                asset: asset.into(),
                 amount: U256::from(1),
-                // todo: map the requested asset here
-                fee_token: requested_asset.address(),
+                fee_token: asset,
                 // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
                 // as long as it's not zero. otherwise, the gas costs will differ a lot.
                 output_intent_digest: B256::with_last_byte(1),
@@ -1127,7 +1131,7 @@ impl Relay {
             plan.push(FundSource {
                 chain_id: chain,
                 amount: take,
-                address: requested_asset.address(),
+                address: asset,
                 cost: escrow_cost,
             });
             remaining = remaining.saturating_sub(take);
@@ -1150,18 +1154,20 @@ impl Relay {
     /// - Since the output intent was simulated as a single chain intent, the fees are guaranteed to
     ///   be off, so we simulate it again as a multi-chain intent, with the funds we sourced.
     /// - Since simulating it as a multichain intent raises the fees, we need to source funds again;
-    ///   we continue this process a number of times, until the number of input chains stop
-    ///   changing, suggesting a stable fee.
+    ///   we continue this process a number of times, until `balance + funding - required_assets -
+    ///   fee >= 0`.
+    #[instrument(skip(self, request, calls, maybe_stored), fields(chain_id = request.chain_id))]
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
         requested_asset: Address,
-        funds: U256,
+        requested_funds: U256,
         calls: Vec<Call>,
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffs, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
+        let source_fee = request.capabilities.meta.fee_token == requested_asset;
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1172,12 +1178,14 @@ impl Relay {
 
         // todo(onbjerg): let's restrict this further to just the tokens we care about
         let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+        let requested_asset_balance_on_dst =
+            assets.balance_on_chain(request.chain_id, requested_asset.into());
 
         // Simulate the output intent first to get the fees required to execute it.
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
-        let output_intent = self
+        let (_, quotes) = self
             .build_single_chain_quote(
                 request,
                 maybe_stored,
@@ -1188,47 +1196,42 @@ impl Relay {
                     fund_transfers: vec![(
                         requested_asset,
                         // Deduct funds that already exist on the destination chain.
-                        funds.saturating_sub(
-                            assets.balance_on_chain(request.chain_id, requested_asset.into()),
-                        ),
+                        requested_funds.saturating_sub(requested_asset_balance_on_dst),
                     )],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
             )
             .await?;
+        // It should never happen that we do not have a quote from this simulation, but to avoid
+        // outright crashing we just throw an internal error.
+        let mut output_quote =
+            quotes.quotes.into_iter().next().ok_or_else(|| {
+                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
+            })?;
 
-        let source_fee = request.capabilities.meta.fee_token == requested_asset;
-
-        // Figure out what chains to pull funds from, if any. This will pull the funds the user
-        // requested from chains, minus the cost of transferring those funds out of the respective
-        // chains.
-        let Some(mut funding_chains) = self
-            .source_funds(
-                eoa,
-                request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                assets.clone(),
-                request.chain_id,
-                asset,
-                funds
-                    + if source_fee {
-                        output_intent.1.fees().map(|(_, fees)| fees).unwrap_or_default()
-                    } else {
-                        U256::ZERO
-                    },
-                2, // when it's at least one funding chain and one output/intent chain
-            )
-            .await?
-        else {
-            return Err(RelayError::InsufficientFunds {
-                required: funds,
-                chain_id: request.chain_id,
-                asset: requested_asset,
-            }
-            .into());
-        };
-
-        // No funding chains required to execute the intent
-        if funding_chains.is_empty() {
+        // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
+        // just do this single chain instead.
+        if requested_asset_balance_on_dst
+            .checked_sub(requested_funds)
+            .and_then(|n| {
+                n.checked_sub(if source_fee {
+                    output_quote.intent.totalPaymentMaxAmount
+                } else {
+                    U256::ZERO
+                })
+            })
+            .is_some()
+        {
+            debug!(
+                %eoa,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %requested_asset_balance_on_dst,
+                %source_fee,
+                fee = %output_quote.intent.totalPaymentMaxAmount,
+                "Falling back to single chain for intent"
+            );
             return self
                 .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
                 .await
@@ -1245,23 +1248,75 @@ impl Relay {
         // validating a multichain intent.
         //
         // Since the cost of validating a multichain intent is proportional to the size of the
-        // merkle tree, we find funds in a loop until the number of input chains does not change.
+        // merkle tree, we find funds in a loop until `balance + funds - required_assets - fee >=
+        // 0`.
         //
         // We constrain this to three attempts
-        let mut number_of_sources = funding_chains.len();
+        let mut num_funding_chains = 1;
         for _ in 0..3 {
-            // todo use funding chains from prev iter of loop
-            // Calculate total sourced funds
-            let sourced_funds = funding_chains.iter().map(|source| source.amount).sum();
-
-            // Encode the input chain IDs for the settler context
+            // Figure out what chains to pull funds from, if any. This will pull the funds the user
+            // requested from chains, minus the cost of transferring those funds out of the
+            // respective chains.
+            debug!(
+                %eoa,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %requested_asset_balance_on_dst,
+                %source_fee,
+                fee = %output_quote.intent.totalPaymentMaxAmount,
+                "Trying to source funds"
+            );
+            let (sourced_funds, funding_chains) = if let Some(new_chains) = self
+                .source_funds(
+                    eoa,
+                    request.key.as_ref().ok_or(IntentError::MissingKey)?,
+                    assets.clone(),
+                    request.chain_id,
+                    asset,
+                    requested_funds
+                        + if source_fee {
+                            output_quote.intent.totalPaymentMaxAmount
+                        } else {
+                            U256::ZERO
+                        },
+                    // TODO(onbjerg): why is the estimate for the input
+                    // dependent on the number of inputs? this seems extremely circular
+                    num_funding_chains + 1,
+                )
+                .await?
+            {
+                (new_chains.iter().map(|source| source.amount).sum(), new_chains)
+            } else {
+                return Err(RelayError::InsufficientFunds {
+                    required: requested_funds,
+                    chain_id: request.chain_id,
+                    asset: requested_asset,
+                }
+                .into());
+            };
+            num_funding_chains = funding_chains.len();
             let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
             let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+
+            debug!(
+                %eoa,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %requested_asset_balance_on_dst,
+                %source_fee,
+                fee = %output_quote.intent.totalPaymentMaxAmount,
+                ?input_chain_ids,
+                "Found potential fund sources"
+            );
+
+            // Encode the input chain IDs for the settler context
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
             // Simulate multi-chain
-            let (asset_diffs, output_quote) = self
+            let (asset_diffs, new_quote) = self
                 .build_intent(
                     request,
                     maybe_stored,
@@ -1274,47 +1329,38 @@ impl Relay {
                     },
                 )
                 .await?;
+            output_quote = new_quote;
 
-            // Compute EIP-712 digest (settlement_id)
-            let (output_intent_digest, _) = output_quote
-                .intent
-                .compute_eip712_data(output_quote.orchestrator, &self.provider(request.chain_id)?)
-                .await
-                .map_err(RelayError::from)?;
-
-            // Figure out what chains to pull funds from, if any. This will pull the funds the user
-            // requested from chains, minus the cost of transferring those funds out of the
-            // respective chains.
-            if let Some(new_chains) = self
-                .source_funds(
-                    eoa,
-                    request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                    assets.clone(),
-                    request.chain_id,
-                    asset,
-                    funds
-                        + if source_fee {
-                            output_quote.intent.totalPaymentMaxAmount
-                        } else {
-                            U256::ZERO
-                        },
-                    funding_chains.len() + 1,
-                )
-                .await?
+            // If the existing balance on the destination chain, plus any funds we've sourced, minus
+            // the requested amount of funds (and the fee if the requested asset is also the fee
+            // token) is 0 or more, we're done.
+            //
+            // If `balance + sourced_funds - requested_funds - fee?` is `0`, then we've sourced
+            // exactly the amount we need. If it's more, then we're overfunding a bit, which is not
+            // the worst scenario, but ideally we get as close to 0 as possible.
+            if requested_asset_balance_on_dst
+                .saturating_add(sourced_funds)
+                .checked_sub(requested_funds)
+                .and_then(|n| {
+                    n.checked_sub(if source_fee {
+                        output_quote.intent.totalPaymentMaxAmount
+                    } else {
+                        U256::ZERO
+                    })
+                })
+                .is_some()
             {
-                funding_chains = new_chains
-            } else {
-                return Err(RelayError::InsufficientFunds {
-                    required: funds,
-                    chain_id: request.chain_id,
-                    asset: requested_asset,
-                }
-                .into());
-            };
-
-            // If the number of funding sources did not change, we are good (probably)
-            if number_of_sources == funding_chains.len() {
                 self.validate_multichain_contracts()?;
+
+                // Compute EIP-712 digest (settlement_id)
+                let (output_intent_digest, _) = output_quote
+                    .intent
+                    .compute_eip712_data(
+                        output_quote.orchestrator,
+                        &self.provider(request.chain_id)?,
+                    )
+                    .await
+                    .map_err(RelayError::from)?;
 
                 let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
@@ -1322,11 +1368,10 @@ impl Relay {
                         self.simulate_funding_intent(
                             eoa,
                             request_key.clone(),
-                            MerkleLeafInfo { total: funding_chains.len() + 1, index: leaf_index },
+                            MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
                             output_intent_digest,
                             request.chain_id,
-                            requested_asset.into(),
                         )
                         .await
                     },
@@ -1347,6 +1392,10 @@ impl Relay {
                         ttl: SystemTime::now()
                             .checked_add(self.inner.quote_config.ttl)
                             .expect("should never overflow"),
+                        // todo(onbjerg): a little silly that we have to set this to `None`, then
+                        // call `with_merke_payload`. we should consider
+                        // smth like Quotes::new(quotes, ttl).with_merkle_payload(..) or
+                        // Quotes::multichain(quotes, ttl, root)
                         multi_chain_root: None,
                     }
                     .with_merkle_payload(
@@ -1360,9 +1409,6 @@ impl Relay {
                     .await?,
                 ));
             }
-
-            // Try again
-            number_of_sources = funding_chains.len();
         }
 
         Err(RelayError::InternalError(eyre::eyre!(
@@ -1371,7 +1417,6 @@ impl Relay {
         .into())
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn simulate_funding_intent(
         &self,
         eoa: Address,
@@ -1380,12 +1425,11 @@ impl Relay {
         source: &FundSource,
         output_intent_digest: B256,
         output_chain_id: ChainId,
-        requested_asset: Asset,
     ) -> RpcResult<PrepareCallsResponse> {
         let funding_context = FundingIntentContext {
             eoa,
             chain_id: source.chain_id,
-            asset: requested_asset,
+            asset: source.address.into(),
             amount: source.amount,
             fee_token: source.address,
             output_intent_digest,

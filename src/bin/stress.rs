@@ -47,7 +47,7 @@ use relay::{
     },
 };
 use tokio::time::Instant;
-use tracing::{error, info, level_filters::LevelFilter, trace};
+use tracing::{debug, error, info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -85,8 +85,15 @@ impl StressAccount {
     ) -> eyre::Result<()> {
         let mut previous_nonce = None;
         let mut retries = 5;
-        loop {
+        'outer: loop {
             let prepare_start = Instant::now();
+            debug!(
+                account = %self.address,
+                total_elapsed = ?prepare_start.elapsed(),
+                retries,
+                ?previous_nonce,
+                "Preparing bundle",
+            );
             let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
                     required_funds: vec![(fee_token, transfer_amount)],
@@ -108,11 +115,18 @@ impl StressAccount {
             {
                 Ok(response) => response,
                 Err(err) => {
+                    warn!(
+                        account = %self.address,
+                        total_elapsed = ?prepare_start.elapsed(),
+                        retries,
+                        ?err,
+                        "Prepare calls failed",
+                    );
                     retries -= 1;
                     if retries == 0 {
                         return Err(err).context("prepare calls failed");
                     } else {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
                 }
@@ -128,7 +142,7 @@ impl StressAccount {
                 let nonce = quote.intent.nonce;
                 if previous_nonce == Some(nonce) {
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
+                    continue 'outer;
                 } else {
                     previous_nonce = Some(nonce);
                 }

@@ -25,7 +25,7 @@ impl AddressOrNative {
     pub fn address(&self) -> Address {
         match self {
             AddressOrNative::Address(address) => *address,
-            AddressOrNative::Native => panic!(),
+            AddressOrNative::Native => Address::ZERO,
         }
     }
 }
