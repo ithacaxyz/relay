@@ -459,6 +459,9 @@ async fn resume_paused() -> eyre::Result<()> {
     // setup 10 accounts
     let num_accounts = 10;
     let accounts = try_join_all((0..num_accounts).map(|_| MockAccount::new(&env))).await?;
+    
+    // set funder balance to 0, so signers cant pull gas money
+    env.provider().anvil_set_balance(env.funder, U256::ZERO).await?;
 
     // set balances of all signers except the last one to 0 and wait for them to get paused
     try_join_all(
