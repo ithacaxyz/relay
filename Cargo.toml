@@ -45,8 +45,19 @@ async-trait = "0.1"
 aws-config = "1.8"
 aws-sdk-kms = { version = "1", default-features = false }
 base64 = "0.22"
-clap = { version = "4", features = ["derive", "env"] }
-chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", default-features = false, features = [
+    "help",
+    "std",
+    "usage",
+    "derive",
+    "env",
+] }
+chrono = { version = "0.4", default-features = false, features = [
+    "std",
+    "clock",
+    "now",
+    "serde",
+] }
 dashmap = "6.1.0"
 eyre = "0.6.12"
 futures-util = "0.3"
