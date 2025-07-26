@@ -77,7 +77,7 @@ async fn test_multichain_layerzero_settlement() -> Result<()> {
     }
 
     let status = setup.env.relay_endpoint.get_calls_status(bundle_id).await?;
-    assert!(status.capabilities.unwrap().interop_status.unwrap() .is_done());
+    assert!(status.capabilities.unwrap().interop_status.unwrap().is_done());
 
     Ok(())
 }
