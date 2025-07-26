@@ -6,7 +6,7 @@ use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
     hex,
-    network::{EthereumWallet, TxSignerSync},
+    network::{EthereumWallet, TransactionBuilder, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, Bytes, TxKind, U256, address, bytes},
     providers::{
@@ -27,7 +27,7 @@ use relay::{
     signers::DynSigner,
     spawn::{RETRY_LAYER, RelayHandle, try_spawn},
     types::{
-        CoinKind, CoinRegistry,
+        CoinKind, CoinRegistry, IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
@@ -270,6 +270,18 @@ async fn setup_chain_with_contracts<P: Provider>(
 ) -> eyre::Result<()> {
     // Fund funder contract
     provider.anvil_set_balance(contracts.funder, U256::from(1000e18)).await?;
+
+    // Set up all signers as gas wallets
+    provider
+        .send_transaction(TransactionRequest::default().with_to(contracts.funder).with_call(
+            &IFunder::setGasWalletCall {
+                wallets: signers.iter().map(|s| s.address()).collect(),
+                isGasWallet: true,
+            },
+        ))
+        .await?
+        .get_receipt()
+        .await?;
 
     // Fund EOA and mint tokens
     let holders = &[eoa_address, contracts.funder]

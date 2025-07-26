@@ -6,14 +6,12 @@ use crate::e2e::{
 use alloy::{
     consensus::Transaction,
     eips::Encodable2718,
-    primitives::{B256, TxKind, U256},
+    primitives::{B256, U256},
     providers::{Provider, ext::AnvilApi},
-    rpc::types::TransactionRequest,
     signers::local::{
         PrivateKeySigner,
         coins_bip39::{English, Mnemonic},
     },
-    sol_types::SolCall,
 };
 use futures_util::{
     StreamExt, TryStreamExt,
@@ -25,7 +23,6 @@ use relay::{
     signers::DynSigner,
     storage::StorageApi,
     transactions::{MIN_SIGNER_GAS, RelayTransactionKind, TransactionService, TransactionStatus},
-    types::IFunder,
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::broadcast;
@@ -668,23 +665,6 @@ async fn test_signer_pull_gas() -> eyre::Result<()> {
     let mnemonic = Mnemonic::<English>::new_from_phrase(SIGNERS_MNEMONIC)?;
     let signers = DynSigner::derive_from_mnemonic(mnemonic, 1)?;
     let signer_address = signers.into_iter().next().unwrap().address();
-    let funder_owner = env.deployer.address();
-
-    // Authorize signer as gas wallet in SimpleFunder
-    provider.anvil_impersonate_account(funder_owner).await?;
-    provider
-        .send_transaction(TransactionRequest {
-            from: Some(funder_owner),
-            to: Some(TxKind::Call(env.funder)),
-            input: IFunder::setGasWalletCall { wallets: vec![signer_address], isGasWallet: true }
-                .abi_encode()
-                .into(),
-            ..Default::default()
-        })
-        .await?
-        .get_receipt()
-        .await?;
-    provider.anvil_stop_impersonating_account(funder_owner).await?;
 
     // set signer balance below threshold, and wait for it to pull it from the contract
     let fees = provider.estimate_eip1559_fees().await?;

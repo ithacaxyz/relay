@@ -9,6 +9,7 @@ use crate::{
         CoinRegistry, CoinRegistryKey,
         DelegationProxy::DelegationProxyInstance,
         IERC20::{self},
+        IFunder,
     },
 };
 use alloy::{
@@ -62,7 +63,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         signers: &[DynSigner],
     ) -> Result<ChainDiagnosticsResult> {
         let (contract_diagnostics, balance_diagnostics) =
-            try_join!(self.verify_contracts(), self.check_balances(registry, signers))?;
+            try_join!(self.verify_contracts(signers), self.check_balances(registry, signers))?;
 
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain_id,
@@ -113,7 +114,8 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
     /// - IthacaAccount implementations: Checks code + EIP712 domain name
     /// - Settler (if configured): Simple settler checks EIP712, LayerZero settler only checks code
     /// - LayerZero configuration (if applicable): Validates ULN config for each remote chain
-    pub async fn verify_contracts(&self) -> Result<ChainDiagnosticsResult> {
+    /// - SimpleFunder: Checks all signers are registered as gas wallets
+    pub async fn verify_contracts(&self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
 
@@ -129,13 +131,13 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             eip712s.push(("Orchestrator", *legacy_orchestrator));
         }
 
-        // Get implementations for all proxies: main and legacy
-        let mut multicall = self.provider.multicall().dynamic().add_dynamic(
+        // Build multicall to obtain the implementation address of every proxy: main and legacy
+        let mut multicall_proxies = self.provider.multicall().dynamic().add_dynamic(
             DelegationProxyInstance::new(self.config.delegation_proxy, &self.provider)
                 .implementation(),
         );
         for legacy_delegation_proxy in &self.config.legacy_delegation_proxies {
-            multicall = multicall.add_dynamic(
+            multicall_proxies = multicall_proxies.add_dynamic(
                 DelegationProxyInstance::new(*legacy_delegation_proxy, &self.provider)
                     .implementation(),
             )
@@ -148,7 +150,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
 
         crate::process_multicall_results!(
             errors,
-            multicall.aggregate3().await?,
+            multicall_proxies.aggregate3().await?,
             proxies,
             |implementation, _| eip712s.push(("IthacaAccount", implementation))
         );
@@ -162,28 +164,50 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             }
         }
 
-        // Call eip712DomainCall on all contracts inside eip712s list
-        let mut multicall = self.provider.multicall().dynamic();
+        // Build multicall to call eip712Domain() on all contracts inside eip712s list.
+        let mut multicall_eip712 = self.provider.multicall().dynamic();
         for (_name, contract) in eip712s.iter() {
-            multicall =
-                multicall.add_dynamic(IEIP712::new(*contract, &self.provider).eip712Domain())
+            multicall_eip712 =
+                multicall_eip712.add_dynamic(IEIP712::new(*contract, &self.provider).eip712Domain())
         }
 
-        let (has_code_errors, multicall_result, lz_result) = try_join!(
+        // Build multicall to check gasWallets() mapping for all signers.
+        let mut multicall_gas_wallets = self.provider.multicall().dynamic();
+        let gas_wallets = signers.iter().map(|s| (s.address(), ())).collect::<Vec<_>>();
+        for (address, _) in &gas_wallets {
+            multicall_gas_wallets = multicall_gas_wallets
+                .add_dynamic(IFunder::new(self.config.funder, &self.provider).gasWallets(*address));
+        }
+
+        let (eip712_result, gas_wallets_result, has_code_errors, lz_result) = try_join!(
+            async { multicall_eip712.aggregate3().await.map_err(eyre::Error::from) },
+            async { multicall_gas_wallets.aggregate3().await.map_err(eyre::Error::from) },
             self.check_contracts_have_code(check_code_exists),
-            async { multicall.aggregate3().await.map_err(eyre::Error::from) },
-            self.maybe_check_layerzero()
+            self.maybe_check_layerzero(),
         )?;
 
         crate::process_multicall_results!(
             errors,
-            multicall_result,
+            eip712_result,
             eip712s,
             |domain: IEIP712::eip712DomainReturn, (name, contract)| {
                 if domain.name != name {
                     errors.push(format!(
                         "got `{}` from {contract}::eip712DomainCall() but expected `{name}`",
                         domain.name
+                    ));
+                }
+            }
+        );
+
+        crate::process_multicall_results!(
+            errors,
+            gas_wallets_result,
+            gas_wallets,
+            |is_gas_wallet: bool, (address, _)| {
+                if !is_gas_wallet {
+                    errors.push(format!(
+                        "signer {address} is not registered as a gas wallet in SimpleFunder"
                     ));
                 }
             }
