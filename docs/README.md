@@ -14,7 +14,8 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 - **[Contributing](development/contributing.md)** - Code style, PR guidelines, and conventions
 
 ### 🏗️ Architecture
-- **[System Overview](architecture/overview.md)** - High-level relay architecture and components
+- **[Porto Integration](architecture/porto-integration.md)** - Ecosystem context and intent-based design principles
+- **[System Overview](architecture/overview.md)** - High-level relay architecture and components  
 - **[RPC Endpoints](architecture/rpc-endpoints.md)** - JSON-RPC API implementation details
 - **[Transaction Pipeline](architecture/transaction-pipeline.md)** - End-to-end transaction processing flow
 - **[Storage Layer](architecture/storage-layer.md)** - Database schema and storage abstractions
@@ -55,7 +56,3 @@ When code moves or changes, simply update the line numbers rather than maintaini
 - **[Porto Documentation](https://github.com/ithacaxyz/porto)** - Client SDK and user-facing documentation
 - **[Account Contracts](https://github.com/ithacaxyz/account)** - EIP-7702 delegation and orchestrator contracts
 - **[Ithaca Protocol](https://porto.sh)** - Protocol overview and specifications
-
----
-
-💡 **Tip**: All file references in this documentation are relative to the relay repository root (`/home/chiayongtcac/ithaca/relay/`).
