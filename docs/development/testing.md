@@ -118,7 +118,7 @@ mod tests {
 **Location**: `tests/storage/`
 
 **Key test files**:
-- **`roundtrip.rs`** (**Lines 15-200**) - Database round-trip testing
+- **`roundtrip.rs`** - Database round-trip testing
 - **`mod.rs`** - Storage test utilities
 
 **Testing patterns**:

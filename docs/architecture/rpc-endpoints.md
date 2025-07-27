@@ -51,17 +51,17 @@ pub struct PrepareCallsParameters {
 
 **Main implementation** (**Implementation**: `src/rpc/relay.rs:901-982`):
 
-1. **Request Validation** (**Lines 901-915**):
+1. **Request Validation**:
    - Call structure validation
    - Chain support verification
    - Account delegation checking
 
-2. **Strategy Determination** (**Lines 1134-1200**):
+2. **Strategy Determination**:
    - Single-chain vs multichain analysis
    - Fund sourcing across chains
    - Execution plan generation
 
-3. **Fee Estimation** (**Lines 221-300**):
+3. **Fee Estimation**:
    - Price oracle consultation (**Implementation**: `src/price/oracle.rs:65-90`)
    - Gas estimation via simulation
    - Fee token conversion calculations
@@ -71,7 +71,7 @@ pub struct PrepareCallsParameters {
    - Asset diff calculation
    - Gas usage prediction
 
-5. **Quote Generation** (**Lines 400-450**):
+5. **Quote Generation**:
    - Quote signing with relay's private key
    - EIP-712 digest calculation
    - TTL and expiration setting
@@ -113,7 +113,7 @@ pub struct SendPreparedCallsParameters {
 
 **Main implementation** (**Implementation**: `src/rpc/relay.rs:1775-1794`):
 
-1. **Quote Extraction** (**Lines 1775-1780**):
+1. **Quote Extraction**:
    - Extract signed quotes from context
    - Validate quote presence and format
 
@@ -122,7 +122,7 @@ pub struct SendPreparedCallsParameters {
    - Quote signature validation
    - User signature assembly
 
-3. **Execution Routing** (**Lines 480-491**):
+3. **Execution Routing**:
    - Single-chain vs multichain routing
    - Bundle ID generation
    - Transaction service integration
@@ -154,21 +154,21 @@ Queries the execution status of a submitted intent bundle.
 
 **Main implementation** (**Implementation**: `src/rpc/relay.rs:1878-1943`):
 
-1. **Transaction Lookup** (**Lines 1880-1885**):
+1. **Transaction Lookup**:
    - Retrieve all transaction IDs for the bundle
    - Handle bundle-to-transaction mapping
 
-2. **Status Aggregation** (**Lines 1890-1920**):
+2. **Status Aggregation**:
    - Query individual transaction statuses
    - Aggregate across multiple chains (for multichain)
    - Handle partial execution states
 
-3. **Receipt Processing** (**Lines 1925-1940**):
+3. **Receipt Processing**:
    - Extract transaction receipts
    - Parse event logs for execution results
    - Detect reverted intents via log analysis
 
-4. **Status Determination** (**Lines 1941-1943**):
+4. **Status Determination**:
    - Calculate overall bundle status
    - Handle edge cases (partial failures, etc.)
 

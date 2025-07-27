@@ -299,9 +299,9 @@ graph TB
 The JSON-RPC server provides the main interface for clients to interact with the relay.
 
 **Key modules**:
-- **`relay.rs`** (**Lines 1-2000+**) - Main relay endpoints (`wallet_prepareCalls`, `wallet_sendPreparedCalls`, `wallet_getCallsStatus`)
-- **`account.rs`** (**Lines 1-500+**) - Account management and delegation
-- **`onramp.rs`** (**Lines 1-300+**) - Onramp integration
+- **`relay.rs`** - Main relay endpoints (`wallet_prepareCalls`, `wallet_sendPreparedCalls`, `wallet_getCallsStatus`)
+- **`account.rs`** - Account management and delegation
+- **`onramp.rs`** - Onramp integration
 
 **Server setup** (**Implementation**: `src/spawn.rs:253-280`):
 ```rust
@@ -319,10 +319,10 @@ let mut rpc = relay.into_rpc();
 Handles the complete transaction lifecycle from intent preparation to blockchain confirmation.
 
 **Core components**:
-- **`service.rs`** (**Lines 85-120**) - Main transaction orchestration service
-- **`signer.rs`** (**Lines 142-300**) - Transaction signing and broadcasting
-- **`monitor.rs`** (**Lines 45-200**) - Transaction status monitoring
-- **`fees.rs`** (**Lines 25-150**) - Fee estimation and calculation
+- **`service.rs`** - Main transaction orchestration service
+- **`signer.rs`** - Transaction signing and broadcasting
+- **`monitor.rs`** - Transaction status monitoring
+- **`fees.rs`** - Fee estimation and calculation
 
 **Transaction pipeline**:
 1. **Queue** (**Implementation**: `src/transactions/service.rs:150-180`) - Per-EOA nonce ordering
@@ -335,9 +335,9 @@ Handles the complete transaction lifecycle from intent preparation to blockchain
 Provides persistent storage with PostgreSQL backend and in-memory testing support.
 
 **Storage abstractions**:
-- **`api.rs`** (**Lines 15-200**) - Storage trait definitions
-- **`pg.rs`** (**Lines 45-800**) - PostgreSQL implementation
-- **`memory.rs`** (**Lines 25-400**) - In-memory implementation for tests
+- **`api.rs`** - Storage trait definitions
+- **`pg.rs`** - PostgreSQL implementation
+- **`memory.rs`** - In-memory implementation for tests
 
 **Key storage entities**:
 - **Transactions** (**Schema**: `migrations/0004_multiple_transactions.sql`)
@@ -352,9 +352,9 @@ Provides persistent storage with PostgreSQL backend and in-memory testing suppor
 Fetches token prices for fee conversion and payment processing.
 
 **Components**:
-- **`oracle.rs`** (**Lines 65-150**) - Main oracle coordination
-- **`fetchers/coingecko.rs`** (**Lines 25-200**) - CoinGecko price fetching
-- **`metrics.rs`** (**Lines 15-100**) - Price oracle metrics
+- **`oracle.rs`** - Main oracle coordination
+- **`fetchers/coingecko.rs`** - CoinGecko price fetching
+- **`metrics.rs`** - Price oracle metrics
 
 **Price flow**:
 1. **Fetch** - External API calls (CoinGecko, etc.)
@@ -366,10 +366,10 @@ Fetches token prices for fee conversion and payment processing.
 Handles multichain intent execution with atomic settlement guarantees.
 
 **Key components**:
-- **`escrow.rs`** (**Lines 45-200**) - Fund locking and unlocking
+- **`escrow.rs`** - Fund locking and unlocking
 - **`settler/`** - Settlement message processing
-  - **`layerzero/`** (**Lines 25-300**) - LayerZero message handling
-  - **`processor.rs`** (**Lines 40-250**) - Settlement state machine
+  - **`layerzero/`** - LayerZero message handling
+  - **`processor.rs`** - Settlement state machine
 - **`refund/`** - Refund processing for failed operations
 
 **Bundle state machine** (**Implementation**: `src/transactions/interop.rs:85-200`):
@@ -384,18 +384,18 @@ See [Bundle State Machine Diagram](../diagrams/bundle_state_machine.svg) for vis
 The relay uses a comprehensive type system for type safety and clear interfaces.
 
 **Core domain types**:
-- **`intent.rs`** (**Lines 25-500**) - Intent structures and validation
-- **`quote.rs`** (**Lines 15-200**) - Quote generation and signing
-- **`call.rs`** (**Lines 10-150**) - Call execution types
-- **`account.rs`** (**Lines 20-300**) - Account management types
+- **`intent.rs`** - Intent structures and validation
+- **`quote.rs`** - Quote generation and signing
+- **`call.rs`** - Call execution types
+- **`account.rs`** - Account management types
 
 **RPC types** (**Location**: `src/types/rpc/`):
-- **`calls.rs`** (**Lines 45-200**) - Request/response structures
-- **`capabilities.rs`** (**Lines 15-100**) - Client capability negotiation
+- **`calls.rs`** - Request/response structures
+- **`capabilities.rs`** - Client capability negotiation
 
 **Contract interfaces** (**Location**: `src/types/`):
-- **`orchestrator.rs`** (**Lines 50-400**) - Orchestrator contract interface
-- **`simulator.rs`** (**Lines 25-150**) - Simulation contract interface
+- **`orchestrator.rs`** - Orchestrator contract interface
+- **`simulator.rs`** - Simulation contract interface
 
 ## Configuration System (`src/config.rs`)
 
@@ -434,10 +434,10 @@ Comprehensive error handling with context and structured error types.
 Built-in Prometheus metrics and OpenTelemetry tracing.
 
 **Metrics collection**:
-- **`transport.rs`** (**Lines 25-150**) - HTTP metrics transport
+- **`transport.rs`** - HTTP metrics transport
 - **`periodic/`** - Background metric collection jobs
-  - **`balance.rs`** (**Lines 15-80**) - Account balance monitoring
-  - **`latency.rs`** (**Lines 20-100**) - Request latency tracking
+  - **`balance.rs`** - Account balance monitoring
+  - **`latency.rs`** - Request latency tracking
 
 **Tracing** (**Integration**: `src/otlp.rs:25-100`):
 - Request tracing with correlation IDs
