@@ -40,30 +40,37 @@ Cross-chain bundles progress through these states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Init
-    Init --> LiquidityLocked: Lock funds on source chains
-    LiquidityLocked --> SourceQueued: Queue source transactions
-    SourceQueued --> SourceConfirmed: Source transactions confirmed
-    SourceConfirmed --> DestinationQueued: Queue destination transactions
-    DestinationQueued --> DestinationConfirmed: Destination transactions confirmed
-    DestinationConfirmed --> SettlementsQueued: Queue settlement messages
-    SettlementsQueued --> Done: All settlements confirmed
+    [*] --> init
+    init --> source_queued: Submit source transactions
+    source_queued --> source_confirmed: Source transactions confirmed
+    source_queued --> source_failures: Source transaction failures
+    source_confirmed --> destination_queued: Submit destination transaction
+    destination_queued --> destination_confirmed: Destination transaction confirmed
+    destination_queued --> destination_failures: Destination transaction failure
+    destination_confirmed --> done: Bundle completed successfully
     
-    SourceConfirmed --> Failed: Source execution failed
-    DestinationConfirmed --> Failed: Destination execution failed
-    Failed --> [*]: Bundle failed, initiate refunds
+    source_failures --> refunds_queued: Schedule refunds
+    destination_failures --> refunds_queued: Schedule refunds  
+    refunds_queued --> withdrawals_queued: Queue withdrawals
+    withdrawals_queued --> failed: Bundle failed with refunds
+    
+    done --> [*]: Success
+    failed --> [*]: Failed with refunds
 ```
 
 ### State Definitions
 
-- **`Init`**: Bundle created, validation complete
-- **`LiquidityLocked`**: Funds locked in escrow contracts
-- **`SourceQueued`**: Source chain transactions submitted
-- **`SourceConfirmed`**: Source execution confirmed on-chain
-- **`DestinationQueued`**: Destination transactions submitted
-- **`DestinationConfirmed`**: Destination execution confirmed
-- **`SettlementsQueued`**: LayerZero settlement messages sent
-- **`Done`**: All operations complete, funds settled
+- **`init`**: Bundle created, validation complete
+- **`source_queued`**: Source chain transactions submitted
+- **`source_confirmed`**: Source execution confirmed on-chain
+- **`source_failures`**: Source chain transaction failures detected
+- **`destination_queued`**: Destination chain transaction submitted
+- **`destination_confirmed`**: Destination execution confirmed on-chain
+- **`destination_failures`**: Destination chain transaction failure
+- **`refunds_queued`**: Refund transactions scheduled
+- **`withdrawals_queued`**: Withdrawal transactions scheduled
+- **`done`**: Bundle completed successfully
+- **`failed`**: Bundle failed with refunds processed
 
 ## Fund Sourcing Algorithm
 

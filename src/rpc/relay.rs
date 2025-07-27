@@ -1,13 +1,14 @@
-//! The `relay_` namespace.
+//! The `wallet` namespace.
 //! # Ithaca Relay RPC
 //!
-//! Implementations of a custom `relay_` namespace.
+//! Implementations of the `wallet` namespace for EIP-5792 compatibility.
 //!
-//! - `relay_estimateFee` for estimating [`Intent`] fees.
-//! - `relay_sendAction` that can perform service-sponsored [EIP-7702][eip-7702] delegations and
-//!   send other service-sponsored Intent's on behalf of EOAs with delegated code.
+//! - `wallet_prepareCalls` for preparing intent execution and generating quotes.
+//! - `wallet_sendPreparedCalls` for submitting signed intents for execution.
+//! - `wallet_getCallsStatus` for querying execution status.
+//! - `wallet_getCapabilities` for discovering relay capabilities.
 //!
-//! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
+//! [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
 
 use crate::{
     asset::AssetInfoServiceHandle,
@@ -81,7 +82,7 @@ use crate::{
     },
 };
 
-/// Ithaca `relay_` RPC namespace.
+/// Ithaca `wallet` RPC namespace.
 #[rpc(server, client, namespace = "wallet")]
 pub trait RelayApi {
     /// Checks the health of the relay and returns its version.

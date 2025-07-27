@@ -11,7 +11,7 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 ### 🚀 Development
 - **[Getting Started](development/getting-started.md)** - Set up your development environment
 - **[Testing Guide](development/testing.md)** - Unit tests, e2e tests, and testing patterns
-- **[Contributing](development/contributing.md)** - Code style, PR guidelines, and conventions
+- **[Contributing Guidelines](../CLAUDE.md#contributing)** - Code style, PR guidelines, and conventions
 
 ### 🏗️ Architecture
 - **[Porto Integration](architecture/porto-integration.md)** - Ecosystem context and intent-based design principles
@@ -23,10 +23,10 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 
 ### 📡 APIs
 - **[RPC API Reference](apis/rpc-reference.md)** - Complete JSON-RPC endpoint documentation
-- **[Internal APIs](apis/internal-apis.md)** - Service interfaces and internal communication
 
 ### 🔧 Operations
 - **[Configuration Reference](development/getting-started.md#configuration)** - Configuration options and examples
+- **[Troubleshooting Guide](troubleshooting/common-issues.md)** - Common issues and solutions
 
 ### 📊 Diagrams
 - **[Bundle State Machine](diagrams/bundle_state_machine.svg)** - Cross-chain bundle processing states
@@ -48,7 +48,7 @@ When code moves or changes, simply update the line numbers rather than maintaini
 1. **Setup**: Follow [Getting Started](development/getting-started.md)
 2. **Code**: Use patterns from [CLAUDE.md](../CLAUDE.md)
 3. **Test**: See [Testing Guide](development/testing.md) 
-4. **Contribute**: Follow [Contributing](development/contributing.md)
+4. **Contribute**: Follow [Contributing Guidelines](../CLAUDE.md#contributing)
 
 ## External Resources
 
