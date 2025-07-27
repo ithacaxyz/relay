@@ -6,18 +6,18 @@ The Ithaca Relay exposes a JSON-RPC API in the `wallet` namespace for intent pre
 
 | Method | Purpose | Implementation |
 |--------|---------|---------------|
-| `wallet_prepareCalls` | Prepare intent and generate quote | `src/rpc/relay.rs:1697-1702` |
-| `wallet_sendPreparedCalls` | Submit signed intent for execution | `src/rpc/relay.rs:1775-1794` |
-| `wallet_getCallsStatus` | Query execution status | `src/rpc/relay.rs:1878-1943` |
+| `wallet_prepareCalls` | Prepare intent and generate quote | `src/rpc/relay.rs` |
+| `wallet_sendPreparedCalls` | Submit signed intent for execution | `src/rpc/relay.rs` |
+| `wallet_getCallsStatus` | Query execution status | `src/rpc/relay.rs` |
 
 ## RPC Server Architecture
 
-**Server setup** (**Implementation**: `src/spawn.rs:253-280`):
+**Server setup** (**Implementation**: `src/spawn.rs`):
 - Uses `jsonrpsee` framework with `wallet` namespace
 - Supports both HTTP and WebSocket transports
 - CORS configuration for web clients
 
-**Trait definition** (**Implementation**: `src/rpc/relay.rs:1690-1695`):
+**Trait definition** (**Implementation**: `src/rpc/relay.rs`):
 ```rust
 #[rpc(server, client, namespace = "wallet")]
 pub trait RelayApi {
@@ -33,7 +33,7 @@ Analyzes an intent, simulates execution, and returns a signed quote for user app
 
 ### Request Structure
 
-**Type definition** (**Implementation**: `src/types/rpc/calls.rs:45-65`):
+**Type definition** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub struct PrepareCallsParameters {
     pub calls: Vec<Call>,                    // Calls to execute
@@ -49,7 +49,7 @@ pub struct PrepareCallsParameters {
 
 ### Processing Flow
 
-**Main implementation** (**Implementation**: `src/rpc/relay.rs:901-982`):
+**Main implementation** (**Implementation**: `src/rpc/relay.rs`):
 
 1. **Request Validation**:
    - Call structure validation
@@ -62,11 +62,11 @@ pub struct PrepareCallsParameters {
    - Execution plan generation
 
 3. **Fee Estimation**:
-   - Price oracle consultation (**Implementation**: `src/price/oracle.rs:65-90`)
+   - Price oracle consultation (**Implementation**: `src/price/oracle.rs`)
    - Gas estimation via simulation
    - Fee token conversion calculations
 
-4. **Simulation Execution** (**Implementation**: `src/types/orchestrator.rs:198-284`):
+4. **Simulation Execution** (**Implementation**: `src/types/orchestrator.rs`):
    - Off-chain contract simulation
    - Asset diff calculation
    - Gas usage prediction
@@ -78,7 +78,7 @@ pub struct PrepareCallsParameters {
 
 ### Response Structure
 
-**Type definition** (**Implementation**: `src/types/rpc/calls.rs:85-95`):
+**Type definition** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub struct PrepareCallsResponse {
     pub context: PrepareCallsContext,       // Signed quotes or precall data
@@ -89,7 +89,7 @@ pub struct PrepareCallsResponse {
 }
 ```
 
-**Context types** (**Implementation**: `src/types/rpc/calls.rs:120-140`):
+**Context types** (**Implementation**: `src/types/rpc/calls.rs`):
 - **Quotes mode**: Contains signed fee quotes and execution plan
 - **Precall mode**: Contains pre-execution call data
 
@@ -99,7 +99,7 @@ Accepts a user-signed intent and submits it for blockchain execution.
 
 ### Request Structure  
 
-**Type definition** (**Implementation**: `src/types/rpc/calls.rs:160-170`):
+**Type definition** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub struct SendPreparedCallsParameters {
     pub capabilities: SendPreparedCallsCapabilities,
@@ -111,13 +111,13 @@ pub struct SendPreparedCallsParameters {
 
 ### Processing Flow
 
-**Main implementation** (**Implementation**: `src/rpc/relay.rs:1775-1794`):
+**Main implementation** (**Implementation**: `src/rpc/relay.rs`):
 
 1. **Quote Extraction**:
    - Extract signed quotes from context
    - Validate quote presence and format
 
-2. **Signature Verification** (**Implementation**: `src/rpc/relay.rs:451-491`):
+2. **Signature Verification** (**Implementation**: `src/rpc/relay.rs`):
    - Quote expiration checking
    - Quote signature validation
    - User signature assembly
@@ -128,12 +128,12 @@ pub struct SendPreparedCallsParameters {
    - Transaction service integration
 
 4. **Transaction Submission**:
-   - **Single-chain** (**Implementation**: `src/rpc/relay.rs:495-550`) - Direct orchestrator call
-   - **Multichain** (**Implementation**: `src/rpc/relay.rs:555-650`) - Cross-chain coordination
+   - **Single-chain** (**Implementation**: `src/rpc/relay.rs`) - Direct orchestrator call
+   - **Multichain** (**Implementation**: `src/rpc/relay.rs`) - Cross-chain coordination
 
 ### Response Structure
 
-**Type definition** (**Implementation**: `src/types/rpc/calls.rs:180-185`):
+**Type definition** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub struct SendPreparedCallsResponse {
     pub id: BundleId,                       // Unique bundle identifier
@@ -152,7 +152,7 @@ Queries the execution status of a submitted intent bundle.
 
 ### Processing Flow
 
-**Main implementation** (**Implementation**: `src/rpc/relay.rs:1878-1943`):
+**Main implementation** (**Implementation**: `src/rpc/relay.rs`):
 
 1. **Transaction Lookup**:
    - Retrieve all transaction IDs for the bundle
@@ -174,7 +174,7 @@ Queries the execution status of a submitted intent bundle.
 
 ### Status Codes
 
-**Status enumeration** (**Implementation**: `src/types/rpc/calls.rs:200-210`):
+**Status enumeration** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub enum CallStatusCode {
     Pending,              // Still processing
@@ -187,7 +187,7 @@ pub enum CallStatusCode {
 
 ### Response Structure
 
-**Type definition** (**Implementation**: `src/types/rpc/calls.rs:220-230`):
+**Type definition** (**Implementation**: `src/types/rpc/calls.rs`):
 ```rust
 pub struct CallsStatus {
     pub id: BundleId,                       // Bundle identifier
@@ -196,7 +196,7 @@ pub struct CallsStatus {
 }
 ```
 
-**Receipt details** (**Implementation**: `src/types/rpc/calls.rs:235-250`):
+**Receipt details** (**Implementation**: `src/types/rpc/calls.rs`):
 - Transaction hash and block information
 - Gas usage and status
 - Event logs from contract execution
@@ -206,7 +206,7 @@ pub struct CallsStatus {
 
 ### Common Error Types
 
-**RPC error mapping** (**Implementation**: `src/rpc/relay.rs:50-100`):
+**RPC error mapping** (**Implementation**: `src/rpc/relay.rs`):
 
 | Error Type | HTTP Code | Description |
 |------------|-----------|-------------|
@@ -238,7 +238,7 @@ pub struct CallsStatus {
 
 ### Request Validation
 
-**Security checks** (**Implementation**: `src/rpc/relay.rs:200-250`):
+**Security checks** (**Implementation**: `src/rpc/relay.rs`):
 - Parameter validation and sanitization
 - Chain ID allowlist verification  
 - Address format validation
@@ -260,7 +260,7 @@ pub struct CallsStatus {
 
 ### RPC Metrics
 
-**Metrics collection** (**Implementation**: `src/metrics/transport.rs:25-100`):
+**Metrics collection** (**Implementation**: `src/metrics/transport.rs`):
 - Request counts per endpoint
 - Response times and latencies
 - Error rates and types
@@ -268,7 +268,7 @@ pub struct CallsStatus {
 
 ### Logging
 
-**Request tracing** (**Implementation**: `src/rpc/relay.rs:100-150`):
+**Request tracing** (**Implementation**: `src/rpc/relay.rs`):
 - Correlation IDs for request tracking
 - Parameter logging (with sensitive data redaction)
 - Execution time logging
@@ -329,7 +329,7 @@ curl -X POST http://localhost:8323 \
 
 ### Unit Tests
 
-**Test patterns** (**Implementation**: `tests/e2e/cases/relay.rs:25-100`):
+**Test patterns** (**Implementation**: `tests/e2e/cases/relay.rs`):
 - Mock provider setup
 - Request/response validation
 - Error condition testing
@@ -337,13 +337,13 @@ curl -X POST http://localhost:8323 \
 
 ### E2E Tests
 
-**Integration testing** (**Implementation**: `tests/e2e/cases/calls.rs:45-200`):
+**Integration testing** (**Implementation**: `tests/e2e/cases/calls.rs`):
 - Full workflow testing (prepare → send → status)
 - Multi-chain intent testing
 - Contract interaction validation
 - Real blockchain integration
 
-**Test environment setup** (**Implementation**: `tests/e2e/environment.rs:45-120`):
+**Test environment setup** (**Implementation**: `tests/e2e/environment.rs`):
 - Automated contract deployment
 - Test account funding
 - Relay service instantiation

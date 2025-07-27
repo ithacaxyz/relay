@@ -38,8 +38,8 @@ This documentation uses **file:line** references to actual code instead of copyi
 
 **Example format**:
 ```markdown
-**Implementation**: `src/rpc/relay.rs:1697-1702`
-**Related types**: `src/types/rpc/calls.rs:45`
+**Implementation**: `src/rpc/relay.rs`
+**Related types**: `src/types/rpc/calls.rs`
 ```
 
 When code moves or changes, simply update the line numbers rather than maintaining duplicate code blocks.

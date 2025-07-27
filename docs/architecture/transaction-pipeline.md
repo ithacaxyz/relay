@@ -45,7 +45,7 @@ graph LR
 
 ### Intent Classification
 
-**Implementation**: `src/rpc/relay.rs:451-491`
+**Implementation**: `src/rpc/relay.rs`
 
 When a signed intent arrives via `wallet_sendPreparedCalls`, the relay classifies the execution type:
 
@@ -64,12 +64,12 @@ if quotes.ty().multi_chain_root.is_none() {
 
 ### Validation Steps
 
-**Quote verification** (**Implementation**: `src/rpc/relay.rs:460-480`):
+**Quote verification** (**Implementation**: `src/rpc/relay.rs`):
 1. **Expiration check**: Ensure quote hasn't expired
 2. **Signature verification**: Validate relay's quote signature  
 3. **User signature assembly**: Build complete signature payload
 
-**Bundle creation** (**Implementation**: `src/rpc/relay.rs:485-491`):
+**Bundle creation** (**Implementation**: `src/rpc/relay.rs`):
 - Generate deterministic `BundleId` from quote hash
 - Create bundle tracking entry in database
 - Initialize transaction status monitoring
@@ -78,7 +78,7 @@ if quotes.ty().multi_chain_root.is_none() {
 
 ### Queue Management
 
-**Transaction queuing** (**Implementation**: `src/transactions/service.rs:150-180`):
+**Transaction queuing** (**Implementation**: `src/transactions/service.rs`):
 
 The transaction service maintains per-EOA ordered queues to ensure nonce consistency:
 
@@ -102,7 +102,7 @@ pub async fn send_transaction(
 
 ### Signer Selection
 
-**Signer management** (**Implementation**: `src/transactions/service.rs:85-120`):
+**Signer management** (**Implementation**: `src/transactions/service.rs`):
 - **Load balancing**: Distribute transactions across available signers
 - **Health monitoring**: Pause signers with low balance or errors
 - **Preference handling**: Route to preferred signers when possible
@@ -111,7 +111,7 @@ pub async fn send_transaction(
 
 ### Signing Process
 
-**Transaction signing** (**Implementation**: `src/transactions/signer.rs:201-240`):
+**Transaction signing** (**Implementation**: `src/transactions/signer.rs`):
 
 ```rust
 async fn sign_transaction(
@@ -138,14 +138,14 @@ async fn sign_transaction(
 
 ### Validation Before Signing
 
-**Pre-flight validation** (**Implementation**: `src/transactions/signer.rs:224-250`):
+**Pre-flight validation** (**Implementation**: `src/transactions/signer.rs`):
 - **Gas estimation**: Simulate transaction to estimate gas usage
 - **Balance checking**: Ensure signer has sufficient funds
 - **Nonce verification**: Confirm nonce is correct and sequential
 
 ### Broadcasting Strategy
 
-**Network submission** (**Implementation**: `src/transactions/signer.rs:142-180`):
+**Network submission** (**Implementation**: `src/transactions/signer.rs`):
 - **Provider selection**: Choose optimal RPC endpoint
 - **Retry logic**: Handle temporary network failures
 - **Fee escalation**: Increase gas price for stuck transactions
@@ -154,7 +154,7 @@ async fn sign_transaction(
 
 ### Status Tracking
 
-**Transaction monitoring** (**Implementation**: `src/transactions/monitor.rs:65-120`):
+**Transaction monitoring** (**Implementation**: `src/transactions/monitor.rs`):
 
 ```rust
 pub async fn watch_transaction(
@@ -182,7 +182,7 @@ pub async fn watch_transaction(
 
 ### Status State Machine
 
-**Transaction states** (**Implementation**: `src/transactions/transaction.rs:25-45`):
+**Transaction states** (**Implementation**: `src/transactions/transaction.rs`):
 
 ```mermaid
 stateDiagram-v2
@@ -203,7 +203,7 @@ stateDiagram-v2
 
 ### Database Integration
 
-**Status persistence** (**Implementation**: `src/storage/pg.rs:150-200`):
+**Status persistence** (**Implementation**: `src/storage/pg.rs`):
 - **Atomic updates**: Transaction status changes are atomic
 - **Historical tracking**: Maintain complete transaction history
 - **Query optimization**: Indexed queries for status lookup
@@ -212,7 +212,7 @@ stateDiagram-v2
 
 ### Cross-Chain Coordination
 
-**Bundle state machine** (**Implementation**: `src/transactions/interop.rs:85-200`):
+**Bundle state machine** (**Implementation**: `src/transactions/interop.rs`):
 
 For multi-chain intents, the relay coordinates complex state transitions:
 
@@ -239,14 +239,14 @@ stateDiagram-v2
     Failed --> [*]
 ```
 
-**State management** (**Implementation**: `src/transactions/interop.rs:25-65`):
+**State management** (**Implementation**: `src/transactions/interop.rs`):
 - **Atomic transitions**: State changes are validated and atomic
 - **Recovery mechanisms**: Handle failed cross-chain operations
 - **Timeout handling**: Automatic refunds for stalled operations
 
 ### Settlement Processing
 
-**LayerZero integration** (**Implementation**: `src/interop/settler/layerzero/processor.rs:40-100`):
+**LayerZero integration** (**Implementation**: `src/interop/settler/layerzero/processor.rs`):
 - **Message verification**: Validate cross-chain messages
 - **Settlement execution**: Process settlement transactions
 - **State synchronization**: Keep settlement state consistent
@@ -255,7 +255,7 @@ stateDiagram-v2
 
 ### Error Classification
 
-**Error types** (**Implementation**: `src/error/mod.rs:15-100`):
+**Error types** (**Implementation**: `src/error/mod.rs`):
 
 | Error Category | Example | Recovery Strategy |
 |----------------|---------|-------------------|
@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ### Recovery Mechanisms
 
-**Automatic recovery** (**Implementation**: `src/transactions/signer.rs:300-350`):
+**Automatic recovery** (**Implementation**: `src/transactions/signer.rs`):
 - **Nonce gap closure**: Detect and fill nonce gaps
 - **Fee escalation**: Increase gas price for stuck transactions
 - **Signer rotation**: Switch to healthy signers on errors
@@ -280,7 +280,7 @@ stateDiagram-v2
 
 ### Throughput Optimization
 
-**Concurrent processing** (**Implementation**: `src/transactions/service.rs:120-180`):
+**Concurrent processing** (**Implementation**: `src/transactions/service.rs`):
 - **Parallel execution**: Process multiple transactions simultaneously
 - **Queue partitioning**: Separate queues per chain and signer
 - **Batch operations**: Group database operations for efficiency
@@ -294,7 +294,7 @@ stateDiagram-v2
 
 ### Resource Management
 
-**Connection pooling** (**Implementation**: `src/provider.rs:25-100`):
+**Connection pooling** (**Implementation**: `src/provider.rs`):
 - **Database connections**: SQLx connection pooling
 - **RPC connections**: HTTP/WebSocket connection reuse
 - **Memory management**: Efficient data structures and cleanup
@@ -303,7 +303,7 @@ stateDiagram-v2
 
 ### Pipeline Metrics
 
-**Key performance indicators** (**Implementation**: `src/metrics/transport.rs:25-100`):
+**Key performance indicators** (**Implementation**: `src/metrics/transport.rs`):
 - **Transaction throughput**: Transactions per second
 - **Confirmation latency**: Time from submission to confirmation
 - **Error rates**: Failed transaction percentages
@@ -319,7 +319,7 @@ stateDiagram-v2
 
 ### Observability
 
-**Tracing integration** (**Implementation**: `src/otlp.rs:25-100`):
+**Tracing integration** (**Implementation**: `src/otlp.rs`):
 - **Request correlation**: Track transactions end-to-end
 - **Performance profiling**: Identify bottlenecks
 - **Error context**: Detailed error information
@@ -328,7 +328,7 @@ stateDiagram-v2
 
 ### Pipeline Configuration
 
-**Transaction service config** (**Implementation**: `src/config.rs:85-120`):
+**Transaction service config** (**Implementation**: `src/config.rs`):
 ```yaml
 transaction:
   queue_capacity: 1000          # Max pending transactions per signer

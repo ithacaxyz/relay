@@ -187,31 +187,31 @@ graph TB
 
 #### Steps 3-8: Preparation Phase (`wallet_prepareCalls`)
 
-**Step 3**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs:1697-1702`)
+**Step 3**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs`)
 
-**Step 4**: Request Validation (**Implementation**: `src/rpc/relay.rs:901-915`)
+**Step 4**: Request Validation (**Implementation**: `src/rpc/relay.rs`)
 - Call structure validation  
 - Chain support verification
 - Account delegation checking
 
-**Step 5**: Strategy Determination (**Implementation**: `src/rpc/relay.rs:1134-1200`)
+**Step 5**: Strategy Determination (**Implementation**: `src/rpc/relay.rs`)
 - Single-chain vs multichain analysis
-- Fund sourcing across chains (**Implementation**: `src/rpc/relay.rs:1697-1850`)
+- Fund sourcing across chains (**Implementation**: `src/rpc/relay.rs`)
 - Execution plan generation
 
-**Step 6**: Simulation Execution (**Implementation**: `src/types/orchestrator.rs:198-284`)
+**Step 6**: Simulation Execution (**Implementation**: `src/types/orchestrator.rs`)
 - Off-chain contract simulation
-- Asset diff calculation (**Implementation**: `src/asset.rs:186-221`)
+- Asset diff calculation (**Implementation**: `src/asset.rs`)
 - Gas usage prediction
 
-**Step 7**: Price Oracle Consultation (**Implementation**: `src/price/oracle.rs:65-90`)
+**Step 7**: Price Oracle Consultation (**Implementation**: `src/price/oracle.rs`)
 - Token price fetching from CoinGecko
 - ETH-denominated conversion
 - Fee calculation in payment token
 
-**Step 8**: Quote Generation (**Implementation**: `src/rpc/relay.rs:400-450`)
+**Step 8**: Quote Generation (**Implementation**: `src/rpc/relay.rs`)
 - Quote signing with relay's private key
-- EIP-712 digest calculation (**Implementation**: `src/types/intent.rs:459-485`)
+- EIP-712 digest calculation (**Implementation**: `src/types/intent.rs`)
 - TTL and expiration setting
 
 #### Step 9: User Signature
@@ -221,17 +221,17 @@ graph TB
 
 #### Steps 10-12: Execution Phase (`wallet_sendPreparedCalls`)
 
-**Step 10**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs:1775-1794`)
+**Step 10**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs`)
 
-**Step 11**: Signature Verification (**Implementation**: `src/rpc/relay.rs:451-491`) 
+**Step 11**: Signature Verification (**Implementation**: `src/rpc/relay.rs`) 
 - Quote expiration checking
 - Quote signature validation
 - User signature assembly
 
-**Step 12**: Transaction Broadcasting (**Implementation**: `src/transactions/signer.rs:142-180`)
+**Step 12**: Transaction Broadcasting (**Implementation**: `src/transactions/signer.rs`)
 - Transaction signing with relay's key
 - Network broadcast via provider
-- Transaction service coordination (**Implementation**: `src/transactions/service.rs:85-120`)
+- Transaction service coordination (**Implementation**: `src/transactions/service.rs`)
 
 #### Step 13: Blockchain Execution
 **Smart Contract Processing**:
@@ -241,12 +241,12 @@ graph TB
 
 #### Steps 14-15: Monitoring Phase
 
-**Step 14**: Status Monitoring (**Implementation**: `src/transactions/monitor.rs:65-120`)
+**Step 14**: Status Monitoring (**Implementation**: `src/transactions/monitor.rs`)
 - Transaction confirmation tracking
-- Database status updates (**Implementation**: `src/storage/pg.rs:150-200`)
+- Database status updates (**Implementation**: `src/storage/pg.rs`)
 - Event log parsing
 
-**Step 15**: Status Retrieval (**Implementation**: `src/rpc/relay.rs:1878-1943`)
+**Step 15**: Status Retrieval (**Implementation**: `src/rpc/relay.rs`)
 - Bundle status aggregation
 - Receipt processing
 - Final status determination
@@ -303,7 +303,7 @@ The JSON-RPC server provides the main interface for clients to interact with the
 - **`account.rs`** - Account management and delegation
 - **`onramp.rs`** - Onramp integration
 
-**Server setup** (**Implementation**: `src/spawn.rs:253-280`):
+**Server setup** (**Implementation**: `src/spawn.rs`):
 ```rust
 // Creates JSON-RPC server with wallet namespace
 let mut rpc = relay.into_rpc();
@@ -325,10 +325,10 @@ Handles the complete transaction lifecycle from intent preparation to blockchain
 - **`fees.rs`** - Fee estimation and calculation
 
 **Transaction pipeline**:
-1. **Queue** (**Implementation**: `src/transactions/service.rs:150-180`) - Per-EOA nonce ordering
-2. **Sign** (**Implementation**: `src/transactions/signer.rs:201-240`) - Cryptographic signing
-3. **Broadcast** (**Implementation**: `src/transactions/signer.rs:142-180`) - Network submission
-4. **Monitor** (**Implementation**: `src/transactions/monitor.rs:65-120`) - Confirmation tracking
+1. **Queue** (**Implementation**: `src/transactions/service.rs`) - Per-EOA nonce ordering
+2. **Sign** (**Implementation**: `src/transactions/signer.rs`) - Cryptographic signing
+3. **Broadcast** (**Implementation**: `src/transactions/signer.rs`) - Network submission
+4. **Monitor** (**Implementation**: `src/transactions/monitor.rs`) - Confirmation tracking
 
 ### 3. Storage Layer (`src/storage/`)
 
@@ -372,11 +372,11 @@ Handles multichain intent execution with atomic settlement guarantees.
   - **`processor.rs`** - Settlement state machine
 - **`refund/`** - Refund processing for failed operations
 
-**Bundle state machine** (**Implementation**: `src/transactions/interop.rs:85-200`):
+**Bundle state machine** (**Implementation**: `src/transactions/interop.rs`):
 
 See [Bundle State Machine Diagram](../diagrams/bundle_state_machine.svg) for visual representation.
 
-**States** (**Definition**: `src/transactions/interop.rs:25-45`):
+**States** (**Definition**: `src/transactions/interop.rs`):
 - `Init` → `LiquidityLocked` → `SourceQueued` → `SourceConfirmed` → `DestinationQueued` → `DestinationConfirmed` → `SettlementsQueued` → `Done`
 
 ## Type System (`src/types/`)
@@ -401,7 +401,7 @@ The relay uses a comprehensive type system for type safety and clear interfaces.
 
 Supports YAML configuration with CLI overrides.
 
-**Configuration structure** (**Implementation**: `src/config.rs:45-200`):
+**Configuration structure** (**Implementation**: `src/config.rs`):
 - **Server** - RPC server settings (address, port, CORS)
 - **Chain** - Blockchain endpoints and fee tokens
 - **Quote** - Quote TTL and gas estimation settings
@@ -417,7 +417,7 @@ Supports YAML configuration with CLI overrides.
 
 Comprehensive error handling with context and structured error types.
 
-**Error hierarchy** (**Implementation**: `src/error/mod.rs:15-100`):
+**Error hierarchy** (**Implementation**: `src/error/mod.rs`):
 - **`RelayError`** - Top-level error type
 - **Module errors** - Specific error types per module
   - `QuoteError` (**Implementation**: `src/error/quote.rs`)
@@ -439,7 +439,7 @@ Built-in Prometheus metrics and OpenTelemetry tracing.
   - **`balance.rs`** - Account balance monitoring
   - **`latency.rs`** - Request latency tracking
 
-**Tracing** (**Integration**: `src/otlp.rs:25-100`):
+**Tracing** (**Integration**: `src/otlp.rs`):
 - Request tracing with correlation IDs
 - Database query tracing
 - Cross-chain operation tracking
@@ -450,7 +450,7 @@ Built-in Prometheus metrics and OpenTelemetry tracing.
 
 The relay is built on Tokio async runtime with message-passing between components.
 
-**Service pattern** (**Example**: `src/transactions/service.rs:45-85`):
+**Service pattern** (**Example**: `src/transactions/service.rs`):
 - Services expose handle types for communication
 - Background tasks process messages
 - Clean shutdown with graceful termination
@@ -459,7 +459,7 @@ The relay is built on Tokio async runtime with message-passing between component
 
 Uses SQLx for compile-time checked SQL queries.
 
-**Query pattern** (**Example**: `src/storage/pg.rs:150-180`):
+**Query pattern** (**Example**: `src/storage/pg.rs`):
 ```rust
 // Compile-time checked SQL
 let result = sqlx::query!("SELECT * FROM transactions WHERE id = $1", id)
@@ -469,7 +469,7 @@ let result = sqlx::query!("SELECT * FROM transactions WHERE id = $1", id)
 
 ### Testing Architecture
 
-**E2E testing framework** (**Implementation**: `tests/e2e/environment.rs:45-150`):
+**E2E testing framework** (**Implementation**: `tests/e2e/environment.rs`):
 - Standardized test environment setup
 - Contract deployment and funding
 - Relay service integration
@@ -488,12 +488,12 @@ let result = sqlx::query!("SELECT * FROM transactions WHERE id = $1", id)
 
 **Validation layers**:
 1. **RPC validation** - Request structure and parameters
-2. **Intent validation** (**Implementation**: `src/types/intent.rs:200-300`) - Business logic validation
+2. **Intent validation** (**Implementation**: `src/types/intent.rs`) - Business logic validation
 3. **Contract validation** - On-chain execution validation
 
 ### Access Control
 
-**Permission system** (**Implementation**: `src/types/rpc/permission.rs:15-80`):
+**Permission system** (**Implementation**: `src/types/rpc/permission.rs`):
 - Account delegation verification
 - Intent authorization checking
 - Rate limiting and quota management
@@ -502,17 +502,17 @@ let result = sqlx::query!("SELECT * FROM transactions WHERE id = $1", id)
 
 ### Connection Pooling
 
-**Database connections** (**Implementation**: `src/storage/pg.rs:45-80`):
+**Database connections** (**Implementation**: `src/storage/pg.rs`):
 - PostgreSQL connection pooling with SQLx
 - Configurable pool size and timeouts
 
-**RPC connections** (**Implementation**: `src/provider.rs:25-100`):
+**RPC connections** (**Implementation**: `src/provider.rs`):
 - HTTP/WebSocket provider pooling
 - Automatic failover between endpoints
 
 ### Caching Strategies
 
-**Price caching** (**Implementation**: `src/price/oracle.rs:85-120`):
+**Price caching** (**Implementation**: `src/price/oracle.rs`):
 - In-memory price cache with TTL
 - Fallback to constant rates
 
@@ -520,7 +520,7 @@ let result = sqlx::query!("SELECT * FROM transactions WHERE id = $1", id)
 
 ### Concurrent Processing
 
-**Transaction processing** (**Implementation**: `src/transactions/service.rs:120-180`):
+**Transaction processing** (**Implementation**: `src/transactions/service.rs`):
 - Per-chain transaction queues
 - Parallel processing with nonce ordering
 - Load balancing across signers

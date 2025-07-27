@@ -62,8 +62,8 @@ cargo run --bin relay -- --help
 ```
 
 **Key configuration files**:
-- **`relay.yaml`** - Main configuration (**Implementation**: `src/config.rs:45-120`)
-- **`registry.yaml`** - Chain and token registry (**Implementation**: `src/types/coin_registry.rs:25-45`)
+- **`relay.yaml`** - Main configuration (**Implementation**: `src/config.rs`)
+- **`registry.yaml`** - Chain and token registry (**Implementation**: `src/types/coin_registry.rs`)
 
 Example minimal configuration:
 
@@ -126,10 +126,10 @@ cargo run --bin relay -- \
 ```
 
 **Key components started**:
-- **RPC Server** (**Implementation**: `src/spawn.rs:45-78`) - JSON-RPC endpoints
-- **Transaction Service** (**Implementation**: `src/transactions/service.rs:85-120`) - Transaction processing
-- **Price Oracle** (**Implementation**: `src/price/oracle.rs:65-90`) - Fee conversion
-- **Storage Backend** (**Implementation**: `src/storage/pg.rs:45-70`) - PostgreSQL integration
+- **RPC Server** (**Implementation**: `src/spawn.rs`) - JSON-RPC endpoints
+- **Transaction Service** (**Implementation**: `src/transactions/service.rs`) - Transaction processing
+- **Price Oracle** (**Implementation**: `src/price/oracle.rs`) - Fee conversion
+- **Storage Backend** (**Implementation**: `src/storage/pg.rs`) - PostgreSQL integration
 
 ### Development Tools
 
@@ -167,7 +167,7 @@ The relay uses several Rust-specific configurations:
 
 The relay uses comprehensive error types:
 
-**Error hierarchy** (**Implementation**: `src/error/mod.rs:15-45`):
+**Error hierarchy** (**Implementation**: `src/error/mod.rs`):
 - `RelayError` - Top-level error type
 - Module-specific errors in `src/error/` subdirectory
 - Error context using `eyre` crate
@@ -177,9 +177,9 @@ The relay uses comprehensive error types:
 All I/O operations use Tokio async runtime:
 
 **Key patterns**:
-- **Service handles** (**Example**: `src/transactions/service.rs:45-65`) - Message-passing between components
-- **Background tasks** (**Example**: `src/spawn.rs:120-150`) - Long-running services
-- **Database operations** (**Example**: `src/storage/pg.rs:85-120`) - Async SQL with SQLx
+- **Service handles** (**Example**: `src/transactions/service.rs`) - Message-passing between components
+- **Background tasks** (**Example**: `src/spawn.rs`) - Long-running services
+- **Database operations** (**Example**: `src/storage/pg.rs`) - Async SQL with SQLx
 
 ### Testing Patterns
 
@@ -195,7 +195,7 @@ async fn test_relay_feature() {
 }
 ```
 
-**Testing setup** (**Implementation**: `tests/e2e/environment.rs:45-120`)
+**Testing setup** (**Implementation**: `tests/e2e/environment.rs`)
 
 ## Next Steps
 

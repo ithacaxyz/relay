@@ -93,19 +93,19 @@ mod tests {
 ```
 
 **Mock dependencies**:
-- Use `MemoryStorage` for database operations (**Implementation**: `src/storage/memory.rs:25-400`)
+- Use `MemoryStorage` for database operations (**Implementation**: `src/storage/memory.rs`)
 - Mock providers for blockchain interaction
 - Mock price oracles for fee calculation
 
 ### Component Testing
 
-**RPC endpoint testing** (**Implementation**: `tests/e2e/cases/relay.rs:25-100`):
+**RPC endpoint testing** (**Implementation**: `tests/e2e/cases/relay.rs`):
 - Request/response validation
 - Error condition handling  
 - Parameter validation
 - Quote generation testing
 
-**Storage layer testing** (**Implementation**: `tests/storage/roundtrip.rs:15-200`):
+**Storage layer testing** (**Implementation**: `tests/storage/roundtrip.rs`):
 - Database schema validation
 - Migration testing
 - Query performance
@@ -151,7 +151,7 @@ async fn test_storage_operations() {
 
 **CRITICAL**: Always use the standardized test environment for e2e tests.
 
-**Environment setup** (**Implementation**: `tests/e2e/environment.rs:45-120`):
+**Environment setup** (**Implementation**: `tests/e2e/environment.rs`):
 ```rust
 use crate::e2e::Environment;
 
@@ -186,7 +186,7 @@ async fn test_relay_functionality() {
 
 ### Key Test Patterns
 
-**Full intent workflow** (**Implementation**: `tests/e2e/cases/calls.rs:45-150`):
+**Full intent workflow** (**Implementation**: `tests/e2e/cases/calls.rs`):
 ```rust
 #[tokio::test]
 async fn test_intent_execution() {
@@ -230,7 +230,7 @@ async fn test_intent_execution() {
 }
 ```
 
-**Multi-chain testing** (**Implementation**: `tests/e2e/cases/multichain_usdt_transfer.rs:25-200`):
+**Multi-chain testing** (**Implementation**: `tests/e2e/cases/multichain_usdt_transfer.rs`):
 - Cross-chain fund sourcing
 - LayerZero message coordination  
 - Settlement verification
@@ -238,7 +238,7 @@ async fn test_intent_execution() {
 
 ### Environment Variables
 
-**Configuration** (**Implementation**: `tests/e2e/environment.rs:15-45`):
+**Configuration** (**Implementation**: `tests/e2e/environment.rs`):
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -285,7 +285,7 @@ cd tests/e2e/layerzero/contracts
 
 ### Contract Artifacts
 
-**Artifact locations** (**Configuration**: `tests/e2e/environment.rs:20-30`):
+**Artifact locations** (**Configuration**: `tests/e2e/environment.rs`):
 - **Main contracts**: `tests/account/out/` 
 - **LayerZero mocks**: `tests/e2e/layerzero/contracts/out/`
 - **Test fixtures**: `tests/fixtures/`
@@ -368,7 +368,7 @@ export DATABASE_URL="postgresql://localhost/ithaca_relay_test"
 
 ### Test Utilities
 
-**Common test helpers** (**Implementation**: `tests/e2e/common_calls.rs:15-100`):
+**Common test helpers** (**Implementation**: `tests/e2e/common_calls.rs`):
 - Account creation and funding
 - Contract deployment helpers
 - Transaction utilities
@@ -397,12 +397,12 @@ async fn debug_test() {
 ### Fixtures
 
 **Test fixtures** (**Location**: `tests/fixtures/`):
-- **`merkle/`** (**Implementation**: `tests/fixtures/merkle/fixtures.rs:15-100`) - Merkle tree test data
+- **`merkle/`** (**Implementation**: `tests/fixtures/merkle/fixtures.rs`) - Merkle tree test data
 - **`mod.rs`** - Fixture utilities
 
 ### Test Account Management
 
-**Account setup** (**Implementation**: `tests/e2e/eoa.rs:25-100`):
+**Account setup** (**Implementation**: `tests/e2e/eoa.rs`):
 - Deterministic test accounts
 - Funding automation
 - Key management

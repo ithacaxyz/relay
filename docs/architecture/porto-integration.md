@@ -94,18 +94,18 @@ const intent = {
 }
 ```
 
-**Relay Implementation**: The relay receives this high-level intent and translates it into optimized execution plans (**Implementation**: `src/rpc/relay.rs:1134-1200`).
+**Relay Implementation**: The relay receives this high-level intent and translates it into optimized execution plans (**Implementation**: `src/rpc/relay.rs`).
 
 #### 2. Trustless Execution Model
 
 **Cryptographic Authorization**:
-- Users sign EIP-712 structured data (**Implementation**: `src/types/intent.rs:459-485`)
+- Users sign EIP-712 structured data (**Implementation**: `src/types/intent.rs`)
 - No custodial risk or trust assumptions
 - Relay cannot access user funds directly
 
 **Atomic Execution**:
 - Smart contracts enforce all-or-nothing execution
-- Simulation prevents failed transactions (**Implementation**: `src/types/orchestrator.rs:198-284`)
+- Simulation prevents failed transactions (**Implementation**: `src/types/orchestrator.rs`)
 - Transparent pricing with binding quotes
 
 #### 3. Cross-Chain Native Design
@@ -117,7 +117,7 @@ const intent = {
 
 **Intelligent Fund Sourcing**:
 ```rust
-// Fund sourcing algorithm in src/rpc/relay.rs:1697-1850
+// Fund sourcing algorithm in src/rpc/relay.rs
 async fn source_funds_multichain(
     account: Address,
     target_chain: ChainId, 
@@ -163,9 +163,9 @@ sequenceDiagram
 ```
 
 **Implementation Details**:
-- **Account validation** (**Implementation**: `src/rpc/account.rs:150-200`)
-- **Delegation verification** (**Implementation**: `src/types/account.rs:85-120`)
-- **Permission management** (**Implementation**: `src/types/rpc/permission.rs:15-80`)
+- **Account validation** (**Implementation**: `src/rpc/account.rs`)
+- **Delegation verification** (**Implementation**: `src/types/account.rs`)
+- **Permission management** (**Implementation**: `src/types/rpc/permission.rs`)
 
 ## Client-Relay Integration Patterns
 
@@ -205,7 +205,7 @@ The relay exposes a `wallet_*` namespace following EIP-1193 patterns:
 The relay provides binding quotes to prevent economic attacks:
 
 ```rust
-// Quote structure in src/types/quote.rs:15-200
+// Quote structure in src/types/quote.rs
 pub struct Quote {
     pub intent: Intent,
     pub ttl: u64,              // Time-to-live prevents stale quotes
@@ -236,7 +236,7 @@ Porto enables atomic execution across multiple blockchains through a sophisticat
 **Single Intent → Multiple Sub-Intents**:
 
 ```rust
-// Intent classification in src/types/intent.rs:82-100
+// Intent classification in src/types/intent.rs
 pub enum IntentKind {
     Single,                    // Standard single-chain intent
     MultiOutput {              // Final execution on destination chain
@@ -255,7 +255,7 @@ pub enum IntentKind {
 
 The relay manages complex cross-chain state transitions:
 
-**Bundle States** (**Implementation**: `src/transactions/interop.rs:25-45`):
+**Bundle States** (**Implementation**: `src/transactions/interop.rs`):
 1. `Init` - Intent received and validated
 2. `LiquidityLocked` - Funds locked on source chains
 3. `SourceQueued` - Source transactions submitted
@@ -271,7 +271,7 @@ The relay manages complex cross-chain state transitions:
 
 Porto uses LayerZero for secure cross-chain messaging:
 
-**Settlement Flow** (**Implementation**: `src/interop/settler/processor.rs:40-250`):
+**Settlement Flow** (**Implementation**: `src/interop/settler/processor.rs`):
 1. **Escrow Creation**: Lock funds on source chains
 2. **Message Dispatch**: Send execution proof via LayerZero
 3. **Destination Execution**: Unlock funds and execute intent
@@ -290,7 +290,7 @@ Users can pay fees in any supported ERC-20 token:
 
 ### Price Oracle Integration
 
-**Real-time Pricing** (**Implementation**: `src/price/oracle.rs:65-150`):
+**Real-time Pricing** (**Implementation**: `src/price/oracle.rs`):
 ```rust
 pub async fn get_price(&self, token: Address) -> Result<U256> {
     // 1. Check in-memory cache with TTL
@@ -367,16 +367,16 @@ sequenceDiagram
 **Optimization Strategies**:
 
 #### Connection Pooling
-**Database** (**Implementation**: `src/storage/pg.rs:45-80`):
+**Database** (**Implementation**: `src/storage/pg.rs`):
 - PostgreSQL connection pool with configurable limits
 - Query optimization with prepared statements
 
-**RPC Providers** (**Implementation**: `src/provider.rs:25-100`):
+**RPC Providers** (**Implementation**: `src/provider.rs`):
 - HTTP/WebSocket provider pools per chain
 - Automatic failover and load balancing
 
 #### Caching Systems
-**Price Caching** (**Implementation**: `src/price/oracle.rs:85-120`):
+**Price Caching** (**Implementation**: `src/price/oracle.rs`):
 - In-memory cache with TTL expiration
 - Reduces external API calls
 
@@ -385,7 +385,7 @@ sequenceDiagram
 - State override optimization
 
 #### Concurrent Processing
-**Transaction Queues** (**Implementation**: `src/transactions/service.rs:120-180`):
+**Transaction Queues** (**Implementation**: `src/transactions/service.rs`):
 - Per-EOA nonce ordering
 - Parallel processing across chains
 - Load balancing across signers
