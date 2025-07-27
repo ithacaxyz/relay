@@ -36,7 +36,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::{DynSigner, Eip712PayLoadSigner},
     types::{
-        Call,
+        Call, DEFAULT_SEQUENCE_KEY,
         IERC20::IERC20Instance,
         KeyType, KeyWith712Signer,
         rpc::{
@@ -137,15 +137,25 @@ impl StressAccount {
             // It might happen that we've received a preconfirmation for previous transaction but
             // Relay is not yet at the latest state. For this case we need to make sure that our new
             // intent does not have the same nonce and otherwise retry a bit later.
-            // todo(onbjerg): this only works for single chain intents right now
-            for quote in context.quote().unwrap().ty().quotes.iter() {
+            // we're only checking output quotes for now
+            if let Some(quote) =
+                context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
+            {
                 let nonce = quote.intent.nonce;
-                if previous_nonce == Some(nonce) {
+                if nonce >> 64 == U256::from(DEFAULT_SEQUENCE_KEY) {
+                    if previous_nonce == Some(nonce) {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue 'outer;
+                    }
+                // only first intent should have a non-sequential nonce, so getting a random nonce
+                // again means that Relay still doesn't have the latest state where account is
+                // initialized
+                } else if previous_nonce.is_some() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue 'outer;
-                } else {
-                    previous_nonce = Some(nonce);
                 }
+
+                previous_nonce = Some(nonce);
 
                 if !quote.fee_token_deficit.is_zero() {
                     return Ok(());
