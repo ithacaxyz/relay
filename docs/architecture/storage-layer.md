@@ -1,6 +1,6 @@
 # Storage Layer Architecture
 
-The relay uses a sophisticated storage system with PostgreSQL as the primary backend and in-memory implementations for testing. This document covers the database schema, storage abstractions, and data management patterns.
+The relay uses a storage system with PostgreSQL as the primary backend and in-memory implementations for testing. This document covers the database schema, storage abstractions, and data management patterns.
 
 ## Storage Architecture Overview
 

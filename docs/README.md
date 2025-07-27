@@ -25,9 +25,8 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 - **[RPC API Reference](apis/rpc-reference.md)** - Complete JSON-RPC endpoint documentation
 - **[Internal APIs](apis/internal-apis.md)** - Service interfaces and internal communication
 
-### 🔧 Troubleshooting
-- **[Common Issues](troubleshooting/common-issues.md)** - Frequent problems and solutions
-- **[Debugging Guide](troubleshooting/debugging.md)** - Tools and techniques for debugging
+### 🔧 Operations
+- **[Configuration Reference](development/getting-started.md#configuration)** - Configuration options and examples
 
 ### 📊 Diagrams
 - **[Bundle State Machine](diagrams/bundle_state_machine.svg)** - Cross-chain bundle processing states

@@ -437,7 +437,7 @@ docker run --rm relay:latest make test
 
 - **[Getting Started](getting-started.md)** - Development environment setup
 - **[Contributing](contributing.md)** - Code quality and PR guidelines
-- **[Troubleshooting](../troubleshooting/common-issues.md)** - Common testing issues
+- **[Configuration](getting-started.md#configuration)** - Setup and configuration options
 
 ---
 

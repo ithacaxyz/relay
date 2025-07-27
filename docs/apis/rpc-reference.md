@@ -549,5 +549,5 @@ curl -X POST http://localhost:8323 \
 ## Related Documentation
 
 - **[RPC Endpoints](../architecture/rpc-endpoints.md)** - Implementation details
-- **[Error Handling](../troubleshooting/common-issues.md)** - Troubleshooting guide
+- **[Transaction Pipeline](../architecture/transaction-pipeline.md)** - End-to-end transaction processing
 - **[Getting Started](../development/getting-started.md)** - Development setup

@@ -415,19 +415,388 @@ Supports YAML configuration with CLI overrides.
 
 ## Error Handling (`src/error/`)
 
-Comprehensive error handling with context and structured error types.
+Comprehensive error handling with context and structured error types for reliable operation and debugging.
 
-**Error hierarchy** (**Implementation**: `src/error/mod.rs`):
-- **`RelayError`** - Top-level error type
-- **Module errors** - Specific error types per module
-  - `QuoteError` (**Implementation**: `src/error/quote.rs`)
-  - `IntentError` (**Implementation**: `src/error/intent.rs`)
-  - `StorageError` (**Implementation**: `src/error/storage.rs`)
+### Error Hierarchy
 
-**Error handling patterns**:
-- Use `eyre` for error context
-- Structured error responses for RPC
-- Metrics collection on errors
+**Main error type** (**Implementation**: `src/error/mod.rs`):
+
+```rust
+#[derive(Debug, Error)]
+pub enum RelayError {
+    Asset(AssetError),                 // Asset-related errors
+    Auth(AuthError),                   // Authentication/authorization errors
+    Quote(QuoteError),                 // Quote generation/validation errors
+    Intent(IntentError),               // Intent processing errors
+    Keys(KeysError),                   // Cryptographic key errors
+    Storage(StorageError),             // Database/storage errors
+    UnsupportedChain(ChainId),         // Chain not supported
+    UnsupportedOrchestrator(Address),  // Contract not supported
+    InsufficientFunds { required: U256, chain_id: ChainId, asset: Address },
+    Settlement(SettlementError),       // Cross-chain settlement errors
+    // ... additional error variants
+}
+```
+
+### Module-Specific Errors
+
+#### Intent Errors (**Implementation**: `src/error/intent.rs`)
+
+| Error | Description | Recovery |
+|-------|-------------|----------|
+| `MissingSender` | No 'from' address provided | Provide sender address |
+| `MissingKey` | No signing key available | Set up signing key |
+| `SimulationError` | Intent simulation failed | Check call data and state |
+| `InvalidIntentDigest` | Wrong intent digest | Re-generate quote |
+| `PausedOrchestrator` | Orchestrator is paused | Wait for unpause |
+
+#### Quote Errors (**Implementation**: `src/error/quote.rs`)
+
+| Error | Description | Recovery |
+|-------|-------------|----------|
+| `Expired` | Quote TTL exceeded | Request new quote |
+| `InvalidSignature` | Invalid relay signature | Report issue to support |
+| `PriceOutdated` | Price data is stale | Wait for price update |
+| `InsufficientLiquidity` | Not enough liquidity | Try different amount/token |
+
+#### Storage Errors (**Implementation**: `src/error/storage.rs`)
+
+| Error | Description | Recovery |
+|-------|-------------|----------|
+| `ConnectionFailed` | Database connection lost | Check database connectivity |
+| `TransactionFailed` | Database transaction failed | Retry operation |
+| `NotFound` | Record not found | Verify bundle/transaction ID |
+| `ConstraintViolation` | Database constraint violated | Check data integrity |
+
+### Error Context and Tracing
+
+**Error context with `eyre`**:
+
+```rust
+use eyre::{Context, Result};
+
+async fn process_intent(intent: Intent) -> Result<BundleId> {
+    let validated = validate_intent(&intent)
+        .context("Failed to validate intent structure")?;
+    
+    let simulated = simulate_execution(&validated)
+        .context("Intent simulation failed - check call data")?;
+    
+    let bundle_id = create_bundle(simulated)
+        .context("Failed to create execution bundle")?;
+    
+    Ok(bundle_id)
+}
+```
+
+**Structured error responses for RPC**:
+
+```rust
+impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
+    fn from(err: RelayError) -> Self {
+        match err {
+            RelayError::UnsupportedChain(chain_id) => {
+                invalid_params(format!("Chain {} not supported", chain_id))
+            }
+            RelayError::InsufficientFunds { required, asset, chain_id } => {
+                invalid_params(format!(
+                    "Insufficient {} on chain {}: need {}", 
+                    asset, chain_id, required
+                ))
+            }
+            RelayError::Intent(intent_err) => (*intent_err).into(),
+            _ => internal_rpc(err.to_string()),
+        }
+    }
+}
+```
+
+### Error Recovery Patterns
+
+#### Automatic Recovery
+
+**Transaction retry with exponential backoff**:
+
+```rust
+async fn submit_transaction_with_retry(
+    tx: Transaction, 
+    max_retries: u32
+) -> Result<TxHash> {
+    let mut delay = Duration::from_secs(1);
+    
+    for attempt in 0..max_retries {
+        match submit_transaction(&tx).await {
+            Ok(hash) => return Ok(hash),
+            Err(RelayError::RpcError(_)) if attempt < max_retries - 1 => {
+                tracing::warn!("RPC error, retrying in {:?}", delay);
+                tokio::time::sleep(delay).await;
+                delay *= 2; // Exponential backoff
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    
+    Err(RelayError::InternalError("Max retries exceeded".into()))
+}
+```
+
+**Graceful degradation for price oracle failures**:
+
+```rust
+async fn get_token_price(&self, token: Address) -> Result<f64> {
+    // Try primary price source
+    if let Ok(price) = self.primary_oracle.get_price(token).await {
+        return Ok(price);
+    }
+    
+    // Fall back to cached price if available
+    if let Some(cached) = self.price_cache.get(&token) {
+        if cached.age() < Duration::from_hours(1) {
+            tracing::warn!("Using cached price for {}", token);
+            return Ok(cached.price);
+        }
+    }
+    
+    // Use configured constant rate as last resort
+    if let Some(rate) = self.config.quote.constant_rate {
+        tracing::warn!("Using constant rate for {}", token);
+        return Ok(rate);
+    }
+    
+    Err(RelayError::InternalError("No price available".into()))
+}
+```
+
+#### Manual Recovery
+
+**Bundle state recovery**:
+
+```rust
+// Recover stuck bundles
+async fn recover_stuck_bundles(&self) -> Result<()> {
+    let stuck_bundles = self.storage
+        .get_bundles_by_status(BundleStatus::SourceQueued)
+        .await?
+        .into_iter()
+        .filter(|b| b.created_at < Utc::now() - Duration::from_secs(300))
+        .collect::<Vec<_>>();
+    
+    for bundle in stuck_bundles {
+        tracing::warn!("Recovering stuck bundle: {}", bundle.id);
+        
+        // Check actual transaction status
+        let tx_status = self.check_transaction_status(&bundle).await?;
+        
+        match tx_status {
+            TransactionStatus::Confirmed => {
+                self.transition_bundle_state(bundle.id, BundleStatus::SourceConfirmed).await?;
+            }
+            TransactionStatus::Failed => {
+                self.initiate_refund(bundle.id).await?;
+            }
+            TransactionStatus::Pending => {
+                // Re-submit with higher gas price
+                self.escalate_transaction_fee(&bundle).await?;
+            }
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Error Monitoring and Alerting
+
+**Error metrics collection**:
+
+```rust
+use metrics::{counter, histogram};
+
+impl ErrorHandler {
+    pub fn record_error(&self, error: &RelayError) {
+        // Count errors by type
+        counter!("relay.errors.total", "type" => error.error_type()).increment(1);
+        
+        // Track error severity
+        match error.severity() {
+            ErrorSeverity::Critical => {
+                counter!("relay.errors.critical").increment(1);
+                self.send_alert(error).await;
+            }
+            ErrorSeverity::Warning => {
+                counter!("relay.errors.warning").increment(1);
+            }
+            ErrorSeverity::Info => {
+                counter!("relay.errors.info").increment(1);
+            }
+        }
+    }
+}
+```
+
+**Health check integration**:
+
+```rust
+// Include error rates in health checks
+async fn health_check(&self) -> HealthStatus {
+    let error_rate = self.metrics.get_error_rate_last_5min();
+    let critical_errors = self.metrics.get_critical_errors_last_hour();
+    
+    if critical_errors > 0 {
+        return HealthStatus::Unhealthy("Critical errors detected".into());
+    }
+    
+    if error_rate > 0.05 { // 5% error rate threshold
+        return HealthStatus::Degraded(format!("High error rate: {:.2}%", error_rate * 100.0));
+    }
+    
+    HealthStatus::Healthy
+}
+```
+
+### Debugging and Troubleshooting
+
+#### Log Analysis
+
+**Structured logging for errors**:
+
+```rust
+use tracing::{error, warn, info, instrument};
+
+#[instrument(skip(self), fields(bundle_id = %bundle_id))]
+async fn process_bundle(&self, bundle_id: BundleId) -> Result<()> {
+    info!("Starting bundle processing");
+    
+    match self.execute_bundle(bundle_id).await {
+        Ok(()) => {
+            info!("Bundle processing completed successfully");
+        }
+        Err(e) => {
+            error!(
+                error = %e,
+                error_chain = ?e.chain().collect::<Vec<_>>(),
+                "Bundle processing failed"
+            );
+            
+            // Include additional context for debugging
+            let bundle = self.storage.get_bundle(bundle_id).await?;
+            error!(
+                bundle_status = ?bundle.status,
+                bundle_age = ?(Utc::now() - bundle.created_at),
+                "Bundle state information"
+            );
+        }
+    }
+    
+    Ok(())
+}
+```
+
+#### Common Error Patterns
+
+**Intent simulation failures**:
+
+```bash
+# Check for simulation errors in logs
+grep "simulation failed" relay.log
+
+# Common causes:
+# - Insufficient balance for token transfers
+# - Contract function reverts
+# - Gas limit too low
+# - State changes between quote and execution
+```
+
+**Cross-chain settlement issues**:
+
+```bash
+# Monitor LayerZero message status
+grep "layerzero.*failed" relay.log
+
+# Check settlement timeouts
+grep "settlement.*timeout" relay.log
+
+# Verify escrow contract state
+cast call $ESCROW_ADDRESS "getLockedFunds(bytes32)" $BUNDLE_ID
+```
+
+**Database connection issues**:
+
+```bash
+# Check database connectivity
+psql $DATABASE_URL -c "SELECT 1"
+
+# Monitor connection pool status
+curl http://localhost:8323/health/database
+
+# Check for connection pool exhaustion
+grep "connection pool" relay.log
+```
+
+### Error Prevention
+
+**Input validation patterns**:
+
+```rust
+// Validate intent before processing
+fn validate_intent(intent: &Intent) -> Result<(), IntentError> {
+    // Check for empty calls
+    if intent.calls.is_empty() {
+        return Err(IntentError::EmptyCalls);
+    }
+    
+    // Validate call targets
+    for call in &intent.calls {
+        if call.to == Address::ZERO {
+            return Err(IntentError::InvalidCallTarget);
+        }
+    }
+    
+    // Check gas limits
+    let total_gas: u64 = intent.calls.iter()
+        .map(|call| call.gas_limit.unwrap_or(21000))
+        .sum();
+    
+    if total_gas > MAX_INTENT_GAS_LIMIT {
+        return Err(IntentError::GasLimitExceeded);
+    }
+    
+    Ok(())
+}
+```
+
+**Circuit breaker pattern for external services**:
+
+```rust
+struct CircuitBreaker {
+    failure_count: AtomicU32,
+    last_failure: Mutex<Option<Instant>>,
+    failure_threshold: u32,
+    timeout: Duration,
+}
+
+impl CircuitBreaker {
+    async fn call<F, T>(&self, operation: F) -> Result<T>
+    where F: Future<Output = Result<T>>
+    {
+        // Check if circuit is open
+        if self.is_open().await {
+            return Err(RelayError::ServiceUnavailable);
+        }
+        
+        match operation.await {
+            Ok(result) => {
+                self.reset();
+                Ok(result)
+            }
+            Err(e) => {
+                self.record_failure().await;
+                Err(e)
+            }
+        }
+    }
+}
+```
 
 ## Metrics and Observability (`src/metrics/`)
 
