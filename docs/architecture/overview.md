@@ -2,60 +2,9 @@
 
 The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 accounts that provides fee abstraction and intent-based execution.
 
-## Porto Ecosystem Architecture
+## Porto Ecosystem Context
 
-The relay operates within the broader Porto ecosystem, which consists of three main layers:
-
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        App[dApp/Frontend]
-        SDK[Porto SDK]
-        Wagmi[Wagmi Integration]
-        Browser[Browser Extension]
-    end
-    
-    subgraph "Relay Layer (This Repository)"
-        RPC[RPC Server]
-        Quote[Quote Engine]
-        TX[Transaction Processor]
-        Monitor[Status Monitor]
-        Cross[Cross-Chain Coordinator]
-    end
-    
-    subgraph "Blockchain Layer"
-        ORCH[Orchestrator Contract]
-        ACC[Account Implementation]
-        SIM[Simulator Contract]
-        ESC[Escrow Contract]
-        FUND[Funder Contract]
-    end
-    
-    subgraph "Infrastructure"
-        DB[(PostgreSQL)]
-        METRICS[Prometheus]
-        LZ[LayerZero Network]
-        ORACLE[Price Oracles]
-    end
-    
-    App --> SDK
-    SDK --> RPC
-    RPC --> Quote
-    RPC --> TX
-    TX --> Monitor
-    TX --> Cross
-    
-    Quote --> ORCH
-    TX --> ORCH
-    Cross --> ESC
-    Cross --> FUND
-    
-    TX --> DB
-    Quote --> ORACLE
-    Cross --> LZ
-    
-    RPC --> METRICS
-```
+The relay operates within the broader Porto ecosystem. For a detailed architectural overview of how the relay integrates with Porto's client layer, blockchain contracts, and infrastructure components, see [Porto Integration Architecture](porto-integration.md#porto-ecosystem-architecture).
 
 ## Design Principles
 
@@ -296,23 +245,9 @@ graph TB
 
 ### 1. RPC Server (`src/rpc/`)
 
-The JSON-RPC server provides the main interface for clients to interact with the relay.
-
-**Key modules**:
-- **`relay.rs`** - Main relay endpoints (`wallet_prepareCalls`, `wallet_sendPreparedCalls`, `wallet_getCallsStatus`)
-- **`account.rs`** - Account management and delegation
-- **`onramp.rs`** - Onramp integration
-
-**Server setup** (**Implementation**: `src/spawn.rs`):
-```rust
-// Creates JSON-RPC server with wallet namespace
-let mut rpc = relay.into_rpc();
-```
-
-**Request handling pattern**:
-1. **Validation** - Request structure and parameters
-2. **Processing** - Business logic execution
-3. **Response** - Structured JSON-RPC response
+The JSON-RPC server provides the main interface for clients. For detailed endpoint documentation and implementation details, see:
+- **[RPC API Reference](../apis/rpc-reference.md)** - Complete API specification
+- **[RPC Endpoints Implementation](rpc-endpoints.md)** - Technical implementation details
 
 ### 2. Transaction Service (`src/transactions/`)
 

@@ -187,18 +187,11 @@ await porto.sendCalls({
 // 4. wallet_getCallsStatus - Monitor execution
 ```
 
-### JSON-RPC API Design
+### JSON-RPC API Integration
 
-The relay exposes a `wallet_*` namespace following EIP-1193 patterns:
-
-**Core Endpoints** (**Implementation**: `src/rpc/relay.rs`):
-
-| Method | Purpose | Lines |
-|--------|---------|-------|
-| `wallet_prepareCalls` | Intent preparation and quoting | 1697-1702 |
-| `wallet_sendPreparedCalls` | Intent execution | 1775-1794 |
-| `wallet_getCallsStatus` | Status monitoring | 1878-1943 |
-| `wallet_getCapabilities` | Feature negotiation | 1580-1620 |
+The relay exposes a `wallet_*` namespace following EIP-1193 patterns. For complete API documentation and implementation details, see:
+- **[RPC API Reference](../apis/rpc-reference.md)** - Full API specification
+- **[RPC Endpoints Implementation](rpc-endpoints.md)** - Technical implementation
 
 ### Quote System Design
 
