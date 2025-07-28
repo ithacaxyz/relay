@@ -6,8 +6,8 @@ use crate::{
     },
     signers::DynSigner,
     types::{
-        CoinRegistry, CoinRegistryKey,
         DelegationProxy::DelegationProxyInstance,
+        FeeTokens,
         IERC20::{self},
         IFunder,
     },
@@ -59,11 +59,11 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
     /// Run all diagnostics.
     pub async fn run(
         self,
-        registry: &CoinRegistry,
+        fee_tokens: &FeeTokens,
         signers: &[DynSigner],
     ) -> Result<ChainDiagnosticsResult> {
         let (contract_diagnostics, balance_diagnostics) =
-            try_join!(self.verify_contracts(signers), self.check_balances(registry, signers))?;
+            try_join!(self.verify_contracts(signers), self.check_balances(fee_tokens, signers))?;
 
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain_id,
@@ -114,7 +114,8 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
     /// - IthacaAccount implementations: Checks code + EIP712 domain name
     /// - Settler (if configured): Simple settler checks EIP712, LayerZero settler only checks code
     /// - LayerZero configuration (if applicable): Validates ULN config for each remote chain
-    /// - SimpleFunder: Checks all signers are registered as gas wallets
+    /// - SimpleFunder: Checks all signers are registered as gas wallets and owner key is correct,
+    ///   if provided
     pub async fn verify_contracts(&self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
@@ -213,6 +214,18 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             }
         );
 
+        // Ensure that the funder owner key is correct, if configured.
+        if let Some(key) = self.config.chain.rebalance_service.as_ref().map(|c| &c.funder_owner_key)
+        {
+            let signer = DynSigner::from_raw(key).await?.address();
+            let owner = IFunder::new(self.config.funder, &self.provider).owner().call().await?;
+            if signer != owner {
+                errors.push(format!(
+                    "Funder owner key {key} does not match configured funder owner {signer}"
+                ));
+            }
+        }
+
         warnings.extend(lz_result.warnings);
         errors.extend(lz_result.errors);
         errors.extend(has_code_errors);
@@ -227,11 +240,26 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
     /// - Interop tokens: Funder must have balance (error if 0)
     pub async fn check_balances(
         &self,
-        registry: &CoinRegistry,
+        fee_tokens: &FeeTokens,
         signers: &[DynSigner],
     ) -> Result<ChainDiagnosticsResult> {
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
+
+        // Ensure we only have a single interop-enabled token of each kind
+        let interop_kinds = fee_tokens
+            .chain_tokens(self.chain_id)
+            .iter()
+            .flat_map(|t| t.iter())
+            .filter(|t| t.interop)
+            .map(|t| t.kind)
+            .collect::<Vec<_>>();
+
+        for kind in &interop_kinds {
+            if interop_kinds.iter().filter(|k| *k == kind).count() > 1 {
+                errors.push(format!("Multiple interop-enabled tokens of kind {kind} found"));
+            }
+        }
 
         // Collect all addresses we need to check with their roles
         let mut all_addresses = signers
@@ -252,20 +280,11 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
 
         // Build multicall to fetch the Funder balance of every token valid for this chain.
         let mut multicall_fee_tokens = self.provider.multicall().dynamic();
-        let tokens = self
-            .config
-            .chain
-            .interop_tokens
+        let tokens = fee_tokens
+            .chain_tokens(self.chain_id)
             .iter()
-            .chain(self.config.chain.fee_tokens.iter())
-            // Right now our token config doesnt differentiate chains. We don't want to query a
-            // token not present in this chain.
-            .filter(|token| {
-                registry
-                    .get(&CoinRegistryKey { chain: self.chain_id, address: Some(**token) })
-                    .is_some()
-            })
-            .map(|a| (*a, AddressRole::FunderContract))
+            .flat_map(|t| t.iter())
+            .map(|token| (token.address, AddressRole::FunderContract))
             .collect::<Vec<_>>();
 
         for (token, _) in &tokens {

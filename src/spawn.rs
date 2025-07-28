@@ -177,12 +177,22 @@ pub async fn try_spawn(
     )
     .await?;
 
+    let fee_tokens = Arc::new(
+        FeeTokens::new(
+            &registry,
+            &config.chain.fee_tokens,
+            &config.chain.interop_tokens,
+            providers.clone(),
+        )
+        .await?,
+    );
+
     // Run pre-flight diagnostics
     if skip_diagnostics {
         warn!("Skipping pre-flight diagnostics.");
     } else {
         info!("Running pre-flight diagnostics.");
-        let report = run_diagnostics(&config, &providers, &signers, &registry).await?;
+        let report = run_diagnostics(&config, &providers, &signers, &fee_tokens).await?;
         report.log();
 
         if report.has_errors() {
@@ -218,16 +228,6 @@ pub async fn try_spawn(
             &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
         );
     }
-
-    let fee_tokens = Arc::new(
-        FeeTokens::new(
-            &registry,
-            &config.chain.fee_tokens,
-            &config.chain.interop_tokens,
-            providers.clone(),
-        )
-        .await?,
-    );
 
     let chains =
         Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;

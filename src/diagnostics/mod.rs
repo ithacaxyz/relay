@@ -6,7 +6,7 @@
 mod chain;
 pub use chain::{ChainDiagnostics, ChainDiagnosticsResult};
 
-use crate::{config::RelayConfig, signers::DynSigner, types::CoinRegistry};
+use crate::{config::RelayConfig, signers::DynSigner, types::FeeTokens};
 use alloy::providers::Provider;
 use eyre::Result;
 use futures_util::future::try_join_all;
@@ -69,7 +69,7 @@ pub async fn run_diagnostics<P: Provider + Clone>(
     config: &RelayConfig,
     providers: &[P],
     signers: &[DynSigner],
-    registry: &CoinRegistry,
+    fee_tokens: &FeeTokens,
 ) -> Result<DiagnosticsReport> {
     let mut report = DiagnosticsReport {
         chains: Vec::new(),
@@ -89,7 +89,7 @@ pub async fn run_diagnostics<P: Provider + Clone>(
         let chain_id = provider.get_chain_id().await?;
         info!("Running diagnostics for chain {} (index {})", chain_id, index);
 
-        ChainDiagnostics::new(provider.clone(), chain_id, config).run(registry, signers).await
+        ChainDiagnostics::new(provider.clone(), chain_id, config).run(fee_tokens, signers).await
     }))
     .await?;
 
