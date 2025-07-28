@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.22", features = [
+alloy = { version = "1.0.23", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -109,7 +109,7 @@ strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.22", features = [
+alloy = { version = "1.0.23", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
