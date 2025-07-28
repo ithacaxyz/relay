@@ -672,8 +672,6 @@ docker run -it --cap-add=SYS_PTRACE --network=host relay:debug bash
 gdb target/profiling/relay
 ```
 
----
-
 ## Related Documentation
 
 - **[Testing Guide](testing.md)** - Comprehensive testing patterns and setup
