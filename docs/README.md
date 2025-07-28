@@ -13,19 +13,12 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 - **[Testing Guide](development/testing.md)** - Unit tests, e2e tests, and testing patterns
 
 ### 🏗️ Architecture
-- **[Porto Integration](architecture/porto-integration.md)** - Ecosystem context and intent-based design principles
 - **[System Overview](architecture/overview.md)** - High-level relay architecture and components  
+- **[Porto Integration](architecture/porto-integration.md)** - Ecosystem context and intent-based design principles
 - **[RPC Endpoints](architecture/rpc-endpoints.md)** - JSON-RPC API implementation details
 - **[Transaction Pipeline](architecture/transaction-pipeline.md)** - End-to-end transaction processing flow
 - **[Storage Layer](architecture/storage-layer.md)** - Database schema and storage abstractions
 - **[Cross-Chain Operations](architecture/cross-chain.md)** - Multichain intent and settlement implementation
-
-### 🔐 Security
-- **[Security Overview](security/overview.md)** - Comprehensive security architecture and threat model
-- **[Nonce Protection](security/nonce-protection.md)** - Multi-layered nonce system preventing replay attacks
-- **[Replay Prevention](security/replay-prevention.md)** - Comprehensive replay attack mitigation strategies
-- **[Intent Nonces](security/intent-nonces.md)** - 256-bit nonce specification and sequence management
-- **[Cross-Chain Security](security/cross-chain-security.md)** - Atomic execution and settlement security
 
 ### 📡 APIs
 - **[RPC API Reference](apis/rpc-reference.md)** - Complete JSON-RPC endpoint documentation
