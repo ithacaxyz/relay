@@ -17,9 +17,9 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        AssetDiffs, AssetMetadata, AssetType, Call, Escrow, FeeTokens, FundSource,
-        FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash,
-        KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
+        FundSource, FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -225,7 +225,7 @@ impl Relay {
         chain_id: ChainId,
         prehash: bool,
         context: FeeEstimationContext,
-    ) -> Result<(AssetDiffs, Quote), RelayError> {
+    ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
@@ -414,7 +414,7 @@ impl Relay {
         // pay for the intent execution or not is determined later and communicated to the
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
-        let (asset_diff, sim_result) = orchestrator
+        let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
@@ -469,7 +469,16 @@ impl Relay {
             fee_token_deficit,
         };
 
-        Ok((asset_diff, quote))
+        // Create ChainAssetDiffs with populated fiat values including fee
+        let chain_asset_diffs = ChainAssetDiffs::new(
+            asset_diffs,
+            &quote,
+            &self.inner.fee_tokens,
+            &self.inner.price_oracle,
+        )
+        .await?;
+
+        Ok((chain_asset_diffs, quote))
     }
 
     #[instrument(skip_all)]
@@ -853,7 +862,7 @@ impl Relay {
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: IntentKind,
-    ) -> Result<(AssetDiffs, Quote), RelayError> {
+    ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
         let Some(request_key) = &request.key else {
             return Err(IntentError::MissingKey.into());
@@ -960,7 +969,7 @@ impl Relay {
                 signature: Bytes::new(),
             };
 
-            (AssetDiffs(vec![]), PrepareCallsContext::with_precall(precall))
+            (AssetDiffResponse::default(), PrepareCallsContext::with_precall(precall))
         } else {
             let (asset_diffs, quotes) = self
                 .build_quotes(&request, calls, nonce, maybe_stored.as_ref(), intent_kind)
@@ -1010,7 +1019,7 @@ impl Relay {
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
         intent_kind: Option<IntentKind>,
-    ) -> RpcResult<(AssetDiffs, Quotes)> {
+    ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         // todo(onbjerg): this is incorrect. we still want to also do multichain if you do not have
         // enough funds to execute the intent, regardless of whether the user requested any funds
         // specifically. i'm too dumb to figure out the exact call graph of this right now, so will
@@ -1165,7 +1174,7 @@ impl Relay {
         calls: Vec<Call>,
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
-    ) -> RpcResult<(AssetDiffs, Quotes)> {
+    ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let source_fee = request.capabilities.meta.fee_token == requested_asset;
 
@@ -1316,7 +1325,7 @@ impl Relay {
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
             // Simulate multi-chain
-            let (asset_diffs, new_quote) = self
+            let (output_asset_diffs, new_quote) = self
                 .build_intent(
                     request,
                     maybe_stored,
@@ -1378,17 +1387,25 @@ impl Relay {
                 ))
                 .await?;
 
-                // todo: assetdiffs should change
+                // Collect all quotes and build aggregated asset diff response
+                let mut all_quotes = Vec::with_capacity(funding_intents.len() + 1);
+                let mut all_asset_diffs = AssetDiffResponse::default();
+
+                // Process source chains
+                for resp in funding_intents {
+                    all_quotes
+                        .extend(resp.context.quote().expect("should exist").ty().quotes.clone());
+                    all_asset_diffs.extend(resp.capabilities.asset_diff);
+                }
+
+                // Add output chain
+                all_quotes.push(output_quote);
+                all_asset_diffs.push(request.chain_id, output_asset_diffs);
+
                 return Ok((
-                    asset_diffs,
+                    all_asset_diffs,
                     Quotes {
-                        quotes: funding_intents
-                            .iter()
-                            .flat_map(|resp| {
-                                resp.context.quote().expect("should exist").ty().quotes.clone()
-                            })
-                            .chain(std::iter::once(output_quote))
-                            .collect(),
+                        quotes: all_quotes,
                         ttl: SystemTime::now()
                             .checked_add(self.inner.quote_config.ttl)
                             .expect("should never overflow"),
@@ -1457,7 +1474,7 @@ impl Relay {
         calls: Vec<Call>,
         nonce: U256,
         intent_kind: Option<IntentKind>,
-    ) -> Result<(AssetDiffs, Quotes), RelayError> {
+    ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
             .build_intent(
                 request,
@@ -1469,7 +1486,7 @@ impl Relay {
             .await?;
 
         Ok((
-            asset_diffs,
+            AssetDiffResponse::new(request.chain_id, asset_diffs),
             Quotes {
                 quotes: vec![quote],
                 ttl: SystemTime::now()

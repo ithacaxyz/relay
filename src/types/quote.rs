@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub type SignedQuotes = Signed<Quotes>;
 
 /// A set of quotes from the relay with a set of intents.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quotes {
     /// A quote for each intent.
@@ -107,7 +107,7 @@ impl Sealable for Quotes {
 }
 
 /// A quote from a relay for a given [`Intent`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
     /// The chain ID.

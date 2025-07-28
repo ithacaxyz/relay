@@ -4,12 +4,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetMetadata {
     /// Asset name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Asset symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
     /// TokenURI if it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
     /// Asset decimals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decimals: Option<u8>,
 }
 
