@@ -123,7 +123,6 @@ docker-compose exec frontend npm run debug
 ```
 
 **Integration testing with Docker Compose**:
-- Jake and the frontend team use this setup to develop and integrate new relay features
 - Provides isolated networking environment for multi-service debugging
 - Enables consistent testing across different development machines
 - Facilitates debugging of relay-frontend communication patterns
