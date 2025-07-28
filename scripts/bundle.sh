@@ -49,9 +49,12 @@ case $status in
     *) human_status="Unknown";;
 esac
 
+settlement_status=$(echo "${bundle}" | jq -r '.capabilities.interopStatus')
+
 echo "Bundle ${bundle_id} on ${rpc_url}"
 echo
 echo "Bundle status: ${human_status} (${status})"
+echo "Settlement status: ${settlement_status}"
 echo "Receipts:"
 
 for receipt in $(echo "${bundle}" | jq -c '.receipts[]'); do
