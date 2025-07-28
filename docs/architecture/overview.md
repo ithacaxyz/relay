@@ -127,78 +127,84 @@ graph TB
     M --> GS
 ```
 
-### Step-by-Step Implementation Details
+### Step-by-Step Data Flow
 
-#### Steps 1-2: Intent Creation and SDK Processing
-**Client Layer Processing**:
-- User creates high-level intent object
-- SDK validates parameters and serializes to JSON-RPC
+#### Step 1: Intent Creation (User/SDK)
+You (or your app) define the intent in the Porto SDK as a JavaScript object (e.g., `{ calls: [...], feeToken: 'USDC' }`). The SDK validates basics (e.g., addresses) and serializes it into a JSON payload.
 
-#### Steps 3-8: Preparation Phase (`wallet_prepareCalls`)
+**Data**: High-level params → JSON object
 
-**Step 3**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs`)
+#### Step 2: SDK Sends Preparation Request to Relay
+SDK makes a JSON-RPC call to the relay's `wallet_prepareCalls` endpoint (HTTP/WebSocket).
 
-**Step 4**: Request Validation (**Implementation**: `src/rpc/relay.rs`)
-- Call structure validation  
-- Chain support verification
-- Account delegation checking
+**Data**: JSON payload (intent params) → Relay RPC server  
+**Trustless**: Relay can't execute yet
 
-**Step 5**: Strategy Determination (**Implementation**: `src/rpc/relay.rs`)
-- Single-chain vs multichain analysis
-- Fund sourcing across chains (**Implementation**: `src/rpc/relay.rs`)
-- Execution plan generation
+#### Step 3: Relay Validates Request (**Implementation**: `src/rpc/relay.rs`)
+Relay receives and validates the intent (e.g., supported chain/token, account delegation via EIP-7702). If invalid, returns error.
 
-**Step 6**: Simulation Execution (**Implementation**: `src/types/orchestrator.rs`)
-- Off-chain contract simulation
-- Asset diff calculation (**Implementation**: `src/asset.rs`)
-- Gas usage prediction
+**Data**: JSON → Internal structs (e.g., `PrepareCallsParams` in Rust)
 
-**Step 7**: Price Oracle Consultation (**Implementation**: `src/price/oracle.rs`)
-- Token price fetching from CoinGecko
-- ETH-denominated conversion
-- Fee calculation in payment token
+#### Step 4: Relay Determines Execution Strategy (**Implementation**: `src/rpc/relay.rs`)
+Relay analyzes if it's single- or multi-chain (e.g., check balances across chains for funding needs).
 
-**Step 8**: Quote Generation (**Implementation**: `src/rpc/relay.rs`)
-- Quote signing with relay's private key
-- EIP-712 digest calculation (**Implementation**: `src/types/intent.rs`)
-- TTL and expiration setting
+**Data**: Params → Strategy (e.g., funding plan if cross-chain)
 
-#### Step 9: User Signature
-**Client-Side Action**:
-- User reviews quote and asset diffs
-- Signs EIP-712 digest with wallet (MetaMask, etc.)
+#### Step 5: Relay Fetches Prices from Oracles (**Implementation**: `src/price/oracle.rs`)
+**Parallel**: Relay queries price oracles (e.g., CoinGecko/Chainlink) for token rates (e.g., USDC/ETH).
 
-#### Steps 10-12: Execution Phase (`wallet_sendPreparedCalls`)
+**Data**: API calls → Price data (e.g., `ethPrice: U256`)
 
-**Step 10**: RPC Endpoint Entry (**Implementation**: `src/rpc/relay.rs`)
+#### Step 6: Relay Simulates Execution (**Implementation**: `src/types/orchestrator.rs`)
+Relay calls the off-chain Simulator Contract with state overrides (mock balances). Predicts gas, asset diffs (incoming/outgoing tokens), and outcomes.
 
-**Step 11**: Signature Verification (**Implementation**: `src/rpc/relay.rs`) 
-- Quote expiration checking
-- Quote signature validation
-- User signature assembly
+**Data**: Encoded intent → Simulation results (e.g., `gasUsed`, `AssetDiffs`)
 
-**Step 12**: Transaction Broadcasting (**Implementation**: `src/transactions/signer.rs`)
-- Transaction signing with relay's key
-- Network broadcast via provider
-- Transaction service coordination (**Implementation**: `src/transactions/service.rs`)
+#### Step 7: Relay Generates Quote (**Implementation**: `src/rpc/relay.rs`)
+Combines simulation + prices into a signed quote (costs, TTL). Includes digest (EIP-712 hash) for signing.
 
-#### Step 13: Blockchain Execution
-**Smart Contract Processing**:
-- Orchestrator validates intent and signatures
-- Processes payments and executes calls atomically
-- Emits execution events for monitoring
+**Data**: Results → Signed Quote object + digest
 
-#### Steps 14-15: Monitoring Phase
+#### Step 8: Relay Returns Quote to SDK
+Relay sends back the quote, digest, typed data, and previews (e.g., asset diffs).
 
-**Step 14**: Status Monitoring (**Implementation**: `src/transactions/monitor.rs`)
-- Transaction confirmation tracking
-- Database status updates (**Implementation**: `src/storage/pg.rs`)
-- Event log parsing
+**Data**: Internal response → JSON RPC result
 
-**Step 15**: Status Retrieval (**Implementation**: `src/rpc/relay.rs`)
-- Bundle status aggregation
-- Receipt processing
-- Final status determination
+#### Step 9: SDK Prompts User for Signature
+SDK displays quote/preview and requests signature (e.g., via wallet like MetaMask). User signs the EIP-712 digest.
+
+**Data**: Digest → Signature (e.g., Hex string)  
+**Trustless**: Signature binds relay to exact intent
+
+#### Step 10: SDK Submits Signed Intent to Relay (**Implementation**: `src/rpc/relay.rs`)
+SDK sends the signed prepared intent via `wallet_sendPreparedCalls`.
+
+**Data**: Signature + context → JSON RPC payload
+
+#### Step 11: Relay Verifies Signature and Quote (**Implementation**: `src/rpc/relay.rs`)
+Relay checks signature validity, quote expiration, and nonce.
+
+**Data**: Payload → Verified intent
+
+#### Step 12: Relay Builds and Broadcasts Transaction (**Implementation**: `src/transactions/signer.rs`)
+Relay constructs the on-chain transaction (e.g., calls Orchestrator Contract) and broadcasts to the blockchain. For multi-chain: Locks funds in Escrow, sends LayerZero messages.
+
+**Data**: Verified intent → Raw transaction (e.g., with gas sponsored by relay)
+
+#### Step 13: Blockchain/Contracts Execute
+Orchestrator validates (nonce, sig, permissions), processes payments, executes calls atomically. Emits events (e.g., `IntentExecuted`). For cross-chain: LayerZero verifies messages; Escrow releases/refunds funds.
+
+**Data**: Tx → Receipt + logs
+
+#### Step 14: Relay Monitors Execution (**Implementation**: `src/transactions/monitor.rs`)
+Relay polls blockchain for status (pending → confirmed/failed) and updates internal storage (e.g., PostgreSQL).
+
+**Data**: Tx hash → Status updates
+
+#### Step 15: SDK/User Monitors Status (**Implementation**: `src/rpc/relay.rs`)
+You poll via `wallet_getCallsStatus` (or SDK hooks).
+
+**Data**: Bundle ID → Final status (e.g., receipt, block number)
 
 ## High-Level Architecture
 
