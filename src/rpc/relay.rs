@@ -72,11 +72,11 @@ use crate::{
         Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
-            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, GetKeysParameters,
-            PrepareCallsParameters, PrepareCallsResponse, PrepareCallsResponseCapabilities,
-            PrepareUpgradeAccountParameters, SendPreparedCallsParameters,
-            SendPreparedCallsResponse, UpgradeAccountParameters, VerifySignatureParameters,
-            VerifySignatureResponse,
+            AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
+            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
+            SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
+            VerifySignatureParameters, VerifySignatureResponse,
         },
     },
 };
@@ -2010,6 +2010,16 @@ impl RelayApiServer for Relay {
             CallStatusCode::Confirmed
         };
 
+        let capabilities = if tx_statuses.len() > 1 {
+            self.inner
+                .storage
+                .get_interop_status(id)
+                .await?
+                .map(|status| CallsStatusCapabilities { interop_status: Some(status) })
+        } else {
+            None
+        };
+
         Ok(CallsStatus {
             id,
             status,
@@ -2025,6 +2035,7 @@ impl RelayApiServer for Relay {
                     transaction_hash: receipt.transaction_hash,
                 })
                 .collect(),
+            capabilities,
         })
     }
 

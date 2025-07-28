@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
+    storage::BundleStatus,
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
         KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
@@ -569,6 +570,18 @@ pub struct CallsStatus {
     pub status: CallStatusCode,
     /// The receipts for the call bundle.
     pub receipts: Vec<CallReceipt>,
+    /// Optional capabilities for the call bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<CallsStatusCapabilities>,
+}
+
+/// Capabilities for call status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallsStatusCapabilities {
+    /// Interop bundle status if this is an interop bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interop_status: Option<BundleStatus>,
 }
 
 #[cfg(test)]

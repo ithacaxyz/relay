@@ -13,7 +13,7 @@ use alloy::{rpc::types::Filter, sol_types::SolEvent};
 use eyre::Result;
 use relay::{
     rpc::RelayApiClient,
-    storage::{BundleStatus, StorageApi},
+    storage::StorageApi,
     types::{IEscrow, rpc::GetAssetsParameters},
 };
 use tokio::time::{Duration, sleep};
@@ -76,17 +76,8 @@ async fn test_multichain_layerzero_settlement() -> Result<()> {
         );
     }
 
-    // Verify the bundle status is successful
-    let finished_bundle =
-        setup.env.relay_handle.storage.get_finished_interop_bundle(bundle_id).await?;
-
-    let bundle_with_status = finished_bundle.expect("Bundle should be in finished_bundles table");
-    assert_eq!(
-        bundle_with_status.status,
-        BundleStatus::Done,
-        "Bundle should have Done status, but got: {:?}",
-        bundle_with_status.status
-    );
+    let status = setup.env.relay_endpoint.get_calls_status(bundle_id).await?;
+    assert!(status.capabilities.unwrap().interop_status.unwrap().is_done());
 
     Ok(())
 }
