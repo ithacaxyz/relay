@@ -823,6 +823,32 @@ impl StorageApi for PgStorage {
         Ok(row.and_then(|r| r.status))
     }
 
+    async fn get_finished_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+    ) -> Result<Option<BundleWithStatus>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT bundle_id, status as "status: BundleStatus", bundle_data, created_at
+            FROM finished_bundles
+            WHERE bundle_id = $1
+            "#,
+            bundle_id.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let bundle: InteropBundle = serde_json::from_value(row.bundle_data)
+            .map_err(|e| eyre::eyre!("Failed to deserialize bundle: {}", e))?;
+
+        Ok(Some(BundleWithStatus { bundle, status: row.status }))
+    }
+
     async fn store_pending_refund(
         &self,
         bundle_id: BundleId,

@@ -175,6 +175,13 @@ impl StorageApi for RelayStorage {
         self.inner.get_interop_status(bundle_id).await
     }
 
+    async fn get_finished_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+    ) -> api::Result<Option<BundleWithStatus>> {
+        self.inner.get_finished_interop_bundle(bundle_id).await
+    }
+
     async fn store_pending_refund(
         &self,
         bundle_id: BundleId,

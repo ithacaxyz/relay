@@ -141,6 +141,12 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets the interop status for a bundle by checking both pending and finished tables.
     async fn get_interop_status(&self, bundle_id: BundleId) -> Result<Option<BundleStatus>>;
 
+    /// Gets a finished interop bundle by ID.
+    async fn get_finished_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+    ) -> Result<Option<BundleWithStatus>>;
+
     /// Stores a pending refund for a bundle with the maximum refund timestamp and atomically
     /// updates the bundle status.
     async fn store_pending_refund(
