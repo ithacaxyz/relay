@@ -672,6 +672,37 @@ docker run -it --cap-add=SYS_PTRACE --network=host relay:debug bash
 gdb target/profiling/relay
 ```
 
+## Distributed Tracing and Latency Analysis
+
+### Grafana and Tempo Setup
+
+**Access tracing data**:
+1. Go to Grafana in the **infra repository**
+2. Focus on **ic-1** instance for relay tracing  
+3. Select **Tempo** data source
+4. Use **Span Tags** filtering with `rpc.method`
+
+### Key Span Tags for Filtering
+
+- `rpc.method = "wallet_prepareCalls"` - Intent preparation requests
+- `rpc.method = "wallet_sendPreparedCalls"` - Intent submission requests  
+- `rpc.method = "wallet_getCallsStatus"` - Status query requests
+- `chain.id` - Filter by specific blockchain (1, 42161, 137, etc.)
+- `bundle_id` - Track complete cross-chain execution flows
+
+### Instrumentation
+
+**Add tracing to code**: Use the `#[instrument]` macro from the tracing crate to automatically create spans and record timing data.
+
+**Alloy provider instrumentation**: Blockchain interactions (`eth_call`, `eth_sendRawTransaction`, `eth_getTransactionReceipt`, etc.) are automatically traced.
+
+### Common Analysis Patterns
+
+1. **Request Latency**: Filter by RPC method to see response time breakdowns
+2. **Cross-Chain Timing**: Search by `bundle_id` to view complete multi-chain execution timelines
+3. **Database Performance**: Filter by `storage.operation` to identify slow queries
+4. **Provider Calls**: Analyze blockchain interaction latencies across different chains
+
 ## Related Documentation
 
 - **[Testing Guide](testing.md)** - Comprehensive testing patterns and setup
