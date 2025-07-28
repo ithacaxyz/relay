@@ -11,6 +11,7 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 ### 🚀 Development
 - **[Getting Started](development/getting-started.md)** - Set up your development environment
 - **[Testing Guide](development/testing.md)** - Unit tests, e2e tests, and testing patterns
+- **[Debugging Guide](development/debugging.md)** - Debugging tools, Anvil traces, Cast CLI, and troubleshooting
 
 ### 🏗️ Architecture
 - **[System Overview](architecture/overview.md)** - High-level relay architecture and components  
