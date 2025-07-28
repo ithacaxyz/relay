@@ -30,25 +30,6 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 ### 📊 Diagrams
 - **[Bundle State Machine](diagrams/bundle_state_machine.svg)** - Cross-chain bundle processing states
 
-## Code Reference Convention
-
-This documentation uses **file:line** references to actual code instead of copying code snippets. This ensures documentation stays up-to-date as the codebase evolves.
-
-**Example format**:
-```markdown
-**Implementation**: `src/rpc/relay.rs`
-**Related types**: `src/types/rpc/calls.rs`
-```
-
-When code moves or changes, simply update the line numbers rather than maintaining duplicate code blocks.
-
-## Development Workflow
-
-1. **Setup**: Follow [Getting Started](development/getting-started.md)
-2. **Code**: Use patterns from [CLAUDE.md](../CLAUDE.md)
-3. **Test**: See [Testing Guide](development/testing.md) 
-4. **Contribute**: Follow [Contributing Guidelines](../CLAUDE.md#contributing)
-
 ## External Resources
 
 - **[Porto Documentation](https://github.com/ithacaxyz/porto)** - Client SDK and user-facing documentation
