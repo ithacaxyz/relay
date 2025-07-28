@@ -284,6 +284,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             .chain_tokens(self.chain_id)
             .iter()
             .flat_map(|t| t.iter())
+            .filter(|t| !t.address.is_zero())
             .map(|token| (token.address, AddressRole::FunderContract))
             .collect::<Vec<_>>();
 
