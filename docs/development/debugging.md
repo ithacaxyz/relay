@@ -99,9 +99,96 @@ TEST_EXTERNAL_ANVIL_2="http://localhost:8547" \
 cargo test test_cross_chain_funding
 ```
 
+## Frontend Development Debugging
+
+### Docker Compose Setup
+
+The frontend team uses Docker Compose for local development and integration testing, which provides a consistent environment for debugging new relay features.
+
+**Docker Compose workflow**:
+```bash
+# Start the development environment
+docker-compose up -d
+
+# View logs from all services
+docker-compose logs -f
+
+# View specific service logs
+docker-compose logs -f relay
+docker-compose logs -f frontend
+
+# Execute commands in running containers
+docker-compose exec relay bash
+docker-compose exec frontend npm run debug
+```
+
+**Integration testing with Docker Compose**:
+- Jake and the frontend team use this setup to develop and integrate new relay features
+- Provides isolated networking environment for multi-service debugging
+- Enables consistent testing across different development machines
+- Facilitates debugging of relay-frontend communication patterns
+
+### Stress Testing Scripts
+
+The team maintains stress testing scripts to validate relay performance under load conditions.
+
+**Running stress tests**:
+```bash
+# Execute stress testing suite
+./scripts/stress-test.sh
+
+# Run specific stress test scenarios
+./scripts/stress-test.sh --scenario heavy-load
+./scripts/stress-test.sh --scenario multi-chain
+./scripts/stress-test.sh --scenario concurrent-intents
+
+# Monitor system resources during stress tests
+docker stats
+htop
+```
+
+**Common stress testing issues**:
+- **Token-related errors**: Often occur under high transaction volume
+- **Contract state conflicts**: Multiple concurrent operations on same contracts
+- **Resource exhaustion**: Connection pool limits, memory usage spikes
+
 ## Cast CLI Integration
 
 [Cast](https://book.getfoundry.sh/cast/) is an essential tool for interacting with blockchain nodes and debugging contract state.
+
+### Cast Limitations and Workarounds
+
+**Known Cast limitations**:
+- `cast call --trace` sometimes fails on `eth_call` and `estimate_gas` operations
+- Cannot debug complex multi-step transactions that fail during gas estimation
+- Limited support for debugging failed state changes in complex contract interactions
+
+**Workarounds for Cast limitations**:
+```bash
+# When cast --trace fails, use Anvil traces instead
+anvil --print-traces --port 8545 &
+
+# For failed eth_call operations, use direct RPC calls
+curl -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "eth_call",
+    "params": [{"to": "'$CONTRACT'", "data": "'$CALLDATA'"}, "latest"],
+    "id": 1
+  }' | jq
+
+# Debug transaction simulation with custom gas limit
+cast call $CONTRACT "method()" $PARAMS \
+  --gas-limit 1000000 \
+  --from $CALLER \
+  --rpc-url http://localhost:8545
+```
+
+**Contributing Cast improvements**:
+- When encountering Cast limitations, consider contributing fixes to the Foundry team
+- Open issues with reproduction steps and expected behavior
+- Stay focused on relay development while identifying opportunities for cross-functional contribution
 
 ### Basic Cast Commands
 
@@ -502,6 +589,45 @@ psql -c "SELECT pid, now() - pg_stat_activity.query_start AS duration, query
          WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes';"
 ```
 
+### Chain State Replication Issues
+
+**Symptoms**: Tests fail with unexpected contract state or "execution reverted" errors that work on mainnet
+**Root cause**: Local test environments may not perfectly replicate the exact chain state from production
+
+**Debugging approach**:
+```bash
+# 1. Log request parameters to understand what the client is trying to do
+grep "request.*params" relay.log
+
+# 2. Use cast run-transaction to debug the exact transaction that failed
+TX_HASH="0x..." # The failing transaction hash from mainnet
+cast run-transaction $TX_HASH --rpc-url $MAINNET_RPC_URL --debug
+
+# 3. Use cast call --trace when available
+cast call $CONTRACT "method()" $PARAMS \
+  --trace \
+  --fork-url $MAINNET_RPC_URL \
+  --fork-block-number $SPECIFIC_BLOCK
+
+# 4. When cast fails, fall back to direct debugging
+# Use Anvil with mainnet fork at specific block
+anvil --fork-url $MAINNET_RPC_URL \
+      --fork-block-number $BLOCK_NUMBER \
+      --print-traces \
+      --port 8545
+
+# 5. Compare contract state between local and mainnet
+cast call $CONTRACT "getState()" --rpc-url http://localhost:8545
+cast call $CONTRACT "getState()" --rpc-url $MAINNET_RPC_URL
+```
+
+**Chain state debugging checklist**:
+- Verify fork block number matches the failing transaction context
+- Check that all required contracts are deployed at expected addresses
+- Confirm token balances and allowances match expected values
+- Validate that contract storage slots contain expected data
+- Ensure timestamp and block-dependent logic matches mainnet conditions
+
 ## Debugging Tools Integration
 
 ### VS Code Configuration
@@ -595,6 +721,98 @@ docker run -it --cap-add=SYS_PTRACE --network=host relay:debug bash
 # Inside container, run with debugger
 gdb target/profiling/relay
 ```
+
+## Code Review Culture and Contribution Guidelines
+
+### Code Review Philosophy
+
+The team encourages a **constructive code review culture** focused on continuous improvement:
+
+**"Feel free to roast the code"** - Team motto for honest, direct feedback:
+- If something doesn't make sense, speak up and suggest alternatives
+- Question design decisions and propose better approaches
+- Focus on code clarity, maintainability, and performance
+- All feedback should be constructive and aimed at improving the codebase
+
+**Move fast and break things approach**:
+- Current focus is on getting interop working effectively
+- Prioritize functionality while maintaining code quality standards
+- Balance rapid development with sustainable code practices
+- Technical debt should be addressed iteratively, not ignored
+
+### High-Impact First Contributions
+
+**Recommended areas for new contributors**:
+
+1. **Code quality improvements**:
+   ```bash
+   # Look for opportunities to improve existing code
+   grep -r "TODO\|FIXME\|HACK" src/
+   cargo clippy --all-targets --all-features
+   cargo audit
+   ```
+
+2. **Test quality enhancements**:
+   ```bash
+   # Identify areas with low test coverage
+   cargo tarpaulin --out Html
+   
+   # Look for flaky or unclear tests
+   cargo test -- --nocapture | grep -E "(panic|failed|error)"
+   ```
+
+3. **Technical debt reduction**:
+   - Refactor complex functions with high cyclomatic complexity
+   - Remove duplicate code and extract common patterns
+   - Update deprecated dependencies and API usage
+   - Improve error handling and logging consistency
+
+4. **Documentation improvements**:
+   - Add missing inline documentation for public APIs
+   - Create examples for complex usage patterns
+   - Update outdated documentation and examples
+   - Add troubleshooting guides for common issues
+
+### Cross-Functional Opportunities
+
+**Contributing beyond the relay codebase**:
+- **Foundry/Cast improvements**: When debugging reveals Cast limitations, consider contributing fixes upstream
+- **Tooling enhancements**: Improve debugging scripts, monitoring tools, and development workflows
+- **Testing infrastructure**: Enhance e2e test reliability and coverage
+
+**Guidelines for cross-functional work**:
+- Stay focused on relay project priorities while identifying improvement opportunities
+- Open issues with detailed reproduction steps and expected behavior
+- Coordinate with team before starting significant cross-functional work
+- Balance exploration with delivery commitments
+
+### Debugging-Driven Development
+
+**Use debugging insights to improve code quality**:
+
+1. **When you find a bug**, ask:
+   - How could this have been caught earlier?
+   - What tests would have prevented this?
+   - How can we make this class of bug more obvious?
+
+2. **When debugging is difficult**, consider:
+   - Adding better logging and observability
+   - Improving error messages and debugging information
+   - Creating better test scenarios that expose edge cases
+   - Documenting complex interaction patterns
+
+3. **When you solve a debugging challenge**, document:
+   - The debugging process you used
+   - Tools and techniques that were helpful
+   - Common pitfalls and how to avoid them
+   - Improvements to prevent similar issues
+
+### Team Resources
+
+**Porto Roadmap**: [Internal Notion link](https://www.notion.so/Porto-Roadmap-20832f2c3484800aa464eff702355d80)
+- Contains strategic priorities and technical roadmap
+- Use for context when prioritizing debugging efforts and improvements
+- Align contributions with broader ecosystem goals
 
 ---
 
