@@ -13,7 +13,7 @@ use alloy::{rpc::types::Filter, sol_types::SolEvent};
 use eyre::Result;
 use relay::{
     rpc::RelayApiClient,
-    storage::{BundleStatus, StorageApi},
+    storage::StorageApi,
     types::{IEscrow, rpc::GetAssetsParameters},
 };
 use tokio::time::{Duration, sleep};
