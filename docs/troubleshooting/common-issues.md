@@ -899,7 +899,7 @@ Any other relevant information
 - **[Getting Started](../development/getting-started.md)** - Initial setup and configuration
 - **[Testing Guide](../development/testing.md)** - Testing patterns and debugging
 - **[Architecture Overview](../architecture/overview.md)** - System design context
-- **[RPC API Reference](../apis/rpc-reference.md)** - API specifications
+- **[RPC API Reference](https://porto.sh/rpc-server)** - API specifications
 
 ---
 

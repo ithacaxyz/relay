@@ -190,7 +190,7 @@ await porto.sendCalls({
 ### JSON-RPC API Integration
 
 The relay exposes a `wallet_*` namespace following EIP-1193 patterns. For complete API documentation and implementation details, see:
-- **[RPC API Reference](../apis/rpc-reference.md)** - Full API specification
+- **[RPC API Reference](https://porto.sh/rpc-server)** - Full API specification
 - **[RPC Endpoints Implementation](rpc-endpoints.md)** - Technical implementation
 
 ### Quote System Design

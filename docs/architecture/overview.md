@@ -78,7 +78,7 @@ graph TB
 ### 1. RPC Server (`src/rpc/`)
 
 The JSON-RPC server provides the main interface for clients. For detailed endpoint documentation and implementation details, see:
-- **[RPC API Reference](../apis/rpc-reference.md)** - Complete API specification
+- **[RPC API Reference](https://porto.sh/rpc-server)** - Complete API specification
 - **[RPC Endpoints Implementation](rpc-endpoints.md)** - Technical implementation details
 
 ### 2. Transaction Service (`src/transactions/`)

@@ -22,7 +22,7 @@ Welcome to the Ithaca Relay developer documentation. This documentation is speci
 - **[Cross-Chain Operations](architecture/cross-chain.md)** - Multichain intent and settlement implementation
 
 ### 📡 APIs
-- **[RPC API Reference](apis/rpc-reference.md)** - Complete JSON-RPC endpoint documentation
+- **[RPC API Reference](https://porto.sh/rpc-server)** - Complete JSON-RPC endpoint documentation
 
 ### 🔧 Operations
 - **[Configuration Reference](development/getting-started.md#configuration)** - Configuration options and examples

@@ -354,7 +354,7 @@ curl -X POST http://localhost:8323 \
 
 - **[Transaction Pipeline](transaction-pipeline.md)** - Execution flow after RPC submission
 - **[Cross-Chain Operations](cross-chain.md)** - Multichain intent handling
-- **[API Reference](../apis/rpc-reference.md)** - Complete API specification
+- **[API Reference](https://porto.sh/rpc-server)** - Complete API specification
 
 ---
 
