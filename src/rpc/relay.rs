@@ -18,8 +18,8 @@ use crate::{
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, GasEstimate, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
+        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -86,7 +86,7 @@ use crate::{
 pub trait RelayApi {
     /// Checks the health of the relay and returns its version.
     #[method(name = "health", aliases = ["health"])]
-    async fn health(&self) -> RpcResult<String>;
+    async fn health(&self) -> RpcResult<Health>;
 
     /// Get capabilities of the relay, which are different sets of configuration values.
     #[method(name = "getCapabilities")]
@@ -1608,7 +1608,7 @@ impl Relay {
 
 #[async_trait]
 impl RelayApiServer for Relay {
-    async fn health(&self) -> RpcResult<String> {
+    async fn health(&self) -> RpcResult<Health> {
         let chains_ok = try_join_all(self.chains().map(|chain| async {
             chain.provider().get_block_number().await.inspect_err(|err| {
                 error!(
@@ -1635,7 +1635,7 @@ impl RelayApiServer for Relay {
             .is_ok();
 
         if chains_ok && db_ok {
-            Ok(RELAY_SHORT_VERSION.to_string())
+            Ok(Health { status: "rpc ok".into(), version: RELAY_SHORT_VERSION.into() })
         } else {
             Err(RelayError::Unhealthy.into())
         }

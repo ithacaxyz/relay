@@ -248,8 +248,12 @@ impl StressTester {
                 .ok_or_else(|| eyre::eyre!("at least one rpc url must be specified"))?,
         )?;
         let signer = DynSigner::from_signing_key(&args.private_key).await?;
-        let version = relay_client.health().await?;
-        info!("Connected to relay at {}, version {}", &args.rpc_urls.first().unwrap(), version);
+        let health = relay_client.health().await?;
+        info!(
+            "Connected to relay at {}, version {}",
+            &args.rpc_urls.first().unwrap(),
+            health.version
+        );
 
         let base_chain =
             ProviderBuilder::new().connect(args.rpc_urls.first().unwrap().as_str()).await?.erased();
