@@ -1959,6 +1959,10 @@ impl RelayApiServer for Relay {
 
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
         let tx_ids = self.inner.storage.get_bundle_transactions(id).await?;
+        if tx_ids.is_empty() {
+            return Err(StorageError::BundleDoesNotExist(id).into());
+        }
+
         let tx_statuses =
             try_join_all(tx_ids.into_iter().map(|tx_id| async move {
                 self.inner.storage.read_transaction_status(tx_id).await
