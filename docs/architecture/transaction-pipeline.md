@@ -328,22 +328,7 @@ stateDiagram-v2
 
 ### Pipeline Configuration
 
-**Transaction service config** (**Implementation**: `src/config.rs`):
-```yaml
-transaction:
-  queue_capacity: 1000          # Max pending transactions per signer
-  confirmation_timeout: 300     # Seconds to wait for confirmation
-  max_gas_price: 100_000_000_000 # Maximum gas price in wei
-  retry_attempts: 3             # Network retry attempts
-```
-
-**Monitoring config**:
-```yaml
-monitoring:
-  poll_interval: 5              # Status polling interval (seconds)
-  confirmation_blocks: 1        # Required confirmation depth
-  provider_timeout: 30          # RPC request timeout (seconds)
-```
+For complete configuration details including transaction service and monitoring parameters, see [Getting Started Configuration Guide](../development/getting-started.md#configuration).
 
 ### Chain-Specific Settings
 
