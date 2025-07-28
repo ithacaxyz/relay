@@ -215,6 +215,13 @@ impl StorageApi for InMemoryStorage {
         }
     }
 
+    async fn get_finished_interop_bundle(
+        &self,
+        bundle_id: BundleId,
+    ) -> Result<Option<BundleWithStatus>> {
+        Ok(self.finished_bundles.get(&bundle_id).map(|v| v.clone()))
+    }
+
     async fn store_pending_refund(
         &self,
         bundle_id: BundleId,

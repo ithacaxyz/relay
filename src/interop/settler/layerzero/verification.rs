@@ -176,10 +176,10 @@ impl ChainMonitor {
 /// Result of initial verification status check
 #[derive(Debug)]
 pub struct InitialVerificationStatus {
-    /// Number of messages that were already verified
-    pub already_verified_count: usize,
     /// Packets that still need verification, grouped by destination chain
     pub pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>>,
+    /// GUIDs of packets that were already verified
+    pub already_verified_guids: Vec<B256>,
 }
 
 /// Handles monitoring for LayerZero verification messages
@@ -218,7 +218,7 @@ impl LayerZeroVerificationMonitor {
         let initial_status = self.check_initial_verification_status(&chain_monitors).await?;
 
         if initial_status.pending_by_chain.is_empty() {
-            info!("All {} messages already verified", initial_status.already_verified_count);
+            info!("All {} messages already verified", initial_status.already_verified_guids.len());
             return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
         }
 
@@ -226,9 +226,13 @@ impl LayerZeroVerificationMonitor {
             .monitor_pending_messages(&initial_status.pending_by_chain, chain_monitors, deadline)
             .await?;
 
+        // Combine pre-verified GUIDs with those verified via events
+        let mut all_verified_guids = initial_status.already_verified_guids;
+        all_verified_guids.extend(verified_via_events);
+
         let final_result = self
             .final_verification_check(
-                verified_via_events,
+                all_verified_guids,
                 &initial_status.pending_by_chain,
                 &packets,
             )
@@ -308,14 +312,14 @@ impl LayerZeroVerificationMonitor {
     /// ## Returns
     ///
     /// Returns an `InitialVerificationStatus` struct containing:
-    /// - `already_verified_count`: Number of messages that were already verified
+    /// - `already_verified_guids`: GUIDs of messages that were already verified
     /// - `pending_by_chain`: HashMap of chain ID to packets that still need verification
     pub async fn check_initial_verification_status(
         &self,
         monitors: &[ChainMonitor],
     ) -> Result<InitialVerificationStatus, SettlementError> {
-        let mut already_verified_count = 0;
         let mut pending_by_chain: HashMap<u64, Vec<LayerZeroPacketInfo>> = HashMap::default();
+        let mut already_verified_guids = Vec::new();
 
         for monitor in monitors {
             let mut pending = Vec::with_capacity(monitor.packets.len());
@@ -323,7 +327,7 @@ impl LayerZeroVerificationMonitor {
                 if !is_message_available(packet, &self.chain_configs).await? {
                     pending.push(packet.clone());
                 } else {
-                    already_verified_count += 1;
+                    already_verified_guids.push(packet.guid);
                 }
             }
 
@@ -340,7 +344,7 @@ impl LayerZeroVerificationMonitor {
             }
         }
 
-        Ok(InitialVerificationStatus { already_verified_count, pending_by_chain })
+        Ok(InitialVerificationStatus { pending_by_chain, already_verified_guids })
     }
 
     /// Monitors pending messages across all chains until the specified deadline.
