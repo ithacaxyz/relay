@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
+    storage::BundleStatus,
     types::{
-        Account, AssetDiffs, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key, KeyType,
-        MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
     },
 };
 use alloy::{
@@ -337,8 +338,9 @@ pub struct PrepareCallsResponseCapabilities {
     /// Keys that were revoked from the account.
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
-    /// The [`AssetDiff`] of the prepared call bundle.
-    pub asset_diff: AssetDiffs,
+    /// The [`AssetDiffResponse`] of the prepared call bundle, flattened.
+    #[serde(flatten)]
+    pub asset_diff: AssetDiffResponse,
 }
 
 /// Response for `wallet_prepareCalls`.
@@ -360,7 +362,7 @@ pub struct PrepareCallsResponse {
 }
 
 /// Response context from `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PrepareCallsContext {
     /// The [`SignedQuotes`] of the prepared call bundle.
@@ -568,6 +570,18 @@ pub struct CallsStatus {
     pub status: CallStatusCode,
     /// The receipts for the call bundle.
     pub receipts: Vec<CallReceipt>,
+    /// Optional capabilities for the call bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<CallsStatusCapabilities>,
+}
+
+/// Capabilities for call status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallsStatusCapabilities {
+    /// Interop bundle status if this is an interop bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interop_status: Option<BundleStatus>,
 }
 
 #[cfg(test)]

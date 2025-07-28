@@ -103,7 +103,7 @@ pub struct Args {
     #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
     pub fee_tokens: Option<Vec<Address>>,
     /// A fee token the relay accepts.
-    #[arg(long = "interop-token", required_unless_present("config_only"), value_name = "ADDRESS")]
+    #[arg(long = "interop-token", value_name = "ADDRESS")]
     pub interop_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
@@ -128,7 +128,7 @@ pub struct Args {
         value_name = "KEY",
         env = "RELAY_FUNDER_KEY"
     )]
-    pub funder_key: String,
+    pub funder_key: Option<String>,
     /// The RPC endpoints of the sequencers for OP rollups.
     #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub sequencer_endpoints: Vec<(Chain, Url)>,
@@ -226,4 +226,14 @@ fn parse_chain_url(arg: &str) -> eyre::Result<(Chain, Url)> {
     let (chain_id, url) = arg.split_once(':').ok_or_eyre("expected chain_id:url argument")?;
 
     Ok((chain_id.parse()?, url.parse()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    #[test]
+    fn test_debug_asserts() {
+        super::Args::command().debug_assert();
+    }
 }

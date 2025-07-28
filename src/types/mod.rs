@@ -1,4 +1,6 @@
 //! Shared primitive types.
+use serde::{Deserialize, Serialize};
+
 mod account;
 pub use account::*;
 
@@ -59,9 +61,6 @@ pub use simulator::*;
 mod storage;
 pub use storage::*;
 
-/// A 40 bit integer.
-pub type U40 = Uint<40, 1>;
-
 mod merkle;
 pub use merkle::*;
 
@@ -76,3 +75,15 @@ pub use funder::*;
 
 mod multicall;
 pub use multicall::*;
+
+/// A 40 bit integer.
+pub type U40 = Uint<40, 1>;
+
+/// The health response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Health {
+    /// The status (usually OK) of the RPC.
+    pub status: String,
+    /// The version of the RPC.
+    pub version: String,
+}

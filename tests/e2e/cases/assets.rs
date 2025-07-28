@@ -83,10 +83,11 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
 
             key: Some(admin_key.to_call_key()),
         };
-        let diffs = env.relay_endpoint.prepare_calls(params).await?.capabilities.asset_diff;
+        let response = env.relay_endpoint.prepare_calls(params).await?.capabilities.asset_diff;
 
         // There should be no diff found for the eoa.
-        assert!(!diffs.0.into_iter().any(|(eoa, _)| eoa == env.eoa.address()));
+        let asset_diffs = response.asset_diffs.get(&env.chain_id()).unwrap();
+        assert!(!asset_diffs.0.iter().any(|(addr, _)| *addr == env.eoa.address()));
     }
 
     Ok(())
@@ -130,8 +131,9 @@ async fn asset_diff() -> eyre::Result<()> {
 
     let find_diff =
         |resp: &PrepareCallsResponse, eoa: Address, token: Address, is_incoming: bool| {
-            resp.capabilities
-                .asset_diff
+            let asset_diffs =
+                resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
+            asset_diffs
                 .0
                 .iter()
                 .filter(|(addr, _)| addr == &eoa)
@@ -196,9 +198,8 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 
     // ensure we always have the expected amount of unique tokens with URIs in our asset diffs.
     let ensure_tokens_with_uris = |resp: &PrepareCallsResponse, expected: usize| -> Vec<U256> {
-        let tokens = resp
-            .capabilities
-            .asset_diff
+        let asset_diffs = resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
+        let tokens = asset_diffs
             .0
             .iter()
             .flat_map(|(_, diffs)| diffs.iter())

@@ -516,7 +516,7 @@ impl Environment {
                 .with_quote_ttl(Duration::from_secs(60))
                 .with_rate_ttl(Duration::from_secs(300))
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_funder_key(DEPLOYER_PRIVATE_KEY.to_string())
+                .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
                 .with_interop_tokens(&[contracts.erc20s[0]])

@@ -15,8 +15,6 @@
 //! configurable
 // it will first create all the accounts and fund them - might take a while.
 
-use std::time::Duration;
-
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
@@ -35,19 +33,27 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     rpc::RelayApiClient,
     signers::{DynSigner, Eip712PayLoadSigner},
+    storage::BundleStatus,
     types::{
-        Call,
+        Call, DEFAULT_SEQUENCE_KEY,
         IERC20::IERC20Instance,
         KeyType, KeyWith712Signer,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
-            PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
+            BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareCallsResponse, PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
             UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
-use tokio::time::Instant;
-use tracing::{error, info, level_filters::LevelFilter, trace};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio::{sync::mpsc, time::Instant};
+use tracing::{debug, error, info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -62,6 +68,14 @@ alloy::sol! {
 
 const CREATE2_DEPLOYER: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
 
+#[derive(Debug, Clone)]
+struct PendingSettlement {
+    bundle_id: BundleId,
+    input_chains: Vec<ChainId>,
+    chain_id: ChainId,
+    tx: mpsc::UnboundedSender<PendingSettlement>,
+}
+
 #[derive(Clone, Debug)]
 struct StressAccount {
     address: Address,
@@ -75,6 +89,7 @@ impl StressAccount {
 }
 
 impl StressAccount {
+    #[expect(clippy::too_many_arguments)]
     async fn run(
         self,
         chain_id: ChainId,
@@ -82,11 +97,20 @@ impl StressAccount {
         relay_client: HttpClient,
         recipient: Address,
         transfer_amount: U256,
+        settlement_tx: mpsc::UnboundedSender<PendingSettlement>,
+        failed_counter: Arc<AtomicUsize>,
     ) -> eyre::Result<()> {
         let mut previous_nonce = None;
         let mut retries = 5;
-        loop {
+        'outer: loop {
             let prepare_start = Instant::now();
+            debug!(
+                account = %self.address,
+                total_elapsed = ?prepare_start.elapsed(),
+                retries,
+                ?previous_nonce,
+                "Preparing bundle",
+            );
             let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
                     required_funds: vec![(fee_token, transfer_amount)],
@@ -108,11 +132,18 @@ impl StressAccount {
             {
                 Ok(response) => response,
                 Err(err) => {
+                    warn!(
+                        account = %self.address,
+                        total_elapsed = ?prepare_start.elapsed(),
+                        retries,
+                        ?err,
+                        "Prepare calls failed",
+                    );
                     retries -= 1;
                     if retries == 0 {
                         return Err(err).context("prepare calls failed");
                     } else {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
                 }
@@ -123,15 +154,25 @@ impl StressAccount {
             // It might happen that we've received a preconfirmation for previous transaction but
             // Relay is not yet at the latest state. For this case we need to make sure that our new
             // intent does not have the same nonce and otherwise retry a bit later.
-            // todo(onbjerg): this only works for single chain intents right now
-            for quote in context.quote().unwrap().ty().quotes.iter() {
+            // we're only checking output quotes for now
+            if let Some(quote) =
+                context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
+            {
                 let nonce = quote.intent.nonce;
-                if previous_nonce == Some(nonce) {
+                if nonce >> 64 == U256::from(DEFAULT_SEQUENCE_KEY) {
+                    if previous_nonce == Some(nonce) {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue 'outer;
+                    }
+                // only first intent should have a non-sequential nonce, so getting a random nonce
+                // again means that Relay still doesn't have the latest state where account is
+                // initialized
+                } else if previous_nonce.is_some() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                } else {
-                    previous_nonce = Some(nonce);
+                    continue 'outer;
                 }
+
+                previous_nonce = Some(nonce);
 
                 if !quote.fee_token_deficit.is_zero() {
                     return Ok(());
@@ -184,6 +225,20 @@ impl StressAccount {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             };
 
+            if chain_ids.len() > 1 {
+                check_settlement_status(
+                    PendingSettlement {
+                        bundle_id: bundle_id.id,
+                        input_chains: chain_ids[..chain_ids.len() - 1].to_vec(),
+                        chain_id,
+                        tx: settlement_tx.clone(),
+                    },
+                    &status,
+                    &failed_counter,
+                )
+                .await;
+            }
+
             if status.status.is_confirmed() {
                 info!(
                     %digest,
@@ -224,8 +279,12 @@ impl StressTester {
                 .ok_or_else(|| eyre::eyre!("at least one rpc url must be specified"))?,
         )?;
         let signer = DynSigner::from_signing_key(&args.private_key).await?;
-        let version = relay_client.health().await?;
-        info!("Connected to relay at {}, version {}", &args.rpc_urls.first().unwrap(), version);
+        let health = relay_client.health().await?;
+        info!(
+            "Connected to relay at {}, version {}",
+            &args.rpc_urls.first().unwrap(),
+            health.version
+        );
 
         let base_chain =
             ProviderBuilder::new().connect(args.rpc_urls.first().unwrap().as_str()).await?.erased();
@@ -384,10 +443,22 @@ impl StressTester {
     async fn run(self) -> eyre::Result<()> {
         info!("Starting stress test");
 
+        let failed_settlements_counter = Arc::new(AtomicUsize::new(0));
+        let (settlement_tx, settlement_rx) = mpsc::unbounded_channel::<PendingSettlement>();
+
+        // Spawn settlement tracker worker thread
+        let worker_client = self.relay_client.clone();
+        let worker_counter = failed_settlements_counter.clone();
+        let worker_handle = tokio::spawn(async move {
+            settlement_worker(worker_client, settlement_rx, worker_counter).await
+        });
+
         let mut tasks = FuturesUnordered::new();
         let recipient = self.signer.address();
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
+            let tx = settlement_tx.clone();
+            let counter = failed_settlements_counter.clone();
             tasks.push(tokio::spawn(async move {
                 account
                     .run(
@@ -396,6 +467,8 @@ impl StressTester {
                         client,
                         recipient,
                         self.args.transfer_amount,
+                        tx,
+                        counter,
                     )
                     .await
             }));
@@ -409,9 +482,79 @@ impl StressTester {
             }
         }
 
+        // close the channel to signal worker to finish
+        drop(settlement_tx);
+        worker_handle.await?;
+
+        let failed_count = failed_settlements_counter.load(Ordering::SeqCst);
+        if failed_count > 0 {
+            error!("Stress test failed with {} failed settlements", failed_count);
+        }
+
         info!("Stress test ended");
         Ok(())
     }
+}
+
+/// Checks the settlement status of an interop bundle and handles it accordingly:
+/// - Done: logs success
+/// - Failed: logs error and increments failure counter
+/// - Pending: re-queues the settlement for later checking
+async fn check_settlement_status(
+    settlement: PendingSettlement,
+    status: &CallsStatus,
+    failed_counter: &Arc<AtomicUsize>,
+) {
+    let Some(interop_status) = status.capabilities.as_ref().and_then(|c| c.interop_status) else {
+        error!(bundle_id = %settlement.bundle_id, "Missing interop status");
+        failed_counter.fetch_add(1, Ordering::SeqCst);
+        return;
+    };
+
+    let inputs =
+        || settlement.input_chains.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+
+    match interop_status {
+        BundleStatus::Done => {
+            info!(
+                bundle_id = %settlement.bundle_id,
+                "Interop settled ({} -> {})",
+                inputs(), settlement.chain_id
+            );
+        }
+        BundleStatus::Failed => {
+            error!(
+                bundle_id = %settlement.bundle_id,
+                "Interop settlement failed ({} -> {})",
+                inputs(), settlement.chain_id
+            );
+            failed_counter.fetch_add(1, Ordering::SeqCst);
+        }
+        _ => {
+            // Still pending, add to queue for later checking
+            let _ = settlement.tx.clone().send(settlement);
+        }
+    }
+}
+
+async fn settlement_worker(
+    client: HttpClient,
+    mut rx: mpsc::UnboundedReceiver<PendingSettlement>,
+    failed_counter: Arc<AtomicUsize>,
+) {
+    while let Some(settlement) = rx.recv().await {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let Ok(status) = client.get_calls_status(settlement.bundle_id).await else {
+            // retry on API error
+            let _ = settlement.tx.clone().send(settlement);
+            continue;
+        };
+
+        check_settlement_status(settlement, &status, &failed_counter).await;
+    }
+
+    info!("Settlement worker finished");
 }
 
 #[derive(Debug, Parser)]

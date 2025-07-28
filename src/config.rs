@@ -595,8 +595,10 @@ impl RelayConfig {
     }
 
     /// Sets the funder signing key used to sign fund operations.
-    pub fn with_funder_key(mut self, funder_key: String) -> Self {
-        self.secrets.funder_key = funder_key;
+    pub fn with_funder_key(mut self, funder_key: Option<String>) -> Self {
+        if let Some(funder_key) = funder_key {
+            self.secrets.funder_key = funder_key;
+        }
         self
     }
 
