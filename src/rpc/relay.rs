@@ -1989,15 +1989,7 @@ impl RelayApiServer for Relay {
             CallStatusCode::Confirmed
         };
 
-        // Check if this is an interop bundle and get its status if so
-        let is_multichain = tx_statuses
-            .iter()
-            .filter_map(|o| o.as_ref().map(|(chain_id, _)| *chain_id))
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|w| w[0] != w[1]);
-
-        let capabilities = if is_multichain {
+        let capabilities = if tx_statuses.len() > 1 {
             self.inner
                 .storage
                 .get_interop_status(id)

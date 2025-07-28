@@ -71,7 +71,7 @@ const CREATE2_DEPLOYER: Address = address!("0x4e59b44847b379578588920cA78FbF26c0
 #[derive(Debug, Clone)]
 struct PendingSettlement {
     bundle_id: BundleId,
-    inputs: String,
+    input_chains: Vec<ChainId>,
     chain_id: ChainId,
     tx: mpsc::UnboundedSender<PendingSettlement>,
 }
@@ -219,7 +219,7 @@ impl StressAccount {
                 check_settlement_status(
                     PendingSettlement {
                         bundle_id: bundle_id.id,
-                        inputs: inputs.clone(),
+                        input_chains: chain_ids[..chain_ids.len() - 1].to_vec(),
                         chain_id,
                         tx: settlement_tx.clone(),
                     },
@@ -497,19 +497,22 @@ async fn check_settlement_status(
         return;
     };
 
+    let inputs =
+        || settlement.input_chains.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+
     match interop_status {
         BundleStatus::Done => {
             info!(
                 bundle_id = %settlement.bundle_id,
                 "Interop settled ({} -> {})",
-                settlement.inputs, settlement.chain_id
+                inputs(), settlement.chain_id
             );
         }
         BundleStatus::Failed => {
             error!(
                 bundle_id = %settlement.bundle_id,
                 "Interop settlement failed ({} -> {})",
-                settlement.inputs, settlement.chain_id
+                inputs(), settlement.chain_id
             );
             failed_counter.fetch_add(1, Ordering::SeqCst);
         }
@@ -526,7 +529,7 @@ async fn settlement_worker(
     failed_counter: Arc<AtomicUsize>,
 ) {
     while let Some(settlement) = rx.recv().await {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         let Ok(status) = client.get_calls_status(settlement.bundle_id).await else {
             // retry on API error
