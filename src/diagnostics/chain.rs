@@ -9,12 +9,11 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{Address, U256, utils::format_ether},
+    primitives::{U256, utils::format_ether},
     providers::{CallItem, MULTICALL3_ADDRESS, Provider, bindings::IMulticall3::getEthBalanceCall},
     sol_types::SolCall,
 };
 use eyre::Result;
-use futures_util::future::join_all;
 use tokio::try_join;
 
 /// Role of an address being checked.
@@ -76,39 +75,15 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         })
     }
 
-    /// Check if contracts have code deployed otherwise return error messages.
-    async fn check_contracts_have_code(
-        &self,
-        contracts: impl IntoIterator<Item = (&str, Address)>,
-    ) -> Result<Vec<String>> {
-        let errors = join_all(contracts.into_iter().map(async |(label, address)| {
-            let Ok(code) = self.provider.get_code_at(address).await else {
-                return Some(format!("{label} {address}: provider error"));
-            };
-
-            if code.is_empty() {
-                Some(format!("{label} {address} has no code deployed"))
-            } else {
-                None
-            }
-        }))
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
-
-        Ok(errors)
-    }
-
     /// Verify contracts are properly deployed and configured.
     ///
     /// Contracts checked:
-    /// - Simulator, Escrow: Only checks if code is deployed
-    /// - Orchestrator, SimpleFunder: Checks code + EIP712 domain name matches contract type
+    /// - Orchestrator, SimpleFunder, Simulator, Escrow: Checks EIP712 domain name matches contract
+    ///   type
     /// - Legacy Orchestrators: Same as Orchestrator check
     /// - DelegationProxy (main + legacy): Gets implementation addresses via multicall
-    /// - IthacaAccount implementations: Checks code + EIP712 domain name
-    /// - Settler (if configured): Simple settler checks EIP712, LayerZero settler only checks code
+    /// - IthacaAccount implementations: Checks EIP712 domain name
+    /// - Settler (if configured): Both Simple and LayerZero settlers check EIP712 domain name
     /// - LayerZero configuration: Checked separately in layerzero diagnostics module
     /// - SimpleFunder: Checks all signers are registered as gas wallets and owner key is correct,
     ///   if provided
@@ -116,12 +91,12 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         let warnings = Vec::new();
         let mut errors = Vec::new();
 
-        // todo(joshie): once all contracts implement eip712/version+name, check_code_exists can go
-        // away
-        let mut check_code_exists =
-            vec![("Simulator", self.config.simulator), ("Escrow", self.config.escrow)];
-        let mut eip712s =
-            vec![("Orchestrator", self.config.orchestrator), ("SimpleFunder", self.config.funder)];
+        let mut eip712s = vec![
+            ("Orchestrator", self.config.orchestrator),
+            ("SimpleFunder", self.config.funder),
+            ("Simulator", self.config.simulator),
+            ("Escrow", self.config.escrow),
+        ];
 
         // Add legacy orchestrators to be checked
         for legacy_orchestrator in &self.config.legacy_orchestrators {
@@ -152,12 +127,15 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             |implementation, _| eip712s.push(("IthacaAccount", implementation))
         );
 
-        // Only SimpleSettler implements eip712 for now.
+        // Add settler to EIP-712 checks
         if let Some(settler) = self.config.interop.as_ref().map(|i| &i.settler.implementation) {
-            if let SettlerImplementation::Simple(_) = settler {
-                eip712s.push(("SimpleSettler", settler.address()));
-            } else {
-                check_code_exists.push(("LayerZeroSettler", settler.address()));
+            match settler {
+                SettlerImplementation::Simple(_) => {
+                    eip712s.push(("SimpleSettler", settler.address()));
+                }
+                SettlerImplementation::LayerZero(_) => {
+                    eip712s.push(("LayerZeroSettler", settler.address()));
+                }
             }
         }
 
@@ -176,10 +154,9 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
                 .add_dynamic(IFunder::new(self.config.funder, &self.provider).gasWallets(*address));
         }
 
-        let (eip712_result, gas_wallets_result, has_code_errors) = try_join!(
+        let (eip712_result, gas_wallets_result) = try_join!(
             async { multicall_eip712.aggregate3().await.map_err(eyre::Error::from) },
             async { multicall_gas_wallets.aggregate3().await.map_err(eyre::Error::from) },
-            self.check_contracts_have_code(check_code_exists),
         )?;
 
         crate::process_multicall_results!(
@@ -220,8 +197,6 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
                 ));
             }
         }
-
-        errors.extend(has_code_errors);
 
         Ok(ChainDiagnosticsResult { chain_id: self.chain_id, warnings, errors })
     }
