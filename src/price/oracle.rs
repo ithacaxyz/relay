@@ -148,9 +148,14 @@ impl PriceOracle {
     }
 
     /// Returns the conversion rate from a coin to native ETH (in wei).
-    pub async fn eth_price(&self, coin: CoinKind) -> Option<U256> {
+    pub async fn eth_price(&self, mut coin: CoinKind) -> Option<U256> {
         if coin.is_eth() {
             return Some(U256::from(1e18));
+        }
+
+        // TEMPORARY PLEASE REMOVE TODO NOTE REMOVEME HACK
+        if matches!(coin, CoinKind::EXP1 | CoinKind::EXP2) {
+            coin = CoinKind::USDC;
         }
 
         let (req_tx, req_rx) = oneshot::channel();
@@ -167,8 +172,13 @@ impl PriceOracle {
     }
 
     /// Returns the conversion rate from a coin to USD.
-    pub async fn usd_price(&self, coin: CoinKind) -> Option<f64> {
+    pub async fn usd_price(&self, mut coin: CoinKind) -> Option<f64> {
         let (req_tx, req_rx) = oneshot::channel();
+        // TEMPORARY PLEASE REMOVE TODO NOTE REMOVEME HACK
+        if matches!(coin, CoinKind::EXP1 | CoinKind::EXP2) {
+            coin = CoinKind::USDC;
+        }
+
         let _ = self.tx.send(PriceOracleMessage::LookupUsd { coin, tx: req_tx });
         req_rx.await.ok().flatten().or(self.constant_rate)
     }

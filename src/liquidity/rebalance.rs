@@ -91,7 +91,9 @@ impl RebalanceService {
     fn get_threshold(&self, asset: &Asset) -> U256 {
         match asset.kind {
             CoinKind::ETH => uint!(100_000_000_000_000_000_U256),
-            CoinKind::USDC | CoinKind::USDT => uint!(1_000_000_000_U256),
+            CoinKind::USDC | CoinKind::USDT | CoinKind::EXP1 | CoinKind::EXP2 => {
+                uint!(1_000_000_000_U256)
+            }
         }
     }
 
