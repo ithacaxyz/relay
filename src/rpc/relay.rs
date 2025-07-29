@@ -1246,7 +1246,13 @@ impl Relay {
                 .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
                 .await
                 .map_err(Into::into);
-        } else if !self
+        }
+
+        // ensure interop has been configured, before proceeding
+        self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+
+        // ensure the requested asset is supported for interop
+        if !self
             .inner
             .fee_tokens
             .find(request.chain_id, &requested_asset)
@@ -1258,9 +1264,6 @@ impl Relay {
             }
             .into());
         }
-
-        // ensure interop has been configured, before proceeding
-        self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
