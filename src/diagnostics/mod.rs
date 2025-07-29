@@ -53,10 +53,10 @@ impl DiagnosticsReport {
         for chain in &self.chains {
             let chain_id = chain.chain_id;
             for error in &chain.errors {
-                tracing::error!("Chain {} diagnostic error: {}", chain_id, error);
+                tracing::error!(chain_id = %chain_id, "Diagnostic error: {}", error);
             }
             for warning in &chain.warnings {
-                warn!("Chain {} diagnostic warning: {}", chain_id, warning);
+                warn!(chain_id = %chain_id, "Diagnostic warning: {}", warning);
             }
         }
 
@@ -91,13 +91,14 @@ pub async fn run_diagnostics<P: Provider + Clone>(
         ));
     }
 
+    info!(provider_count = providers.len(), "Fetching chain IDs");
     let chain_ids: Vec<_> =
         try_join_all(providers.iter().map(async |provider| provider.get_chain_id().await)).await?;
 
     // Run chain diagnostics
     report.chains =
         try_join_all(providers.iter().zip(&chain_ids).map(async |(provider, chain_id)| {
-            info!("Running diagnostics for chain {}", chain_id);
+            info!(chain_id = %chain_id, "Running diagnostics");
             ChainDiagnostics::new(provider.clone(), *chain_id, config)
                 .run(fee_tokens, signers)
                 .await

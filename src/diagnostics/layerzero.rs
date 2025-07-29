@@ -162,6 +162,7 @@ async fn check_chain<P: Provider>(
     }
 
     // Execute all multicalls
+    info!(chain_id = %src_chain_id, "Executing LZ multicalls: quotes, libs, peers");
     let (quote_results, lib_results, peer_results) = try_join!(
         multicall_quotes.aggregate3(),
         multicall_get_lib.aggregate3(),
@@ -175,7 +176,12 @@ async fn check_chain<P: Provider>(
         quote_results,
         chain_pairs,
         |fee: crate::interop::settler::layerzero::contracts::MessagingFee, (src, dst)| {
-            info!("LayerZero quote successful: {} -> {}, fee: {} wei", src, dst, fee.nativeFee);
+            info!(
+                src_chain_id = %src,
+                dst_chain_id = %dst,
+                native_fee = %fee.nativeFee,
+                "LayerZero quote successful"
+            );
         }
     );
 
@@ -204,6 +210,11 @@ async fn check_chain<P: Provider>(
         );
     }
 
+    info!(
+        chain_id = %src_chain_id,
+        remote_chains = valid_remote_chains.len(),
+        "Fetching ULN configs"
+    );
     crate::process_multicall_results!(
         errors,
         multicall_get_config.aggregate3().await?,
@@ -219,8 +230,11 @@ async fn check_chain<P: Provider>(
 
             // Log the ULN configuration
             info!(
-                "LayerZero ULN config on chain {} for receiving from chain {} (EID {}): {:?}",
-                src_chain_id, remote_chain_id, remote_eid, uln_config
+                src_chain_id = %src_chain_id,
+                remote_chain_id = %remote_chain_id,
+                remote_eid = %remote_eid,
+                uln_config = ?uln_config,
+                "LayerZero ULN config retrieved"
             );
 
             // Validate confirmations
@@ -272,8 +286,11 @@ async fn check_chain<P: Provider>(
             ));
         } else {
             info!(
-                "LayerZeroSettler peer configured: chain {} -> chain {} (EID {}): {}",
-                src_chain_id, dst_chain_id, dst_eid, peer_bytes32
+                src_chain_id = %src_chain_id,
+                dst_chain_id = %dst_chain_id,
+                dst_eid = %dst_eid,
+                peer = %peer_bytes32,
+                "LayerZeroSettler peer configured"
             );
         }
     });

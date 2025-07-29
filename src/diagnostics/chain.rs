@@ -16,6 +16,7 @@ use alloy::{
 };
 use eyre::Result;
 use tokio::try_join;
+use tracing::info;
 
 /// Role of an address being checked.
 #[derive(Debug, Clone, Copy)]
@@ -128,6 +129,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             .map(|address| ("Proxy", *address))
             .collect::<Vec<_>>();
 
+        info!(chain_id = %self.chain_id, "Fetching proxy implementations");
         crate::process_multicall_results!(
             errors,
             multicall_proxies.aggregate3().await?,
@@ -168,6 +170,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             );
         }
 
+        info!(chain_id = %self.chain_id, "Checking EIP712 domains & gas wallets");
         let (eip712_result, gas_wallets_result) = try_join!(
             async { multicall_eip712.aggregate3().await.map_err(eyre::Error::from) },
             async { multicall_gas_wallets.aggregate3().await.map_err(eyre::Error::from) },
@@ -277,6 +280,12 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             );
         }
 
+        info!(
+            chain_id = %self.chain_id,
+            addresses = all_addresses.len(),
+            tokens = tokens.len(),
+            "Fetching balances"
+        );
         let (native_result, fee_tokens_result) =
             try_join!(multicall_native_balance.aggregate3(), multicall_fee_tokens.aggregate3())?;
 
@@ -296,7 +305,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
                 }
                 AddressRole::FunderContract => {
                     if balance.is_zero() {
-                        errors.push(format!("Funder contract {account} has no balance",));
+                        errors.push(format!("Funder contract {account} has no balance"));
                     }
                 }
             }
@@ -308,7 +317,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             tokens,
             |balance: U256, (token, role)| {
                 if balance.is_zero() && self.config.chain.interop_tokens.contains(&token) {
-                    errors.push(format!("{role:?} has no balance on {token}.",));
+                    errors.push(format!("{role:?} has no balance on {token}."));
                 }
             }
         );
