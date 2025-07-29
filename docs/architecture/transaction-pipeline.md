@@ -16,6 +16,14 @@ For complete technical details, see the [15-Step Data Flow](#detailed-15-step-da
 
 ## Detailed 15-Step Data Flow
 
+The transaction pipeline consists of five main stages that transform user intents into blockchain transactions:
+
+1. **Intent Processing** (Steps 1-3): User creates intent, SDK validates and sends to relay
+2. **Execution Planning** (Steps 4-6): Relay analyzes intent, fetches prices, and simulates execution
+3. **Quote Generation** (Steps 7-8): Relay calculates fees and creates binding quote for user
+4. **Transaction Execution** (Steps 9-12): User signs intent, relay submits to blockchain with monitoring
+5. **Cross-Chain Settlement** (Steps 13-15): For multi-chain intents, settlement across destination chains
+
 ### Step 1: Intent Creation (User/SDK)
 You (or your app) define the intent in the Porto SDK as a JavaScript object (e.g., `{ calls: [...], feeToken: 'USDC' }`). The SDK validates basics (e.g., addresses) and serializes it into a JSON payload.
 
