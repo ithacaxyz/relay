@@ -4,9 +4,15 @@
 //! ensuring all required contracts are deployed, funded, and properly configured.
 
 mod chain;
+mod layerzero;
+
 pub use chain::{ChainDiagnostics, ChainDiagnosticsResult};
 
-use crate::{config::RelayConfig, signers::DynSigner, types::FeeTokens};
+use crate::{
+    config::{RelayConfig, SettlerImplementation},
+    signers::DynSigner,
+    types::FeeTokens,
+};
 use alloy::providers::Provider;
 use eyre::Result;
 use futures_util::future::try_join_all;
@@ -85,19 +91,39 @@ pub async fn run_diagnostics<P: Provider + Clone>(
         ));
     }
 
-    report.chains = try_join_all(providers.iter().enumerate().map(async |(index, provider)| {
-        let chain_id = provider.get_chain_id().await?;
-        info!("Running diagnostics for chain {} (index {})", chain_id, index);
+    let chain_ids: Vec<_> =
+        try_join_all(providers.iter().map(async |provider| provider.get_chain_id().await)).await?;
 
-        ChainDiagnostics::new(provider.clone(), chain_id, config).run(fee_tokens, signers).await
-    }))
-    .await?;
+    // Run chain diagnostics
+    report.chains =
+        try_join_all(providers.iter().zip(&chain_ids).map(async |(provider, chain_id)| {
+            info!("Running diagnostics for chain {}", chain_id);
+            ChainDiagnostics::new(provider.clone(), *chain_id, config)
+                .run(fee_tokens, signers)
+                .await
+        }))
+        .await?;
 
     if config.chain.endpoints.len() > 1 && config.interop.is_none() {
         report.global_errors.push(
             "No configuration for interop found, but more than one endpoint was configured."
                 .to_string(),
         )
+    }
+
+    // Run LayerZero diagnostics if configured
+    if let Some(interop) = &config.interop
+        && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
+    {
+        match layerzero::run_layerzero_diagnostics(lz_config, config, providers, &chain_ids).await {
+            Ok(lz_result) => {
+                report.global_warnings.extend(lz_result.warnings);
+                report.global_errors.extend(lz_result.errors);
+            }
+            Err(e) => {
+                report.global_errors.push(format!("LayerZero diagnostics failed: {e}"));
+            }
+        }
     }
 
     Ok(report)
