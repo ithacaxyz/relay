@@ -18,7 +18,6 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![Call::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
             chain_id: env.chain_id(),
@@ -28,6 +27,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),

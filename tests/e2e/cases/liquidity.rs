@@ -6,7 +6,7 @@ use eyre::Result;
 use relay::{
     config::RebalanceServiceConfig,
     liquidity::bridge::SimpleBridgeConfig,
-    types::{Call, IERC20, KeyType},
+    types::{Call, IERC20, KeyType, rpc::RequiredAsset},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -57,9 +57,12 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
                 meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![RequiredAsset::new(
+                    env.erc20,
+                    funder_balance_1 + eoa_balance_1,
+                )],
             },
             key: Some(key.to_call_key()),
-            required_funds: vec![(env.erc20, funder_balance_1 + eoa_balance_1)],
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
         })

@@ -391,7 +391,6 @@ async fn fee_token_deficit() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -405,6 +404,7 @@ async fn fee_token_deficit() -> eyre::Result<()> {
                 },
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
@@ -428,7 +428,6 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -438,6 +437,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: true,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
@@ -457,7 +457,6 @@ async fn empty_request_nonce() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -467,6 +466,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![precall],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
@@ -508,7 +508,6 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -518,6 +517,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),

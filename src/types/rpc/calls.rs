@@ -222,9 +222,6 @@ pub struct PrepareCallsParameters {
     /// precall.
     #[serde(default)]
     pub key: Option<CallKey>,
-    /// Required funds on the target chain.
-    #[serde(default)]
-    pub required_funds: Vec<(Address, U256)>,
 }
 
 impl PrepareCallsParameters {
@@ -326,6 +323,26 @@ pub struct PrepareCallsCapabilities {
     /// Whether the call bundle is to be considered a precall.
     #[serde(default)]
     pub pre_call: bool,
+    /// Required funds on the target chain.
+    #[serde(default)]
+    pub required_funds: Vec<RequiredAsset>,
+}
+
+/// A required asset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredAsset {
+    /// The address of the required asset.
+    pub address: Address,
+    /// The value required.
+    pub value: U256,
+}
+
+impl RequiredAsset {
+    /// Create a new [`RequiredAsset`].
+    pub const fn new(address: Address, value: U256) -> Self {
+        Self { address, value }
+    }
 }
 
 /// Capabilities for `wallet_prepareCalls` response.

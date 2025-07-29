@@ -43,7 +43,6 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
         let PrepareCallsResponse { mut context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
-                required_funds: vec![],
                 calls: vec![],
                 chain_id: env.chain_id(),
                 from: Some(eoa.address),
@@ -53,6 +52,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],
+                    required_funds: vec![],
                 },
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),

@@ -24,7 +24,6 @@ async fn pause() -> eyre::Result<()> {
     let orchestrator = OrchestratorContractInstance::new(env.orchestrator, env.provider());
 
     let prepare_params = PrepareCallsParameters {
-        required_funds: vec![],
         from: Some(eoa.address),
         calls: vec![],
         chain_id: env.chain_id(),
@@ -34,6 +33,7 @@ async fn pause() -> eyre::Result<()> {
             meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
             pre_calls: vec![],
             pre_call: false,
+            required_funds: vec![],
         },
         state_overrides: Default::default(),
         balance_overrides: Default::default(),

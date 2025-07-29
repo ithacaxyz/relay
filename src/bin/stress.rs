@@ -41,7 +41,8 @@ use relay::{
         rpc::{
             BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
             PrepareCallsResponse, PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
-            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            RequiredAsset, UpgradeAccountCapabilities, UpgradeAccountParameters,
+            UpgradeAccountSignatures,
         },
     },
 };
@@ -113,7 +114,6 @@ impl StressAccount {
             );
             let PrepareCallsResponse { context, digest, .. } = match relay_client
                 .prepare_calls(PrepareCallsParameters {
-                    required_funds: vec![(fee_token, transfer_amount)],
                     calls: vec![Call::transfer(fee_token, recipient, transfer_amount)],
                     chain_id,
                     from: Some(self.address),
@@ -123,6 +123,7 @@ impl StressAccount {
                         revoke_keys: vec![],
                         pre_calls: vec![],
                         pre_call: false,
+                        required_funds: vec![RequiredAsset::new(fee_token, transfer_amount)],
                     },
                     state_overrides: Default::default(),
                     balance_overrides: Default::default(),
