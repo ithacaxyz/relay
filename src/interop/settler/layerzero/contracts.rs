@@ -2,7 +2,12 @@
 //!
 //! This module contains the Solidity interface definitions for LayerZero contracts.
 
-use alloy::sol;
+use alloy::{
+    primitives::{Address, B256, U256},
+    sol,
+};
+use alloy::sol_types::SolValue;
+use alloy::primitives::bytes;
 
 sol! {
     /// LayerZero settler interface
@@ -75,5 +80,55 @@ sol! {
         function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
         function setDefaultReceiveLibrary(uint32 _eid, address _newLib, uint256 _timeout) external;
         function getConfig(address _oapp, address _lib, uint32 _eid, uint32 _configType) external view returns (bytes memory config);
+    }
+}
+
+impl MessagingParams {
+    /// Creates LayerZero messaging parameters for settlement messages.
+    pub fn new(
+        src_chain_id: u64,
+        dst_eid: u32,
+        receiver: Address,
+        settlement_id: B256,
+    ) -> Self {        
+        Self {
+            dstEid: dst_eid,
+            receiver: B256::left_padding_from(receiver.as_slice()),
+            message: (settlement_id, receiver, U256::from(src_chain_id))
+                .abi_encode()
+                .into(),
+            options: bytes!("0x0003"),
+            payInLzToken: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::providers::ProviderBuilder;
+    use alloy::primitives::address;
+    use alloy_chains::Chain;
+
+    #[tokio::test]
+    async fn test_layerzero_quote_base_op_sepolia() {
+        // Test configuration
+        let base_sepolia_url = "https://base-sepolia.rpc.ithaca.xyz";
+        let base_sepolia_endpoint = address!("0x6EDCE65403992e310A62460808c4b910D972f10f");
+        let op_sepolia_eid: u32 = 40232; 
+        let settler_address = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
+        let base_provider = ProviderBuilder::new().connect_http(base_sepolia_url.parse().unwrap());
+        let endpoint = ILayerZeroEndpointV2::new(base_sepolia_endpoint, &base_provider);
+        let settlement_id = B256::random();
+        
+        let params = MessagingParams::new(
+            Chain::base_sepolia().id(),
+            op_sepolia_eid,
+            settler_address,
+            settlement_id,
+        );
+
+        let quote = endpoint.quote(params, settler_address).call().await.unwrap();
+        println!("Quote: nativeFee = {} wei, lzTokenFee = {} wei", quote.nativeFee, quote.lzTokenFee);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{B256, Bytes, ChainId, U256},
+    primitives::{B256, Bytes, ChainId},
     providers::Provider,
     sol_types::SolValue,
 };
@@ -115,15 +115,12 @@ async fn check_chain<P: Provider>(
         }
 
         // Create messaging params similar to the settler implementation
-        let params = MessagingParams {
-            dstEid: *dst_endpoint_id,
-            receiver: B256::left_padding_from(lz_config.settler_address.as_slice()),
-            message: (settlement_id, lz_config.settler_address, U256::from(src_chain_id))
-                .abi_encode()
-                .into(),
-            options: Bytes::new(),
-            payInLzToken: false,
-        };
+        let params = MessagingParams::new(
+            src_chain_id,
+            *dst_endpoint_id,
+            lz_config.settler_address,
+            settlement_id,
+        );
 
         // Add quote call
         multicall_quotes =
