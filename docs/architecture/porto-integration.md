@@ -389,6 +389,7 @@ sequenceDiagram
 
 **Current State**: Single relay operated by Ithaca
 
+
 **Future Vision**: Competitive network of independent relays
 
 **Benefits**:
