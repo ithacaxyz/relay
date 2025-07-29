@@ -340,7 +340,7 @@ pub struct RequiredAsset {
 
 impl RequiredAsset {
     /// Create a new [`RequiredAsset`].
-    pub fn new(address: Address, value: U256) -> Self {
+    pub const fn new(address: Address, value: U256) -> Self {
         Self { address, value }
     }
 }
