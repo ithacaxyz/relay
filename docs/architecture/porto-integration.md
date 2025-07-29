@@ -345,7 +345,7 @@ sequenceDiagram
 | **Relay Censorship** | Multiple relay competition (future) |
 | **Intent Manipulation** | Cryptographic signatures + EIP-712 |
 | **Cross-Chain Fraud** | LayerZero verification + escrow timeouts |
-| **Price Manipulation** | CoinGecko price feeds (additional oracles planned) |
+| **Price Manipulation** | CoinGecko price feeds + circuit breakers |
 | **Smart Contract Bugs** | Formal verification + comprehensive audits |
 
 ## Performance Considerations

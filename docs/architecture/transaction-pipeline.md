@@ -38,7 +38,7 @@ Relay analyzes if it's single- or multi-chain (e.g., check balances across chain
 **Data**: Params → Strategy (e.g., funding plan if cross-chain)
 
 ### Step 5: Relay Fetches Prices from Oracles (**Implementation**: `src/price/oracle.rs`)
-**Parallel**: Relay queries price oracles (currently CoinGecko; Chainlink integration planned) for token rates (e.g., USDC/ETH).
+**Parallel**: Relay queries price oracles (CoinGecko) for token rates (e.g., USDC/ETH).
 
 **Data**: API calls → Price data (e.g., `ethPrice: U256`)
 
