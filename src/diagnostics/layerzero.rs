@@ -115,7 +115,6 @@ async fn check_chain<P: Provider>(
             continue;
         }
 
-
         // Create messaging params similar to the settler implementation
         let params = MessagingParams {
             dstEid: *dst_endpoint_id,
