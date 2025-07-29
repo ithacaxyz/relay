@@ -22,7 +22,6 @@ use tracing::info;
 /// Run LayerZero diagnostics.
 ///
 /// Checks:
-/// - Endpoint connectivity: Tests endpoint.quote() functionality for every chain pair
 /// - Endpoint configuration: Validates endpoint addresses and IDs are properly configured
 /// - Chain coverage: Ensures all relay chains have corresponding LayerZero configuration
 /// - Settlement readiness: Verifies settler can send messages between all chain pairs
