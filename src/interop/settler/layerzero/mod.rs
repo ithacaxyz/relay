@@ -360,15 +360,12 @@ impl Settler for LayerZeroSettler {
         for source_chain_id in &source_chains {
             let src_config = self.get_chain_config(*source_chain_id)?;
 
-            let params = MessagingParams {
-                dstEid: src_config.endpoint_id,
-                receiver: B256::left_padding_from(self.settler_address.as_slice()),
-                message: (settlement_id, self.settler_address, U256::from(*source_chain_id))
-                    .abi_encode()
-                    .into(),
-                options: Bytes::new(),
-                payInLzToken: false,
-            };
+            let params = MessagingParams::new(
+                *source_chain_id,
+                src_config.endpoint_id,
+                self.settler_address,
+                settlement_id,
+            );
 
             multicall = multicall.add_dynamic(endpoint.quote(params, self.settler_address));
         }
