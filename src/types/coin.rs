@@ -34,6 +34,10 @@ pub enum CoinKind {
     USDT,
     /// USDC
     USDC,
+    /// EXP1. TEMPORARY TEMPORARY TEMPORARY REMOVEME TODO
+    EXP1,
+    /// EXP2.  TEMPORARY TEMPORARY TEMPORARY REMOVEME TODO
+    EXP2,
 }
 
 impl CoinKind {
@@ -77,6 +81,8 @@ impl CoinKind {
             CoinKind::ETH => "ETH",
             CoinKind::USDT => "USDT",
             CoinKind::USDC => "USDC",
+            CoinKind::EXP1 => "EXP1",
+            CoinKind::EXP2 => "EXP2",
         }
     }
 }
