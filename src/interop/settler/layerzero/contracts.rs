@@ -39,6 +39,7 @@ sol! {
     }
 
     /// LayerZero messaging parameters
+    #[derive(Debug)]
     struct MessagingParams {
         uint32 dstEid;
         bytes32 receiver;
@@ -48,6 +49,7 @@ sol! {
     }
 
     /// LayerZero messaging fee
+    #[derive(Debug)]
     struct MessagingFee {
         uint256 nativeFee;
         uint256 lzTokenFee;
@@ -63,11 +65,10 @@ sol! {
 
     /// LayerZero Endpoint V2 interface
     #[sol(rpc)]
+    #[derive(Debug)]
     interface ILayerZeroEndpointV2 {
-        #[derive(Debug)]
         event PacketSent(bytes encodedPayload, bytes options, address sendLibrary);
 
-        #[derive(Debug)]
         event PacketVerified(Origin origin, address receiver, bytes32 payloadHash);
 
         function quote(MessagingParams calldata _params, address _sender) external view returns (MessagingFee memory);
@@ -124,5 +125,28 @@ mod tests {
             "Quote: nativeFee = {} wei, lzTokenFee = {} wei",
             quote.nativeFee, quote.lzTokenFee
         );
+    }
+
+    #[tokio::test]
+    async fn test_layerzero_diagnostics_base_op_sepolia() {
+        let base_provider = ProviderBuilder::new()
+            .connect_http("https://base-sepolia.rpc.ithaca.xyz".parse().unwrap());
+        let endpoint = ILayerZeroEndpointV2::new(
+            address!("0x6EDCE65403992e310A62460808c4b910D972f10f"),
+            &base_provider,
+        );
+        let settler = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
+        let op_eid = 40232u32;
+        
+        // Receive lib + ULN config
+        let lib_info = endpoint.getReceiveLibrary(settler, op_eid).call().await.unwrap();
+        let uln_config = IReceiveUln302::new(lib_info.lib, &base_provider)
+            .getUlnConfig(settler, op_eid)
+            .call()
+            .await
+            .unwrap();
+        println!("Lib: {:?}", lib_info);
+        println!("ULN: {:?}", uln_config);
+
     }
 }
