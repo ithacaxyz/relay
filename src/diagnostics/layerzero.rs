@@ -5,12 +5,15 @@ use crate::{
     config::{LayerZeroConfig, RelayConfig},
     interop::settler::layerzero::{
         ULN_CONFIG_TYPE,
-        contracts::{ILayerZeroEndpointV2, MessagingParams, UlnConfig},
+        contracts::{
+            ILayerZeroEndpointV2::{self, getConfigCall, getReceiveLibraryCall, quoteCall},
+            MessagingParams, UlnConfig,
+        },
     },
 };
 use alloy::{
     primitives::{B256, Bytes, ChainId},
-    providers::Provider,
+    providers::{CallItem, Provider},
     sol_types::SolValue,
 };
 use eyre::Result;
@@ -100,8 +103,8 @@ async fn check_chain<P: Provider>(
     let endpoint = ILayerZeroEndpointV2::new(*src_endpoint_address, src_provider);
 
     // Prepare multicalls
-    let mut multicall_quotes = src_provider.multicall().dynamic();
-    let mut multicall_get_lib = src_provider.multicall().dynamic();
+    let mut multicall_quotes = src_provider.multicall().dynamic::<quoteCall>();
+    let mut multicall_get_lib = src_provider.multicall().dynamic::<getReceiveLibraryCall>();
 
     let mut quote_dst_chains = Vec::new();
     let mut config_remote_chains = Vec::new();
@@ -123,13 +126,16 @@ async fn check_chain<P: Provider>(
         );
 
         // Add quote call
-        multicall_quotes =
-            multicall_quotes.add_dynamic(endpoint.quote(params, lz_config.settler_address));
+        multicall_quotes = multicall_quotes.add_call_dynamic(
+            CallItem::from(endpoint.quote(params, lz_config.settler_address)).allow_failure(true),
+        );
         quote_dst_chains.push(*dst_chain_id);
 
         // Add getReceiveLibrary call
-        multicall_get_lib = multicall_get_lib
-            .add_dynamic(endpoint.getReceiveLibrary(lz_config.settler_address, *dst_endpoint_id));
+        multicall_get_lib = multicall_get_lib.add_call_dynamic(
+            CallItem::from(endpoint.getReceiveLibrary(lz_config.settler_address, *dst_endpoint_id))
+                .allow_failure(true),
+        );
         config_remote_chains.push((*dst_chain_id, *dst_endpoint_id));
     }
 
@@ -172,14 +178,17 @@ async fn check_chain<P: Provider>(
     );
 
     // Build multicall_get_config to fetch ULN configurations for all valid remote chains
-    let mut multicall_get_config = src_provider.multicall().dynamic();
+    let mut multicall_get_config = src_provider.multicall().dynamic::<getConfigCall>();
     for (lib, (_, remote_eid)) in &valid_remote_chains {
-        multicall_get_config = multicall_get_config.add_dynamic(endpoint.getConfig(
-            lz_config.settler_address,
-            *lib,
-            *remote_eid,
-            ULN_CONFIG_TYPE,
-        ));
+        multicall_get_config = multicall_get_config.add_call_dynamic(
+            CallItem::from(endpoint.getConfig(
+                lz_config.settler_address,
+                *lib,
+                *remote_eid,
+                ULN_CONFIG_TYPE,
+            ))
+            .allow_failure(true),
+        );
     }
 
     crate::process_multicall_results!(
