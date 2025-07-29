@@ -191,10 +191,7 @@ async fn check_chain<P: Provider>(
             // Log the ULN configuration
             info!(
                 "LayerZero config for {} -> {} (EID {}): {:?}",
-                src_chain_id,
-                remote_chain_id,
-                remote_eid,
-                uln_config
+                src_chain_id, remote_chain_id, remote_eid, uln_config
             );
 
             // Validate confirmations
