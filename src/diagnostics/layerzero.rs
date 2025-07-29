@@ -20,6 +20,19 @@ use tokio::try_join;
 use tracing::info;
 
 /// Run LayerZero diagnostics.
+///
+/// Checks:
+/// - Endpoint connectivity: Tests endpoint.quote() functionality for every chain pair
+/// - Endpoint configuration: Validates endpoint addresses and IDs are properly configured
+/// - Chain coverage: Ensures all relay chains have corresponding LayerZero configuration
+/// - Settlement readiness: Verifies settler can send messages between all chain pairs
+/// - ULN configuration: Validates Ultra Light Node settings for each chain pair
+/// - DVN configuration: Checks Decentralized Verifier Network settings
+///   - Ensures required DVN count matches actual DVN addresses
+///   - Validates no zero addresses in DVN lists
+///   - Confirms at least one DVN is configured (required or optional)
+/// - Message fees: Confirms quote generation works for cross-chain messages
+/// - Library configuration: Validates receive library is properly set for each endpoint
 pub async fn run_layerzero_diagnostics<P: Provider + Clone>(
     lz_config: &LayerZeroConfig,
     relay_config: &RelayConfig,
@@ -93,6 +106,7 @@ async fn check_chain<P: Provider>(
 
     let mut quote_dst_chains = Vec::new();
     let mut config_remote_chains = Vec::new();
+    let settlement_id = B256::random();
 
     // Build multicalls for each destination chain
     for (dst_chain_id, dst_endpoint_id) in &lz_config.endpoint_ids {
@@ -101,8 +115,6 @@ async fn check_chain<P: Provider>(
             continue;
         }
 
-        // Generate a random settlement ID for testing
-        let settlement_id = B256::random();
 
         // Create messaging params similar to the settler implementation
         let params = MessagingParams {
@@ -190,7 +202,7 @@ async fn check_chain<P: Provider>(
 
             // Log the ULN configuration
             info!(
-                "LayerZero config for {} -> {} (EID {}): {:?}",
+                "LayerZero ULN config on chain {} for receiving from chain {} (EID {}): {:?}",
                 src_chain_id, remote_chain_id, remote_eid, uln_config
             );
 

@@ -115,6 +115,7 @@ pub async fn run_diagnostics<P: Provider + Clone>(
     if let Some(interop) = &config.interop
         && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
     {
+        info!("Running LayerZero diagnostics");
         match layerzero::run_layerzero_diagnostics(lz_config, config, providers, &chain_ids).await {
             Ok(lz_result) => {
                 report.global_warnings.extend(lz_result.warnings);
