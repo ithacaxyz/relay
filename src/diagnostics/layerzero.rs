@@ -7,6 +7,7 @@ use crate::{
         ULN_CONFIG_TYPE,
         contracts::{
             ILayerZeroEndpointV2::{self, getConfigCall, getReceiveLibraryCall, quoteCall},
+            ILayerZeroSettler::{self, peersCall},
             MessagingParams, UlnConfig,
         },
     },
@@ -105,9 +106,12 @@ async fn check_chain<P: Provider>(
     // Prepare multicalls
     let mut multicall_quotes = src_provider.multicall().dynamic::<quoteCall>();
     let mut multicall_get_lib = src_provider.multicall().dynamic::<getReceiveLibraryCall>();
+    let mut multicall_peers = src_provider.multicall().dynamic::<peersCall>();
 
+    let settler_contract = ILayerZeroSettler::new(lz_config.settler_address, src_provider);
     let mut quote_dst_chains = Vec::new();
     let mut config_remote_chains = Vec::new();
+    let mut peer_eids = Vec::new();
     let settlement_id = B256::random();
 
     // Build multicalls for each destination chain
@@ -137,6 +141,12 @@ async fn check_chain<P: Provider>(
                 .allow_failure(true),
         );
         config_remote_chains.push((*dst_chain_id, *dst_endpoint_id));
+
+        // Add peers call
+        multicall_peers = multicall_peers.add_call_dynamic(
+            CallItem::from(settler_contract.peers(*dst_endpoint_id)).allow_failure(true),
+        );
+        peer_eids.push((*dst_chain_id, *dst_endpoint_id));
     }
 
     // Validate we have the expected number of remote chains
@@ -151,9 +161,12 @@ async fn check_chain<P: Provider>(
         ));
     }
 
-    // Execute both multicalls
-    let (quote_results, lib_results) =
-        try_join!(multicall_quotes.aggregate3(), multicall_get_lib.aggregate3())?;
+    // Execute all multicalls
+    let (quote_results, lib_results, peer_results) = try_join!(
+        multicall_quotes.aggregate3(),
+        multicall_get_lib.aggregate3(),
+        multicall_peers.aggregate3()
+    )?;
 
     // Process quote results
     let chain_pairs: Vec<_> = quote_dst_chains.into_iter().map(|dst| (src_chain_id, dst)).collect();
@@ -245,6 +258,25 @@ async fn check_chain<P: Provider>(
             }
         }
     );
+
+    // Process peer results
+    crate::process_multicall_results!(errors, peer_results, peer_eids, |peer_bytes32: B256,
+                                                                        (
+        dst_chain_id,
+        dst_eid,
+    )| {
+        if peer_bytes32.is_zero() {
+            errors.push(format!(
+                "LayerZeroSettler@{} on chain {} has zero address peer for chain {} (EID {})",
+                lz_config.settler_address, src_chain_id, dst_chain_id, dst_eid
+            ));
+        } else {
+            info!(
+                "LayerZeroSettler peer configured: chain {} -> chain {} (EID {}): {}",
+                src_chain_id, dst_chain_id, dst_eid, peer_bytes32
+            );
+        }
+    });
 
     Ok((warnings, errors))
 }
