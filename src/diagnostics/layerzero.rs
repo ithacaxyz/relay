@@ -274,15 +274,16 @@ async fn check_chain<P: Provider>(
     );
 
     // Process peer results
+    let expected_peer = B256::left_padding_from(lz_config.settler_address.as_slice());
     crate::process_multicall_results!(errors, peer_results, peer_eids, |peer_bytes32: B256,
                                                                         (
         dst_chain_id,
         dst_eid,
     )| {
-        if peer_bytes32.is_zero() {
+        if peer_bytes32 != expected_peer {
             errors.push(format!(
-                "LayerZeroSettler@{} on chain {} has zero address peer for chain {} (EID {})",
-                lz_config.settler_address, src_chain_id, dst_chain_id, dst_eid
+                "LayerZeroSettler@{} on chain {} has incorrect peer {} for chain {} (EID {}). Expected: {}",
+                lz_config.settler_address, src_chain_id, peer_bytes32, dst_chain_id, dst_eid, expected_peer
             ));
         } else {
             info!(
