@@ -23,7 +23,7 @@ use relay::{
         Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             GetAssetsParameters, Meta, PrepareCallsCapabilities, PrepareCallsContext,
-            PrepareCallsParameters, PrepareCallsResponse,
+            PrepareCallsParameters, PrepareCallsResponse, RequiredAsset,
         },
     },
 };
@@ -195,11 +195,11 @@ impl MultichainTransferSetup {
                     meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
+                    required_funds: vec![RequiredAsset::new(env.erc20, total_transfer_amount)],
                 },
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
                 key: Some(key.to_call_key()),
-                required_funds: vec![(env.erc20, total_transfer_amount)],
             })
             .await?;
 

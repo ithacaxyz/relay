@@ -117,7 +117,6 @@ pub async fn prepare_calls(
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: tx.calls.clone(),
             chain_id: env.chain_id(),
@@ -131,6 +130,7 @@ pub async fn prepare_calls(
                 },
                 pre_calls,
                 pre_call,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),

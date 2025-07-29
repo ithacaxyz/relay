@@ -48,7 +48,6 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: (1..num_calls)
                 .map(|_| Call { to: Address::ZERO, value: U256::ZERO, data: Default::default() })
@@ -60,6 +59,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),

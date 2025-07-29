@@ -64,7 +64,6 @@ impl MockAccount {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
-                required_funds: vec![],
                 calls: vec![Call {
                     to: env.erc20,
                     value: U256::ZERO,
@@ -80,6 +79,7 @@ impl MockAccount {
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],
+                    required_funds: vec![],
                 },
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -106,7 +106,6 @@ impl MockAccount {
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
-                required_funds: vec![],
                 calls: vec![],
                 chain_id: env.chain_id(),
                 from: Some(self.address),
@@ -116,6 +115,7 @@ impl MockAccount {
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],
+                    required_funds: vec![],
                 },
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),

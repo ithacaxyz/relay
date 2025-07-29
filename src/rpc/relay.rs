@@ -1025,11 +1025,12 @@ impl Relay {
         // specifically. i'm too dumb to figure out the exact call graph of this right now, so will
         // leave this as an exercise for later.
         // Check if funding is required
-        if let Some((requested_asset, funds)) = request.required_funds.first() {
+        // todo: this only supports one asset...
+        if let Some(required_funds) = request.capabilities.required_funds.first() {
             self.determine_quote_strategy(
                 request,
-                *requested_asset,
-                *funds,
+                required_funds.address,
+                required_funds.value,
                 calls,
                 nonce,
                 maybe_stored,
@@ -2267,11 +2268,11 @@ impl Relay {
                 revoke_keys: vec![],
                 pre_calls: vec![],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
             key: Some(request_key),
-            required_funds: vec![],
         })
     }
 }

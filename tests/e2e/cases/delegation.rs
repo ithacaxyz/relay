@@ -47,7 +47,6 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     env.provider().anvil_set_code(another_impl, expected_impl_code).await?;
 
     let params = PrepareCallsParameters {
-        required_funds: vec![],
         from: Some(env.eoa.address()),
         calls: vec![],
         chain_id: env.chain_id(),
@@ -57,6 +56,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
             pre_calls: vec![],
             pre_call: false,
+            required_funds: vec![],
         },
         state_overrides: Default::default(),
         balance_overrides: Default::default(),
@@ -273,7 +273,6 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![Call {
                 to: env.eoa.address(),
@@ -295,6 +294,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![],
                 pre_call: true,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
@@ -315,7 +315,6 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            required_funds: vec![],
             from: Some(env.eoa.address()),
             calls: vec![],
             chain_id: env.chain_id(),
@@ -325,6 +324,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
                 meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
                 pre_calls: vec![precall],
                 pre_call: false,
+                required_funds: vec![],
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
