@@ -212,16 +212,6 @@ pub struct SettlerConfig {
     pub wait_verification_timeout: Duration,
 }
 
-/// Settler implementation configuration (mutually exclusive).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SettlerImplementation {
-    /// LayerZero configuration for cross-chain settlement.
-    LayerZero(LayerZeroConfig),
-    /// Simple settler configuration for testing.
-    Simple(SimpleSettlerConfig),
-}
-
 impl SettlerConfig {
     /// Creates a settlement processor from this configuration.
     pub fn settlement_processor(
@@ -238,6 +228,26 @@ impl SettlerConfig {
         };
 
         Ok(SettlementProcessor::new(settler))
+    }
+}
+
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
+}
+
+impl SettlerImplementation {
+    /// Address of the settler.
+    pub fn address(&self) -> Address {
+        match self {
+            Self::LayerZero(c) => c.settler_address,
+            Self::Simple(c) => c.settler_address,
+        }
     }
 }
 

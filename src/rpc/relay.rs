@@ -1247,6 +1247,9 @@ impl Relay {
                 .map_err(Into::into);
         }
 
+        // ensure interop has been configured, before proceeding
+        self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
         // the true fees. After this, we do one more pass of finding funds on other chains.
@@ -1359,8 +1362,6 @@ impl Relay {
                 })
                 .is_some()
             {
-                self.validate_multichain_contracts()?;
-
                 // Compute EIP-712 digest (settlement_id)
                 let (output_intent_digest, _) = output_quote
                     .intent
@@ -2171,27 +2172,6 @@ impl Relay {
     /// The escrow address.
     pub fn escrow(&self) -> Address {
         self.inner.contracts.escrow.address
-    }
-
-    /// Validates that all required multichain contracts are properly configured.
-    ///
-    /// Returns an error if any of the required contracts (escrow, settler, funder)
-    /// have zero addresses, indicating they are not properly configured.
-    fn validate_multichain_contracts(&self) -> Result<(), RelayError> {
-        let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
-
-        if [
-            self.inner.contracts.escrow.address,
-            interop.settler_address(),
-            self.inner.contracts.funder.address,
-        ]
-        .iter()
-        .any(|addr| addr.is_zero())
-        {
-            return Err(QuoteError::MultichainDisabled.into());
-        }
-
-        Ok(())
     }
 
     /// Creates an escrow struct for funding intents.

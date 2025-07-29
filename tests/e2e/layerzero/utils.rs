@@ -4,10 +4,7 @@
 //! including provider creation, address conversion, and message handling.
 
 use super::interfaces::{IMessageLibManager, IReceiveUlnE2, SetConfigParam as ISetConfigParam};
-use crate::e2e::{
-    layerzero::interfaces::{ULN_CONFIG_TYPE, UlnConfig},
-    send_impersonated_tx,
-};
+use crate::e2e::{layerzero::interfaces::UlnConfig, send_impersonated_tx};
 use alloy::{
     network::Ethereum,
     primitives::{Address, B256, Bytes, U256, keccak256},
@@ -17,7 +14,10 @@ use alloy::{
 };
 use eyre::Result;
 use futures_util::future::try_join_all;
-use relay::interop::settler::layerzero::contracts::{ILayerZeroEndpointV2, Origin};
+use relay::interop::settler::layerzero::{
+    ULN_CONFIG_TYPE,
+    contracts::{ILayerZeroEndpointV2, Origin},
+};
 
 /// Default executor address for LayerZero messages
 pub const EXECUTOR_ADDRESS: Address = Address::new([3u8; 20]);

@@ -4,9 +4,6 @@
 
 use alloy::sol;
 
-/// Config type constant for ULN
-pub const ULN_CONFIG_TYPE: u32 = 2;
-
 sol! {
     /// LayerZero Escrow V2 contract interface
     ///

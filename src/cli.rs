@@ -163,6 +163,9 @@ pub struct Args {
     /// The API secret for Binance.
     #[arg(long = "binance-api-secret", value_name = "KEY", env = "BINANCE_API_SECRET")]
     pub binance_api_secret: Option<String>,
+    /// Skip pre-flight diagnostics checks on startup.
+    #[arg(long = "skip-diagnostics", default_value_t = false)]
+    pub skip_diagnostics: bool,
 }
 
 impl Args {
