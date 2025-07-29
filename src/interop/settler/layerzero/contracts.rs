@@ -98,6 +98,8 @@ impl MessagingParams {
 
 #[cfg(test)]
 mod tests {
+    use crate::interop::settler::layerzero::ULN_CONFIG_TYPE;
+
     use super::*;
     use alloy::{primitives::address, providers::ProviderBuilder};
     use alloy_chains::Chain;
@@ -138,13 +140,14 @@ mod tests {
         let settler = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
         let op_eid = 40232u32;
 
-        // Receive lib + ULN config
+        // Receive lib + ULN config via getConfig
         let lib_info = endpoint.getReceiveLibrary(settler, op_eid).call().await.unwrap();
-        let uln_config = IReceiveUln302::new(lib_info.lib, &base_provider)
-            .getUlnConfig(settler, op_eid)
+        let config_bytes = endpoint
+            .getConfig(settler, lib_info.lib, op_eid, ULN_CONFIG_TYPE)
             .call()
             .await
             .unwrap();
+        let uln_config = UlnConfig::abi_decode(&config_bytes).unwrap();
         println!("Lib: {:?}", lib_info);
         println!("ULN: {:?}", uln_config);
     }
