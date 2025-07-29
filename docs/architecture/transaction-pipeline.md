@@ -6,6 +6,14 @@ This document details the complete transaction processing pipeline from intent s
 
 The transaction pipeline consists of five main stages that transform user intents into blockchain transactions:
 
+1. **Intent Processing** (Steps 1-3): User creates intent, SDK validates and sends to relay
+2. **Execution Planning** (Steps 4-6): Relay analyzes intent, fetches prices, and simulates execution
+3. **Quote Generation** (Steps 7-8): Relay calculates fees and creates binding quote for user
+4. **Transaction Execution** (Steps 9-12): User signs intent, relay submits to blockchain with monitoring
+5. **Cross-Chain Settlement** (Steps 13-15): For multi-chain intents, settlement across destination chains
+
+For complete technical details, see the [15-Step Data Flow](#detailed-15-step-data-flow) below.
+
 ## Detailed 15-Step Data Flow
 
 ### Step 1: Intent Creation (User/SDK)
@@ -30,7 +38,7 @@ Relay analyzes if it's single- or multi-chain (e.g., check balances across chain
 **Data**: Params → Strategy (e.g., funding plan if cross-chain)
 
 ### Step 5: Relay Fetches Prices from Oracles (**Implementation**: `src/price/oracle.rs`)
-**Parallel**: Relay queries price oracles (e.g., CoinGecko/Chainlink) for token rates (e.g., USDC/ETH).
+**Parallel**: Relay queries price oracles (currently CoinGecko; Chainlink integration planned) for token rates (e.g., USDC/ETH).
 
 **Data**: API calls → Price data (e.g., `ethPrice: U256`)
 

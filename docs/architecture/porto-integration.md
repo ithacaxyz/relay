@@ -345,7 +345,7 @@ sequenceDiagram
 | **Relay Censorship** | Multiple relay competition (future) |
 | **Intent Manipulation** | Cryptographic signatures + EIP-712 |
 | **Cross-Chain Fraud** | LayerZero verification + escrow timeouts |
-| **Price Manipulation** | Multiple oracle feeds + circuit breakers |
+| **Price Manipulation** | CoinGecko price feeds (additional oracles planned) |
 | **Smart Contract Bugs** | Formal verification + comprehensive audits |
 
 ## Performance Considerations
@@ -354,7 +354,7 @@ sequenceDiagram
 
 **Current Limitations**:
 - Single relay point (centralized)
-- PostgreSQL storage bottleneck
+- PostgreSQL storage bottleneck (single region deployment; relays from different clusters communicate with central PostgreSQL instance)
 - Quote generation latency for complex intents
 
 **Optimization Strategies**:
