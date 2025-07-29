@@ -356,6 +356,7 @@ sequenceDiagram
 - Single relay point (centralized)
 - PostgreSQL storage bottleneck (single region deployment; relays from different clusters communicate with central PostgreSQL instance)
 - Quote generation latency for complex intents
+- Network latency from cross-node communication (relay containers and blockchain nodes on separate nodes use CNI overlay, adding network hops)
 
 **Optimization Strategies**:
 
