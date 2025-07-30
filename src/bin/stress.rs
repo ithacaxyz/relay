@@ -35,7 +35,7 @@ use relay::{
     signers::{DynSigner, Eip712PayLoadSigner},
     storage::BundleStatus,
     types::{
-        Call, DEFAULT_SEQUENCE_KEY,
+        Call,
         IERC20::IERC20Instance,
         KeyType, KeyWith712Signer,
         rpc::{
@@ -102,15 +102,13 @@ impl StressAccount {
         settlement_tx: mpsc::UnboundedSender<PendingSettlement>,
         failed_counter: Arc<AtomicUsize>,
     ) -> eyre::Result<()> {
-        let mut previous_nonce = None;
         let mut retries = 5;
-        'outer: loop {
+        loop {
             let prepare_start = Instant::now();
             debug!(
                 account = %self.address,
                 total_elapsed = ?prepare_start.elapsed(),
                 retries,
-                ?previous_nonce,
                 "Preparing bundle",
             );
             let PrepareCallsResponse { context, digest, .. } = match relay_client
@@ -153,32 +151,12 @@ impl StressAccount {
 
             retries = 5;
 
-            // It might happen that we've received a preconfirmation for previous transaction but
-            // Relay is not yet at the latest state. For this case we need to make sure that our new
-            // intent does not have the same nonce and otherwise retry a bit later.
-            // we're only checking output quotes for now
+            // If we have a fee token deficit then the stress test ends.
             if let Some(quote) =
                 context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
+                && !quote.fee_token_deficit.is_zero()
             {
-                let nonce = quote.intent.nonce;
-                if nonce >> 64 == U256::from(DEFAULT_SEQUENCE_KEY) {
-                    if previous_nonce == Some(nonce) {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        continue 'outer;
-                    }
-                // only first intent should have a non-sequential nonce, so getting a random nonce
-                // again means that Relay still doesn't have the latest state where account is
-                // initialized
-                } else if previous_nonce.is_some() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue 'outer;
-                }
-
-                previous_nonce = Some(nonce);
-
-                if !quote.fee_token_deficit.is_zero() {
-                    return Ok(());
-                }
+                return Ok(());
             }
 
             let signature =
@@ -221,7 +199,9 @@ impl StressAccount {
             let status = loop {
                 let status = relay_client.get_calls_status(bundle_id.id).await;
                 trace!("got bundle status: {:?}", status);
-                if status.as_ref().is_ok_and(|status| status.status.is_final()) {
+                if status.as_ref().is_ok_and(|status| {
+                    status.status.is_final() && !status.status.is_preconfirmed()
+                }) {
                     break status.unwrap();
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
