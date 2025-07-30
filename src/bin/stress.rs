@@ -41,12 +41,13 @@ use relay::{
         rpc::{
             BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
             PrepareCallsResponse, PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
-            RequiredAsset, UpgradeAccountCapabilities, UpgradeAccountParameters,
+            RelayCapabilities, RequiredAsset, UpgradeAccountCapabilities, UpgradeAccountParameters,
             UpgradeAccountSignatures,
         },
     },
 };
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -270,6 +271,7 @@ struct StressTester {
     accounts: Vec<StressAccount>,
     destination_chain_id: ChainId,
     signer: DynSigner,
+    fee_token_map: Arc<HashMap<ChainId, Address>>,
 }
 
 impl StressTester {
@@ -287,20 +289,19 @@ impl StressTester {
             health.version
         );
 
-        let base_chain =
-            ProviderBuilder::new().connect(args.rpc_urls.first().unwrap().as_str()).await?.erased();
-        let destination_chain_id = base_chain.get_chain_id().await?;
+        let chain_ids = try_join_all(args.rpc_urls.iter().map(|rpc_url| async move {
+            let provider = ProviderBuilder::new().connect(rpc_url.as_str()).await?.erased();
+            provider.get_chain_id().await
+        }))
+        .await?;
+        let destination_chain_id = chain_ids[0];
         info!("Output chain is {destination_chain_id}");
 
-        let caps = relay_client.get_capabilities(vec![destination_chain_id]).await?;
-        let supports_fee_token = caps.chain(destination_chain_id).has_token(&args.fee_token);
-        if !supports_fee_token {
-            eyre::bail!(
-                "fee token {} is not supported on chain {}",
-                args.fee_token,
-                destination_chain_id,
-            );
-        }
+        // Get capabilities for all chains
+        let caps = relay_client.get_capabilities(chain_ids.clone()).await?;
+
+        // Build fee token mapping across all chains
+        let fee_token_map = build_fee_token_map(&caps, &chain_ids, args.fee_token).await?;
 
         info!("Initializing {} accounts", args.accounts);
         let accounts = futures_util::future::try_join_all((0..args.accounts).map(|acc_number| {
@@ -366,8 +367,11 @@ impl StressTester {
         try_join_all(providers.iter().map(|provider| {
             let accounts = accounts.clone();
             let signer = signer.clone();
+            let fee_token_map = fee_token_map.clone();
             async move {
                 let chain_id = provider.get_chain_id().await?;
+                let fee_token_address = fee_token_map.get(&chain_id)
+                    .ok_or_else(|| eyre::eyre!("no fee token mapping for chain {}", chain_id))?;
                 if provider.get_code_at(disperse_address).await?.is_empty() {
                     info!("Deploying Disperse contract on chain {chain_id}");
                     let receipt: alloy::rpc::types::TransactionReceipt = provider
@@ -385,18 +389,18 @@ impl StressTester {
 
                 let disperse = Disperse::new(disperse_address, &provider);
 
-                let fee_token = IERC20Instance::new(args.fee_token, &provider);
+                let fee_token = IERC20Instance::new(*fee_token_address, &provider);
                 if fee_token.allowance(signer.address(), disperse_address).call().await?
                     < args.fee_token_amount * U256::from(accounts.len())
                 {
-                    info!("Approving Disperse contract on chain {chain_id}");
+                    info!("Approving Disperse contract on chain {chain_id} for token {fee_token_address}");
                     fee_token
                         .approve(disperse_address, U256::MAX)
                         .send()
                         .await?
                         .get_receipt()
                         .await?;
-                    info!("Approved Disperse contract on chain {chain_id}");
+                    info!("Approved Disperse contract on chain {chain_id} for token {fee_token_address}");
                 }
 
                 let mut funded = 0;
@@ -410,7 +414,7 @@ impl StressTester {
 
                     disperse
                         .disperseToken(
-                            args.fee_token,
+                            *fee_token_address,
                             batch.iter().map(|acc| acc.address).collect(),
                             std::iter::repeat_n(args.fee_token_amount, batch.len()).collect(),
                         )
@@ -433,7 +437,7 @@ impl StressTester {
         }))
         .await?;
 
-        Ok(Self { destination_chain_id, relay_client, args, accounts, signer })
+        Ok(Self { destination_chain_id, relay_client, args, accounts, signer, fee_token_map })
     }
 
     async fn spawn(self) -> eyre::Result<()> {
@@ -456,15 +460,24 @@ impl StressTester {
 
         let mut tasks = FuturesUnordered::new();
         let recipient = self.signer.address();
+        let destination_fee_token =
+            self.fee_token_map.get(&self.destination_chain_id).ok_or_else(|| {
+                eyre::eyre!(
+                    "no fee token mapping for destination chain {}",
+                    self.destination_chain_id
+                )
+            })?;
+
         for account in self.accounts.into_iter() {
             let client = self.relay_client.clone();
             let tx = settlement_tx.clone();
             let counter = failed_settlements_counter.clone();
+            let destination_fee_token = *destination_fee_token;
             tasks.push(tokio::spawn(async move {
                 account
                     .run(
                         self.destination_chain_id,
-                        self.args.fee_token,
+                        destination_fee_token,
                         client,
                         recipient,
                         self.args.transfer_amount,
@@ -606,4 +619,44 @@ async fn main() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
+}
+
+/// Build a mapping of chain IDs to fee token addresses for a given fee token
+async fn build_fee_token_map(
+    caps: &RelayCapabilities,
+    chain_ids: &[ChainId],
+    fee_token: Address,
+) -> eyre::Result<Arc<HashMap<ChainId, Address>>> {
+    // Find the fee token kind from the first chain that has it
+    let fee_token_kind = caps
+        .0
+        .values()
+        .flat_map(|chain_caps| &chain_caps.fees.tokens)
+        .find(|token| token.address == fee_token)
+        .ok_or_else(|| eyre::eyre!("fee token {} not found in any chain", fee_token))?
+        .kind;
+
+    info!("Fee token {} has kind {:?}", fee_token, fee_token_kind);
+
+    // Build a mapping of chain_id -> fee token address for this kind
+    let mut fee_token_map = HashMap::new();
+    for (chain_id, chain_caps) in &caps.0 {
+        if let Some(token) = chain_caps.fees.tokens.iter().find(|t| t.kind == fee_token_kind) {
+            fee_token_map.insert(*chain_id, token.address);
+            info!("Chain {} has {} token at address {}", chain_id, fee_token_kind, token.address);
+        }
+    }
+
+    // Verify all chains support the fee token kind
+    for chain_id in chain_ids {
+        if !fee_token_map.contains_key(chain_id) {
+            eyre::bail!(
+                "fee token kind {:?} is not supported on chain {}",
+                fee_token_kind,
+                chain_id,
+            );
+        }
+    }
+
+    Ok(Arc::new(fee_token_map))
 }
