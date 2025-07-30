@@ -33,8 +33,8 @@ sol! {
 
     /// ReceiveUln302 interface for committing verification
     #[sol(rpc)]
+    #[derive(Debug)]
     interface IReceiveUln302 {
-        #[derive(Debug)]
         event PayloadVerified(address dvn, bytes header, uint256 confirmations, bytes32 proofHash);
 
         function commitVerification(bytes calldata _packetHeader, bytes32 _payloadHash) external;

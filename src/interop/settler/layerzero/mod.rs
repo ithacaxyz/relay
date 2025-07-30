@@ -41,18 +41,25 @@ use super::{SettlementError, Settler, SettlerId};
 use crate::{
     interop::settler::layerzero::{
         contracts::{
-            ILayerZeroEndpointV2::{self, PacketSent},
-            ILayerZeroSettler, IReceiveUln302, MessagingParams,
+            ILayerZeroEndpointV2::{self, PacketSent, lzReceiveCall},
+            ILayerZeroSettler,
+            IReceiveUln302::{self, commitVerificationCall},
+            MessagingParams,
         },
         types::{LayerZeroPacketInfo, LayerZeroPacketV1},
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
-    types::{Call3, IEscrow, aggregate3Call},
+    types::{
+        Call3,
+        IEscrow::{self, settleCall},
+        aggregate3Call,
+        rpc::BundleId,
+    },
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MULTICALL3_ADDRESS, Provider},
+    providers::{CallItem, DynProvider, MULTICALL3_ADDRESS, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolEvent, SolValue},
 };
@@ -155,6 +162,51 @@ impl LayerZeroSettler {
         self.eid_to_chain.get(&eid).copied().ok_or_else(|| SettlementError::UnknownEndpointId(eid))
     }
 
+    /// Estimates gas for the receive transaction. If it fails, it runs the multicall again to fetch
+    /// and log the errors.
+    async fn estimate_receive_transaction_gas(
+        &self,
+        calls: &[Call3; 3],
+        provider: &DynProvider,
+        bundle_id: BundleId,
+    ) -> Result<u64, SettlementError> {
+        let multicall_calldata = aggregate3Call { calls: calls.to_vec() }.abi_encode();
+        let tx_request =
+            TransactionRequest::default().to(MULTICALL3_ADDRESS).input(multicall_calldata.into());
+
+        let result = provider.estimate_gas(tx_request).await;
+
+        let Err(e) = result else {
+            return result.map_err(Into::into);
+        };
+
+        let (commit_verification, lz_receive, settle) = provider
+            .multicall()
+            .add_call::<commitVerificationCall>(
+                CallItem::new(calls[0].target, calls[0].callData.clone()).allow_failure(true),
+            )
+            .add_call::<lzReceiveCall>(
+                CallItem::new(calls[1].target, calls[1].callData.clone()).allow_failure(true),
+            )
+            .add_call::<settleCall>(
+                CallItem::new(calls[2].target, calls[2].callData.clone()).allow_failure(true),
+            )
+            .aggregate3()
+            .await?;
+
+        if commit_verification.is_err() {
+            tracing::error!(?bundle_id, "commitVerification failed: {:?}", commit_verification);
+        } else if lz_receive.is_err() {
+            tracing::error!(?bundle_id, "lzReceive failed: {:?}", lz_receive);
+        } else if settle.is_err() {
+            tracing::error!(?bundle_id, "settle failed: {:?}", settle);
+        } else {
+            tracing::error!(?bundle_id, "all calls would succeed but gas estimation still failed");
+        }
+
+        Err(SettlementError::InternalError(format!("Gas estimation failed: {e:?}")))
+    }
+
     /// Extracts all packet information from a transaction receipt.
     async fn extract_packets_from_receipt(
         &self,
@@ -244,18 +296,6 @@ impl LayerZeroSettler {
         let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
         let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
 
-        let multicall_calldata = build_multicall_data(
-            packet,
-            &lz_receive_call,
-            dst_config.endpoint_address,
-            &escrow_info.escrow_ids,
-            escrow_info.escrow_address,
-        )?;
-
-        let tx_request = TransactionRequest::default()
-            .to(MULTICALL3_ADDRESS)
-            .input(multicall_calldata.clone().into());
-
         // Wait for the correct nonce before proceeding.
         let endpoint = ILayerZeroEndpointV2::new(dst_config.endpoint_address, &dst_config.provider);
         let sender = B256::left_padding_from(packet.sender.as_slice());
@@ -268,32 +308,42 @@ impl LayerZeroSettler {
             let expected_nonce = current_nonce + 1;
 
             tracing::debug!(
-                "Nonce check - packet nonce: {}, current inbound nonce: {}",
-                packet.nonce,
-                current_nonce,
+                bundle_id = ?bundle.id,
+                packet_nonce = packet.nonce,
+                current_inbound_nonce = current_nonce,
+                expected_nonce = expected_nonce,
+                "Nonce check"
             );
 
             if packet.nonce == expected_nonce {
                 break;
             }
 
-            // Need to wait for earlier nonces to be processed
             tracing::info!(
-                "Waiting for earlier nonces to be processed. Packet nonce: {}, expected: {}. Missing: {:?}",
-                packet.nonce,
-                expected_nonce,
-                (expected_nonce..packet.nonce).collect::<Vec<_>>()
+                bundle_id = ?bundle.id,
+                packet_nonce = packet.nonce,
+                expected_nonce = expected_nonce,
+                "Waiting for earlier nonces to be processed"
             );
 
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        tracing::debug!("Estimating multicall for packet {:?}", &packet);
-        let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
+        let calls = build_multicall_calls(
+            packet,
+            &lz_receive_call,
+            dst_config.endpoint_address,
+            &escrow_info.escrow_ids,
+            escrow_info.escrow_address,
+        );
+
+        tracing::debug!(bundle_id = ?bundle.id, "Estimating multicall for packet {:?}", &packet);
+        let gas_limit =
+            self.estimate_receive_transaction_gas(&calls, &dst_config.provider, bundle.id).await?;
 
         let tx = RelayTransaction::new_internal(
             MULTICALL3_ADDRESS,
-            multicall_calldata,
+            aggregate3Call { calls: calls.to_vec() }.abi_encode(),
             packet.dst_chain_id,
             gas_limit,
         );
@@ -541,43 +591,33 @@ impl Settler for LayerZeroSettler {
 /// 1. Commits the verification by calling ReceiveLib.commitVerification
 /// 2. Executes lzReceive to process the cross-chain message
 /// 3. Settles the escrows to release funds
-fn build_multicall_data(
+fn build_multicall_calls(
     packet: &LayerZeroPacketInfo,
     lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
     endpoint_address: Address,
     escrow_ids: &[B256],
     escrow_address: Address,
-) -> Result<Bytes, SettlementError> {
-    let commit_verification_calldata = contracts::IReceiveUln302::commitVerificationCall {
-        _packetHeader: packet.packet_header.clone().into(),
-        _payloadHash: packet.payload_hash,
-    }
-    .abi_encode();
-
-    // Encode the LayerZero receive call
-    let lz_receive_calldata = lz_receive_call.abi_encode();
-
-    // Encode the escrow settle call
-    let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
-
-    // Build the multicall with the correct order:
-    // 1. commitVerification
-    // 2. lzReceive
-    // 3. settle
-    let calls = vec![
+) -> [Call3; 3] {
+    [
         Call3 {
             target: packet.receive_lib_address,
             allowFailure: false,
-            callData: commit_verification_calldata.into(),
+            callData: contracts::IReceiveUln302::commitVerificationCall {
+                _packetHeader: packet.packet_header.clone().into(),
+                _payloadHash: packet.payload_hash,
+            }
+            .abi_encode()
+            .into(),
         },
         Call3 {
             target: endpoint_address,
             allowFailure: false,
-            callData: lz_receive_calldata.into(),
+            callData: lz_receive_call.abi_encode().into(),
         },
-        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
-    ];
-
-    let multicall_calldata = aggregate3Call { calls }.abi_encode();
-    Ok(multicall_calldata.into())
+        Call3 {
+            target: escrow_address,
+            allowFailure: false,
+            callData: IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode().into(),
+        },
+    ]
 }
