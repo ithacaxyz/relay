@@ -256,6 +256,38 @@ impl LayerZeroSettler {
             .to(MULTICALL3_ADDRESS)
             .input(multicall_calldata.clone().into());
 
+        // Wait for the correct nonce before proceeding.
+        let endpoint = ILayerZeroEndpointV2::new(dst_config.endpoint_address, &dst_config.provider);
+        let sender = B256::left_padding_from(packet.sender.as_slice());
+        loop {
+            let current_nonce = endpoint
+                .inboundNonce(packet.receiver, src_config.endpoint_id, sender)
+                .call()
+                .await?;
+
+            let expected_nonce = current_nonce + 1;
+
+            tracing::debug!(
+                "Nonce check - packet nonce: {}, current inbound nonce: {}",
+                packet.nonce,
+                current_nonce,
+            );
+
+            if packet.nonce == expected_nonce {
+                break;
+            }
+
+            // Need to wait for earlier nonces to be processed
+            tracing::info!(
+                "Waiting for earlier nonces to be processed. Packet nonce: {}, expected: {}. Missing: {:?}",
+                packet.nonce,
+                expected_nonce,
+                (expected_nonce..packet.nonce).collect::<Vec<_>>()
+            );
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
         tracing::debug!("Estimating multicall for packet {:?}", &packet);
         let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
 

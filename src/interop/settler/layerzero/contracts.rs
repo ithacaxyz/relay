@@ -84,6 +84,7 @@ sol! {
         function setDefaultSendLibrary(uint32 _eid, address _newLib) external;
         function setDefaultReceiveLibrary(uint32 _eid, address _newLib, uint256 _timeout) external;
         function getConfig(address _oapp, address _lib, uint32 _eid, uint32 _configType) external view returns (bytes memory config);
+        function inboundNonce(address _receiver, uint32 _srcEid, bytes32 _sender) external view returns (uint64);
     }
 }
 
