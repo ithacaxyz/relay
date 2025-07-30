@@ -514,6 +514,12 @@ pub enum CallStatusCode {
     Pending = 100,
     /// The call bundle was confirmed.
     Confirmed = 200,
+    /// The call bundle was preconfirmed.
+    ///
+    /// Note that this status is returned if all receipts are available and at least one of the
+    /// receipts is for a block in the future, indicating it was preconfirmed. It does not
+    /// necessarily indicate that all transactions were preconfirmed.
+    PreConfirmed = 201,
     /// The call bundle failed offchain.
     Failed = 300,
     /// The call bundle reverted fully onchain.

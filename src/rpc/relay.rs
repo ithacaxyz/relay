@@ -35,7 +35,7 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, Bytes, ChainId, U256, aliases::B192, bytes},
+    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -51,12 +51,13 @@ use futures_util::{
     future::{try_join_all, try_join4},
     join,
 };
+use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{iter, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, instrument, span};
 
@@ -1984,6 +1985,23 @@ impl RelayApiServer for Relay {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let block_numbers: HashMap<ChainId, BlockNumber> = HashMap::from_iter(
+            try_join_all(receipts.iter().map(|(chain_id, _)| chain_id).unique().map(
+                |chain_id| async move {
+                    let provider = self.provider(*chain_id)?;
+                    Ok::<_, RelayError>((*chain_id, provider.get_block_number().await?))
+                },
+            ))
+            .await?
+            .into_iter(),
+        );
+        let any_preconfs = receipts.iter().any(|(chain_id, receipt)| {
+            receipt
+                .block_number
+                // SAFETY: we construct the hashmap using `receipts`, so there should never be a
+                // block number missing here
+                .is_some_and(|receipt_block| receipt_block > *block_numbers.get(chain_id).unwrap())
+        });
 
         // note(onbjerg): this currently rests on the assumption that there is only one intent per
         // transaction, and that each transaction in a bundle originates from a single user
@@ -2008,6 +2026,8 @@ impl RelayApiServer for Relay {
             CallStatusCode::Reverted
         } else if any_reverted {
             CallStatusCode::PartiallyReverted
+        } else if any_preconfs {
+            CallStatusCode::PreConfirmed
         } else {
             CallStatusCode::Confirmed
         };
