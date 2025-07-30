@@ -1,11 +1,12 @@
 use crate::{
     config::{RelayConfig, SettlerImplementation},
+    diagnostics::chain::IEIP712::eip712DomainCall,
     signers::DynSigner,
     types::{
-        DelegationProxy::DelegationProxyInstance,
+        DelegationProxy::{DelegationProxyInstance, implementationCall},
         FeeTokens,
-        IERC20::{self},
-        IFunder,
+        IERC20::{self, balanceOfCall},
+        IFunder::{self, gasWalletsCall},
     },
 };
 use alloy::{
@@ -15,6 +16,7 @@ use alloy::{
 };
 use eyre::Result;
 use tokio::try_join;
+use tracing::info;
 
 /// Role of an address being checked.
 #[derive(Debug, Clone, Copy)]
@@ -104,14 +106,21 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         }
 
         // Build multicall to obtain the implementation address of every proxy: main and legacy
-        let mut multicall_proxies = self.provider.multicall().dynamic().add_dynamic(
-            DelegationProxyInstance::new(self.config.delegation_proxy, &self.provider)
-                .implementation(),
+        let mut multicall_proxies = self.provider.multicall().dynamic::<implementationCall>();
+        multicall_proxies = multicall_proxies.add_call_dynamic(
+            CallItem::from(
+                DelegationProxyInstance::new(self.config.delegation_proxy, &self.provider)
+                    .implementation(),
+            )
+            .allow_failure(true),
         );
         for legacy_delegation_proxy in &self.config.legacy_delegation_proxies {
-            multicall_proxies = multicall_proxies.add_dynamic(
-                DelegationProxyInstance::new(*legacy_delegation_proxy, &self.provider)
-                    .implementation(),
+            multicall_proxies = multicall_proxies.add_call_dynamic(
+                CallItem::from(
+                    DelegationProxyInstance::new(*legacy_delegation_proxy, &self.provider)
+                        .implementation(),
+                )
+                .allow_failure(true),
             )
         }
 
@@ -120,6 +129,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             .map(|address| ("Proxy", *address))
             .collect::<Vec<_>>();
 
+        info!(chain_id = %self.chain_id, "Fetching proxy implementations");
         crate::process_multicall_results!(
             errors,
             multicall_proxies.aggregate3().await?,
@@ -140,20 +150,27 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         }
 
         // Build multicall to call eip712Domain() on all contracts inside eip712s list.
-        let mut multicall_eip712 = self.provider.multicall().dynamic();
+        let mut multicall_eip712 = self.provider.multicall().dynamic::<eip712DomainCall>();
         for (_name, contract) in eip712s.iter() {
-            multicall_eip712 =
-                multicall_eip712.add_dynamic(IEIP712::new(*contract, &self.provider).eip712Domain())
+            multicall_eip712 = multicall_eip712.add_call_dynamic(
+                CallItem::from(IEIP712::new(*contract, &self.provider).eip712Domain())
+                    .allow_failure(true),
+            )
         }
 
         // Build multicall to check gasWallets() mapping for all signers.
-        let mut multicall_gas_wallets = self.provider.multicall().dynamic();
+        let mut multicall_gas_wallets = self.provider.multicall().dynamic::<gasWalletsCall>();
         let gas_wallets = signers.iter().map(|s| (s.address(), ())).collect::<Vec<_>>();
         for (address, _) in &gas_wallets {
-            multicall_gas_wallets = multicall_gas_wallets
-                .add_dynamic(IFunder::new(self.config.funder, &self.provider).gasWallets(*address));
+            multicall_gas_wallets = multicall_gas_wallets.add_call_dynamic(
+                CallItem::from(
+                    IFunder::new(self.config.funder, &self.provider).gasWallets(*address),
+                )
+                .allow_failure(true),
+            );
         }
 
+        info!(chain_id = %self.chain_id, "Checking EIP712 domains & gas wallets");
         let (eip712_result, gas_wallets_result) = try_join!(
             async { multicall_eip712.aggregate3().await.map_err(eyre::Error::from) },
             async { multicall_gas_wallets.aggregate3().await.map_err(eyre::Error::from) },
@@ -247,7 +264,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         }
 
         // Build multicall to fetch the Funder balance of every token valid for this chain.
-        let mut multicall_fee_tokens = self.provider.multicall().dynamic();
+        let mut multicall_fee_tokens = self.provider.multicall().dynamic::<balanceOfCall>();
         let tokens = fee_tokens
             .chain_tokens(self.chain_id)
             .iter()
@@ -257,10 +274,18 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             .collect::<Vec<_>>();
 
         for (token, _) in &tokens {
-            multicall_fee_tokens = multicall_fee_tokens
-                .add_dynamic(IERC20::new(*token, &self.provider).balanceOf(self.config.funder));
+            multicall_fee_tokens = multicall_fee_tokens.add_call_dynamic(
+                CallItem::from(IERC20::new(*token, &self.provider).balanceOf(self.config.funder))
+                    .allow_failure(true),
+            );
         }
 
+        info!(
+            chain_id = %self.chain_id,
+            addresses = all_addresses.len(),
+            tokens = tokens.len(),
+            "Fetching balances"
+        );
         let (native_result, fee_tokens_result) =
             try_join!(multicall_native_balance.aggregate3(), multicall_fee_tokens.aggregate3())?;
 
@@ -280,7 +305,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
                 }
                 AddressRole::FunderContract => {
                     if balance.is_zero() {
-                        errors.push(format!("Funder contract {account} has no balance",));
+                        errors.push(format!("Funder contract {account} has no balance"));
                     }
                 }
             }
@@ -292,7 +317,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             tokens,
             |balance: U256, (token, role)| {
                 if balance.is_zero() && self.config.chain.interop_tokens.contains(&token) {
-                    errors.push(format!("{role:?} has no balance on {token}.",));
+                    errors.push(format!("{role:?} has no balance on {token}."));
                 }
             }
         );

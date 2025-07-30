@@ -10,10 +10,14 @@ use alloy::{
 
 sol! {
     /// LayerZero settler interface
+    #[derive(Debug)]
+    #[sol(rpc)]
     interface ILayerZeroSettler {
+        function send(bytes32 settlementId, bytes calldata settlerContext) external payable;
         function executeSend(address sender, bytes32 settlementId, bytes calldata settlerContext)
             external
             payable;
+        function peers(uint32 _eid) external view returns (bytes32 peer);
     }
 
     /// ULN configuration structure
@@ -39,6 +43,7 @@ sol! {
     }
 
     /// LayerZero messaging parameters
+    #[derive(Debug)]
     struct MessagingParams {
         uint32 dstEid;
         bytes32 receiver;
@@ -48,6 +53,7 @@ sol! {
     }
 
     /// LayerZero messaging fee
+    #[derive(Debug)]
     struct MessagingFee {
         uint256 nativeFee;
         uint256 lzTokenFee;
@@ -63,11 +69,10 @@ sol! {
 
     /// LayerZero Endpoint V2 interface
     #[sol(rpc)]
+    #[derive(Debug)]
     interface ILayerZeroEndpointV2 {
-        #[derive(Debug)]
         event PacketSent(bytes encodedPayload, bytes options, address sendLibrary);
 
-        #[derive(Debug)]
         event PacketVerified(Origin origin, address receiver, bytes32 payloadHash);
 
         function quote(MessagingParams calldata _params, address _sender) external view returns (MessagingFee memory);
@@ -98,7 +103,14 @@ impl MessagingParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::{primitives::address, providers::ProviderBuilder};
+    use crate::interop::settler::layerzero::{
+        ULN_CONFIG_TYPE,
+        contracts::ILayerZeroSettler::{executeSendCall, sendCall},
+    };
+    use alloy::{
+        primitives::{Bytes, address},
+        providers::{CallItem, MULTICALL3_ADDRESS, Provider, ProviderBuilder},
+    };
     use alloy_chains::Chain;
 
     #[tokio::test]
@@ -107,7 +119,7 @@ mod tests {
         let base_sepolia_url = "https://base-sepolia.rpc.ithaca.xyz";
         let base_sepolia_endpoint = address!("0x6EDCE65403992e310A62460808c4b910D972f10f");
         let op_sepolia_eid: u32 = 40232;
-        let settler_address = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
+        let settler_address = address!("0x1C716Cb3BbDc3bc28B9C57615F6234506061b483");
         let base_provider = ProviderBuilder::new().connect_http(base_sepolia_url.parse().unwrap());
         let endpoint = ILayerZeroEndpointV2::new(base_sepolia_endpoint, &base_provider);
         let settlement_id = B256::random();
@@ -124,5 +136,55 @@ mod tests {
             "Quote: nativeFee = {} wei, lzTokenFee = {} wei",
             quote.nativeFee, quote.lzTokenFee
         );
+
+        // Test send + executeSend with multicall
+        let settler_contract = ILayerZeroSettler::new(settler_address, &base_provider);
+        let settler_context: Bytes = vec![op_sepolia_eid].abi_encode().into(); // ABI-encoded remote EID
+
+        // Build multicall: first send(), then executeSend()
+        let (send, execute_send) = base_provider
+            .multicall()
+            .add_call::<sendCall>(
+                CallItem::from(settler_contract.send(settlement_id, settler_context.clone()))
+                    .allow_failure(true),
+            )
+            .add_call::<executeSendCall>(
+                CallItem::from(settler_contract.executeSend(
+                    MULTICALL3_ADDRESS,
+                    settlement_id,
+                    settler_context,
+                ))
+                .value(quote.nativeFee)
+                .allow_failure(true),
+            )
+            .aggregate3_value()
+            .await
+            .unwrap();
+
+        send.unwrap();
+        execute_send.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_layerzero_diagnostics_base_op_sepolia() {
+        let base_provider = ProviderBuilder::new()
+            .connect_http("https://base-sepolia.rpc.ithaca.xyz".parse().unwrap());
+        let endpoint = ILayerZeroEndpointV2::new(
+            address!("0x6EDCE65403992e310A62460808c4b910D972f10f"),
+            &base_provider,
+        );
+        let settler = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
+        let op_eid = 40232u32;
+
+        // Receive lib + ULN config via getConfig
+        let lib_info = endpoint.getReceiveLibrary(settler, op_eid).call().await.unwrap();
+        let config_bytes = endpoint
+            .getConfig(settler, lib_info.lib, op_eid, ULN_CONFIG_TYPE)
+            .call()
+            .await
+            .unwrap();
+        let uln_config = UlnConfig::abi_decode(&config_bytes).unwrap();
+        println!("Lib: {lib_info:?}");
+        println!("ULN: {uln_config:?}");
     }
 }

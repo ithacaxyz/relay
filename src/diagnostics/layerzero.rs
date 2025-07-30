@@ -5,12 +5,16 @@ use crate::{
     config::{LayerZeroConfig, RelayConfig},
     interop::settler::layerzero::{
         ULN_CONFIG_TYPE,
-        contracts::{ILayerZeroEndpointV2, MessagingParams, UlnConfig},
+        contracts::{
+            ILayerZeroEndpointV2::{self, getConfigCall, getReceiveLibraryCall, quoteCall},
+            ILayerZeroSettler::{self, peersCall},
+            MessagingParams, UlnConfig,
+        },
     },
 };
 use alloy::{
     primitives::{B256, Bytes, ChainId},
-    providers::Provider,
+    providers::{CallItem, Provider},
     sol_types::SolValue,
 };
 use eyre::Result;
@@ -100,11 +104,14 @@ async fn check_chain<P: Provider>(
     let endpoint = ILayerZeroEndpointV2::new(*src_endpoint_address, src_provider);
 
     // Prepare multicalls
-    let mut multicall_quotes = src_provider.multicall().dynamic();
-    let mut multicall_get_lib = src_provider.multicall().dynamic();
+    let mut multicall_quotes = src_provider.multicall().dynamic::<quoteCall>();
+    let mut multicall_get_lib = src_provider.multicall().dynamic::<getReceiveLibraryCall>();
+    let mut multicall_peers = src_provider.multicall().dynamic::<peersCall>();
 
+    let settler_contract = ILayerZeroSettler::new(lz_config.settler_address, src_provider);
     let mut quote_dst_chains = Vec::new();
     let mut config_remote_chains = Vec::new();
+    let mut peer_eids = Vec::new();
     let settlement_id = B256::random();
 
     // Build multicalls for each destination chain
@@ -123,14 +130,23 @@ async fn check_chain<P: Provider>(
         );
 
         // Add quote call
-        multicall_quotes =
-            multicall_quotes.add_dynamic(endpoint.quote(params, lz_config.settler_address));
+        multicall_quotes = multicall_quotes.add_call_dynamic(
+            CallItem::from(endpoint.quote(params, lz_config.settler_address)).allow_failure(true),
+        );
         quote_dst_chains.push(*dst_chain_id);
 
         // Add getReceiveLibrary call
-        multicall_get_lib = multicall_get_lib
-            .add_dynamic(endpoint.getReceiveLibrary(lz_config.settler_address, *dst_endpoint_id));
+        multicall_get_lib = multicall_get_lib.add_call_dynamic(
+            CallItem::from(endpoint.getReceiveLibrary(lz_config.settler_address, *dst_endpoint_id))
+                .allow_failure(true),
+        );
         config_remote_chains.push((*dst_chain_id, *dst_endpoint_id));
+
+        // Add peers call
+        multicall_peers = multicall_peers.add_call_dynamic(
+            CallItem::from(settler_contract.peers(*dst_endpoint_id)).allow_failure(true),
+        );
+        peer_eids.push((*dst_chain_id, *dst_endpoint_id));
     }
 
     // Validate we have the expected number of remote chains
@@ -145,9 +161,13 @@ async fn check_chain<P: Provider>(
         ));
     }
 
-    // Execute both multicalls
-    let (quote_results, lib_results) =
-        try_join!(multicall_quotes.aggregate3(), multicall_get_lib.aggregate3())?;
+    // Execute all multicalls
+    info!(chain_id = %src_chain_id, "Executing LZ multicalls: quotes, libs, peers");
+    let (quote_results, lib_results, peer_results) = try_join!(
+        multicall_quotes.aggregate3(),
+        multicall_get_lib.aggregate3(),
+        multicall_peers.aggregate3()
+    )?;
 
     // Process quote results
     let chain_pairs: Vec<_> = quote_dst_chains.into_iter().map(|dst| (src_chain_id, dst)).collect();
@@ -156,7 +176,12 @@ async fn check_chain<P: Provider>(
         quote_results,
         chain_pairs,
         |fee: crate::interop::settler::layerzero::contracts::MessagingFee, (src, dst)| {
-            info!("LayerZero quote successful: {} -> {}, fee: {} wei", src, dst, fee.nativeFee);
+            info!(
+                src_chain_id = %src,
+                dst_chain_id = %dst,
+                native_fee = %fee.nativeFee,
+                "LayerZero quote successful"
+            );
         }
     );
 
@@ -172,16 +197,24 @@ async fn check_chain<P: Provider>(
     );
 
     // Build multicall_get_config to fetch ULN configurations for all valid remote chains
-    let mut multicall_get_config = src_provider.multicall().dynamic();
+    let mut multicall_get_config = src_provider.multicall().dynamic::<getConfigCall>();
     for (lib, (_, remote_eid)) in &valid_remote_chains {
-        multicall_get_config = multicall_get_config.add_dynamic(endpoint.getConfig(
-            lz_config.settler_address,
-            *lib,
-            *remote_eid,
-            ULN_CONFIG_TYPE,
-        ));
+        multicall_get_config = multicall_get_config.add_call_dynamic(
+            CallItem::from(endpoint.getConfig(
+                lz_config.settler_address,
+                *lib,
+                *remote_eid,
+                ULN_CONFIG_TYPE,
+            ))
+            .allow_failure(true),
+        );
     }
 
+    info!(
+        chain_id = %src_chain_id,
+        remote_chains = valid_remote_chains.len(),
+        "Fetching ULN configs"
+    );
     crate::process_multicall_results!(
         errors,
         multicall_get_config.aggregate3().await?,
@@ -197,8 +230,11 @@ async fn check_chain<P: Provider>(
 
             // Log the ULN configuration
             info!(
-                "LayerZero ULN config on chain {} for receiving from chain {} (EID {}): {:?}",
-                src_chain_id, remote_chain_id, remote_eid, uln_config
+                src_chain_id = %src_chain_id,
+                remote_chain_id = %remote_chain_id,
+                remote_eid = %remote_eid,
+                uln_config = ?uln_config,
+                "LayerZero ULN config retrieved"
             );
 
             // Validate confirmations
@@ -236,6 +272,29 @@ async fn check_chain<P: Provider>(
             }
         }
     );
+
+    // Process peer results
+    let expected_peer = B256::left_padding_from(lz_config.settler_address.as_slice());
+    crate::process_multicall_results!(errors, peer_results, peer_eids, |peer_bytes32: B256,
+                                                                        (
+        dst_chain_id,
+        dst_eid,
+    )| {
+        if peer_bytes32 != expected_peer {
+            errors.push(format!(
+                "LayerZeroSettler@{} on chain {} has incorrect peer {} for chain {} (EID {}). Expected: {}",
+                lz_config.settler_address, src_chain_id, peer_bytes32, dst_chain_id, dst_eid, expected_peer
+            ));
+        } else {
+            info!(
+                src_chain_id = %src_chain_id,
+                dst_chain_id = %dst_chain_id,
+                dst_eid = %dst_eid,
+                peer = %peer_bytes32,
+                "LayerZeroSettler peer configured"
+            );
+        }
+    });
 
     Ok((warnings, errors))
 }

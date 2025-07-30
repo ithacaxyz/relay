@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
 use sqlx::{PgPool, Postgres, types::BigDecimal};
-use tracing::instrument;
+use tracing::{error, instrument};
 
 /// PostgreSQL storage implementation.
 #[derive(Debug)]
@@ -196,6 +196,7 @@ impl PgStorage {
                 .await
                 .map_err(eyre::Error::from)?;
             } else {
+                error!(?locked, ?unlocked, balance=?input.current_balance, lock_amount=?input.lock_amount, ?chain, ?asset, "not enough liquidity");
                 return Err(StorageError::CantLockLiquidity);
             }
         }
