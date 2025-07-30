@@ -256,6 +256,7 @@ impl LayerZeroSettler {
             .to(MULTICALL3_ADDRESS)
             .input(multicall_calldata.clone().into());
 
+        tracing::debug!("Estimating multicall for packet {:?}", &packet);
         let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
 
         let tx = RelayTransaction::new_internal(
@@ -367,11 +368,15 @@ impl Settler for LayerZeroSettler {
                 settlement_id,
             );
 
+            tracing::debug!(?params, "LayerZero quote params");
+
             multicall = multicall.add_dynamic(endpoint.quote(params, self.settler_address));
         }
 
-        let native_lz_fee: U256 =
-            multicall.aggregate().await?.into_iter().map(|fee| fee.nativeFee).sum();
+        let quote_results = multicall.aggregate().await?;
+        let native_lz_fee: U256 = quote_results.into_iter().map(|fee| fee.nativeFee).sum();
+
+        tracing::debug!(?settlement_id, ?native_lz_fee, "Total LayerZero fee");
 
         let calldata = ILayerZeroSettler::executeSendCall {
             sender: orchestrator,
