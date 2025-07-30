@@ -1252,6 +1252,20 @@ impl Relay {
         // ensure interop has been configured, before proceeding
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
+        // ensure the requested asset is supported for interop
+        if !self
+            .inner
+            .fee_tokens
+            .find(request.chain_id, &requested_asset)
+            .is_some_and(|t| t.interop)
+        {
+            return Err(RelayError::UnsupportedAsset {
+                chain: request.chain_id,
+                asset: requested_asset,
+            }
+            .into());
+        }
+
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
         // the true fees. After this, we do one more pass of finding funds on other chains.

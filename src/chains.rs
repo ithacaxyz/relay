@@ -134,7 +134,12 @@ impl Chains {
 
             info!(bridges=?bridges.iter().map(|b| b.id()).collect::<Vec<_>>(), "Launching interop service");
 
-            let service = RebalanceService::new(fee_tokens, liquidity_tracker.clone(), bridges);
+            let service = RebalanceService::new(
+                fee_tokens,
+                liquidity_tracker.clone(),
+                bridges,
+                rebalance_config.thresholds.clone(),
+            );
             tokio::spawn(service.into_future().await?);
         }
 

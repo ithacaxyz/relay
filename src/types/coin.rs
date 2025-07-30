@@ -1,6 +1,6 @@
 use super::{CoinRegistry, CoinRegistryKey};
 use alloy::primitives::{Address, ChainId};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fmt::Display;
 
 /// A coin price pair.
@@ -25,7 +25,7 @@ impl CoinPair {
 }
 
 /// Chain, address and contract agonistic coins.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, derive_more::FromStr, Serialize)]
 #[non_exhaustive]
 pub enum CoinKind {
     /// Ethereum
@@ -90,5 +90,15 @@ impl CoinKind {
 impl Display for CoinKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CoinKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)
+            .and_then(|s| s.to_lowercase().parse().map_err(serde::de::Error::custom))
     }
 }
