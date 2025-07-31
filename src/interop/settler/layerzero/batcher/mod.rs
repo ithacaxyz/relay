@@ -22,4 +22,4 @@ mod types;
 
 pub use pool::LayerZeroPoolHandle;
 pub use processor::LayerZeroBatchProcessor;
-pub use types::{ChainConfigs, LayerZeroBatchMessage, LayerZeroPoolMessages, PendingBatch};
+pub use types::{LayerZeroBatchMessage, LayerZeroPoolMessages, PendingBatch};

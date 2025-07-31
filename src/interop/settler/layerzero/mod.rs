@@ -19,7 +19,7 @@ use crate::{
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
-    types::{Call3, IEscrow, TransactionServiceHandles},
+    types::{Call3, IEscrow, LZChainConfigs, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
@@ -43,7 +43,7 @@ pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
 /// Layerzero batch processing.
 pub mod batcher;
-use batcher::{ChainConfigs, LayerZeroBatchProcessor, LayerZeroPoolHandle};
+use batcher::{LayerZeroBatchProcessor, LayerZeroPoolHandle};
 
 /// ULN config type constant
 pub const ULN_CONFIG_TYPE: u32 = 2;
@@ -73,7 +73,7 @@ pub struct LayerZeroSettler {
     /// Storage backend for persisting data.
     storage: RelayStorage,
     /// Chain configurations.
-    chain_configs: ChainConfigs,
+    chain_configs: LZChainConfigs,
     /// Handle to the batch pool for processing settlements.
     settlement_pool: LayerZeroPoolHandle,
 }
@@ -93,7 +93,7 @@ impl LayerZeroSettler {
 
         // Build chain configs
         let chain_configs =
-            ChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
+            LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
 
         // Create batch processor with pool
         let settlement_pool = LayerZeroBatchProcessor::run(

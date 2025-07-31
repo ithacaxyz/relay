@@ -38,7 +38,7 @@ impl LayerZeroPoolHandle {
 
         // Send the message with the sender separately
         self.sender
-            .send(LayerZeroPoolMessages::Settlement(batch_message, tx))
+            .send(LayerZeroPoolMessages::Settlement { settlement: batch_message, response: tx })
             .map_err(|_| SettlementError::InternalError("Channel closed".to_string()))?;
 
         // Wait for direct notification
@@ -70,9 +70,12 @@ impl LayerZeroPoolHandle {
         nonce: u64,
         tx_id: TxId,
     ) {
-        let _ = self
-            .sender
-            .send(LayerZeroPoolMessages::UpdateHighestNonce(chain_id, src_eid, nonce, tx_id));
+        let _ = self.sender.send(LayerZeroPoolMessages::UpdateHighestNonce {
+            chain_id,
+            src_eid,
+            nonce,
+            tx_id,
+        });
     }
 
     /// Get highest nonce for a specific chain/eid
@@ -208,8 +211,8 @@ impl LayerZeroBatchPool {
         tokio::spawn(async move {
             while let Some(message) = self.receiver.recv().await {
                 match message {
-                    LayerZeroPoolMessages::Settlement(msg, sender) => {
-                        self.handle_settlement(msg, sender);
+                    LayerZeroPoolMessages::Settlement { settlement: message, response } => {
+                        self.handle_settlement(message, response);
                     }
                     LayerZeroPoolMessages::GetPendingBatch {
                         chain_id,
@@ -219,7 +222,12 @@ impl LayerZeroBatchPool {
                     } => {
                         self.handle_get_pending_batch(chain_id, src_eid, highest_nonce, response);
                     }
-                    LayerZeroPoolMessages::UpdateHighestNonce(chain_id, src_eid, nonce, tx_id) => {
+                    LayerZeroPoolMessages::UpdateHighestNonce {
+                        chain_id,
+                        src_eid,
+                        nonce,
+                        tx_id,
+                    } => {
                         self.handle_update_highest_nonce(chain_id, src_eid, nonce, tx_id);
                     }
                     LayerZeroPoolMessages::GetHighestNonce { chain_id, src_eid, response } => {

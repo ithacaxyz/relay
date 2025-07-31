@@ -1,4 +1,4 @@
-use super::{ChainConfigs, LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool};
+use super::{LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool};
 use crate::{
     interop::settler::{
         SettlementError,
@@ -6,7 +6,7 @@ use crate::{
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
-    types::{Call3, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call},
+    types::{Call3, LZChainConfigs, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call},
 };
 use alloy::{
     primitives::{B256, ChainId, map::HashMap},
@@ -24,7 +24,7 @@ pub struct LayerZeroBatchProcessor {
     /// Storage for persistence
     storage: RelayStorage,
     /// Chain configurations
-    chain_configs: ChainConfigs,
+    chain_configs: LZChainConfigs,
     /// Handle to communicate with batch pool
     pool_handle: LayerZeroPoolHandle,
 }
@@ -33,7 +33,7 @@ impl LayerZeroBatchProcessor {
     /// Run batch processor with its associated pool, returning pool handle.
     pub async fn run(
         storage: RelayStorage,
-        chain_configs: ChainConfigs,
+        chain_configs: LZChainConfigs,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroPoolHandle, SettlementError> {
         // Create channels for pool and processor communication
