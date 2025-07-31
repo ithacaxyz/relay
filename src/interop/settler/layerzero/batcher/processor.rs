@@ -281,13 +281,10 @@ impl LayerZeroBatchProcessor {
                     "Transaction confirmed, updating highest nonce"
                 );
 
-                // Update highest nonce
+                // Update highest nonce (also removes processed entries)
                 self.pool_handle
                     .update_highest_nonce(chain_id, src_eid, highest_nonce, tx_id)
                     .await;
-
-                // Remove processed settlements up to highest_nonce
-                self.pool_handle.remove_processed(chain_id, src_eid, highest_nonce).await;
 
                 Ok(())
             }

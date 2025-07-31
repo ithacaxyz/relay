@@ -62,7 +62,7 @@ impl LayerZeroPoolHandle {
         rx.await.unwrap_or_else(|_| PendingBatch::default())
     }
 
-    /// Update the highest nonce confirmed for a chain
+    /// Update the highest nonce confirmed for a chain and remove processed settlements
     pub async fn update_highest_nonce(
         &self,
         chain_id: ChainId,
@@ -73,20 +73,6 @@ impl LayerZeroPoolHandle {
         let _ = self
             .sender
             .send(LayerZeroPoolMessages::UpdateHighestNonce(chain_id, src_eid, nonce, tx_id));
-    }
-
-    /// Remove processed settlements up to and including highest_nonce
-    pub async fn remove_processed(
-        &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
-        highest_nonce: u64,
-    ) {
-        let _ = self.sender.send(LayerZeroPoolMessages::RemoveProcessed {
-            chain_id,
-            src_eid,
-            highest_nonce,
-        });
     }
 
     /// Get highest nonce for a specific chain/eid
@@ -175,7 +161,7 @@ impl LayerZeroBatchPool {
         let _ = response.send(pending_batch);
     }
 
-    /// Handle update highest nonce message
+    /// Handle update highest nonce message - also removes processed entries and notifies callers
     fn handle_update_highest_nonce(
         &mut self,
         chain_id: ChainId,
@@ -183,7 +169,8 @@ impl LayerZeroBatchPool {
         nonce: u64,
         tx_id: TxId,
     ) {
-        self.highest_nonce_confirmed.insert((chain_id, src_eid), (nonce, tx_id));
+        let key = (chain_id, src_eid);
+        self.highest_nonce_confirmed.insert(key, (nonce, tx_id));
 
         info!(
             chain_id = chain_id,
@@ -191,22 +178,13 @@ impl LayerZeroBatchPool {
             highest_nonce = nonce,
             "Batch confirmed on chain"
         );
-    }
 
-    /// Handle remove processed message
-    fn handle_remove_processed(
-        &mut self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
-        highest_nonce: u64,
-    ) {
-        if let Some(pending) = self.pending_settlements.get_mut(&(chain_id, src_eid)) {
-            // Collect nonces to remove and send confirmations
-            let to_remove: Vec<_> =
-                pending.range(..=highest_nonce).map(|(&nonce, _)| nonce).collect();
+        // Remove processed settlements and send confirmations
+        if let Some(pending) = self.pending_settlements.get_mut(&key) {
+            let to_remove: Vec<_> = pending.range(..=nonce).map(|(&n, _)| n).collect();
 
-            for nonce in to_remove {
-                if let Some(entry) = pending.remove(&nonce) {
+            for n in to_remove {
+                if let Some(entry) = pending.remove(&n) {
                     let _ = entry.response_tx.send(Ok(()));
                 }
             }
@@ -243,9 +221,6 @@ impl LayerZeroBatchPool {
                     }
                     LayerZeroPoolMessages::UpdateHighestNonce(chain_id, src_eid, nonce, tx_id) => {
                         self.handle_update_highest_nonce(chain_id, src_eid, nonce, tx_id);
-                    }
-                    LayerZeroPoolMessages::RemoveProcessed { chain_id, src_eid, highest_nonce } => {
-                        self.handle_remove_processed(chain_id, src_eid, highest_nonce);
                     }
                     LayerZeroPoolMessages::GetHighestNonce { chain_id, src_eid, response } => {
                         self.handle_get_highest_nonce(chain_id, src_eid, response);

@@ -70,17 +70,8 @@ pub enum LayerZeroPoolMessages {
         /// Channel to send response
         response: oneshot::Sender<PendingBatch>,
     },
-    /// Update highest nonce confirmed
+    /// Update highest nonce confirmed and remove/notify processed settlements
     UpdateHighestNonce(ChainId, EndpointId, u64, TxId),
-    /// Remove processed settlements up to and including highest_nonce
-    RemoveProcessed {
-        /// Chain ID
-        chain_id: ChainId,
-        /// Source endpoint ID
-        src_eid: EndpointId,
-        /// Highest nonce to remove up to
-        highest_nonce: u64,
-    },
     /// Get highest nonce for a specific chain/eid
     GetHighestNonce {
         /// Chain ID
