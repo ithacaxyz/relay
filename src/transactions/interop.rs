@@ -533,11 +533,10 @@ impl InteropServiceInner {
             self.storage
                 .unlock_bundle_liquidity(&bundle.bundle, HashMap::default(), new_status)
                 .await?;
+            bundle.status = new_status;
         } else {
             self.update_bundle_status(bundle, new_status).await?;
         }
-
-        bundle.status = new_status;
 
         Ok(())
     }
