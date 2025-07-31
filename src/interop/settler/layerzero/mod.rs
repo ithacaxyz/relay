@@ -1,41 +1,12 @@
-//! # LayerZero Protocol Integration
+//! LayerZero settler for cross-chain settlement attestation.
 //!
-//! This module implements the LayerZero settler for cross-chain settlement attestation in the
-//! Ithaca Relay. LayerZero is an omnichain interoperability protocol that enables secure message
-//! passing between blockchains.
+//! Handles sending settlement messages via LayerZero protocol, monitoring verification,
+//! and executing received messages on destination chains using batch processing.
 //!
-//! ## Overview
-//!
-//! The LayerZero integration allows the relay to:
-//! - Send cross-chain settlement attestations via LayerZero's messaging protocol
-//! - Monitor and verify message delivery across chains
-//! - Execute received messages to complete settlement flows
-//!
-//! ## Cross-Chain Settlement Flow
-//!
-//! 1. **Settlement Initiation**: When a settlement needs to be attested across chains, the relay
-//!    calls `build_execute_send_transaction` to create a transaction that sends LayerZero messages
-//!    to all destination chains.
-//!
-//! 2. **Message Transmission**: The LayerZero endpoint on the source chain emits `PacketSent`
-//!    events containing the encoded message payload and routing information.
-//!
-//! 3. **Off-Chain Verification**: LayerZero's decentralized verifier network (DVNs) observes the
-//!    source chain event and attests to its validity on the destination chains.
-//!
-//! 4. **Message Availability**: Once verified, the message becomes available on the destination
-//!    chain's LayerZero endpoint, indicated by a non-zero `inboundPayloadHash`.
-//!
-//! 5. **Message Execution**: The relay monitors for message verification and builds `lzReceive`
-//!    transactions to execute the delivered messages on each destination chain.
-//!
-//! ## Key Concepts
-//!
-//! - **Endpoint ID (EID)**: Each blockchain in the LayerZero network has a unique endpoint ID
-//! - **GUID**: Globally Unique Identifier for each LayerZero packet
-//! - **Nonce**: Per-sender ordering mechanism to ensure message sequencing
-//! - **DVN**: Decentralized Verifier Network that attests to cross-chain messages
-//! - **Packet**: The unit of cross-chain communication containing routing info and payload
+//! Key components:
+//! - **LayerZeroSettler**: Main settler implementation
+//! - **LayerZeroBatchProcessor**: Batches and executes settlements
+//! - **Verification**: Monitors message verification across chains
 
 use super::{SettlementError, Settler, SettlerId};
 use crate::{
@@ -47,12 +18,14 @@ use crate::{
         types::{LayerZeroPacketInfo, LayerZeroPacketV1},
     },
     storage::{RelayStorage, StorageApi},
-    transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
-    types::{Call3, IEscrow, aggregate3Call},
+    transactions::{
+        RelayTransaction, TransactionServiceHandle, TransactionStatus, interop::InteropBundle,
+    },
+    types::{Call3, IEscrow},
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
-    providers::{DynProvider, MULTICALL3_ADDRESS, Provider},
+    providers::{DynProvider, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
     sol_types::{SolCall, SolEvent, SolValue},
 };
@@ -60,7 +33,7 @@ use async_trait::async_trait;
 use futures_util::future::try_join_all;
 use itertools::Itertools;
 use std::{sync::Arc, time::Duration};
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 
 /// LayerZero contract interfaces.
 pub mod contracts;
@@ -70,19 +43,24 @@ pub use types::EndpointId;
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
+/// Layerzero settlement pool.
+pub mod pool;
+use pool::{LayerZeroBatchProcessor, LayerZeroPoolHandle};
 
 /// ULN config type constant
 pub const ULN_CONFIG_TYPE: u32 = 2;
 
 /// Layerzero configuration for a specific chain.
 #[derive(Debug, Clone)]
-pub(super) struct LZChainConfig {
+pub struct LZChainConfig {
     /// LayerZero endpoint ID for this chain.
     pub endpoint_id: EndpointId,
     /// LayerZero endpoint address for this chain.
     pub endpoint_address: Address,
     /// Provider for this chain.
     pub provider: DynProvider,
+    /// LayerZero settler contract address for this chain.
+    pub settler_address: Address,
 }
 
 /// LayerZero settler implementation for cross-chain settlement attestation.
@@ -98,25 +76,27 @@ pub struct LayerZeroSettler {
     storage: RelayStorage,
     /// Chain configurations.
     chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+    /// Handle to the batch pool for processing settlements.
+    settlement_pool: LayerZeroPoolHandle,
 }
 
 impl LayerZeroSettler {
-    /// Creates a new LayerZero settler instance for cross-chain settlement attestation.
-    pub fn new(
+    /// Creates a new LayerZero settler instance with batch processing.
+    pub async fn new(
         endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
         settler_address: Address,
         storage: RelayStorage,
-    ) -> Self {
+        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+    ) -> Result<Self, SettlementError> {
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
 
         // Build chain configs
-        let chain_configs = endpoint_ids
-            .keys()
-            .filter_map(|chain_id| {
-                let endpoint_id = endpoint_ids.get(chain_id)?;
+        let chain_configs: HashMap<ChainId, LZChainConfig> = endpoint_ids
+            .iter()
+            .filter_map(|(chain_id, endpoint_id)| {
                 let endpoint_address = endpoint_addresses.get(chain_id)?;
                 let provider = providers.get(chain_id)?;
 
@@ -126,18 +106,29 @@ impl LayerZeroSettler {
                         endpoint_id: *endpoint_id,
                         endpoint_address: *endpoint_address,
                         provider: provider.clone(),
+                        settler_address,
                     },
                 ))
             })
             .collect();
+        let chain_configs = Arc::new(chain_configs);
 
-        Self {
+        // Create batch processor with pool
+        let settlement_pool = LayerZeroBatchProcessor::run(
+            storage.clone(),
+            chain_configs.clone(),
+            tx_service_handles,
+        )
+        .await?;
+
+        Ok(Self {
             eid_to_chain,
             endpoint_addresses,
             settler_address,
             storage,
-            chain_configs: Arc::new(chain_configs),
-        }
+            chain_configs,
+            settlement_pool,
+        })
     }
 
     /// Gets the LayerZero endpoint address for a given chain ID.
@@ -211,70 +202,6 @@ impl LayerZeroSettler {
         .await?;
 
         Ok(packets)
-    }
-
-    /// Builds a transaction to execute a single verified LayerZero message.
-    ///
-    /// This method constructs a multicall transaction that:
-    /// 1. Calls `lzReceive` to complete the LayerZero message delivery
-    /// 2. Calls `Escrow.settle` to release the escrowed funds
-    ///
-    /// ## Note
-    ///
-    /// This method assumes the message has already been verified. Always check
-    /// `is_message_available` before building the execute transaction.
-    async fn build_execute_receive_transaction(
-        &self,
-        packet: &LayerZeroPacketInfo,
-        bundle: &InteropBundle,
-    ) -> Result<RelayTransaction, SettlementError> {
-        debug!(
-            packet_guid = ?packet.guid,
-            dst_chain = packet.dst_chain_id,
-            "Building multicall execute receive transaction"
-        );
-
-        let dst_config = self.get_chain_config(packet.dst_chain_id)?;
-        let src_config = self.get_chain_config(packet.src_chain_id)?;
-
-        // Build the LayerZero receive call
-        let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
-
-        // Extract and filter escrows for this settlement
-        let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
-        let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
-
-        let multicall_calldata = build_multicall_data(
-            packet,
-            &lz_receive_call,
-            dst_config.endpoint_address,
-            &escrow_info.escrow_ids,
-            escrow_info.escrow_address,
-        )?;
-
-        let tx_request = TransactionRequest::default()
-            .to(MULTICALL3_ADDRESS)
-            .input(multicall_calldata.clone().into());
-
-        tracing::debug!("Estimating multicall for packet {:?}", &packet);
-        let gas_limit = dst_config.provider.estimate_gas(tx_request).await?;
-
-        let tx = RelayTransaction::new_internal(
-            MULTICALL3_ADDRESS,
-            multicall_calldata,
-            packet.dst_chain_id,
-            gas_limit,
-        );
-
-        debug!(
-            packet_guid = ?packet.guid,
-            dst_chain = packet.dst_chain_id,
-            num_escrows = escrow_info.escrow_ids.len(),
-            gas_limit = gas_limit,
-            "Built multicall execute receive transaction"
-        );
-
-        Ok(tx)
     }
 
     /// Extracts LayerZero packet information from settlement transaction receipts.
@@ -428,20 +355,6 @@ impl Settler for LayerZeroSettler {
     }
 
     /// Waits for LayerZero messages to be verified on their destination chains.
-    ///
-    /// This method monitors the verification status of all LayerZero packets sent as part of
-    /// the settlement process. It uses both event monitoring (via WebSocket when available)
-    /// and polling fallbacks to track when messages become available for execution.
-    ///
-    /// # Verification Process
-    ///
-    /// 1. Extracts packet information from settlement transaction receipts
-    /// 2. Groups packets by destination chain for efficient monitoring
-    /// 3. Sets up event subscriptions for `PacketVerified` events.
-    /// 4. Falls back to polling `inboundPayloadHash` for chains without WebSocket
-    /// 5. Returns early if all messages are already verified
-    ///
-    /// ```
     async fn wait_for_verifications(
         &self,
         bundle: &InteropBundle,
@@ -455,67 +368,95 @@ impl Settler for LayerZeroSettler {
     }
 
     /// Builds transactions to execute verified LayerZero messages on their destination chains.
-    ///
-    /// This method creates `lzReceive` transactions for all verified messages, allowing the
-    /// destination chain contracts to process the settlement attestations.
+    /// Always returns empty list - settlements handled internally via batch processor.
     async fn build_execute_receive_transactions(
         &self,
         bundle: &InteropBundle,
     ) -> Result<Vec<RelayTransaction>, SettlementError> {
-        // Extract packet infos and filter for verified ones
-        let all_packet_infos = self.extract_packet_infos(bundle).await?;
+        // Extract packet infos to send to the settlement pool
+        let packet_infos = self.extract_packet_infos(bundle).await?;
 
-        if all_packet_infos.is_empty() {
-            return Ok(vec![]);
+        let futures = packet_infos.into_iter().map(|packet| {
+            let chain_configs = self.chain_configs.clone();
+            let settlement_pool = self.settlement_pool.clone();
+
+            async move {
+                // Check if message is available for execution
+                if is_message_available(&packet, &chain_configs).await? {
+                    // Build the message for the settlement pool
+                    let src_config = chain_configs
+                        .get(&packet.src_chain_id)
+                        .ok_or_else(|| SettlementError::UnsupportedChain(packet.src_chain_id))?;
+                    let dst_config = chain_configs
+                        .get(&packet.dst_chain_id)
+                        .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
+                    let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
+
+                    let settlement_id =
+                        packet.settlement_id().map_err(SettlementError::InternalError)?;
+                    let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
+
+                    let calls = build_multicall_calls(
+                        &packet,
+                        &lz_receive_call,
+                        dst_config.endpoint_address,
+                        &escrow_info.escrow_ids,
+                        escrow_info.escrow_address,
+                    )?;
+
+                    settlement_pool
+                        .send_settlement_and_wait(
+                            packet.dst_chain_id,
+                            src_config.endpoint_id,
+                            packet.nonce,
+                            calls,
+                        )
+                        .await
+                        .map_err(|e| {
+                            SettlementError::InternalError(format!("Settlement pool error: {e:?}"))
+                        })?;
+                }
+                Ok::<(), SettlementError>(())
+            }
+        });
+
+        // Wait for all to complete, collecting results
+        let results = futures_util::future::join_all(futures).await;
+
+        // Check if any failed and log errors
+        let mut any_failed = false;
+        for result in &results {
+            if let Err(e) = result {
+                tracing::error!("Failed to process packet: {:?}", e);
+                any_failed = true;
+            }
         }
 
-        // Check which packets are actually available for execute receive
-        let availability_results: Vec<bool> = try_join_all(
-            all_packet_infos
-                .iter()
-                .map(async |packet| is_message_available(packet, &self.chain_configs).await),
-        )
-        .await?;
+        // Return error if any packet failed
+        if any_failed {
+            return Err(SettlementError::InternalError(
+                "One or more packets failed to process".to_string(),
+            ));
+        }
 
-        // Filter packets based on availability results
-        let packet_infos: Vec<LayerZeroPacketInfo> = all_packet_infos
-            .into_iter()
-            .zip(availability_results)
-            .filter_map(|(packet, is_available)| if is_available { Some(packet) } else { None })
-            .collect();
-
-        info!(num_packets = packet_infos.len(), "Building LayerZero execute receive transactions");
-
-        // Build execute receive transactions
-        let execute_receive_txs = try_join_all(
-            packet_infos
-                .iter()
-                .map(|packet| self.build_execute_receive_transaction(packet, bundle)),
-        )
-        .await?;
-
-        info!(
-            num_deliveries = execute_receive_txs.len(),
-            "Successfully built execute receive transactions"
-        );
-
-        Ok(execute_receive_txs)
+        // Always return empty - batch processor handles execution
+        Ok(vec![])
     }
 }
 
-/// Builds the multicall data for executing LayerZero receive and escrow settlement.
+/// Builds the multicall calls for executing LayerZero receive and escrow settlement.
 ///
-/// This function creates a multicall that:
-/// 1. Commits the verification by calling ReceiveLib.commitVerification
-/// 2. Executes lzReceive to process the cross-chain message
-/// 3. Settles the escrows to release funds
-fn build_multicall_data(
+/// This function creates calls that:
+/// 1. Commit the verification by calling ReceiveLib.commitVerification
+/// 2. Execute lzReceive to process the cross-chain message
+/// 3. Settle the escrows to release funds
+fn build_multicall_calls(
     packet: &LayerZeroPacketInfo,
     lz_receive_call: &ILayerZeroEndpointV2::lzReceiveCall,
     endpoint_address: Address,
     escrow_ids: &[B256],
     escrow_address: Address,
-) -> Result<Bytes, SettlementError> {
+) -> Result<Vec<Call3>, SettlementError> {
     let commit_verification_calldata = contracts::IReceiveUln302::commitVerificationCall {
         _packetHeader: packet.packet_header.clone().into(),
         _payloadHash: packet.payload_hash,
@@ -528,7 +469,7 @@ fn build_multicall_data(
     // Encode the escrow settle call
     let settle_calldata = IEscrow::settleCall { escrowIds: escrow_ids.to_vec() }.abi_encode();
 
-    // Build the multicall with the correct order:
+    // Build the calls with the correct order:
     // 1. commitVerification
     // 2. lzReceive
     // 3. settle
@@ -546,6 +487,5 @@ fn build_multicall_data(
         Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
     ];
 
-    let multicall_calldata = aggregate3Call { calls }.abi_encode();
-    Ok(multicall_calldata.into())
+    Ok(calls)
 }

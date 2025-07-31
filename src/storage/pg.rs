@@ -12,7 +12,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, LayerZeroNonceRecord, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -1267,5 +1267,64 @@ impl StorageApi for PgStorage {
         }
 
         Ok(pending_transactions)
+    }
+
+    /// Update LayerZero nonce and queue transaction atomically
+    #[instrument(skip_all)]
+    async fn update_lz_nonce_and_queue_transaction(
+        &self,
+        chain_id: ChainId,
+        src_eid: u32,
+        nonce_lz: u64,
+        tx_id: TxId,
+        transaction: &RelayTransaction,
+    ) -> Result<()> {
+        let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
+
+        // Update or insert nonce tracking
+        sqlx::query!(
+            r#"
+            INSERT INTO layerzero_nonces (chain_id, src_eid, nonce_lz, tx_id, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (chain_id, src_eid) 
+            DO UPDATE SET 
+                nonce_lz = EXCLUDED.nonce_lz,
+                tx_id = EXCLUDED.tx_id,
+                updated_at = NOW()
+            "#,
+            chain_id as i64,
+            src_eid as i32,
+            nonce_lz as i64,
+            tx_id.as_slice()
+        )
+        .execute(&mut *db_tx)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        // Queue transaction
+        self.queue_transaction_with(transaction, &mut db_tx).await?;
+
+        db_tx.commit().await.map_err(eyre::Error::from)?;
+        Ok(())
+    }
+
+    /// Get latest LayerZero nonces for all chain/endpoint pairs
+    #[instrument(skip_all)]
+    async fn get_latest_layerzero_nonces(&self) -> Result<Vec<LayerZeroNonceRecord>> {
+        let records =
+            sqlx::query!("SELECT chain_id, src_eid, nonce_lz, tx_id FROM layerzero_nonces")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(eyre::Error::from)?;
+
+        Ok(records
+            .into_iter()
+            .map(|record| LayerZeroNonceRecord {
+                chain_id: record.chain_id as u64,
+                src_eid: record.src_eid as u32,
+                nonce_lz: record.nonce_lz as u64,
+                tx_id: TxId::from_slice(&record.tx_id),
+            })
+            .collect())
     }
 }

@@ -2,11 +2,12 @@
 use crate::{
     constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
     interop::{
-        LayerZeroSettler, SettlementProcessor, Settler, SimpleSettler,
+        LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SimpleSettler,
         settler::layerzero::EndpointId,
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
+    transactions::TransactionServiceHandle,
     types::CoinKind,
 };
 use alloy::{
@@ -26,6 +27,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tracing::warn;
@@ -218,16 +220,17 @@ pub struct SettlerConfig {
 
 impl SettlerConfig {
     /// Creates a settlement processor from this configuration.
-    pub fn settlement_processor(
+    pub async fn settlement_processor(
         &self,
         storage: RelayStorage,
         providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+        tx_service_handles: Arc<HashMap<ChainId, crate::transactions::TransactionServiceHandle>>,
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
         let settler: Box<dyn Settler> = match &self.implementation {
-            SettlerImplementation::LayerZero(config) => {
-                Box::new(config.create_settler(providers, storage.clone()))
-            }
+            SettlerImplementation::LayerZero(config) => Box::new(
+                config.create_settler(providers, storage.clone(), tx_service_handles).await?,
+            ),
             SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
         };
 
@@ -299,18 +302,21 @@ pub struct LayerZeroConfig {
 
 impl LayerZeroConfig {
     /// Creates a new LayerZero settler instance with the given providers and storage.
-    pub fn create_settler(
+    pub async fn create_settler(
         &self,
         providers: HashMap<ChainId, DynProvider>,
         storage: RelayStorage,
-    ) -> LayerZeroSettler {
+        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+    ) -> Result<LayerZeroSettler, SettlementError> {
         LayerZeroSettler::new(
-            self.endpoint_ids.clone().into_iter().collect(),
-            self.endpoint_addresses.clone().into_iter().collect(),
+            self.endpoint_ids.clone(),
+            self.endpoint_addresses.clone(),
             providers,
             self.settler_address,
             storage,
+            tx_service_handles,
         )
+        .await
     }
 }
 
