@@ -540,6 +540,11 @@ impl CallStatusCode {
     }
 
     /// Whether the bundle was confirmed.
+    pub fn is_preconfirmed(&self) -> bool {
+        matches!(self, CallStatusCode::PreConfirmed)
+    }
+
+    /// Whether the bundle was confirmed.
     pub fn is_confirmed(&self) -> bool {
         matches!(self, CallStatusCode::Confirmed)
     }
