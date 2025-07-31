@@ -1276,12 +1276,10 @@ impl StorageApi for PgStorage {
         chain_id: ChainId,
         src_eid: u32,
         nonce_lz: u64,
-        tx_id: TxId,
         transaction: &RelayTransaction,
     ) -> Result<()> {
         let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
 
-        // Update or insert nonce tracking
         sqlx::query!(
             r#"
             INSERT INTO layerzero_nonces (chain_id, src_eid, nonce_lz, tx_id, updated_at)
@@ -1295,13 +1293,12 @@ impl StorageApi for PgStorage {
             chain_id as i64,
             src_eid as i32,
             nonce_lz as i64,
-            tx_id.as_slice()
+            transaction.id.as_slice()
         )
         .execute(&mut *db_tx)
         .await
         .map_err(eyre::Error::from)?;
 
-        // Queue transaction
         self.queue_transaction_with(transaction, &mut db_tx).await?;
 
         db_tx.commit().await.map_err(eyre::Error::from)?;

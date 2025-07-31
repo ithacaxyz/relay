@@ -505,14 +505,11 @@ impl StorageApi for InMemoryStorage {
         chain_id: ChainId,
         src_eid: u32,
         nonce_lz: u64,
-        tx_id: TxId,
         transaction: &RelayTransaction,
     ) -> Result<()> {
-        // Update nonce record
-        let record = LayerZeroNonceRecord { chain_id, src_eid, nonce_lz, tx_id };
+        let record = LayerZeroNonceRecord { chain_id, src_eid, nonce_lz, tx_id: transaction.id };
         self.layerzero_nonces.insert((chain_id, src_eid), record);
 
-        // Queue transaction
         self.queue_transaction(transaction).await?;
 
         Ok(())

@@ -233,7 +233,7 @@ impl LayerZeroBatchProcessor {
         // Update LayerZero nonce and queue transaction atomically
         let last_nonce = pending_batch.settlements.last().unwrap().nonce;
         self.storage
-            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, last_nonce, tx_id, &batch_tx)
+            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, last_nonce, &batch_tx)
             .await
             .map_err(|e| SettlementError::InternalError(format!("Storage error: {e:?}")))?;
 

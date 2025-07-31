@@ -270,24 +270,13 @@ pub trait StorageApi: Debug + Send + Sync {
         chain_id: ChainId,
     ) -> Result<Vec<TxEnvelope>>;
 
-    /// Update LayerZero nonce and queue transaction atomically.
-    ///
-    /// This method ensures that LayerZero batch processing maintains proper sequencing
-    /// by atomically updating the highest processed nonce for a given (chain_id, src_eid)
-    /// pair and queuing the associated transaction.
-    ///
-    /// # Arguments
-    /// * `chain_id` - The destination chain ID where the batch will be executed
-    /// * `src_eid` - The source LayerZero endpoint ID
-    /// * `nonce_lz` - The highest LayerZero nonce included in this batch
-    /// * `tx_id` - The transaction ID of the batch transaction being queued
-    /// * `transaction` - The batch transaction to be queued
+    /// Update LayerZero nonce for the chain_id and src_eid pair and queue the associated
+    /// transaction atomically.
     async fn update_lz_nonce_and_queue_transaction(
         &self,
         chain_id: ChainId,
         src_eid: u32,
         nonce_lz: u64,
-        tx_id: TxId,
         transaction: &RelayTransaction,
     ) -> Result<()>;
 

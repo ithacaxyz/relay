@@ -324,11 +324,10 @@ impl StorageApi for RelayStorage {
         chain_id: ChainId,
         src_eid: u32,
         nonce_lz: u64,
-        tx_id: TxId,
         transaction: &RelayTransaction,
     ) -> api::Result<()> {
         self.inner
-            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, nonce_lz, tx_id, transaction)
+            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, nonce_lz, transaction)
             .await
     }
 

@@ -1,10 +1,10 @@
-//! LayerZero-specific types
+//! LayerZero specific types
 
 use crate::transactions::TxId;
 use alloy::primitives::ChainId;
 use serde::{Deserialize, Serialize};
 
-/// Record of the latest LayerZero nonce for a specific chain and endpoint.
+/// Storage record of the latest LayerZero nonce for a specific chain and endpoint.
 ///
 /// This struct tracks the highest nonce that has been queued for processing
 /// along with the associated transaction ID. This is used for crash recovery
