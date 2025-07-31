@@ -6,7 +6,7 @@ use crate::{
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
-    types::{Call3, LayerZeroNonceRecord, aggregate3Call},
+    types::{Call3, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call},
 };
 use alloy::{
     primitives::{B256, ChainId, map::HashMap},
@@ -14,7 +14,7 @@ use alloy::{
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, info};
 
@@ -34,7 +34,7 @@ impl LayerZeroBatchProcessor {
     pub async fn run(
         storage: RelayStorage,
         chain_configs: ChainConfigs,
-        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+        tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroPoolHandle, SettlementError> {
         // Create channels for pool and processor communication
         let (msg_sender, msg_receiver) = mpsc::unbounded_channel();
@@ -56,7 +56,7 @@ impl LayerZeroBatchProcessor {
     /// Spawn dedicated tasks for each (destination_chain, source_endpoint) pair.
     async fn spawn(
         self,
-        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+        tx_service_handles: TransactionServiceHandles,
     ) -> Result<(), SettlementError> {
         // Create a map of the latest handled nonces by (chain_id, src_eid)
         let nonce_map: HashMap<(ChainId, EndpointId), LayerZeroNonceRecord> = self

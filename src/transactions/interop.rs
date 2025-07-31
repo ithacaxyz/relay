@@ -12,7 +12,10 @@ use crate::{
     },
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
-    types::{InteropTransactionBatch, OrchestratorContract::IntentExecuted, rpc::BundleId},
+    types::{
+        InteropTransactionBatch, OrchestratorContract::IntentExecuted, TransactionServiceHandles,
+        rpc::BundleId,
+    },
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
@@ -1167,7 +1170,7 @@ impl InteropService {
                 .settlement_processor(
                     storage.clone(),
                     providers.clone(),
-                    Arc::new(tx_service_handles.clone()),
+                    TransactionServiceHandles::new(tx_service_handles.clone()),
                 )
                 .await?,
         );

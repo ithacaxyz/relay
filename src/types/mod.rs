@@ -47,6 +47,9 @@ pub use signed::*;
 mod quote;
 pub use quote::*;
 
+mod transaction;
+pub use transaction::*;
+
 pub mod rpc;
 
 mod token;

@@ -7,8 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
-    transactions::TransactionServiceHandle,
-    types::CoinKind,
+    types::{CoinKind, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{Address, ChainId, U256, map::HashMap},
@@ -27,7 +26,6 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
     str::FromStr,
-    sync::Arc,
     time::Duration,
 };
 use tracing::warn;
@@ -224,7 +222,7 @@ impl SettlerConfig {
         &self,
         storage: RelayStorage,
         providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
-        tx_service_handles: Arc<HashMap<ChainId, crate::transactions::TransactionServiceHandle>>,
+        tx_service_handles: TransactionServiceHandles,
     ) -> eyre::Result<SettlementProcessor> {
         // Create the settler based on config
         let settler: Box<dyn Settler> = match &self.implementation {
@@ -306,7 +304,7 @@ impl LayerZeroConfig {
         &self,
         providers: HashMap<ChainId, DynProvider>,
         storage: RelayStorage,
-        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+        tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroSettler, SettlementError> {
         LayerZeroSettler::new(
             self.endpoint_ids.clone(),

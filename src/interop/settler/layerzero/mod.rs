@@ -18,10 +18,8 @@ use crate::{
         types::{LayerZeroPacketInfo, LayerZeroPacketV1},
     },
     storage::{RelayStorage, StorageApi},
-    transactions::{
-        RelayTransaction, TransactionServiceHandle, TransactionStatus, interop::InteropBundle,
-    },
-    types::{Call3, IEscrow},
+    transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
+    types::{Call3, IEscrow, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
@@ -32,7 +30,7 @@ use alloy::{
 use async_trait::async_trait;
 use futures_util::future::try_join_all;
 use itertools::Itertools;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tracing::{info, instrument};
 
 /// LayerZero contract interfaces.
@@ -88,7 +86,7 @@ impl LayerZeroSettler {
         providers: HashMap<ChainId, DynProvider>,
         settler_address: Address,
         storage: RelayStorage,
-        tx_service_handles: Arc<HashMap<ChainId, TransactionServiceHandle>>,
+        tx_service_handles: TransactionServiceHandles,
     ) -> Result<Self, SettlementError> {
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();

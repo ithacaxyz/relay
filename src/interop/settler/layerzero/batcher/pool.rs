@@ -139,7 +139,8 @@ impl LayerZeroBatchPool {
         }
 
         // Add to pending settlements
-        self.pending_settlements.entry(key).or_default().insert(msg.nonce, (msg, sender));
+        let entry = PendingSettlementEntry::new(msg, sender);
+        self.pending_settlements.entry(key).or_default().insert(entry.message.nonce, entry);
     }
 
     /// Handle get pending batch message
@@ -161,8 +162,8 @@ impl LayerZeroBatchPool {
 
                 for _ in 0..20 {
                     match pending.get(&current_nonce) {
-                        Some((msg, _)) => {
-                            messages.push(msg.clone());
+                        Some(entry) => {
+                            messages.push(entry.message.clone());
                             current_nonce += 1;
                         }
                         None => break,
@@ -205,8 +206,8 @@ impl LayerZeroBatchPool {
                 pending.range(..=highest_nonce).map(|(&nonce, _)| nonce).collect();
 
             for nonce in to_remove {
-                if let Some((_, sender)) = pending.remove(&nonce) {
-                    let _ = sender.send(Ok(()));
+                if let Some(entry) = pending.remove(&nonce) {
+                    let _ = entry.response_tx.send(Ok(()));
                 }
             }
         }

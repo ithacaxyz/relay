@@ -13,7 +13,8 @@ use alloy::{
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
-/// LayerZero settlement message to be batched.
+/// LayerZero settlement message to be batched with the following calls: { commitVerification,
+/// lzReceive, settle }.
 #[derive(Debug, Clone)]
 pub struct LayerZeroBatchMessage {
     /// Destination chain ID
@@ -22,7 +23,7 @@ pub struct LayerZeroBatchMessage {
     pub src_eid: EndpointId,
     /// LayerZero nonce for this message
     pub nonce: u64,
-    /// The calls to execute
+    /// The calls to execute: { commitVerification, lzReceive, settle }
     pub calls: Vec<Call3>,
 }
 
@@ -135,12 +136,21 @@ impl ChainConfigs {
     }
 }
 
-impl From<Arc<HashMap<ChainId, LZChainConfig>>> for ChainConfigs {
-    fn from(configs: Arc<HashMap<ChainId, LZChainConfig>>) -> Self {
-        Self(configs)
-    }
+/// Pending settlement entry containing the message and response channel
+#[derive(Debug)]
+pub struct PendingSettlementEntry {
+    /// The LayerZero batch message
+    pub message: LayerZeroBatchMessage,
+    /// Channel to send the result back to the caller
+    pub response_tx: oneshot::Sender<Result<(), SettlementError>>,
 }
 
-/// Type alias for pending settlement entry
-pub type PendingSettlementEntry =
-    (LayerZeroBatchMessage, oneshot::Sender<Result<(), SettlementError>>);
+impl PendingSettlementEntry {
+    /// Create a new pending settlement entry
+    pub fn new(
+        message: LayerZeroBatchMessage,
+        response_tx: oneshot::Sender<Result<(), SettlementError>>,
+    ) -> Self {
+        Self { message, response_tx }
+    }
+}
