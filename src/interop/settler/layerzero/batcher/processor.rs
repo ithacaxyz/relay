@@ -6,7 +6,9 @@ use crate::{
     },
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
-    types::{Call3, LZChainConfigs, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call},
+    types::{
+        Call3, LZChainConfigs, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call,
+    },
 };
 use alloy::{
     primitives::{B256, ChainId, map::HashMap},

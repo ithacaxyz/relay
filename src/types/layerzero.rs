@@ -1,6 +1,9 @@
 //! LayerZero specific types
 
-use crate::{interop::settler::layerzero::{EndpointId, LZChainConfig}, transactions::TxId};
+use crate::{
+    interop::settler::layerzero::{EndpointId, LZChainConfig},
+    transactions::TxId,
+};
 use alloy::{
     primitives::{Address, ChainId, map::HashMap},
     providers::DynProvider,

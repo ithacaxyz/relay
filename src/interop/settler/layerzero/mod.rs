@@ -364,9 +364,7 @@ impl Settler for LayerZeroSettler {
 
         // Check which packets are actually available for execute receive
         let availability_results: Vec<bool> = try_join_all(
-            all_packet_infos
-                .iter()
-                .map(|packet| is_message_available(packet, &self.chain_configs)),
+            all_packet_infos.iter().map(|packet| is_message_available(packet, &self.chain_configs)),
         )
         .await?;
 
@@ -385,13 +383,12 @@ impl Settler for LayerZeroSettler {
             // Get configs for source and destination chains
             let src_config = self.get_chain_config(packet.src_chain_id)?;
             let dst_config = self.get_chain_config(packet.dst_chain_id)?;
-            
+
             // Build LayerZero receive call
             let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
 
             // Get escrow information
-            let settlement_id =
-                packet.settlement_id().map_err(SettlementError::InternalError)?;
+            let settlement_id = packet.settlement_id().map_err(SettlementError::InternalError)?;
             let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
 
             // Build multicall

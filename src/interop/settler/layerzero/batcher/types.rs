@@ -1,8 +1,5 @@
 use crate::{
-    interop::settler::{
-        SettlementError,
-        layerzero::EndpointId,
-    },
+    interop::settler::{SettlementError, layerzero::EndpointId},
     transactions::TxId,
     types::Call3,
 };
@@ -92,7 +89,6 @@ pub enum LayerZeroPoolMessages {
         response: oneshot::Sender<Option<u64>>,
     },
 }
-
 
 /// Pending settlement entry containing the message and response channel
 #[derive(Debug)]
