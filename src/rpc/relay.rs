@@ -860,7 +860,6 @@ impl Relay {
         &self,
         request: &PrepareCallsParameters,
         maybe_stored: Option<&CreatableAccount>,
-        calls: Vec<Call>,
         nonce: U256,
         intent_kind: IntentKind,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
@@ -892,7 +891,7 @@ impl Relay {
             .estimate_fee(
                 PartialIntent {
                     eoa,
-                    execution_data: calls.abi_encode().into(),
+                    execution_data: request.calls.abi_encode().into(),
                     nonce,
                     payer: request.capabilities.meta.fee_payer,
                     // stored PreCall should come first since it's been signed by the root
@@ -931,7 +930,7 @@ impl Relay {
 
     async fn prepare_calls_inner(
         &self,
-        request: PrepareCallsParameters,
+        mut request: PrepareCallsParameters,
         intent_kind: Option<IntentKind>,
     ) -> RpcResult<PrepareCallsResponse> {
         // Checks calls and precall calls in the request
@@ -956,7 +955,7 @@ impl Relay {
         }
 
         // Generate all requested calls.
-        let calls = self.generate_calls(&request).await?;
+        request.calls = self.generate_calls(&request).await?;
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request.get_nonce(maybe_stored.as_ref(), &provider).await?;
@@ -965,16 +964,15 @@ impl Relay {
         let (asset_diff, context) = if request.capabilities.pre_call {
             let precall = SignedCall {
                 eoa: request.from.unwrap_or_default(),
-                executionData: calls.abi_encode().into(),
+                executionData: request.calls.abi_encode().into(),
                 nonce,
                 signature: Bytes::new(),
             };
 
             (AssetDiffResponse::default(), PrepareCallsContext::with_precall(precall))
         } else {
-            let (asset_diffs, quotes) = self
-                .build_quotes(&request, calls, nonce, maybe_stored.as_ref(), intent_kind)
-                .await?;
+            let (asset_diffs, quotes) =
+                self.build_quotes(&request, nonce, maybe_stored.as_ref(), intent_kind).await?;
 
             let sig = self
                 .inner
@@ -1016,7 +1014,6 @@ impl Relay {
     async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
-        calls: Vec<Call>,
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
         intent_kind: Option<IntentKind>,
@@ -1032,13 +1029,12 @@ impl Relay {
                 request,
                 required_funds.address,
                 required_funds.value,
-                calls,
                 nonce,
                 maybe_stored,
             )
             .await
         } else {
-            self.build_single_chain_quote(request, maybe_stored, calls, nonce, intent_kind)
+            self.build_single_chain_quote(request, maybe_stored, nonce, intent_kind)
                 .await
                 .map_err(Into::into)
         }
@@ -1167,13 +1163,12 @@ impl Relay {
     /// - Since simulating it as a multichain intent raises the fees, we need to source funds again;
     ///   we continue this process a number of times, until `balance + funding - required_assets -
     ///   fee >= 0`.
-    #[instrument(skip(self, request, calls, maybe_stored), fields(chain_id = request.chain_id))]
+    #[instrument(skip(self, request, maybe_stored), fields(chain_id = request.chain_id))]
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
         requested_asset: Address,
         requested_funds: U256,
-        calls: Vec<Call>,
         nonce: U256,
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
@@ -1200,7 +1195,6 @@ impl Relay {
             .build_single_chain_quote(
                 request,
                 maybe_stored,
-                calls.clone(),
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 1,
@@ -1244,7 +1238,7 @@ impl Relay {
                 "Falling back to single chain for intent"
             );
             return self
-                .build_single_chain_quote(request, maybe_stored, calls, nonce, None)
+                .build_single_chain_quote(request, maybe_stored, nonce, None)
                 .await
                 .map_err(Into::into);
         }
@@ -1348,7 +1342,6 @@ impl Relay {
                 .build_intent(
                     request,
                     maybe_stored,
-                    calls.clone(),
                     nonce,
                     IntentKind::MultiOutput {
                         leaf_index: funding_chains.len(),
@@ -1488,18 +1481,11 @@ impl Relay {
         &self,
         request: &PrepareCallsParameters,
         maybe_stored: Option<&CreatableAccount>,
-        calls: Vec<Call>,
         nonce: U256,
         intent_kind: Option<IntentKind>,
     ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
-            .build_intent(
-                request,
-                maybe_stored,
-                calls,
-                nonce,
-                intent_kind.unwrap_or(IntentKind::Single),
-            )
+            .build_intent(request, maybe_stored, nonce, intent_kind.unwrap_or(IntentKind::Single))
             .await?;
 
         Ok((
