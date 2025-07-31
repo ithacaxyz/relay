@@ -43,9 +43,9 @@ pub use types::EndpointId;
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
-/// Layerzero settlement pool.
-pub mod pool;
-use pool::{LayerZeroBatchProcessor, LayerZeroPoolHandle};
+/// Layerzero batch processing.
+pub mod batcher;
+use batcher::{ChainConfigs, LayerZeroBatchProcessor, LayerZeroPoolHandle};
 
 /// ULN config type constant
 pub const ULN_CONFIG_TYPE: u32 = 2;
@@ -75,7 +75,7 @@ pub struct LayerZeroSettler {
     /// Storage backend for persisting data.
     storage: RelayStorage,
     /// Chain configurations.
-    chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+    chain_configs: ChainConfigs,
     /// Handle to the batch pool for processing settlements.
     settlement_pool: LayerZeroPoolHandle,
 }
@@ -94,24 +94,8 @@ impl LayerZeroSettler {
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
 
         // Build chain configs
-        let chain_configs: HashMap<ChainId, LZChainConfig> = endpoint_ids
-            .iter()
-            .filter_map(|(chain_id, endpoint_id)| {
-                let endpoint_address = endpoint_addresses.get(chain_id)?;
-                let provider = providers.get(chain_id)?;
-
-                Some((
-                    *chain_id,
-                    LZChainConfig {
-                        endpoint_id: *endpoint_id,
-                        endpoint_address: *endpoint_address,
-                        provider: provider.clone(),
-                        settler_address,
-                    },
-                ))
-            })
-            .collect();
-        let chain_configs = Arc::new(chain_configs);
+        let chain_configs =
+            ChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
 
         // Create batch processor with pool
         let settlement_pool = LayerZeroBatchProcessor::run(
