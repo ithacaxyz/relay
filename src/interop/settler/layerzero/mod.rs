@@ -28,7 +28,7 @@ use alloy::{
     sol_types::{SolCall, SolEvent, SolValue},
 };
 use async_trait::async_trait;
-use futures_util::future::try_join_all;
+use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
 use std::time::Duration;
 use tracing::{info, instrument};
@@ -355,57 +355,77 @@ impl Settler for LayerZeroSettler {
         &self,
         bundle: &InteropBundle,
     ) -> Result<Vec<RelayTransaction>, SettlementError> {
-        // Extract packet infos to send to the settlement pool
-        let packet_infos = self.extract_packet_infos(bundle).await?;
+        // Extract packet infos and filter for verified ones
+        let all_packet_infos = self.extract_packet_infos(bundle).await?;
 
-        let futures = packet_infos.into_iter().map(|packet| {
-            let chain_configs = self.chain_configs.clone();
+        if all_packet_infos.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Check which packets are actually available for execute receive
+        let availability_results: Vec<bool> = try_join_all(
+            all_packet_infos
+                .iter()
+                .map(|packet| is_message_available(packet, &self.chain_configs)),
+        )
+        .await?;
+
+        // Filter packets based on availability results
+        let packet_infos: Vec<LayerZeroPacketInfo> = all_packet_infos
+            .into_iter()
+            .zip(availability_results)
+            .filter_map(|(packet, is_available)| if is_available { Some(packet) } else { None })
+            .collect();
+
+        info!(num_packets = packet_infos.len(), "Building LayerZero execute receive transactions");
+
+        // Prepare all settlement data before sending
+        let mut settlement_requests = Vec::with_capacity(packet_infos.len());
+        for packet in packet_infos {
+            // Get configs for source and destination chains
+            let src_config = self.get_chain_config(packet.src_chain_id)?;
+            let dst_config = self.get_chain_config(packet.dst_chain_id)?;
+            
+            // Build LayerZero receive call
+            let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
+
+            // Get escrow information
+            let settlement_id =
+                packet.settlement_id().map_err(SettlementError::InternalError)?;
+            let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
+
+            // Build multicall
+            let calls = build_multicall_calls(
+                &packet,
+                &lz_receive_call,
+                dst_config.endpoint_address,
+                &escrow_info.escrow_ids,
+                escrow_info.escrow_address,
+            )?;
+
+            settlement_requests.push((
+                packet.dst_chain_id,
+                src_config.endpoint_id,
+                packet.nonce,
+                calls,
+            ));
+        }
+
+        // Send all settlements to the pool
+        let futures = settlement_requests.into_iter().map(|(chain_id, src_eid, nonce, calls)| {
             let settlement_pool = self.settlement_pool.clone();
-
             async move {
-                // Check if message is available for execution
-                if is_message_available(&packet, &chain_configs).await? {
-                    // Build the message for the settlement pool
-                    let src_config = chain_configs
-                        .get(&packet.src_chain_id)
-                        .ok_or_else(|| SettlementError::UnsupportedChain(packet.src_chain_id))?;
-                    let dst_config = chain_configs
-                        .get(&packet.dst_chain_id)
-                        .ok_or_else(|| SettlementError::UnsupportedChain(packet.dst_chain_id))?;
-                    let lz_receive_call = packet.build_lz_receive_call(src_config.endpoint_id);
-
-                    let settlement_id =
-                        packet.settlement_id().map_err(SettlementError::InternalError)?;
-                    let escrow_info = bundle.get_escrows(packet.dst_chain_id, settlement_id)?;
-
-                    let calls = build_multicall_calls(
-                        &packet,
-                        &lz_receive_call,
-                        dst_config.endpoint_address,
-                        &escrow_info.escrow_ids,
-                        escrow_info.escrow_address,
-                    )?;
-
-                    settlement_pool
-                        .send_settlement_and_wait(
-                            packet.dst_chain_id,
-                            src_config.endpoint_id,
-                            packet.nonce,
-                            calls,
-                        )
-                        .await
-                        .map_err(|e| {
-                            SettlementError::InternalError(format!("Settlement pool error: {e:?}"))
-                        })?;
-                }
-                Ok::<(), SettlementError>(())
+                settlement_pool
+                    .send_settlement_and_wait(chain_id, src_eid, nonce, calls)
+                    .await
+                    .map_err(|e| {
+                        SettlementError::InternalError(format!("Settlement pool error: {e:?}"))
+                    })
             }
         });
+        let results = join_all(futures).await;
 
-        // Wait for all to complete, collecting results
-        let results = futures_util::future::join_all(futures).await;
-
-        // Check if any failed and log errors
+        // Check if any failed
         let mut any_failed = false;
         for result in &results {
             if let Err(e) = result {
