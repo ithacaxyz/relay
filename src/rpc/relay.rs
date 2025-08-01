@@ -16,6 +16,7 @@ use crate::{
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
+    utils::provider_utils::ProviderUtils,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
@@ -943,7 +944,7 @@ impl Relay {
         // Checks calls and precall calls in the request
         request.check_calls(self.delegation_implementation())?;
 
-        let provider = self.provider(request.chain_id)?;
+        let provider = ProviderUtils::get_provider(&self.inner.chains, request.chain_id)?;
 
         // Find if the address is delegated or if we have a stored account in storage that can use
         // to delegate.
@@ -1798,7 +1799,7 @@ impl RelayApiServer for Relay {
         let chain_id = request.chain_id.unwrap_or_else(|| {
             *self.inner.chains.chain_ids_iter().next().expect("there should be one")
         });
-        let provider = self.provider(chain_id)?;
+        let provider = ProviderUtils::get_provider(&self.inner.chains, chain_id)?;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
