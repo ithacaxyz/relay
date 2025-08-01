@@ -115,6 +115,9 @@ impl LayerZeroBatchProcessor {
         record: Option<LayerZeroNonceRecord>,
     ) {
         let mut interval = interval(Duration::from_millis(200)); // ~1 block time
+        // Subscribe to pool size updates for this chain pair
+        let mut pool_size_watcher =
+            self.pool_handle.subscribe(chain_id, src_eid).await.expect("should exist");
 
         info!(chain_id = chain_id, src_eid = src_eid, "Starting batch processor for chain pair");
         if let Some(record) = record {
@@ -157,7 +160,28 @@ impl LayerZeroBatchProcessor {
                 );
             }
 
-            interval.tick().await;
+            // Wait for next processing trigger
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        // Regular interval check - always process
+                        break;
+                    }
+                    Ok(()) = pool_size_watcher.changed() => {
+                        let pool_size = *pool_size_watcher.borrow();
+                        if pool_size >= super::MAX_SETTLEMENTS_PER_BATCH {
+                            info!(
+                                chain_id = chain_id,
+                                src_eid = src_eid,
+                                pool_size = pool_size,
+                                "Pool has enough messages, processing immediately"
+                            );
+                            break;
+                        }
+                        // Pool changed but not enough messages, keep waiting
+                    }
+                }
+            }
         }
     }
 

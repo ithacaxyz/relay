@@ -4,7 +4,7 @@ use crate::{
     types::Call3,
 };
 use alloy::primitives::ChainId;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 /// LayerZero settlement message to be batched with the following calls: `{ commitVerification,
 /// lzReceive, settle }`.
@@ -87,6 +87,15 @@ pub enum LayerZeroPoolMessages {
         src_eid: EndpointId,
         /// Channel to send response
         response: oneshot::Sender<Option<u64>>,
+    },
+    /// Subscribe to pool size updates for a specific chain/eid
+    Subscribe {
+        /// Chain ID
+        chain_id: ChainId,
+        /// Source endpoint ID
+        src_eid: EndpointId,
+        /// Channel to send watch receiver
+        response: oneshot::Sender<watch::Receiver<usize>>,
     },
 }
 

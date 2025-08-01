@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy::primitives::{ChainId, map::HashMap};
 use std::collections::BTreeMap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::info;
 
 /// Handle for interacting with the LayerZeroBatchPool.
@@ -85,6 +85,19 @@ impl LayerZeroPoolHandle {
         });
         rx.await.unwrap_or(None)
     }
+
+    /// Subscribe to pool size updates for a specific chain/eid
+    pub async fn subscribe(
+        &self,
+        chain_id: ChainId,
+        src_eid: EndpointId,
+    ) -> Option<watch::Receiver<usize>> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(LayerZeroPoolMessages::Subscribe { chain_id, src_eid, response: tx })
+            .ok()?;
+        rx.await.ok()
+    }
 }
 
 /// Pool maintaining pending LayerZero settlements organized by (chain_id, src_eid).
@@ -96,6 +109,8 @@ pub struct LayerZeroBatchPool {
     pending_settlements: HashMap<(ChainId, EndpointId), BTreeMap<u64, PendingSettlementEntry>>,
     /// Highest nonce confirmed per (chain_id, src_eid) with tx_id
     highest_nonce_confirmed: HashMap<(ChainId, EndpointId), (u64, TxId)>,
+    /// Watch channels for pool size updates per (chain_id, src_eid)
+    pool_watchers: HashMap<(ChainId, EndpointId), watch::Sender<usize>>,
 }
 
 impl LayerZeroBatchPool {
@@ -105,6 +120,7 @@ impl LayerZeroBatchPool {
             receiver,
             pending_settlements: HashMap::default(),
             highest_nonce_confirmed: HashMap::default(),
+            pool_watchers: HashMap::default(),
         }
     }
 
@@ -126,7 +142,13 @@ impl LayerZeroBatchPool {
 
         // Add to pending settlements
         let entry = PendingSettlementEntry::new(msg, sender);
-        self.pending_settlements.entry(key).or_default().insert(entry.message.nonce, entry);
+        let pending = self.pending_settlements.entry(key).or_default();
+        pending.insert(entry.message.nonce, entry);
+
+        // Notify watchers of the new pool size
+        if let Some(watcher) = self.pool_watchers.get(&key) {
+            let _ = watcher.send(pending.len());
+        }
     }
 
     /// Handle get pending batch message
@@ -184,6 +206,11 @@ impl LayerZeroBatchPool {
                     let _ = entry.response_tx.send(Ok(()));
                 }
             }
+
+            // Notify watcher of the new pool size
+            if let Some(watcher) = self.pool_watchers.get(&(chain_id, src_eid)) {
+                let _ = watcher.send(pending.len());
+            }
         }
     }
 
@@ -196,6 +223,31 @@ impl LayerZeroBatchPool {
     ) {
         let _ = response
             .send(self.highest_nonce_confirmed.get(&(chain_id, src_eid)).map(|(nonce, _)| *nonce));
+    }
+
+    /// Handle subscribe message
+    fn handle_subscribe(
+        &mut self,
+        chain_id: ChainId,
+        src_eid: EndpointId,
+        response: oneshot::Sender<watch::Receiver<usize>>,
+    ) {
+        // Get or create watch channel for this chain/eid pair
+        let watcher = self.pool_watchers.entry((chain_id, src_eid)).or_insert_with(|| {
+            let current_size =
+                self.pending_settlements.get(&(chain_id, src_eid)).map(|p| p.len()).unwrap_or(0);
+            info!(
+                chain_id = chain_id,
+                src_eid = src_eid,
+                current_size = current_size,
+                "Creating pool watcher for chain pair"
+            );
+            let (tx, _) = watch::channel(current_size);
+            tx
+        });
+
+        // Send a receiver to the subscriber
+        let _ = response.send(watcher.subscribe());
     }
 
     /// Spawns the pool that handles messages to add, query or remove settlements.
@@ -224,6 +276,9 @@ impl LayerZeroBatchPool {
                     }
                     LayerZeroPoolMessages::GetHighestNonce { chain_id, src_eid, response } => {
                         self.handle_get_highest_nonce(chain_id, src_eid, response);
+                    }
+                    LayerZeroPoolMessages::Subscribe { chain_id, src_eid, response } => {
+                        self.handle_subscribe(chain_id, src_eid, response);
                     }
                 }
             }
