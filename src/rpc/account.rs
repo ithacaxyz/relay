@@ -59,6 +59,7 @@ pub struct AccountRpc {
     client: Resend,
     storage: RelayStorage,
     porto_base_url: String,
+    service_api_key: Option<String>,
 }
 
 impl AccountRpc {
@@ -68,8 +69,9 @@ impl AccountRpc {
         client: Resend,
         storage: RelayStorage,
         porto_base_url: String,
+        service_api_key: Option<String>,
     ) -> Self {
-        Self { relay, client, storage, porto_base_url }
+        Self { relay, client, storage, porto_base_url, service_api_key }
     }
 }
 
@@ -140,8 +142,15 @@ impl AccountApiServer for AccountRpc {
 
     async fn check_email_verified(
         &self,
-        CheckEmailVerifiedParameters { wallet_address, email }: CheckEmailVerifiedParameters,
+        CheckEmailVerifiedParameters { wallet_address, email, api_key }: CheckEmailVerifiedParameters,
     ) -> RpcResult<CheckEmailVerifiedResponse> {
+        // Check if API key is required and validate it
+        if let Some(expected_key) = &self.service_api_key
+            && api_key.as_ref() != Some(expected_key)
+        {
+            return Err(EmailError::Unauthorized.into());
+        }
+
         if let Some(specific_email) = email {
             // Check if specific email is verified for this wallet
             let verified_email = self.storage.get_verified_email(wallet_address).await?;
