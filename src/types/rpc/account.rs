@@ -198,10 +198,10 @@ pub struct VerifyEmailParameters {
     pub signature: Bytes,
 }
 
-/// Parameters for `account_checkEmailVerified`.
+/// Parameters for `account_getVerifiedEmail`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CheckEmailVerifiedParameters {
+pub struct GetVerifiedEmailParameters {
     /// The wallet address.
     pub wallet_address: Address,
     /// The email address to check. If not provided, returns any verified email for the wallet.
@@ -211,10 +211,10 @@ pub struct CheckEmailVerifiedParameters {
     pub api_key: Option<String>,
 }
 
-/// Response for `account_checkEmailVerified`.
+/// Response for `account_getVerifiedEmail`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CheckEmailVerifiedResponse {
+pub struct GetVerifiedEmailResponse {
     /// Whether the email is verified (or if any email is verified when email is not specified).
     pub verified: bool,
     /// The verified email address if found.

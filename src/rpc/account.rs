@@ -12,7 +12,7 @@ use crate::{
     rpc::{Relay, RelayApiServer},
     storage::{RelayStorage, StorageApi},
     types::rpc::{
-        CheckEmailVerifiedParameters, CheckEmailVerifiedResponse, SetEmailParameters,
+        GetVerifiedEmailParameters, GetVerifiedEmailResponse, SetEmailParameters,
         VerifyEmailParameters, VerifySignatureParameters,
     },
 };
@@ -41,15 +41,15 @@ pub trait AccountApi {
     #[method(name = "verifyEmail")]
     async fn verify_email(&self, params: VerifyEmailParameters) -> RpcResult<()>;
 
-    /// Check if an email is verified for a given wallet address.
+    /// Get the verified email for a given wallet address.
     ///
-    /// If an email is provided, checks if that specific email is verified for the wallet.
+    /// If an email is provided, returns it only if it's verified for the wallet.
     /// If no email is provided, returns any verified email for the wallet.
-    #[method(name = "checkEmailVerified")]
-    async fn check_email_verified(
+    #[method(name = "getVerifiedEmail")]
+    async fn get_verified_email(
         &self,
-        params: CheckEmailVerifiedParameters,
-    ) -> RpcResult<CheckEmailVerifiedResponse>;
+        params: GetVerifiedEmailParameters,
+    ) -> RpcResult<GetVerifiedEmailResponse>;
 }
 
 /// Ithaca `account_` RPC module.
@@ -140,10 +140,10 @@ impl AccountApiServer for AccountRpc {
         Ok(())
     }
 
-    async fn check_email_verified(
+    async fn get_verified_email(
         &self,
-        CheckEmailVerifiedParameters { wallet_address, email, api_key }: CheckEmailVerifiedParameters,
-    ) -> RpcResult<CheckEmailVerifiedResponse> {
+        GetVerifiedEmailParameters { wallet_address, email, api_key }: GetVerifiedEmailParameters,
+    ) -> RpcResult<GetVerifiedEmailResponse> {
         // Check if API key is required and validate it
         if let Some(expected_key) = &self.service_api_key
             && api_key.as_ref() != Some(expected_key)
@@ -155,14 +155,14 @@ impl AccountApiServer for AccountRpc {
             // Check if specific email is verified for this wallet
             let verified_email = self.storage.get_verified_email(wallet_address).await?;
             let verified = verified_email.as_ref() == Some(&specific_email);
-            Ok(CheckEmailVerifiedResponse {
+            Ok(GetVerifiedEmailResponse {
                 verified,
                 email: if verified { Some(specific_email) } else { None },
             })
         } else {
             // Check if any email is verified for this wallet
             let verified_email = self.storage.get_verified_email(wallet_address).await?;
-            Ok(CheckEmailVerifiedResponse {
+            Ok(GetVerifiedEmailResponse {
                 verified: verified_email.is_some(),
                 email: verified_email,
             })
