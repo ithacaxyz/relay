@@ -1,0 +1,1 @@
+//! Pricing-specific error types.

@@ -1,0 +1,1 @@
+//! Provider access utilities and common patterns.

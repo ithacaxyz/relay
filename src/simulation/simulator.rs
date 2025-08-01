@@ -1,0 +1,1 @@
+//! Main simulation framework and coordinator.

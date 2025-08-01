@@ -1,0 +1,1 @@
+//! Mock key generation utilities for simulation.

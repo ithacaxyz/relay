@@ -1,0 +1,1 @@
+//! Simulation-specific error types.

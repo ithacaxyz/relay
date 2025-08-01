@@ -1,0 +1,1 @@
+//! Common validation utilities and patterns.
