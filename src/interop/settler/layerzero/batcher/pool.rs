@@ -1,5 +1,6 @@
 use super::{
-    LayerZeroBatchMessage, LayerZeroPoolMessages, PendingBatch, types::PendingSettlementEntry,
+    LayerZeroBatchMessage, LayerZeroPoolMessages, MAX_SETTLEMENTS_PER_BATCH, PendingBatch,
+    types::PendingSettlementEntry,
 };
 use crate::{
     interop::settler::{SettlementError, layerzero::EndpointId},
@@ -22,7 +23,7 @@ impl LayerZeroPoolHandle {
         Self { sender }
     }
 
-    /// Submit settlement to pool and wait for batch confirmation.
+    /// Submit settlement to pool and wait for confirmation.
     pub async fn send_settlement_and_wait(
         &self,
         chain_id: ChainId,
@@ -34,14 +35,10 @@ impl LayerZeroPoolHandle {
         let (tx, rx) = oneshot::channel();
 
         // Create the message without the response sender
-        let batch_message = LayerZeroBatchMessage { chain_id, src_eid, nonce, calls };
+        let settlement = LayerZeroBatchMessage { chain_id, src_eid, nonce, calls };
 
         // Send the message with the sender separately
-        self.sender
-            .send(LayerZeroPoolMessages::Settlement { settlement: batch_message, response: tx })
-            .map_err(|_| SettlementError::InternalError("Channel closed".to_string()))?;
-
-        // Wait for direct notification
+        let _ = self.sender.send(LayerZeroPoolMessages::Settlement { settlement, response: tx });
         rx.await.map_err(|_| SettlementError::InternalError("Channel closed".to_string()))?
     }
 
@@ -140,23 +137,20 @@ impl LayerZeroBatchPool {
         highest_nonce: u64,
         response: oneshot::Sender<PendingBatch>,
     ) {
-        let key = (chain_id, src_eid);
         let pending_batch = self
             .pending_settlements
-            .get(&key)
+            .get(&(chain_id, src_eid))
             .map(|pending| {
                 let total = pending.len();
-                let mut messages = Vec::with_capacity(20.min(total));
+                let mut messages = Vec::with_capacity(MAX_SETTLEMENTS_PER_BATCH.min(total));
                 let mut current_nonce = highest_nonce + 1;
 
-                for _ in 0..20 {
-                    match pending.get(&current_nonce) {
-                        Some(entry) => {
-                            messages.push(entry.message.clone());
-                            current_nonce += 1;
-                        }
-                        None => break,
-                    }
+                for _ in 0..MAX_SETTLEMENTS_PER_BATCH {
+                    let Some(entry) = pending.get(&current_nonce) else {
+                        break;
+                    };
+                    messages.push(entry.message.clone());
+                    current_nonce += 1;
                 }
                 PendingBatch::new(messages, total)
             })
@@ -172,8 +166,7 @@ impl LayerZeroBatchPool {
         nonce: u64,
         tx_id: TxId,
     ) {
-        let key = (chain_id, src_eid);
-        self.highest_nonce_confirmed.insert(key, (nonce, tx_id));
+        self.highest_nonce_confirmed.insert((chain_id, src_eid), (nonce, tx_id));
 
         info!(
             chain_id = chain_id,
@@ -183,7 +176,7 @@ impl LayerZeroBatchPool {
         );
 
         // Remove processed settlements and send confirmations
-        if let Some(pending) = self.pending_settlements.get_mut(&key) {
+        if let Some(pending) = self.pending_settlements.get_mut(&(chain_id, src_eid)) {
             let to_remove: Vec<_> = pending.range(..=nonce).map(|(&n, _)| n).collect();
 
             for n in to_remove {
@@ -201,12 +194,11 @@ impl LayerZeroBatchPool {
         src_eid: EndpointId,
         response: oneshot::Sender<Option<u64>>,
     ) {
-        let result =
-            self.highest_nonce_confirmed.get(&(chain_id, src_eid)).map(|(nonce, _)| *nonce);
-        let _ = response.send(result);
+        let _ = response
+            .send(self.highest_nonce_confirmed.get(&(chain_id, src_eid)).map(|(nonce, _)| *nonce));
     }
 
-    /// Spawn the batch pool - handles messages
+    /// Spawns the pool that handles messages to add, query or remove settlements.
     pub fn spawn(mut self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             while let Some(message) = self.receiver.recv().await {

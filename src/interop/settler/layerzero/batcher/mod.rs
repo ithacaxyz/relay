@@ -16,6 +16,9 @@
 //! - `pool`: Settlement queue with gap detection and caller notification
 //! - `processor`: Per-chain-pair tasks that build and execute batches
 
+/// Maximum number of settlements to include in a single batch
+pub const MAX_SETTLEMENTS_PER_BATCH: usize = 20;
+
 mod pool;
 mod processor;
 mod types;
