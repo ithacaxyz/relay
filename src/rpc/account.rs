@@ -11,7 +11,10 @@ use crate::{
     error::EmailError,
     rpc::{Relay, RelayApiServer},
     storage::{RelayStorage, StorageApi},
-    types::rpc::{SetEmailParameters, VerifyEmailParameters, VerifySignatureParameters},
+    types::rpc::{
+        CheckEmailVerifiedParameters, CheckEmailVerifiedResponse, SetEmailParameters,
+        VerifyEmailParameters, VerifySignatureParameters,
+    },
 };
 
 /// Ithaca `account_` RPC namespace.
@@ -37,6 +40,16 @@ pub trait AccountApi {
     /// the account.
     #[method(name = "verifyEmail")]
     async fn verify_email(&self, params: VerifyEmailParameters) -> RpcResult<()>;
+
+    /// Check if an email is verified for a given wallet address.
+    ///
+    /// If an email is provided, checks if that specific email is verified for the wallet.
+    /// If no email is provided, returns any verified email for the wallet.
+    #[method(name = "checkEmailVerified")]
+    async fn check_email_verified(
+        &self,
+        params: CheckEmailVerifiedParameters,
+    ) -> RpcResult<CheckEmailVerifiedResponse>;
 }
 
 /// Ithaca `account_` RPC module.
@@ -123,6 +136,28 @@ impl AccountApiServer for AccountRpc {
         }
 
         Ok(())
+    }
+
+    async fn check_email_verified(
+        &self,
+        CheckEmailVerifiedParameters { wallet_address, email }: CheckEmailVerifiedParameters,
+    ) -> RpcResult<CheckEmailVerifiedResponse> {
+        if let Some(specific_email) = email {
+            // Check if specific email is verified for this wallet
+            let verified_email = self.storage.get_verified_email(wallet_address).await?;
+            let verified = verified_email.as_ref() == Some(&specific_email);
+            Ok(CheckEmailVerifiedResponse {
+                verified,
+                email: if verified { Some(specific_email) } else { None },
+            })
+        } else {
+            // Check if any email is verified for this wallet
+            let verified_email = self.storage.get_verified_email(wallet_address).await?;
+            Ok(CheckEmailVerifiedResponse {
+                verified: verified_email.is_some(),
+                email: verified_email,
+            })
+        }
     }
 }
 
