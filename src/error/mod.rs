@@ -28,6 +28,12 @@ pub use quote::QuoteError;
 mod storage;
 pub use storage::StorageError;
 
+mod simulation;
+pub use simulation::SimulationError;
+
+mod pricing;
+pub use pricing::PricingError;
+
 use alloy::{
     primitives::{Address, Bytes, ChainId},
     providers::MulticallError,
@@ -56,6 +62,12 @@ pub enum RelayError {
     /// Errors related to storage.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// Errors related to simulation.
+    #[error(transparent)]
+    Simulation(#[from] SimulationError),
+    /// Errors related to pricing.
+    #[error(transparent)]
+    Pricing(#[from] PricingError),
     /// The chain is not supported.
     #[error("unsupported chain {0}")]
     UnsupportedChain(ChainId),
@@ -141,6 +153,8 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::Intent(inner) => (*inner).into(),
             RelayError::Keys(inner) => inner.into(),
             RelayError::Storage(inner) => inner.into(),
+            RelayError::Simulation(inner) => internal_rpc(inner.to_string()),
+            RelayError::Pricing(inner) => internal_rpc(inner.to_string()),
             RelayError::UnsupportedChain(_)
             | RelayError::AbiError(_)
             | RelayError::RpcError(_)
