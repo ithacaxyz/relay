@@ -7,3 +7,4 @@ pub mod price_calculator;
 pub mod pricer;
 
 pub use price_calculator::PriceCalculator;
+pub use pricer::{IntentPricer, PricingContext};
