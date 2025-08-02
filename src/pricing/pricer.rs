@@ -5,9 +5,7 @@ use crate::{
     config::QuoteConfig,
     price::PriceOracle,
     pricing::{
-        error::PricingError,
-        fee_history::FeeHistoryAnalyzer,
-        gas_estimation::GasEstimator,
+        error::PricingError, fee_history::FeeHistoryAnalyzer, gas_estimation::GasEstimator,
         price_calculator::PriceCalculator,
     },
     types::{GasEstimate, Intent, Quote, Token},
@@ -45,14 +43,12 @@ pub struct IntentPricer<'a> {
 impl<'a> IntentPricer<'a> {
     /// Creates a new intent pricer with the given dependencies.
     pub fn new(price_oracle: &'a PriceOracle, quote_config: &'a QuoteConfig) -> Self {
-        Self {
-            price_oracle,
-            quote_config,
-        }
+        Self { price_oracle, quote_config }
     }
 
     /// Calculates fees and generates a quote for an intent.
     #[instrument(skip_all)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn calculate_fees<P: Provider + Clone>(
         &self,
         provider: &P,
@@ -65,46 +61,36 @@ impl<'a> IntentPricer<'a> {
         authorization_address: Option<Address>,
     ) -> Result<Quote, PricingError> {
         // Step 1: Fetch and analyze fee history
-        let fee_estimate = FeeHistoryAnalyzer::fetch_and_analyze(
-            provider,
-            context.priority_fee_percentile,
-        )
-        .await?;
+        let fee_estimate =
+            FeeHistoryAnalyzer::fetch_and_analyze(provider, context.priority_fee_percentile)
+                .await?;
 
         // Step 2: Calculate gas estimates
-        let gas_estimate = GasEstimator::estimate_combined_gas(
-            simulation_gas,
-            intrinsic_gas,
-            self.quote_config,
-        );
+        let gas_estimate =
+            GasEstimator::estimate_combined_gas(simulation_gas, intrinsic_gas, self.quote_config);
 
         // Step 3: Calculate price conversions
         let price_calc = PriceCalculator::new(self.price_oracle);
-        
+
         // Calculate payment per gas in fee token units
-        let payment_per_gas = price_calc
-            .calculate_payment_per_gas(&fee_estimate, &context.fee_token)
-            .await?;
+        let payment_per_gas =
+            price_calc.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
 
         // Get ETH price for the quote
         let eth_price = self
             .price_oracle
             .eth_price(context.fee_token.kind)
             .await
-            .ok_or_else(|| PricingError::UnavailablePrice(context.fee_token.address))?;
+            .ok_or(PricingError::UnavailablePrice(context.fee_token.address))?;
 
         // Calculate extra fees (L1 data availability, etc.)
-        let extra_payment_native = price_calc
-            .estimate_extra_fee(provider, chain, &intent)
-            .await?;
+        let extra_payment_native = price_calc.estimate_extra_fee(provider, chain, &intent).await?;
 
         // Convert extra payment to fee token units
         let extra_payment = if extra_payment_native.is_zero() {
             U256::ZERO
         } else {
-            price_calc
-                .convert_native_to_token(extra_payment_native, &context.fee_token)
-                .await?
+            price_calc.convert_native_to_token(extra_payment_native, &context.fee_token).await?
         };
 
         // Step 4: Generate quote
@@ -124,8 +110,9 @@ impl<'a> IntentPricer<'a> {
     }
 
     /// Generates a quote from pricing components.
-    /// 
+    ///
     /// Note: The caller must set the intent, orchestrator, and authorization_address fields.
+    #[allow(clippy::too_many_arguments)]
     fn generate_quote(
         &self,
         gas_estimate: GasEstimate,
@@ -179,21 +166,19 @@ impl<'a> IntentPricer<'a> {
         estimated_gas: U256,
     ) -> Result<U256, PricingError> {
         // Fetch current fee data
-        let fee_estimate = FeeHistoryAnalyzer::fetch_and_analyze(
-            provider,
-            context.priority_fee_percentile,
-        )
-        .await?;
+        let fee_estimate =
+            FeeHistoryAnalyzer::fetch_and_analyze(provider, context.priority_fee_percentile)
+                .await?;
 
         // Calculate price conversion
         let price_calc = PriceCalculator::new(self.price_oracle);
-        let payment_per_gas = price_calc
-            .calculate_payment_per_gas(&fee_estimate, &context.fee_token)
-            .await?;
+        let payment_per_gas =
+            price_calc.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
 
         // Quick estimate without detailed gas calculation
-        let payment = U256::from((payment_per_gas * estimated_gas.to::<u64>() as f64).ceil() as u128);
-        
+        let payment =
+            U256::from((payment_per_gas * estimated_gas.to::<u64>() as f64).ceil() as u128);
+
         Ok(payment.max(U256::from(1)))
     }
 }

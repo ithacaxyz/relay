@@ -14,17 +14,15 @@ use crate::{
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     pricing::{IntentPricer, PricingContext, gas_estimation::GasEstimator},
-    provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
-    utils::provider_utils::ProviderUtils,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Token,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
-        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
             ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
@@ -33,25 +31,20 @@ use crate::{
             UpgradeAccountDigests, ValidSignatureProof,
         },
     },
+    utils::provider_utils::ProviderUtils,
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192},
-    providers::{
-        DynProvider, Provider,
-    },
+    providers::{DynProvider, Provider},
     rpc::types::{
         Authorization,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
-use futures_util::{
-    future::try_join_all,
-    join,
-};
+use futures_util::{future::try_join_all, join};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -71,8 +64,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer,
-        PartialIntent, Quote, Signature, SignedQuotes,
+        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, PartialIntent,
+        Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
             GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
@@ -195,18 +188,16 @@ impl Relay {
         chain_id: ChainId,
         fee_token: Address,
     ) -> Result<U256, RelayError> {
-        Ok(self.get_assets(GetAssetsParameters {
-            account,
-            asset_filter: [(
-                chain_id,
-                vec![AssetFilterItem::fungible(fee_token.into())],
-            )]
-            .into(),
-            ..Default::default()
-        })
-        .await
-        .map_err(RelayError::internal)?
-        .balance_on_chain(chain_id, fee_token.into()))
+        Ok(self
+            .get_assets(GetAssetsParameters {
+                account,
+                asset_filter: [(chain_id, vec![AssetFilterItem::fungible(fee_token.into())])]
+                    .into(),
+                ..Default::default()
+            })
+            .await
+            .map_err(RelayError::internal)?
+            .balance_on_chain(chain_id, fee_token.into()))
     }
 
     /// Validates account delegation and orchestrator support.
@@ -218,9 +209,9 @@ impl Relay {
         if !self.is_supported_orchestrator(&orchestrator) {
             return Err(RelayError::UnsupportedOrchestrator(orchestrator));
         }
-        
-        let delegation = self.has_supported_delegation(account).await.map_err(RelayError::from)?;
-        
+
+        let delegation = self.has_supported_delegation(account).await?;
+
         Ok((orchestrator, delegation))
     }
 
@@ -257,11 +248,11 @@ impl Relay {
         };
 
         // For MultiOutput intents, set the settler address and context
-        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
-            if let Ok(interop) = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled) {
-                intent.settler = interop.settler_address();
-                intent.settlerContext = settler_context.clone();
-            }
+        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind
+            && let Ok(interop) = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)
+        {
+            intent.settler = interop.settler_address();
+            intent.settlerContext = settler_context.clone();
         }
 
         // Add funder if needed
@@ -270,38 +261,6 @@ impl Relay {
         }
 
         intent
-    }
-
-    async fn estimate_extra_fee(&self, chain: &Chain, intent: &Intent) -> Result<U256, RelayError> {
-        // Include the L1 DA fees if we're on an OP rollup.
-        let fee = if chain.is_optimism {
-            // Create a dummy transactions with all fields set to max values to make sure that
-            // calldata is largest possible
-            let tx = TxEip1559 {
-                chain_id: chain.chain_id,
-                nonce: u64::MAX,
-                gas_limit: u64::MAX,
-                max_fee_per_gas: u128::MAX,
-                max_priority_fee_per_gas: u128::MAX,
-                to: (!Address::ZERO).into(),
-                input: intent.encode_execute(),
-                ..Default::default()
-            };
-            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
-
-            let encoded = {
-                let tx = tx.into_signed(signature);
-                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
-                tx.eip2718_encode(&mut buf);
-                buf
-            };
-
-            chain.provider.estimate_l1_fee(encoded.into()).await?
-        } else {
-            U256::ZERO
-        };
-
-        Ok(fee)
     }
 
     #[instrument(skip_all)]
@@ -313,9 +272,13 @@ impl Relay {
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         // Validate chain and token
-        let chain = self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
-        let token = self.inner.fee_tokens.find(chain_id, &context.fee_token)
-            .ok_or_else(|| QuoteError::UnsupportedFeeToken(context.fee_token))?;
+        let chain =
+            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let token = self
+            .inner
+            .fee_tokens
+            .find(chain_id, &context.fee_token)
+            .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
         let provider = chain.provider.clone();
 
         // Create simulation and pricing components
@@ -327,9 +290,8 @@ impl Relay {
         let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
 
         // Fetch the user's balance for the fee token
-        let fee_token_balance = self
-            .get_fee_token_balance(intent.eoa, chain_id, context.fee_token)
-            .await?;
+        let fee_token_balance =
+            self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
 
         // Create simulation context from fee estimation context
         let sim_context = context.clone().into();
@@ -340,29 +302,23 @@ impl Relay {
             if let Some(auth_addr) = context.authorization_address {
                 overrides = overrides.append(
                     intent.eoa,
-                    AccountOverride::default().with_code(
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat())
-                    ),
+                    AccountOverride::default().with_code(Bytes::from(
+                        [&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat(),
+                    )),
                 );
             }
             Account::new(intent.eoa, &provider).with_overrides(overrides.build())
         };
-        
+
         let (orchestrator_addr, delegation) = self.validate_account_setup(&account).await?;
 
         // Run simulation
-        let sim_output = simulator
-            .simulate_intent(&provider, &intent, sim_context, fee_token_balance)
-            .await?;
+        let sim_output =
+            simulator.simulate_intent(&provider, &intent, sim_context, fee_token_balance).await?;
 
         // Build intent to sign
-        let intent_to_sign = self.build_intent_to_sign(
-            intent,
-            &token,
-            delegation,
-            &context,
-            sim_output.gas_combined,
-        );
+        let intent_to_sign =
+            self.build_intent_to_sign(intent, token, delegation, &context, sim_output.gas_combined);
 
         // Calculate intrinsic gas based on intent size
         let intrinsic_gas = GasEstimator::calculate_intrinsic_cost(
@@ -394,7 +350,8 @@ impl Relay {
 
         // Update quote with fee token deficit
         let mut final_quote = quote;
-        final_quote.fee_token_deficit = final_quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
+        final_quote.fee_token_deficit =
+            final_quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(

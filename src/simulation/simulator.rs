@@ -4,14 +4,12 @@ use crate::{
     asset::AssetInfoServiceHandle,
     error::RelayError,
     simulation::{
-        error::SimulationError,
-        mock_keys::MockKeyGenerator,
+        error::SimulationError, mock_keys::MockKeyGenerator,
         state_overrides::SimulationStateBuilder,
     },
     types::{
-        Account, AssetDiffs, FeeEstimationContext, Intent, Key, Orchestrator,
-        PartialIntent, SimulationResult, Transfer,
-        rpc::BalanceOverrides,
+        Account, AssetDiffs, FeeEstimationContext, Intent, Key, Orchestrator, PartialIntent,
+        SimulationResult, Transfer, rpc::BalanceOverrides,
     },
 };
 use alloy::{
@@ -54,6 +52,7 @@ impl From<FeeEstimationContext> for SimulationContext {
 
 /// Result of intent simulation.
 #[derive(Clone)]
+#[allow(missing_debug_implementations)]
 pub struct SimulationOutput {
     /// Asset differences calculated from simulation.
     pub asset_diffs: AssetDiffs,
@@ -81,11 +80,7 @@ impl IntentSimulator {
         orchestrator_address: Address,
         asset_info: AssetInfoServiceHandle,
     ) -> Self {
-        Self {
-            simulator_address,
-            orchestrator_address,
-            asset_info,
-        }
+        Self { simulator_address, orchestrator_address, asset_info }
     }
 
     /// Simulates intent execution with the given context.
@@ -99,22 +94,16 @@ impl IntentSimulator {
     ) -> Result<SimulationOutput, SimulationError> {
         // Build state overrides for simulation
         let overrides = self
-            .build_state_overrides(
-                provider,
-                intent,
-                &context,
-                fee_token_balance,
-            )
+            .build_state_overrides(provider, intent, &context, fee_token_balance)
             .await
             .map_err(|e| SimulationError::StateOverrideFailed(e.to_string()))?;
 
         // Create account with overrides
-        let _account = Account::new(intent.eoa, provider)
-            .with_overrides(overrides.clone());
+        let _account = Account::new(intent.eoa, provider).with_overrides(overrides.clone());
 
         // Create orchestrator with overrides
-        let orchestrator = Orchestrator::new(self.orchestrator_address, provider)
-            .with_overrides(overrides);
+        let orchestrator =
+            Orchestrator::new(self.orchestrator_address, provider).with_overrides(overrides);
 
         // Generate mock key for simulation
         let _mock_key = MockKeyGenerator::generate_admin_key(context.account_key.keyType)?;
@@ -217,7 +206,9 @@ impl IntentSimulator {
             encodedFundTransfers: partial
                 .fund_transfers
                 .iter()
-                .map(|(token, amount)| Transfer { token: *token, amount: *amount }.abi_encode().into())
+                .map(|(token, amount)| {
+                    Transfer { token: *token, amount: *amount }.abi_encode().into()
+                })
                 .collect(),
             isMultichain: false,
             ..Default::default()
@@ -255,8 +246,7 @@ impl IntentSimulator {
         };
 
         // Run simulation
-        self.simulate_intent(provider, &intent, context, U256::ZERO)
-            .await?;
+        self.simulate_intent(provider, &intent, context, U256::ZERO).await?;
 
         Ok(())
     }

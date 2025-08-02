@@ -39,7 +39,7 @@ impl<'a> PriceCalculator<'a> {
             .price_oracle
             .eth_price(token.kind)
             .await
-            .ok_or_else(|| PricingError::UnavailablePrice(token.address))?;
+            .ok_or(PricingError::UnavailablePrice(token.address))?;
 
         // Convert from wei to token units
         // Formula: (gas_price_wei * 10^token_decimals) / eth_price_in_token
@@ -62,11 +62,13 @@ impl<'a> PriceCalculator<'a> {
     ) -> Result<U256, PricingError> {
         // Include the L1 DA fees if we're on an OP rollup
         let fee = if chain.is_optimism {
-            // Create a dummy transaction with all fields set to max values 
+            // Create a dummy transaction with all fields set to max values
             // to ensure calldata is largest possible
-            use alloy::consensus::{TxEip1559, SignableTransaction};
-            use alloy::signers::Signature;
-            
+            use alloy::{
+                consensus::{SignableTransaction, TxEip1559},
+                signers::Signature,
+            };
+
             let tx = TxEip1559 {
                 chain_id: chain.chain_id,
                 nonce: u64::MAX,
@@ -109,14 +111,12 @@ impl<'a> PriceCalculator<'a> {
             .price_oracle
             .eth_price(token.kind)
             .await
-            .ok_or_else(|| PricingError::UnavailablePrice(token.address))?;
+            .ok_or(PricingError::UnavailablePrice(token.address))?;
 
         // Convert from native to token units
-        let token_amount = native_amount
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
+        let token_amount =
+            native_amount * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
 
         Ok(token_amount)
     }
-
 }

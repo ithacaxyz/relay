@@ -5,7 +5,7 @@ use alloy::{
     primitives::U256,
     providers::{
         Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator, Eip1559Estimation},
+        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimation, Eip1559Estimator},
     },
     rpc::types::FeeHistory,
 };
@@ -38,18 +38,13 @@ impl FeeHistoryAnalyzer {
 
     /// Estimates EIP-1559 fees from fee history data.
     pub fn estimate_fees(fee_history: &FeeHistory) -> Result<Eip1559Estimation, PricingError> {
-        let latest_base_fee = fee_history
-            .latest_block_base_fee()
-            .ok_or_else(|| PricingError::FeeHistoryUnavailable(
-                "No base fee in fee history".to_string()
-            ))?;
+        let latest_base_fee = fee_history.latest_block_base_fee().ok_or_else(|| {
+            PricingError::FeeHistoryUnavailable("No base fee in fee history".to_string())
+        })?;
 
-        let reward = fee_history
-            .reward
-            .as_ref()
-            .ok_or_else(|| PricingError::FeeHistoryUnavailable(
-                "No reward data in fee history".to_string()
-            ))?;
+        let reward = fee_history.reward.as_ref().ok_or_else(|| {
+            PricingError::FeeHistoryUnavailable("No reward data in fee history".to_string())
+        })?;
 
         Ok(Eip1559Estimator::default().estimate(latest_base_fee, reward))
     }
@@ -62,8 +57,7 @@ impl FeeHistoryAnalyzer {
         token_decimals: u8,
         eth_price_in_token: f64,
     ) -> f64 {
-        (native_fee_estimate.max_fee_per_gas as f64
-            * 10u128.pow(token_decimals as u32) as f64)
+        (native_fee_estimate.max_fee_per_gas as f64 * 10u128.pow(token_decimals as u32) as f64)
             / eth_price_in_token
     }
 

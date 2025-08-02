@@ -1,13 +1,7 @@
 //! Gas estimation utilities and intrinsic cost calculations.
 
-use crate::{
-    config::QuoteConfig,
-    types::GasEstimate,
-};
-use alloy::{
-    eips::eip7702::constants::PER_EMPTY_ACCOUNT_COST,
-    primitives::U256,
-};
+use crate::{config::QuoteConfig, types::GasEstimate};
+use alloy::{eips::eip7702::constants::PER_EMPTY_ACCOUNT_COST, primitives::U256};
 
 /// Gas estimator for intent and transaction gas calculations.
 #[derive(Debug)]
@@ -23,11 +17,7 @@ impl GasEstimator {
         intrinsic_gas: u64,
         config: &QuoteConfig,
     ) -> GasEstimate {
-        GasEstimate::from_combined_gas(
-            simulation_gas.to::<u64>(),
-            intrinsic_gas,
-            config,
-        )
+        GasEstimate::from_combined_gas(simulation_gas.to::<u64>(), intrinsic_gas, config)
     }
 
     /// Calculates the intrinsic cost of a transaction.
@@ -39,15 +29,15 @@ impl GasEstimator {
     pub fn calculate_intrinsic_cost(call_data: &[u8], has_authorization: bool) -> u64 {
         let zero_data_len = call_data.iter().filter(|v| **v == 0).count() as u64;
         let non_zero_data_len = call_data.len() as u64 - zero_data_len;
-        
+
         // Gas costs per Istanbul rules
         const NON_ZERO_DATA_COST: u64 = 16;
         const ZERO_DATA_COST: u64 = 4;
         const BASE_TX_COST: u64 = 21000;
-        
+
         let data_gas = zero_data_len * ZERO_DATA_COST + non_zero_data_len * NON_ZERO_DATA_COST;
         let auth_gas = if has_authorization { PER_EMPTY_ACCOUNT_COST } else { 0 };
-        
+
         BASE_TX_COST + data_gas + auth_gas
     }
 

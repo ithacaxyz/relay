@@ -1,7 +1,10 @@
 //! Provider access utilities and common patterns.
 
 use crate::{chains::Chains, error::RelayError};
-use alloy::{primitives::{Address, ChainId}, providers::{DynProvider, Provider}};
+use alloy::{
+    primitives::{Address, ChainId},
+    providers::{DynProvider, Provider},
+};
 
 /// Provider access utilities for common patterns.
 #[derive(Debug)]

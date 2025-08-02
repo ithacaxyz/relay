@@ -18,7 +18,7 @@ pub struct ValidationUtils;
 
 impl ValidationUtils {
     /// Gets the account's delegation implementation address.
-    /// 
+    ///
     /// First checks if the account already has a delegation implementation deployed.
     /// If not, attempts to retrieve from storage as a fallback.
     pub async fn get_delegation_implementation<P: Provider + Clone>(
@@ -28,13 +28,13 @@ impl ValidationUtils {
         if let Some(delegation) = account.delegation_implementation().await? {
             return Ok(delegation);
         }
-        
+
         // Attempt to retrieve the delegation proxy from storage, since it might not be
         // deployed yet.
         let Some(stored) = storage.read_account(&account.address()).await? else {
             return Err(RelayError::Auth(AuthError::EoaNotDelegated(account.address()).boxed()));
         };
-        
+
         let address = account.address();
         let account = account.clone().with_overrides(
             StateOverridesBuilder::default()
@@ -50,7 +50,7 @@ impl ValidationUtils {
                 )
                 .build(),
         );
-        
+
         account.delegation_implementation().await?.ok_or_else(|| {
             RelayError::Auth(
                 AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
@@ -69,11 +69,11 @@ impl ValidationUtils {
         legacy_delegations: &[Address],
     ) -> Result<Address, RelayError> {
         let address = Self::get_delegation_implementation(account, storage).await?;
-        
+
         if current_delegation == address || legacy_delegations.contains(&address) {
             return Ok(address);
         }
-        
+
         Err(AuthError::InvalidDelegation(address).into())
     }
 
@@ -91,12 +91,13 @@ impl ValidationUtils {
             storage,
             current_delegation,
             legacy_delegations,
-        ).await?;
-        
+        )
+        .await?;
+
         if current_delegation != address {
             return Err(AuthError::InvalidDelegation(address).into());
         }
-        
+
         Ok(())
     }
 
@@ -112,10 +113,17 @@ impl ValidationUtils {
         require_latest: bool,
     ) -> Result<Address, RelayError> {
         if require_latest {
-            Self::ensure_latest_delegation(account, storage, current_delegation, legacy_delegations).await?;
+            Self::ensure_latest_delegation(
+                account,
+                storage,
+                current_delegation,
+                legacy_delegations,
+            )
+            .await?;
             Ok(current_delegation)
         } else {
-            Self::has_supported_delegation(account, storage, current_delegation, legacy_delegations).await
+            Self::has_supported_delegation(account, storage, current_delegation, legacy_delegations)
+                .await
         }
     }
 }
