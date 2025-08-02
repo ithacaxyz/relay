@@ -13,13 +13,15 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
+    pricing::{IntentPricer, PricingContext, gas_estimation::GasEstimator},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
+    simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
     utils::provider_utils::ProviderUtils,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
+        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind,
         Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
@@ -36,10 +38,9 @@ use crate::{
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
     eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
+    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192},
     providers::{
         DynProvider, Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::{
         Authorization,
@@ -48,8 +49,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use futures_util::{
-    TryFutureExt,
-    future::{try_join_all, try_join4},
+    future::try_join_all,
     join,
 };
 use itertools::Itertools;
@@ -71,7 +71,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
+        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer,
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
@@ -225,7 +225,7 @@ impl Relay {
         &self,
         intent: PartialIntent,
         chain_id: ChainId,
-        prehash: bool,
+        _prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         let chain =
@@ -236,12 +236,15 @@ impl Relay {
             return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
         };
 
-        // create key
-        let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
-            .map_err(RelayError::from)
-            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+        // Create simulation and pricing components
+        let simulator = IntentSimulator::new(
+            self.simulator(),
+            self.orchestrator(),
+            self.inner.asset_info.clone(),
+        );
+        let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
 
-        // Fetch the user's balance for the fee token.
+        // Fetch the user's balance for the fee token
         let fee_token_balance = self
             .get_assets(GetAssetsParameters {
                 account: intent.eoa,
@@ -255,97 +258,50 @@ impl Relay {
             .await
             .map_err(RelayError::internal)?
             .balance_on_chain(chain_id, context.fee_token.into());
-        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
-        // simulation
-        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // mocking key storage for the eoa, and the balance for the mock signer
-        let mut overrides = StateOverridesBuilder::with_capacity(2)
-            // simulateV1Logs requires it, so the function can only be called under a testing
-            // environment
-            .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
-            .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
-            .append(
+        // Create simulation context from fee estimation context
+        let sim_context = context.clone().into();
+
+        // Fetch account information with minimal overrides for validation
+        let mut validation_overrides = StateOverridesBuilder::default();
+        if let Some(auth_addr) = context.authorization_address {
+            validation_overrides = validation_overrides.append(
                 intent.eoa,
-                AccountOverride::default()
-                    // If the fee token is the native token, we override it
-                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                    .with_state_diff(if context.key_slot_override {
-                        context.account_key.storage_slots()
-                    } else {
-                        Default::default()
-                    })
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(context.authorization_address.map(|addr| {
-                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-                    })),
-            )
-            .extend(context.state_overrides);
-
-        // If the fee token is an ERC20, we do a balance override, merging it with the client
-        // supplied balance override if necessary.
-        if !context.fee_token.is_zero() {
-            overrides = overrides.extend(
-                context
-                    .balance_overrides
-                    .modify_token(context.fee_token, |balance| {
-                        balance.add_balance(intent.eoa, new_fee_token_balance);
-                    })
-                    .into_state_overrides(&provider)
-                    .await?,
+                AccountOverride::default().with_code(
+                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat())
+                ),
             );
         }
+        let validation_overrides = validation_overrides.build();
+        
+        let account = Account::new(intent.eoa, &provider).with_overrides(validation_overrides);
 
-        let overrides = overrides.build();
-        let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
-
-        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
-            // fetch orchestrator from the account and ensure it is supported
-            async {
-                let orchestrator = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
-                }
-                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
-            },
-            // fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from),
-            // fetch chain fees
-            provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[self.inner.priority_fee_percentile],
-                )
-                .map_err(RelayError::from),
-            // fetch price in eth
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
-            },
-        )
-        .await?;
-        debug!(
-            %chain_id,
-            fee_token = ?token,
-            ?fee_history,
-            ?eth_price,
-            "Got fee parameters"
-        );
-
-        let native_fee_estimate = Eip1559Estimator::default().estimate(
-            fee_history.latest_block_base_fee().unwrap_or_default(),
-            &fee_history.reward.unwrap_or_default(),
-        );
-
-        let Some(eth_price) = eth_price else {
-            return Err(QuoteError::UnavailablePrice(token.address).into());
+        // Fetch orchestrator and delegation
+        let orchestrator_addr = {
+            let orchestrator = account.get_orchestrator().await?;
+            if !self.is_supported_orchestrator(&orchestrator) {
+                return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+            }
+            orchestrator
         };
-        let payment_per_gas = (native_fee_estimate.max_fee_per_gas as f64
-            * 10u128.pow(token.decimals as u32) as f64)
-            / f64::from(eth_price);
+        
+        let delegation = self.has_supported_delegation(&account).await.map_err(RelayError::from)?;
 
-        // fill intent
+        // Run simulation
+        let sim_output = simulator
+            .simulate_intent(&provider, &intent, sim_context, fee_token_balance)
+            .await?;
+
+        // Calculate intrinsic gas for the transaction
+        let intrinsic_gas = GasEstimator::calculate_intrinsic_cost(
+            &OrchestratorContract::executeCall {
+                encodedIntent: Intent::default().abi_encode().into(), // Approximate size
+            }
+            .abi_encode(),
+            context.authorization_address.is_some(),
+        );
+
+        // Build intent to sign
         let mut intent_to_sign = Intent {
             eoa: intent.eoa,
             executionData: intent.execution_data.clone(),
@@ -365,6 +321,7 @@ impl Relay {
                 .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
                 .collect(),
             isMultichain: !context.intent_kind.is_single(),
+            combinedGas: sim_output.gas_combined,
             ..Default::default()
         };
 
@@ -375,119 +332,48 @@ impl Relay {
             intent_to_sign.settlerContext = settler_context.clone();
         }
 
-        if intent_to_sign.isMultichain {
-            // For multichain intents, add a mocked merkle signature
-            intent_to_sign = intent_to_sign
-                .with_mock_merkle_signature(
-                    &context.intent_kind,
-                    *orchestrator.address(),
-                    &provider,
-                    &mock_key,
-                    context.account_key.key_hash(),
-                    prehash,
-                )
-                .await
-                .map_err(RelayError::from)?;
-        } else {
-            // For single chain intents, sign the intent directly
-            let signature = mock_key
-                .sign_typed_data(
-                    &intent_to_sign.as_eip712().map_err(RelayError::from)?,
-                    &orchestrator
-                        .eip712_domain(intent_to_sign.is_multichain())
-                        .await
-                        .map_err(RelayError::from)?,
-                )
-                .await
-                .map_err(RelayError::from)?;
-
-            intent_to_sign.signature = Signature {
-                innerSignature: signature,
-                keyHash: context.account_key.key_hash(),
-                prehash,
-            }
-            .abi_encode_packed()
-            .into();
-        }
-
+        // Add funder if needed
         if !intent_to_sign.encodedFundTransfers.is_empty() {
             intent_to_sign.funder = self.inner.contracts.funder.address;
         }
 
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_legacy_payment_amount(U256::from(1));
-        let (asset_diffs, sim_result) = orchestrator
-            .simulate_execute(
-                self.simulator(),
-                &intent_to_sign,
-                context.account_key.keyType,
-                self.inner.asset_info.clone(),
+        // Create pricing context
+        let pricing_context = PricingContext {
+            chain_id,
+            fee_token: token.clone(),
+            is_init: false,
+            fee_token_balance,
+            priority_fee_percentile: self.inner.priority_fee_percentile,
+        };
+
+        // Calculate fees and generate quote
+        let quote = pricer
+            .calculate_fees(
+                &provider,
+                &chain,
+                intent_to_sign,
+                sim_output.gas_combined,
+                intrinsic_gas,
+                pricing_context,
+                orchestrator_addr,
+                context.authorization_address,
             )
             .await?;
 
-        // Calculate the real fee
-        let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
-        let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall {
-                encodedIntent: intent_to_sign.abi_encode().into(),
-            }
-            .abi_encode(),
-            context.authorization_address.is_some(),
-        );
-        let gas_estimate = GasEstimate::from_combined_gas(
-            sim_result.gCombined.to(),
-            intrinsic_gas,
-            &self.inner.quote_config,
-        );
-        debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
-
-        // Fill combinedGas and empty dummy signature
-        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
-        intent_to_sign.signature = bytes!("");
-        intent_to_sign.funderSignature = bytes!("");
-
-        // Fill payment information
-        //
-        // If the fee has already been specified (multichain inputs only), we only simulate to get
-        // asset diffs. Otherwise, we simulate to get the fee.
-        intent_to_sign.set_legacy_payment_amount(context.intent_kind.multi_input_fee().unwrap_or(
-            extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-        ));
-
-        let fee_token_deficit =
-            intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
-        let quote = Quote {
-            chain_id,
-            payment_token_decimals: token.decimals,
-            intent: intent_to_sign,
-            extra_payment,
-            eth_price,
-            tx_gas: gas_estimate.tx,
-            native_fee_estimate,
-            authorization_address: context.authorization_address,
-            orchestrator: *orchestrator.address(),
-            fee_token_deficit,
-        };
+        // Update quote with fee token deficit
+        let mut final_quote = quote;
+        final_quote.fee_token_deficit = final_quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
-            asset_diffs,
-            &quote,
+            sim_output.asset_diffs,
+            &final_quote,
             &self.inner.fee_tokens,
             &self.inner.price_oracle,
         )
         .await?;
 
-        Ok((chain_asset_diffs, quote))
+        Ok((chain_asset_diffs, final_quote))
     }
 
     #[instrument(skip_all)]
@@ -2303,21 +2189,3 @@ impl Relay {
     }
 }
 
-/// Approximates the intrinsic cost of a transaction.
-///
-/// This function assumes Prague rules.
-fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
-    // for 7702 designations there is an additional gas charge
-    //
-    // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-    // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-    // need to charge for the account being presumed empty.
-    let auth_cost = if has_auth { PER_EMPTY_ACCOUNT_COST } else { 0 };
-
-    // We just assume gas cost to cost 16 gas per token to eliminate fluctuations in gas estimates
-    // due to calldata values changing. A more robust approach here is either only doing an
-    // upperbound for calldata ranges that will change and doing a more accurate estimate for
-    // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
-    // an empty address on the chain the intent is for to get an estimte of the calldata.
-    21000 + auth_cost + input.len() as u64 * 16
-}
