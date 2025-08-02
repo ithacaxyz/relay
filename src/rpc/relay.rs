@@ -21,7 +21,7 @@ use crate::{
     utils::provider_utils::ProviderUtils,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind,
+        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Token,
         Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
@@ -188,6 +188,90 @@ impl Relay {
     ///
     /// Returns fees in ETH.
     #[instrument(skip_all)]
+    /// Fetches the user's balance for a fee token.
+    async fn get_fee_token_balance(
+        &self,
+        account: Address,
+        chain_id: ChainId,
+        fee_token: Address,
+    ) -> Result<U256, RelayError> {
+        Ok(self.get_assets(GetAssetsParameters {
+            account,
+            asset_filter: [(
+                chain_id,
+                vec![AssetFilterItem::fungible(fee_token.into())],
+            )]
+            .into(),
+            ..Default::default()
+        })
+        .await
+        .map_err(RelayError::internal)?
+        .balance_on_chain(chain_id, fee_token.into()))
+    }
+
+    /// Validates account delegation and orchestrator support.
+    async fn validate_account_setup(
+        &self,
+        account: &Account<&DynProvider>,
+    ) -> Result<(Address, Address), RelayError> {
+        let orchestrator = account.get_orchestrator().await?;
+        if !self.is_supported_orchestrator(&orchestrator) {
+            return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+        }
+        
+        let delegation = self.has_supported_delegation(account).await.map_err(RelayError::from)?;
+        
+        Ok((orchestrator, delegation))
+    }
+
+    /// Builds an intent from partial intent with all required fields.
+    fn build_intent_to_sign(
+        &self,
+        partial: PartialIntent,
+        token: &Token,
+        delegation: Address,
+        context: &FeeEstimationContext,
+        gas_combined: U256,
+    ) -> Intent {
+        let mut intent = Intent {
+            eoa: partial.eoa,
+            executionData: partial.execution_data.clone(),
+            nonce: partial.nonce,
+            payer: partial.payer.unwrap_or_default(),
+            paymentToken: token.address,
+            paymentRecipient: self.inner.fee_recipient,
+            supportedAccountImplementation: delegation,
+            encodedPreCalls: partial
+                .pre_calls
+                .into_iter()
+                .map(|pre_call| pre_call.abi_encode().into())
+                .collect(),
+            encodedFundTransfers: partial
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
+            isMultichain: !context.intent_kind.is_single(),
+            combinedGas: gas_combined,
+            ..Default::default()
+        };
+
+        // For MultiOutput intents, set the settler address and context
+        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
+            if let Ok(interop) = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled) {
+                intent.settler = interop.settler_address();
+                intent.settlerContext = settler_context.clone();
+            }
+        }
+
+        // Add funder if needed
+        if !intent.encodedFundTransfers.is_empty() {
+            intent.funder = self.inner.contracts.funder.address;
+        }
+
+        intent
+    }
+
     async fn estimate_extra_fee(&self, chain: &Chain, intent: &Intent) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
@@ -228,13 +312,11 @@ impl Relay {
         _prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let chain =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
-
+        // Validate chain and token
+        let chain = self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let token = self.inner.fee_tokens.find(chain_id, &context.fee_token)
+            .ok_or_else(|| QuoteError::UnsupportedFeeToken(context.fee_token))?;
         let provider = chain.provider.clone();
-        let Some(token) = self.inner.fee_tokens.find(chain_id, &context.fee_token) else {
-            return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
-        };
 
         // Create simulation and pricing components
         let simulator = IntentSimulator::new(
@@ -246,106 +328,50 @@ impl Relay {
 
         // Fetch the user's balance for the fee token
         let fee_token_balance = self
-            .get_assets(GetAssetsParameters {
-                account: intent.eoa,
-                asset_filter: [(
-                    chain_id,
-                    vec![AssetFilterItem::fungible(context.fee_token.into())],
-                )]
-                .into(),
-                ..Default::default()
-            })
-            .await
-            .map_err(RelayError::internal)?
-            .balance_on_chain(chain_id, context.fee_token.into());
+            .get_fee_token_balance(intent.eoa, chain_id, context.fee_token)
+            .await?;
 
         // Create simulation context from fee estimation context
         let sim_context = context.clone().into();
 
-        // Fetch account information with minimal overrides for validation
-        let mut validation_overrides = StateOverridesBuilder::default();
-        if let Some(auth_addr) = context.authorization_address {
-            validation_overrides = validation_overrides.append(
-                intent.eoa,
-                AccountOverride::default().with_code(
-                    Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat())
-                ),
-            );
-        }
-        let validation_overrides = validation_overrides.build();
-        
-        let account = Account::new(intent.eoa, &provider).with_overrides(validation_overrides);
-
-        // Fetch orchestrator and delegation
-        let orchestrator_addr = {
-            let orchestrator = account.get_orchestrator().await?;
-            if !self.is_supported_orchestrator(&orchestrator) {
-                return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+        // Validate account setup with minimal overrides
+        let account = {
+            let mut overrides = StateOverridesBuilder::default();
+            if let Some(auth_addr) = context.authorization_address {
+                overrides = overrides.append(
+                    intent.eoa,
+                    AccountOverride::default().with_code(
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat())
+                    ),
+                );
             }
-            orchestrator
+            Account::new(intent.eoa, &provider).with_overrides(overrides.build())
         };
         
-        let delegation = self.has_supported_delegation(&account).await.map_err(RelayError::from)?;
+        let (orchestrator_addr, delegation) = self.validate_account_setup(&account).await?;
 
         // Run simulation
         let sim_output = simulator
             .simulate_intent(&provider, &intent, sim_context, fee_token_balance)
             .await?;
 
-        // Calculate intrinsic gas for the transaction
+        // Build intent to sign
+        let intent_to_sign = self.build_intent_to_sign(
+            intent,
+            &token,
+            delegation,
+            &context,
+            sim_output.gas_combined,
+        );
+
+        // Calculate intrinsic gas based on intent size
         let intrinsic_gas = GasEstimator::calculate_intrinsic_cost(
             &OrchestratorContract::executeCall {
-                encodedIntent: Intent::default().abi_encode().into(), // Approximate size
+                encodedIntent: intent_to_sign.abi_encode().into(),
             }
             .abi_encode(),
             context.authorization_address.is_some(),
         );
-
-        // Build intent to sign
-        let mut intent_to_sign = Intent {
-            eoa: intent.eoa,
-            executionData: intent.execution_data.clone(),
-            nonce: intent.nonce,
-            payer: intent.payer.unwrap_or_default(),
-            paymentToken: token.address,
-            paymentRecipient: self.inner.fee_recipient,
-            supportedAccountImplementation: delegation,
-            encodedPreCalls: intent
-                .pre_calls
-                .into_iter()
-                .map(|pre_call| pre_call.abi_encode().into())
-                .collect(),
-            encodedFundTransfers: intent
-                .fund_transfers
-                .into_iter()
-                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
-                .collect(),
-            isMultichain: !context.intent_kind.is_single(),
-            combinedGas: sim_output.gas_combined,
-            ..Default::default()
-        };
-
-        // For MultiOutput intents, set the settler address and context
-        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
-            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
-            intent_to_sign.settler = interop.settler_address();
-            intent_to_sign.settlerContext = settler_context.clone();
-        }
-
-        // Add funder if needed
-        if !intent_to_sign.encodedFundTransfers.is_empty() {
-            intent_to_sign.funder = self.inner.contracts.funder.address;
-        }
-
-        // Create pricing context
-        let pricing_context = PricingContext {
-            chain_id,
-            fee_token: token.clone(),
-            is_init: false,
-            fee_token_balance,
-            priority_fee_percentile: self.inner.priority_fee_percentile,
-        };
-
         // Calculate fees and generate quote
         let quote = pricer
             .calculate_fees(
@@ -354,7 +380,13 @@ impl Relay {
                 intent_to_sign,
                 sim_output.gas_combined,
                 intrinsic_gas,
-                pricing_context,
+                PricingContext {
+                    chain_id,
+                    fee_token: token.clone(),
+                    is_init: false,
+                    fee_token_balance,
+                    priority_fee_percentile: self.inner.priority_fee_percentile,
+                },
                 orchestrator_addr,
                 context.authorization_address,
             )
