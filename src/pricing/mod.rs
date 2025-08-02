@@ -5,3 +5,5 @@ pub mod fee_history;
 pub mod gas_estimation;
 pub mod price_calculator;
 pub mod pricer;
+
+pub use price_calculator::PriceCalculator;

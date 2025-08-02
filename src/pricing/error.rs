@@ -1,5 +1,7 @@
 //! Pricing-specific error types.
 
+use alloy::primitives::Address;
+
 /// Errors that can occur during price calculation and fee estimation.
 #[derive(Debug, thiserror::Error)]
 pub enum PricingError {
@@ -30,4 +32,12 @@ pub enum PricingError {
     /// Fee token not supported for pricing.
     #[error("Unsupported fee token: {0}")]
     UnsupportedFeeToken(String),
+
+    /// Token not supported by price oracle.
+    #[error("Unsupported token: {0}")]
+    UnsupportedToken(Address),
+
+    /// Price unavailable for token.
+    #[error("Price unavailable for token: {0}")]
+    UnavailablePrice(Address),
 }
