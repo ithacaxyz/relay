@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    pricing::{IntentPricer, PricingContext, gas_estimation::GasEstimator},
+    pricing::{gas_estimation::GasEstimator, IntentPricer, PricingContext},
     signers::Eip712PayLoadSigner,
     simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
@@ -271,6 +271,18 @@ impl Relay {
         _prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
+        // Validate input size limits to prevent DoS attacks
+        const MAX_EXECUTION_DATA_SIZE: usize = 1024 * 1024; // 1MB
+        const MAX_PRE_CALLS_COUNT: usize = 100;
+        
+        if intent.execution_data.len() > MAX_EXECUTION_DATA_SIZE {
+            return Err(RelayError::Intent(Box::new(IntentError::InvalidExecution)));
+        }
+        
+        if intent.pre_calls.len() > MAX_PRE_CALLS_COUNT {
+            return Err(RelayError::Intent(Box::new(IntentError::InvalidPreCalls)));
+        }
+
         // Validate chain and token
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;

@@ -43,9 +43,16 @@ impl<'a> PriceCalculator<'a> {
 
         // Convert from wei to token units
         // Formula: (gas_price_wei * 10^token_decimals) / eth_price_in_token
+        let eth_price_f64 = f64::from(eth_price);
+        
+        // Prevent division by zero
+        if eth_price_f64 == 0.0 {
+            return Err(PricingError::PriceOracleUnavailable("ETH price is zero".to_string()));
+        }
+        
         let payment_per_gas = (fee_estimate.max_fee_per_gas as f64
             * 10u128.pow(token.decimals as u32) as f64)
-            / f64::from(eth_price);
+            / eth_price_f64;
 
         Ok(payment_per_gas)
     }
