@@ -35,7 +35,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192},
     providers::{DynProvider, Provider},
     rpc::types::{
