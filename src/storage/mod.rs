@@ -17,7 +17,7 @@ use crate::{
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, LayerZeroNonceRecord, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -317,21 +317,5 @@ impl StorageApi for RelayStorage {
         chain_id: ChainId,
     ) -> api::Result<Vec<TxEnvelope>> {
         self.inner.load_pending_pull_gas_transactions(signer, chain_id).await
-    }
-
-    async fn update_lz_nonce_and_queue_transaction(
-        &self,
-        chain_id: ChainId,
-        src_eid: u32,
-        nonce_lz: u64,
-        transaction: &RelayTransaction,
-    ) -> api::Result<()> {
-        self.inner
-            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, nonce_lz, transaction)
-            .await
-    }
-
-    async fn get_latest_layerzero_nonces(&self) -> api::Result<Vec<LayerZeroNonceRecord>> {
-        self.inner.get_latest_layerzero_nonces().await
     }
 }

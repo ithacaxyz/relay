@@ -3,7 +3,6 @@
 use super::{StorageApi, api::Result};
 use crate::{
     error::StorageError,
-    interop::settler::layerzero::EndpointId,
     liquidity::{
         ChainAddress,
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
@@ -13,7 +12,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, LayerZeroNonceRecord, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -43,7 +42,6 @@ pub struct InMemoryStorage {
     transfers:
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
     pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
-    layerzero_nonces: DashMap<(ChainId, EndpointId), LayerZeroNonceRecord>,
 }
 
 #[async_trait]
@@ -498,25 +496,6 @@ impl StorageApi for InMemoryStorage {
         }
 
         Ok(pending_transactions)
-    }
-
-    async fn update_lz_nonce_and_queue_transaction(
-        &self,
-        chain_id: ChainId,
-        src_eid: u32,
-        nonce_lz: u64,
-        transaction: &RelayTransaction,
-    ) -> Result<()> {
-        let record = LayerZeroNonceRecord { chain_id, src_eid, nonce_lz, tx_id: transaction.id };
-        self.layerzero_nonces.insert((chain_id, src_eid), record);
-
-        self.queue_transaction(transaction).await?;
-
-        Ok(())
-    }
-
-    async fn get_latest_layerzero_nonces(&self) -> Result<Vec<LayerZeroNonceRecord>> {
-        Ok(self.layerzero_nonces.iter().map(|entry| entry.value().clone()).collect())
     }
 }
 

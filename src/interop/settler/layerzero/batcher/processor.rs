@@ -4,14 +4,11 @@ use crate::{
         SettlementError,
         layerzero::{EndpointId, contracts::ILayerZeroEndpointV2},
     },
-    storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
-    types::{
-        Call3, LZChainConfigs, LayerZeroNonceRecord, TransactionServiceHandles, aggregate3Call,
-    },
+    types::{Call3, LZChainConfigs, TransactionServiceHandles, aggregate3Call},
 };
 use alloy::{
-    primitives::{B256, ChainId, map::HashMap},
+    primitives::{B256, ChainId},
     providers::{MULTICALL3_ADDRESS, Provider},
     rpc::types::TransactionRequest,
     sol_types::SolCall,
@@ -23,8 +20,6 @@ use tracing::{error, info};
 /// Processor monitoring and executing LayerZero settlement batches.
 #[derive(Debug, Clone)]
 pub struct LayerZeroBatchProcessor {
-    /// Storage for persistence
-    storage: RelayStorage,
     /// Chain configurations
     chain_configs: LZChainConfigs,
     /// Handle to communicate with batch pool
@@ -34,7 +29,6 @@ pub struct LayerZeroBatchProcessor {
 impl LayerZeroBatchProcessor {
     /// Run batch processor with its associated pool, returning pool handle.
     pub async fn run(
-        storage: RelayStorage,
         chain_configs: LZChainConfigs,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroPoolHandle, SettlementError> {
@@ -48,9 +42,7 @@ impl LayerZeroBatchProcessor {
         let pool_handle = LayerZeroPoolHandle::new(msg_sender);
 
         // Spawn the processor
-        Self { storage, chain_configs, pool_handle: pool_handle.clone() }
-            .spawn(tx_service_handles)
-            .await?;
+        Self { chain_configs, pool_handle: pool_handle.clone() }.spawn(tx_service_handles).await?;
 
         Ok(pool_handle)
     }
@@ -60,15 +52,6 @@ impl LayerZeroBatchProcessor {
         self,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<(), SettlementError> {
-        // Create a map of the latest handled nonces by (chain_id, src_eid)
-        let nonce_map: HashMap<(ChainId, EndpointId), LayerZeroNonceRecord> = self
-            .storage
-            .get_latest_layerzero_nonces()
-            .await?
-            .into_iter()
-            .map(|record| ((record.chain_id, record.src_eid as EndpointId), record))
-            .collect();
-
         // Build all possible (chain_id, src_eid) combinations from chain configs
         let mut chains_to_process = Vec::new();
         for (dst_chain_id, _) in self.chain_configs.iter() {
@@ -92,14 +75,9 @@ impl LayerZeroBatchProcessor {
                 }
             };
 
-            // Get the nonce record for this chain pair, if any
-            let nonce_record = nonce_map.get(&(chain_id, src_eid)).cloned();
-
             let processor = self.clone();
             tokio::spawn(async move {
-                processor
-                    .process_chain_pair(tx_service_handle, chain_id, src_eid, nonce_record)
-                    .await;
+                processor.process_chain_pair(tx_service_handle, chain_id, src_eid).await;
             });
         }
 
@@ -112,7 +90,6 @@ impl LayerZeroBatchProcessor {
         tx_service_handle: TransactionServiceHandle,
         chain_id: ChainId,
         src_eid: EndpointId,
-        record: Option<LayerZeroNonceRecord>,
     ) {
         let mut interval = interval(Duration::from_millis(200)); // ~1 block time
         // Subscribe to pool size updates for this chain pair
@@ -120,34 +97,6 @@ impl LayerZeroBatchProcessor {
             self.pool_handle.subscribe(chain_id, src_eid).await.expect("should exist");
 
         info!(chain_id = chain_id, src_eid = src_eid, "Starting batch processor for chain pair");
-        if let Some(record) = record {
-            // We have a nonce record from storage - need to wait for it to confirm
-            info!(
-                chain_id = chain_id,
-                src_eid = src_eid,
-                tx_id = %record.tx_id,
-                nonce = record.nonce_lz,
-                "Found existing transaction, waiting for confirmation"
-            );
-
-            if let Err(e) = self
-                .wait_for_transaction(
-                    &tx_service_handle,
-                    record.tx_id,
-                    chain_id,
-                    src_eid,
-                    record.nonce_lz,
-                )
-                .await
-            {
-                error!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
-                    error = ?e,
-                    "Failed to wait for existing transaction"
-                );
-            }
-        }
 
         loop {
             // Process next batch for this chain pair
@@ -255,13 +204,7 @@ impl LayerZeroBatchProcessor {
         // Create and queue batch transaction
         let batch_tx = self.create_batch_transaction(chain_id, &pending_batch.settlements).await?;
         let tx_id = batch_tx.id;
-
-        // Update LayerZero nonce and queue transaction atomically
         let last_nonce = pending_batch.settlements.last().unwrap().nonce;
-        self.storage
-            .update_lz_nonce_and_queue_transaction(chain_id, src_eid, last_nonce, &batch_tx)
-            .await
-            .map_err(|e| SettlementError::InternalError(format!("Storage error: {e:?}")))?;
 
         // Send transaction and don't wait for the status updates
         let _ = tx_service_handle.send_transaction_no_queue(batch_tx);

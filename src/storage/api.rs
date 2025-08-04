@@ -10,7 +10,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, LayerZeroNonceRecord, rpc::BundleId},
+    types::{CreatableAccount, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -269,21 +269,4 @@ pub trait StorageApi: Debug + Send + Sync {
         signer: Address,
         chain_id: ChainId,
     ) -> Result<Vec<TxEnvelope>>;
-
-    /// Update LayerZero nonce for the chain_id and src_eid pair and queue the associated
-    /// transaction atomically.
-    async fn update_lz_nonce_and_queue_transaction(
-        &self,
-        chain_id: ChainId,
-        src_eid: u32,
-        nonce_lz: u64,
-        transaction: &RelayTransaction,
-    ) -> Result<()>;
-
-    /// Get latest LayerZero nonces for all chain/endpoint pairs.
-    ///
-    /// Returns the highest processed nonce for each (chain_id, src_eid) combination
-    /// along with the associated transaction ID. This is used for crash recovery
-    /// and determining the starting point for new batches.
-    async fn get_latest_layerzero_nonces(&self) -> Result<Vec<LayerZeroNonceRecord>>;
 }

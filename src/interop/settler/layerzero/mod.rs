@@ -96,12 +96,8 @@ impl LayerZeroSettler {
             LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
 
         // Create batch processor with pool
-        let settlement_pool = LayerZeroBatchProcessor::run(
-            storage.clone(),
-            chain_configs.clone(),
-            tx_service_handles,
-        )
-        .await?;
+        let settlement_pool =
+            LayerZeroBatchProcessor::run(chain_configs.clone(), tx_service_handles).await?;
 
         Ok(Self {
             eid_to_chain,
