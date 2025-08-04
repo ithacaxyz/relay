@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO layerzero_nonces (chain_id, src_eid, nonce_lz, tx_id, updated_at)\n            VALUES ($1, $2, $3, $4, NOW())\n            ON CONFLICT (chain_id, src_eid) \n            DO UPDATE SET \n                nonce_lz = EXCLUDED.nonce_lz,\n                tx_id = EXCLUDED.tx_id,\n                updated_at = NOW()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e1ada8fa4f6aea543f99b3c6753ecaff5c8c22bdfad1bc478c95d524f377044"
+}

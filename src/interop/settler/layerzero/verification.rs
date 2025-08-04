@@ -21,11 +21,11 @@ use alloy::{
     sol_types::SolEvent,
 };
 use futures_util::future::try_join_all;
-use std::sync::Arc;
 use tokio::time::{Duration, Instant, sleep_until};
 use tracing::{info, warn};
 
-use super::{LZChainConfig, contracts::IReceiveUln302};
+use super::contracts::IReceiveUln302;
+use crate::types::LZChainConfigs;
 
 /// Result of verification monitoring for LayerZero messages
 #[derive(Debug)]
@@ -61,7 +61,7 @@ impl ChainMonitor {
     async fn monitor_packet_stream(
         mut self,
         deadline: Instant,
-        chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+        chain_configs: LZChainConfigs,
     ) -> Result<Vec<B256>, SettlementError> {
         // Create lookup map using header hash as key
         let packet_lookup: HashMap<B256, LayerZeroPacketInfo> = self
@@ -185,12 +185,12 @@ pub struct InitialVerificationStatus {
 /// Handles monitoring for LayerZero verification messages
 #[derive(Debug)]
 pub(super) struct LayerZeroVerificationMonitor {
-    chain_configs: Arc<HashMap<ChainId, LZChainConfig>>,
+    chain_configs: LZChainConfigs,
 }
 
 impl LayerZeroVerificationMonitor {
     /// Creates a new LayerZero verification monitor
-    pub(super) fn new(chain_configs: Arc<HashMap<ChainId, LZChainConfig>>) -> Self {
+    pub(super) fn new(chain_configs: LZChainConfigs) -> Self {
         Self { chain_configs }
     }
 
@@ -490,7 +490,7 @@ impl LayerZeroVerificationMonitor {
 /// This checks if the ReceiveLib reports it as verifiable (DVN threshold met)
 pub(super) async fn is_message_available(
     packet: &LayerZeroPacketInfo,
-    chain_configs: &HashMap<ChainId, LZChainConfig>,
+    chain_configs: &LZChainConfigs,
 ) -> Result<bool, SettlementError> {
     let dst_config = chain_configs
         .get(&packet.dst_chain_id)
