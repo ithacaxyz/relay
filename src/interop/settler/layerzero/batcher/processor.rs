@@ -91,7 +91,8 @@ impl LayerZeroBatchProcessor {
         chain_id: ChainId,
         src_eid: EndpointId,
     ) {
-        let mut interval = interval(Duration::from_millis(200)); // ~1 block time
+        let mut interval = interval(Duration::from_millis(200));
+
         // Subscribe to pool size updates for this chain pair
         let mut pool_size_watcher =
             self.pool_handle.subscribe(chain_id, src_eid).await.expect("should exist");

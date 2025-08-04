@@ -124,6 +124,13 @@ impl LayerZeroBatchPool {
         }
     }
 
+    /// Notify pool watchers of the current pool size
+    fn notify_pool_watchers(&self, chain_id: ChainId, src_eid: EndpointId, size: usize) {
+        if let Some(watcher) = self.pool_watchers.get(&(chain_id, src_eid)) {
+            let _ = watcher.send(size);
+        }
+    }
+
     /// Handle settlement message
     fn handle_settlement(
         &mut self,
@@ -145,10 +152,8 @@ impl LayerZeroBatchPool {
         let pending = self.pending_settlements.entry(key).or_default();
         pending.insert(entry.message.nonce, entry);
 
-        // Notify watchers of the new pool size
-        if let Some(watcher) = self.pool_watchers.get(&key) {
-            let _ = watcher.send(pending.len());
-        }
+        let size = pending.len();
+        self.notify_pool_watchers(key.0, key.1, size);
     }
 
     /// Handle get pending batch message
@@ -207,10 +212,8 @@ impl LayerZeroBatchPool {
                 }
             }
 
-            // Notify watcher of the new pool size
-            if let Some(watcher) = self.pool_watchers.get(&(chain_id, src_eid)) {
-                let _ = watcher.send(pending.len());
-            }
+            let size = pending.len();
+            self.notify_pool_watchers(chain_id, src_eid, size);
         }
     }
 
