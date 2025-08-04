@@ -324,6 +324,13 @@ impl Relay {
             },
         )
         .await?;
+        debug!(
+            %chain_id,
+            fee_token = ?token,
+            ?fee_history,
+            ?eth_price,
+            "Got fee parameters"
+        );
 
         let native_fee_estimate = Eip1559Estimator::default().estimate(
             fee_history.latest_block_base_fee().unwrap_or_default(),
@@ -1273,7 +1280,7 @@ impl Relay {
         // merkle tree, we find funds in a loop until `balance + funds - required_assets - fee >=
         // 0`.
         //
-        // We constrain this to three attempts
+        // We constrain this to three attempts.
         let mut num_funding_chains = 1;
         for _ in 0..3 {
             // Figure out what chains to pull funds from, if any. This will pull the funds the user
@@ -1302,8 +1309,6 @@ impl Relay {
                         } else {
                             U256::ZERO
                         },
-                    // TODO(onbjerg): why is the estimate for the input
-                    // dependent on the number of inputs? this seems extremely circular
                     num_funding_chains + 1,
                 )
                 .await?
