@@ -12,15 +12,14 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
-    error::{IntentError, StorageError},
+    error::{IntentError, StorageError, SimulationError},
     pricing::{IntentPricer, PricingContext, fee_engine::FeeEngine},
     signers::Eip712PayLoadSigner,
-    simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo, Orchestrator,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
@@ -295,15 +294,7 @@ impl Relay {
             .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
         let provider = chain.provider.clone();
 
-        // Create simulation and pricing components
-        let simulator = IntentSimulator::new(
-            self.simulator(),
-            self.orchestrator(),
-            self.inner.asset_info.clone(),
-        );
-        let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
-
-        // Clone context to avoid borrow checker issues
+        // Clone context early to avoid borrow checker issues
         let context_clone = context.clone();
         
         // Fetch the user's balance for the fee token
@@ -314,7 +305,7 @@ impl Relay {
         // simulation (preserving original business logic)
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Build comprehensive state overrides (matching original logic)
+        // Build comprehensive state overrides (matching original logic exactly)
         let mut overrides = StateOverridesBuilder::with_capacity(3)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
@@ -354,18 +345,60 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        let (orchestrator_addr, delegation) = self.validate_account_setup(&account).await?;
+        // Create components with the same overrides (matching original approach)
+        let orchestrator = {
+            let orchestrator_addr = account.get_orchestrator().await?;
+            if !self.is_supported_orchestrator(&orchestrator_addr) {
+                return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
+            }
+            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone())
+        };
 
-        // Create simulation context from fee estimation context
-        let sim_context = context.clone().into();
+        let delegation = self.has_supported_delegation(&account).await?;
+        
+        // Create pricer for fee calculation
+        let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
 
-        // Run simulation (using the same balance as original logic)
-        let sim_output =
-            simulator.simulate_intent(&provider, &intent, sim_context, new_fee_token_balance).await?;
+        // Build intent from partial intent for simulation (matching original flow)
+        let mut intent_to_sign = Intent {
+            eoa: intent.eoa,
+            executionData: intent.execution_data.clone(),
+            nonce: intent.nonce,
+            payer: intent.payer.unwrap_or_default(),
+            paymentToken: token.address,
+            paymentRecipient: self.inner.fee_recipient,
+            supportedAccountImplementation: delegation,
+            encodedPreCalls: intent
+                .pre_calls
+                .iter()
+                .map(|pre_call| pre_call.abi_encode().into())
+                .collect(),
+            encodedFundTransfers: intent
+                .fund_transfers
+                .iter()
+                .map(|(token, amount)| Transfer { token: *token, amount: *amount }.abi_encode().into())
+                .collect(),
+            isMultichain: false,
+            ..Default::default()
+        };
 
-        // Build intent to sign
+        // Set payment amount for simulation
+        intent_to_sign.set_legacy_payment_amount(U256::from(1));
+
+        // Execute simulation using the orchestrator with correct overrides
+        let (asset_diffs, simulation_result) = orchestrator
+            .simulate_execute(
+                self.simulator(),
+                &intent_to_sign,
+                context.account_key.keyType,
+                self.inner.asset_info.clone(),
+            )
+            .await
+            .map_err(|e| RelayError::Simulation(SimulationError::ExecutionFailed(e.to_string())))?;
+
+        // Build final intent for pricing with gas estimate  
         let intent_to_sign =
-            self.build_intent_to_sign(intent, token, delegation, &context, sim_output.gas_combined);
+            self.build_intent_to_sign(intent, token, delegation, &context, simulation_result.gCombined);
 
         // Calculate intrinsic gas based on intent size
         let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
@@ -381,7 +414,7 @@ impl Relay {
                 &provider,
                 &chain,
                 intent_to_sign,
-                sim_output.gas_combined,
+                simulation_result.gCombined,
                 intrinsic_gas,
                 PricingContext {
                     chain_id,
@@ -390,7 +423,7 @@ impl Relay {
                     fee_token_balance,
                     priority_fee_percentile: self.inner.priority_fee_percentile,
                 },
-                orchestrator_addr,
+                account.get_orchestrator().await?,
                 context.authorization_address,
             )
             .await?;
@@ -415,7 +448,7 @@ impl Relay {
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
-            sim_output.asset_diffs,
+            asset_diffs,
             &final_quote,
             &self.inner.fee_tokens,
             &self.inner.price_oracle,
