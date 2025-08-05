@@ -303,32 +303,65 @@ impl Relay {
         );
         let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
 
+        // Clone context to avoid borrow checker issues
+        let context_clone = context.clone();
+        
         // Fetch the user's balance for the fee token
         let fee_token_balance =
             self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
 
-        // Create simulation context from fee estimation context
-        let sim_context = context.clone().into();
+        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
+        // simulation (preserving original business logic)
+        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Validate account setup with minimal overrides
-        let account = {
-            let mut overrides = StateOverridesBuilder::default();
-            if let Some(auth_addr) = context.authorization_address {
-                overrides = overrides.append(
-                    intent.eoa,
-                    AccountOverride::default().with_code(Bytes::from(
-                        [&EIP7702_DELEGATION_DESIGNATOR, auth_addr.as_slice()].concat(),
-                    )),
-                );
-            }
-            Account::new(intent.eoa, &provider).with_overrides(overrides.build())
-        };
+        // Build comprehensive state overrides (matching original logic)
+        let mut overrides = StateOverridesBuilder::with_capacity(3)
+            // simulateV1Logs requires it, so the function can only be called under a testing
+            // environment
+            .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
+            .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
+            .append(
+                intent.eoa,
+                AccountOverride::default()
+                    // If the fee token is the native token, we override it
+                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
+                    .with_state_diff(if context.key_slot_override {
+                        context.account_key.storage_slots()
+                    } else {
+                        Default::default()
+                    })
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(context.authorization_address.map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    })),
+            )
+            .extend(context_clone.state_overrides);
+
+        // If the fee token is an ERC20, we do a balance override, merging it with the client
+        // supplied balance override if necessary.
+        if !context.fee_token.is_zero() {
+            overrides = overrides.extend(
+                context_clone
+                    .balance_overrides
+                    .modify_token(context.fee_token, |balance| {
+                        balance.add_balance(intent.eoa, new_fee_token_balance);
+                    })
+                    .into_state_overrides(&provider)
+                    .await?,
+            );
+        }
+
+        let overrides = overrides.build();
+        let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         let (orchestrator_addr, delegation) = self.validate_account_setup(&account).await?;
 
-        // Run simulation
+        // Create simulation context from fee estimation context
+        let sim_context = context.clone().into();
+
+        // Run simulation (using the same balance as original logic)
         let sim_output =
-            simulator.simulate_intent(&provider, &intent, sim_context, fee_token_balance).await?;
+            simulator.simulate_intent(&provider, &intent, sim_context, new_fee_token_balance).await?;
 
         // Build intent to sign
         let intent_to_sign =
