@@ -12,7 +12,7 @@
 //! - **Message Delivery**: Executes lzReceive on destination endpoints
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
-use super::utils::{bytes32_to_address, create_origin, deliver_layerzero_message};
+use super::utils::{create_origin, deliver_layerzero_message};
 use alloy::{
     primitives::{Address, B256},
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
@@ -167,8 +167,8 @@ impl LayerZeroRelayer {
             dst_endpoint.endpoint,
             packet.src_eid,
             packet.dst_eid,
-            &create_origin(packet.src_eid, bytes32_to_address(&packet.sender), packet.nonce),
-            bytes32_to_address(&packet.receiver),
+            &create_origin(packet.src_eid, packet.sender_addr(), packet.nonce),
+            packet.receiver_addr(),
             packet.guid,
             packet.message.clone().into(),
             &self.inner.escrows,

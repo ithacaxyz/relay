@@ -45,8 +45,8 @@ impl LayerZeroPacketInfo {
         receive_lib_address: Address,
         uln_config: UlnConfig,
     ) -> Self {
-        let sender = Address::from_slice(&packet.sender[12..]);
-        let receiver = Address::from_slice(&packet.receiver[12..]);
+        let sender = packet.sender_addr();
+        let receiver = packet.receiver_addr();
 
         let header = packet.encoded_packet_header();
         let header_hash = keccak256(&header);
@@ -118,6 +118,16 @@ pub struct LayerZeroPacketV1 {
 }
 
 impl LayerZeroPacketV1 {
+    /// Returns the receiver address
+    pub fn receiver_addr(&self) -> Address {
+        Address::from_slice(&self.receiver[12..])
+    }
+
+    /// Returns the sender address
+    pub fn sender_addr(&self) -> Address {
+        Address::from_slice(&self.sender[12..])
+    }
+
     /// Encodes the packet header in LayerZero V1 format.
     ///
     /// The packet header format is:
