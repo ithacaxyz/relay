@@ -106,9 +106,6 @@ impl IntentSimulator {
         let orchestrator =
             Orchestrator::new(self.orchestrator_address, provider).with_overrides(overrides);
 
-        // Generate mock key for simulation
-        let _mock_key = MockKeyGenerator::generate_admin_key(context.account_key.keyType)?;
-
         // Build intent from partial intent
         let mut intent_to_sign = self.build_intent_from_partial(
             intent,
