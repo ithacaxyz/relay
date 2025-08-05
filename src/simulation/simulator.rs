@@ -149,10 +149,10 @@ impl IntentSimulator {
         provider: &P,
         intent: &PartialIntent,
         context: &SimulationContext,
-        _fee_token_balance: U256,
+        fee_token_balance: U256,
     ) -> Result<StateOverride, RelayError> {
-        // Use large constant balance for simulation to avoid data flow inconsistencies
-        let simulation_balance = U256::from(1_000_000_000_000_000_000_u64); // 1 ETH equivalent
+        // Add 1 to the user's balance to ensure simulation passes
+        let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
 
         // Build state overrides
         let mut builder = SimulationStateBuilder::with_capacity(2)
