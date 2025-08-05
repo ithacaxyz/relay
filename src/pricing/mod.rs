@@ -2,8 +2,8 @@
 
 pub mod fee_history;
 pub mod gas_estimation;
-pub mod price_calculator;
+pub mod fee_calculator;
 pub mod pricer;
 
-pub use price_calculator::PriceCalculator;
+pub use fee_calculator::FeeCalculator;
 pub use pricer::{IntentPricer, PricingContext};

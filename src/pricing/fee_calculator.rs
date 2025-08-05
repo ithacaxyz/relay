@@ -1,4 +1,4 @@
-//! Price calculation utilities for converting between native and fee token prices.
+//! Fee calculation utilities for converting between native and fee token prices.
 
 use crate::{
     chains::Chain,
@@ -13,14 +13,24 @@ use alloy::{
 };
 use tracing::instrument;
 
-/// Price calculator for fee token conversions.
+/// Fee calculator for transaction fee estimation and token conversions.
+///
+/// This component handles the calculation of transaction fees in different token
+/// denominations. It bridges between native ETH gas prices and ERC20 fee tokens,
+/// enabling users to pay for transactions in their preferred tokens.
+///
+/// # Key Responsibilities
+/// - Convert native gas prices to fee token units
+/// - Calculate L1 data availability fees for rollups
+/// - Convert between native ETH and ERC20 token amounts
+/// - Provide accurate fee estimations for user transactions
 #[derive(Debug)]
-pub struct PriceCalculator<'a> {
+pub struct FeeCalculator<'a> {
     price_oracle: &'a PriceOracle,
 }
 
-impl<'a> PriceCalculator<'a> {
-    /// Creates a new price calculator with the given price oracle.
+impl<'a> FeeCalculator<'a> {
+    /// Creates a new fee calculator with the given price oracle.
     pub fn new(price_oracle: &'a PriceOracle) -> Self {
         Self { price_oracle }
     }

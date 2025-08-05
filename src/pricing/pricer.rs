@@ -7,7 +7,7 @@ use crate::{
     error::PricingError,
     pricing::{
         fee_history::FeeHistoryAnalyzer, gas_estimation::GasEstimator,
-        price_calculator::PriceCalculator,
+        fee_calculator::FeeCalculator,
     },
     types::{GasEstimate, Intent, Quote, Token},
 };
@@ -71,7 +71,7 @@ impl<'a> IntentPricer<'a> {
             GasEstimator::estimate_combined_gas(simulation_gas, intrinsic_gas, self.quote_config);
 
         // Step 3: Calculate price conversions
-        let price_calc = PriceCalculator::new(self.price_oracle);
+        let price_calc = FeeCalculator::new(self.price_oracle);
 
         // Calculate payment per gas in fee token units
         let payment_per_gas =
@@ -172,7 +172,7 @@ impl<'a> IntentPricer<'a> {
                 .await?;
 
         // Calculate price conversion
-        let price_calc = PriceCalculator::new(self.price_oracle);
+        let price_calc = FeeCalculator::new(self.price_oracle);
         let payment_per_gas =
             price_calc.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
 
