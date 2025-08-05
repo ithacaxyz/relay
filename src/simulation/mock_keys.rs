@@ -1,8 +1,7 @@
 //! Mock key generation utilities for simulation.
 
 use crate::{
-    error::{KeysError, RelayError},
-    simulation::error::SimulationError,
+    error::{KeysError, RelayError, SimulationError},
     types::{KeyType, KeyWith712Signer},
 };
 use alloy::primitives::B256;

@@ -3,8 +3,9 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     error::RelayError,
+    error::SimulationError,
     simulation::{
-        error::SimulationError, mock_keys::MockKeyGenerator,
+        mock_keys::MockKeyGenerator,
         state_overrides::SimulationStateBuilder,
     },
     types::{

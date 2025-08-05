@@ -4,8 +4,9 @@ use crate::{
     chains::Chain,
     config::QuoteConfig,
     price::PriceOracle,
+    error::PricingError,
     pricing::{
-        error::PricingError, fee_history::FeeHistoryAnalyzer, gas_estimation::GasEstimator,
+        fee_history::FeeHistoryAnalyzer, gas_estimation::GasEstimator,
         price_calculator::PriceCalculator,
     },
     types::{GasEstimate, Intent, Quote, Token},

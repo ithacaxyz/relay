@@ -3,7 +3,7 @@
 use crate::{
     chains::Chain,
     price::PriceOracle,
-    pricing::error::PricingError,
+    error::PricingError,
     provider::ProviderExt,
     types::{Intent, Token},
 };

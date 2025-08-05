@@ -1,6 +1,6 @@
 //! Fee history analysis and EIP-1559 estimation utilities.
 
-use crate::pricing::error::PricingError;
+use crate::error::PricingError;
 use alloy::{
     primitives::U256,
     providers::{
