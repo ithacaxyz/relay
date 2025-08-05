@@ -110,8 +110,19 @@ impl RebalanceService {
     }
 
     /// Returns minimum amount for rebalancing to be performed.
-    fn get_min_rebalance(&self, asset: &Asset) -> U256 {
-        self.get_threshold(asset) / uint!(10_U256)
+    fn get_min_rebalance(&self, src: &Asset, dst: &Asset) -> U256 {
+        let min_supported = self
+            .bridges
+            .iter()
+            .filter_map(|bridge| {
+                bridge
+                    .supports((src.chain_id, src.address), (dst.chain_id, dst.address))
+                    .map(|direction| direction.min_amount)
+            })
+            .min()
+            .unwrap_or(U256::MAX);
+
+        (self.get_threshold(src) / uint!(10_U256)).max(min_supported)
     }
 
     /// Gets balance ranges for all assets.
@@ -161,7 +172,7 @@ impl RebalanceService {
 
             amount >= direction.min_amount
         }) else {
-            eyre::bail!("no bridge for the given asset");
+            eyre::bail!("no bridge for the given asset")
         };
 
         let transfer = BridgeTransfer {
@@ -224,7 +235,7 @@ impl RebalanceService {
             let rebalance_amount =
                 U256::from((-(*min_negative.1.end())).min(*max_positive.1.start()));
 
-            if rebalance_amount >= self.get_min_rebalance(&min_negative.0) {
+            if rebalance_amount >= self.get_min_rebalance(&max_positive.0, &min_negative.0) {
                 return Ok(Some(AssetsToRebalance {
                     from: max_positive.0,
                     to: min_negative.0,
