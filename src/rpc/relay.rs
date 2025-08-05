@@ -214,35 +214,38 @@ impl Relay {
         Ok((orchestrator, delegation))
     }
 
-    /// Builds an intent from partial intent with all required fields.
+    /// Builds a complete intent from partial user input with computed fields.
+    ///
+    /// This function takes a PartialIntent (user input) and fills in all the computed
+    /// fields needed for a complete Intent that can be signed and executed.
     fn build_intent_to_sign(
         &self,
-        partial: PartialIntent,
-        token: &Token,
-        delegation: Address,
+        partial_intent: PartialIntent,
+        fee_token: &Token,
+        delegation_implementation: Address,
         context: &FeeEstimationContext,
-        gas_combined: U256,
+        combined_gas: U256,
     ) -> Intent {
         let mut intent = Intent {
-            eoa: partial.eoa,
-            executionData: partial.execution_data.clone(),
-            nonce: partial.nonce,
-            payer: partial.payer.unwrap_or_default(),
-            paymentToken: token.address,
+            eoa: partial_intent.eoa,
+            executionData: partial_intent.execution_data.clone(),
+            nonce: partial_intent.nonce,
+            payer: partial_intent.payer.unwrap_or_default(),
+            paymentToken: fee_token.address,
             paymentRecipient: self.inner.fee_recipient,
-            supportedAccountImplementation: delegation,
-            encodedPreCalls: partial
+            supportedAccountImplementation: delegation_implementation,
+            encodedPreCalls: partial_intent
                 .pre_calls
                 .into_iter()
                 .map(|pre_call| pre_call.abi_encode().into())
                 .collect(),
-            encodedFundTransfers: partial
+            encodedFundTransfers: partial_intent
                 .fund_transfers
                 .into_iter()
                 .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
                 .collect(),
             isMultichain: !context.intent_kind.is_single(),
-            combinedGas: gas_combined,
+            combinedGas: combined_gas,
             ..Default::default()
         };
 
