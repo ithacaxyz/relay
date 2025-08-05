@@ -4,7 +4,7 @@ use alloy::{
     primitives::{ChainId, map::HashMap},
     providers::{DynProvider, Provider},
 };
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     config::RelayConfig,
@@ -131,8 +131,6 @@ impl Chains {
                     .await?,
                 ));
             }
-
-            info!(bridges=?bridges.iter().map(|b| b.id()).collect::<Vec<_>>(), "Launching interop service");
 
             let service = RebalanceService::new(
                 fee_tokens,

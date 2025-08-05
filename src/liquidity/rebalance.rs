@@ -13,7 +13,7 @@ use futures_util::{
     stream::{SelectAll, select_all},
 };
 use std::{ops::RangeInclusive, time::Duration};
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Represents an asset in a chain tracked by [`RebalanceService`].
 #[derive(Debug, Clone, Copy)]
@@ -240,6 +240,13 @@ impl RebalanceService {
         }
 
         let fut = async move {
+            info!(
+                bridges=?self.bridges.iter().map(|b| b.id()).collect::<Vec<_>>(),
+                assets=?self.assets,
+                thresholds=?self.thresholds,
+                "Launched rebalance service"
+            );
+
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
                 tokio::select! {
