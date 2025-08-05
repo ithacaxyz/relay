@@ -94,6 +94,10 @@ pub async fn try_spawn_with_args(
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
             .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
             .with_funder_owner_key(std::env::var("RELAY_FUNDER_OWNER_KEY").ok())
+            .with_binance_keys(
+                std::env::var("BINANCE_API_KEY").ok(),
+                std::env::var("BINANCE_API_SECRET").ok(),
+            )
     };
 
     let registry = if !registry_path.exists() {
