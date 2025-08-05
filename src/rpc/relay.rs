@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError, SimulationError},
-    pricing::{IntentPricer, PricingContext, fee_engine::FeeEngine},
+    pricing::{QuoteGenerator, PricingContext, fee_engine::FeeEngine},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -356,8 +356,8 @@ impl Relay {
 
         let delegation = self.has_supported_delegation(&account).await?;
         
-        // Create pricer for fee calculation
-        let pricer = IntentPricer::new(&self.inner.price_oracle, &self.inner.quote_config);
+        // Create quote generator for fee calculation and quote creation
+        let quote_generator = QuoteGenerator::new(&self.inner.price_oracle, &self.inner.quote_config);
 
         // Build intent from partial intent for simulation (matching original flow)
         let mut intent_to_sign = Intent {
@@ -409,7 +409,7 @@ impl Relay {
             context.authorization_address.is_some(),
         );
         // Calculate fees and generate quote
-        let quote = pricer
+        let quote = quote_generator
             .calculate_fees(
                 &provider,
                 &chain,

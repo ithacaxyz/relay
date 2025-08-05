@@ -1,4 +1,4 @@
-//! Main pricing framework for coordinating fee estimation and quote generation.
+//! Quote generation framework for intent pricing and fee coordination.
 
 use crate::{
     chains::Chain,
@@ -29,22 +29,34 @@ pub struct PricingContext {
     pub priority_fee_percentile: f64,
 }
 
-/// Main pricing coordinator for intent fee calculation.
+/// Quote generator that orchestrates fee calculation and quote creation.
+///
+/// This component coordinates the entire quote generation process by:
+/// - Using FeeEngine for low-level fee calculations
+/// - Orchestrating gas estimation, pricing, and L1 fees
+/// - Generating complete Quote objects with all required fields
 #[derive(Debug)]
-pub struct IntentPricer<'a> {
+pub struct QuoteGenerator<'a> {
     /// Price oracle for token conversions.
     price_oracle: &'a PriceOracle,
     /// Quote configuration.
     quote_config: &'a QuoteConfig,
 }
 
-impl<'a> IntentPricer<'a> {
-    /// Creates a new intent pricer with the given dependencies.
+impl<'a> QuoteGenerator<'a> {
+    /// Creates a new quote generator with the given dependencies.
     pub fn new(price_oracle: &'a PriceOracle, quote_config: &'a QuoteConfig) -> Self {
         Self { price_oracle, quote_config }
     }
 
-    /// Calculates fees and generates a quote for an intent.
+    /// Generates a complete quote with calculated fees for an intent.
+    ///
+    /// This orchestrates the entire quote generation process:
+    /// 1. Fetches and analyzes fee history for gas pricing
+    /// 2. Calculates gas estimates and payment per gas
+    /// 3. Computes L1 data availability fees (for rollups)
+    /// 4. Converts fees to the specified fee token
+    /// 5. Assembles the final Quote object
     #[instrument(skip_all)]
     #[allow(clippy::too_many_arguments)]
     pub async fn calculate_fees<P: Provider + Clone>(
