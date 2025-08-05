@@ -127,6 +127,10 @@ impl StorageApi for RelayStorage {
         self.inner.verify_email(account, email, token).await
     }
 
+    async fn get_verified_email(&self, account: Address) -> api::Result<Option<String>> {
+        self.inner.get_verified_email(account).await
+    }
+
     async fn ping(&self) -> api::Result<()> {
         self.inner.ping().await
     }

@@ -272,6 +272,7 @@ pub async fn try_spawn(
             Resend::new(resend_api_key),
             storage.clone(),
             config.email.porto_base_url.unwrap_or("id.porto.sh".to_string()),
+            config.secrets.service_api_key.clone(),
         )
         .into_rpc()
     });

@@ -161,6 +161,9 @@ pub struct SecretsConfig {
     pub signers_mnemonic: Mnemonic<English>,
     /// The funder KMS key or private key
     pub funder_key: String,
+    /// API key for protected RPC endpoints
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_api_key: Option<String>,
 }
 
 impl Default for SecretsConfig {
@@ -172,6 +175,7 @@ impl Default for SecretsConfig {
             .unwrap(),
             funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
                 .to_string(),
+            service_api_key: None,
         }
     }
 }
@@ -607,6 +611,12 @@ impl RelayConfig {
         if let Some(funder_key) = funder_key {
             self.secrets.funder_key = funder_key;
         }
+        self
+    }
+
+    /// Sets the service API key for protected RPC endpoints.
+    pub fn with_service_api_key(mut self, service_api_key: Option<String>) -> Self {
+        self.secrets.service_api_key = service_api_key.or(self.secrets.service_api_key);
         self
     }
 
