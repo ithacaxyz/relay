@@ -93,6 +93,7 @@ pub async fn try_spawn_with_args(
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
             .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
+            .with_funder_owner_key(std::env::var("RELAY_FUNDER_OWNER_KEY").ok())
     };
 
     let registry = if !registry_path.exists() {

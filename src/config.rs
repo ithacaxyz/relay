@@ -617,9 +617,10 @@ impl RelayConfig {
     }
 
     /// Sets the funder owner key, and enables the rebalance service.
-    pub fn with_funder_owner_key(mut self, funder_owner_key: String) -> Self {
+    pub fn with_funder_owner_key(mut self, funder_owner_key: Option<String>) -> Self {
+        let Some(key) = funder_owner_key else { return self };
         let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
-        rebalance_service.funder_owner_key = funder_owner_key;
+        rebalance_service.funder_owner_key = key;
         self
     }
 
