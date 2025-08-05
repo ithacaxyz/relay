@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    pricing::{gas_estimation::GasEstimator, IntentPricer, PricingContext},
+    pricing::{IntentPricer, PricingContext, gas_estimation::GasEstimator},
     signers::Eip712PayLoadSigner,
     simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
@@ -274,11 +274,11 @@ impl Relay {
         // Validate input size limits to prevent DoS attacks
         const MAX_EXECUTION_DATA_SIZE: usize = 1024 * 1024; // 1MB
         const MAX_PRE_CALLS_COUNT: usize = 100;
-        
+
         if intent.execution_data.len() > MAX_EXECUTION_DATA_SIZE {
             return Err(RelayError::Intent(Box::new(IntentError::InvalidExecution)));
         }
-        
+
         if intent.pre_calls.len() > MAX_PRE_CALLS_COUNT {
             return Err(RelayError::Intent(Box::new(IntentError::InvalidPreCalls)));
         }
@@ -2189,4 +2189,3 @@ impl Relay {
         })
     }
 }
-
