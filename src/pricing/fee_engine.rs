@@ -70,9 +70,7 @@ impl<'a> FeeEngine<'a> {
         use alloy::providers::utils::Eip1559Estimator;
 
         let estimator = Eip1559Estimator::default();
-        let base_fee = fee_history
-            .latest_block_base_fee()
-            .unwrap_or_default();
+        let base_fee = fee_history.latest_block_base_fee().unwrap_or_default();
         let rewards = fee_history.reward.as_deref().unwrap_or(&[]);
 
         Ok(estimator.estimate(base_fee, rewards))
@@ -128,11 +126,7 @@ impl<'a> FeeEngine<'a> {
     ///
     /// The recommended transaction gas is calculated according to the contracts recommendation:
     /// https://github.com/ithacaxyz/account/blob/feffa280d5de487223e43a69126f5b6b3d99a10a/test/SimulateExecute.t.sol#L205-L206
-    pub fn estimate_combined_gas(
-        &self,
-        simulation_gas: U256,
-        intrinsic_gas: u64,
-    ) -> GasEstimate {
+    pub fn estimate_combined_gas(&self, simulation_gas: U256, intrinsic_gas: u64) -> GasEstimate {
         GasEstimate::from_combined_gas(simulation_gas.to::<u64>(), intrinsic_gas, self.quote_config)
     }
 

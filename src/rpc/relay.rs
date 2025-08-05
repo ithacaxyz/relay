@@ -363,9 +363,11 @@ impl Relay {
             .await?;
 
         // Calculate fee token deficit and validate balance before proceeding
-        let fee_token_deficit = quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
-        
-        // Reject quotes when user has insufficient balance (allow small margin for gas price fluctuations)
+        let fee_token_deficit =
+            quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
+
+        // Reject quotes when user has insufficient balance (allow small margin for gas price
+        // fluctuations)
         if fee_token_deficit > U256::ZERO {
             return Err(RelayError::Quote(QuoteError::InsufficientBalance {
                 required: quote.intent.totalPaymentMaxAmount,
@@ -727,7 +729,7 @@ impl Relay {
     }
 
     /// Simulates the account initialization call.
-    /// 
+    ///
     /// Note: Uses a mock key because during account initialization, the user doesn't
     /// have a real key yet - the account is being created. This is a legitimate
     /// use of mock keys for initialization simulation only.

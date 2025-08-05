@@ -2,12 +2,8 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::RelayError,
-    error::SimulationError,
-    simulation::{
-        mock_keys::MockKeyGenerator,
-        state_overrides::build_simulation_state_overrides,
-    },
+    error::{RelayError, SimulationError},
+    simulation::{mock_keys::MockKeyGenerator, state_overrides::build_simulation_state_overrides},
     types::{
         Account, AssetDiffs, FeeEstimationContext, Intent, Key, Orchestrator, PartialIntent,
         SimulationResult, Transfer, rpc::BalanceOverrides,
@@ -152,20 +148,19 @@ impl IntentSimulator {
         let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
 
         // Build state overrides using simplified function
-        let overrides = build_simulation_state_overrides(
-            provider,
-            self.simulator_address,
-            self.orchestrator_address,
-            intent.eoa,
-            context.fee_token,
-            simulation_balance,
-            &context.account_key,
-            context.key_slot_override,
-            context.authorization_address,
-            context.state_overrides.clone(),
-            context.balance_overrides.clone(),
-        )
-        .await?;
+        let params = crate::simulation::state_overrides::SimulationOverrideParams {
+            simulator_address: self.simulator_address,
+            orchestrator_address: self.orchestrator_address,
+            eoa: intent.eoa,
+            fee_token: context.fee_token,
+            fee_token_balance: simulation_balance,
+            account_key: &context.account_key,
+            key_slot_override: context.key_slot_override,
+            authorization_address: context.authorization_address,
+            base_overrides: context.state_overrides.clone(),
+            balance_overrides: context.balance_overrides.clone(),
+        };
+        let overrides = build_simulation_state_overrides(provider, params).await?;
 
         Ok(overrides)
     }
@@ -203,7 +198,7 @@ impl IntentSimulator {
     }
 
     /// Simulates account initialization.
-    /// 
+    ///
     /// Note: This function uses a mock key because during account initialization,
     /// the user doesn't have a real key yet - the account is being created.
     /// This is the only legitimate use of mock keys in production.

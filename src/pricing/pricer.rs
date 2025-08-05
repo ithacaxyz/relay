@@ -3,8 +3,8 @@
 use crate::{
     chains::Chain,
     config::QuoteConfig,
-    price::PriceOracle,
     error::PricingError,
+    price::PriceOracle,
     pricing::fee_engine::FeeEngine,
     types::{GasEstimate, Intent, Quote, Token},
 };
@@ -63,8 +63,7 @@ impl<'a> IntentPricer<'a> {
 
         // Step 1: Fetch and analyze fee history
         let fee_estimate =
-            FeeEngine::fetch_and_analyze(provider, context.priority_fee_percentile)
-                .await?;
+            FeeEngine::fetch_and_analyze(provider, context.priority_fee_percentile).await?;
 
         // Step 2: Calculate gas estimates
         let gas_estimate = fee_engine.estimate_combined_gas(simulation_gas, intrinsic_gas);
@@ -150,5 +149,4 @@ impl<'a> IntentPricer<'a> {
 
         Ok(quote)
     }
-
 }
