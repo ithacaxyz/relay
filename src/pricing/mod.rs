@@ -2,7 +2,7 @@ pub mod gas_estimation;
 pub mod price_calculator;
 
 use crate::error::RelayError;
-use crate::types::{PartialIntent, QuoteResponse};
+use crate::types::PartialIntent;
 use alloy::primitives::Address;
 
 #[derive(Debug, thiserror::Error)]
@@ -37,8 +37,8 @@ impl<'a> IntentPricer<'a> {
 
     pub async fn calculate_pricing(
         &self,
-        intent: &PartialIntent,
-    ) -> Result<QuoteResponse, PricingError> {
+        _intent: &PartialIntent,
+    ) -> Result<(), PricingError> {
         // Implementation would calculate pricing for the intent
         // This is a placeholder for the actual pricing logic
         todo!("Implement actual pricing logic")

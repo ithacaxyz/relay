@@ -1,5 +1,5 @@
 use super::PricingError;
-use crate::types::Asset;
+use crate::types::Token;
 use alloy::primitives::U256;
 
 pub struct FeeEstimate {
@@ -19,7 +19,7 @@ impl<'a> PriceCalculator<'a> {
 
     pub fn calculate_payment_per_gas(
         &self,
-        token: &Asset,
+        token: &Token,
         eth_price: f32,
     ) -> Result<U256, PricingError> {
         // Convert from wei to token units

@@ -1,12 +1,10 @@
 use crate::{
-    error::IntentError,
-    rpc::relay::RelayError,
-    types::{PartialIntent, QuoteResponse},
+    error::{IntentError, RelayError},
+    types::PartialIntent,
 };
 use alloy::{
     primitives::{Address, U256},
     providers::Provider,
-    transports::Transport,
 };
 use std::collections::HashMap;
 
@@ -21,7 +19,7 @@ pub enum SimulationError {
 }
 
 impl From<SimulationError> for RelayError {
-    fn from(err: SimulationError) -> Self {
+    fn from(_err: SimulationError) -> Self {
         RelayError::Intent(Box::new(IntentError::SimulationError))
     }
 }
@@ -32,8 +30,7 @@ pub struct IntentSimulator<P> {
 
 impl<P> IntentSimulator<P>
 where
-    P: Provider<T>,
-    T: Transport + Clone,
+    P: Provider,
 {
     pub fn new(provider: P) -> Self {
         Self { provider }
@@ -41,17 +38,17 @@ where
 
     pub async fn simulate_intent(
         &self,
-        intent: &PartialIntent,
-        fee_token: Address,
-        user_address: Address,
-    ) -> Result<QuoteResponse, SimulationError> {
+        _intent: &PartialIntent,
+        _fee_token: Address,
+        _user_address: Address,
+    ) -> Result<(), SimulationError> {
         // Use large constant balance for simulation to avoid data flow inconsistencies
         let simulation_balance = U256::from(1_000_000_000_000_000_000_u64); // 1 ETH equivalent
 
         // Create state override with constant simulation balance
         let mut state_override = HashMap::new();
         state_override.insert(
-            user_address,
+            _user_address,
             StateOverride {
                 balance: Some(simulation_balance),
                 ..Default::default()
@@ -59,14 +56,14 @@ where
         );
 
         // Simulate the intent with the overridden state
-        self.simulate_with_override(&intent, state_override).await
+        self.simulate_with_override(_intent, state_override).await
     }
 
     async fn simulate_with_override(
         &self,
-        intent: &PartialIntent,
-        state_override: HashMap<Address, StateOverride>,
-    ) -> Result<QuoteResponse, SimulationError> {
+        _intent: &PartialIntent,
+        _state_override: HashMap<Address, StateOverride>,
+    ) -> Result<(), SimulationError> {
         // Implementation would simulate the intent execution
         // This is a placeholder for the actual simulation logic
         todo!("Implement actual simulation logic")

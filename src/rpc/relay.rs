@@ -13,6 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
+    pricing::gas_estimation::GasEstimator,
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
@@ -34,7 +35,7 @@ use crate::{
 };
 use alloy::{
     consensus::{SignableTransaction, TxEip1559},
-    eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
@@ -227,6 +228,18 @@ impl Relay {
         prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
+        // Validate input size limits to prevent DoS attacks
+        const MAX_EXECUTION_DATA_SIZE: usize = 1024 * 1024; // 1MB
+        const MAX_PRE_CALLS_COUNT: usize = 100;
+
+        if intent.execution_data.len() > MAX_EXECUTION_DATA_SIZE {
+            return Err(RelayError::Intent(Box::new(IntentError::InvalidExecution)));
+        }
+
+        if intent.pre_calls.len() > MAX_PRE_CALLS_COUNT {
+            return Err(RelayError::Intent(Box::new(IntentError::InvalidPreCalls)));
+        }
+
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
@@ -435,7 +448,7 @@ impl Relay {
         let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
-        let intrinsic_gas = approx_intrinsic_cost(
+        let intrinsic_gas = GasEstimator::calculate_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
             }
@@ -2302,22 +2315,3 @@ impl Relay {
     }
 }
 
-/// Approximates the intrinsic cost of a transaction.
-///
-/// This function assumes Prague rules.
-fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
-    let zero_data_len = input.iter().filter(|v| **v == 0).count() as u64;
-    let non_zero_data_len = input.len() as u64 - zero_data_len;
-    let non_zero_data_multiplier = 4; // as defined in istanbul
-    let standard_token_cost = 4;
-    let tokens = zero_data_len + non_zero_data_len * non_zero_data_multiplier;
-
-    // for 7702 designations there is an additional gas charge
-    //
-    // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-    // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-    // need to charge for the account being presumed empty.
-    let auth_cost = if has_auth { PER_EMPTY_ACCOUNT_COST } else { 0 };
-
-    21000 + auth_cost + tokens * standard_token_cost
-}
