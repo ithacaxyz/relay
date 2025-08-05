@@ -5,10 +5,7 @@ use crate::{
     config::QuoteConfig,
     price::PriceOracle,
     error::PricingError,
-    pricing::{
-        fee_estimator::FeeEstimator, gas_estimation::GasEstimator,
-        fee_calculator::FeeCalculator,
-    },
+    pricing::fee_engine::FeeEngine,
     types::{GasEstimate, Intent, Quote, Token},
 };
 use alloy::{
@@ -61,21 +58,20 @@ impl<'a> IntentPricer<'a> {
         orchestrator: Address,
         authorization_address: Option<Address>,
     ) -> Result<Quote, PricingError> {
+        // Create fee engine for all calculations
+        let fee_engine = FeeEngine::new(self.price_oracle, self.quote_config);
+
         // Step 1: Fetch and analyze fee history
         let fee_estimate =
-            FeeEstimator::fetch_and_analyze(provider, context.priority_fee_percentile)
+            FeeEngine::fetch_and_analyze(provider, context.priority_fee_percentile)
                 .await?;
 
         // Step 2: Calculate gas estimates
-        let gas_estimate =
-            GasEstimator::estimate_combined_gas(simulation_gas, intrinsic_gas, self.quote_config);
+        let gas_estimate = fee_engine.estimate_combined_gas(simulation_gas, intrinsic_gas);
 
-        // Step 3: Calculate price conversions
-        let price_calc = FeeCalculator::new(self.price_oracle);
-
-        // Calculate payment per gas in fee token units
+        // Step 3: Calculate payment per gas in fee token units
         let payment_per_gas =
-            price_calc.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
+            fee_engine.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
 
         // Get ETH price for the quote
         let eth_price = self
@@ -84,14 +80,14 @@ impl<'a> IntentPricer<'a> {
             .await
             .ok_or(PricingError::UnavailablePrice(context.fee_token.address))?;
 
-        // Calculate extra fees (L1 data availability, etc.)
-        let extra_payment_native = price_calc.estimate_extra_fee(provider, chain, &intent).await?;
+        // Step 4: Calculate extra fees (L1 data availability, etc.)
+        let extra_payment_native = FeeEngine::estimate_l1_fee(provider, chain, &intent).await?;
 
         // Convert extra payment to fee token units
         let extra_payment = if extra_payment_native.is_zero() {
             U256::ZERO
         } else {
-            price_calc.convert_native_to_token(extra_payment_native, &context.fee_token).await?
+            fee_engine.convert_native_to_token(extra_payment_native, &context.fee_token).await?
         };
 
         // Step 4: Generate quote

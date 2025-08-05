@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    pricing::{IntentPricer, PricingContext, gas_estimation::GasEstimator},
+    pricing::{IntentPricer, PricingContext, fee_engine::FeeEngine},
     signers::Eip712PayLoadSigner,
     simulation::simulator::IntentSimulator,
     transactions::interop::InteropBundle,
@@ -335,7 +335,7 @@ impl Relay {
             self.build_intent_to_sign(intent, token, delegation, &context, sim_output.gas_combined);
 
         // Calculate intrinsic gas based on intent size
-        let intrinsic_gas = GasEstimator::calculate_intrinsic_cost(
+        let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
             }
