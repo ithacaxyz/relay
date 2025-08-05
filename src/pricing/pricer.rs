@@ -155,31 +155,4 @@ impl<'a> IntentPricer<'a> {
         Ok(quote)
     }
 
-    /// Calculates a quick estimate for an intent without full simulation.
-    ///
-    /// This is useful for providing fast estimates before actual execution.
-    #[instrument(skip_all)]
-    pub async fn quick_estimate<P: Provider>(
-        &self,
-        provider: &P,
-        _chain: &Chain,
-        context: PricingContext,
-        estimated_gas: U256,
-    ) -> Result<U256, PricingError> {
-        // Fetch current fee data
-        let fee_estimate =
-            Eip1559FeeEstimator::fetch_and_analyze(provider, context.priority_fee_percentile)
-                .await?;
-
-        // Calculate price conversion
-        let price_calc = FeeCalculator::new(self.price_oracle);
-        let payment_per_gas =
-            price_calc.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
-
-        // Quick estimate without detailed gas calculation
-        let payment =
-            U256::from((payment_per_gas * estimated_gas.to::<u64>() as f64).ceil() as u128);
-
-        Ok(payment.max(U256::from(1)))
-    }
 }
