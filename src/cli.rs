@@ -156,7 +156,7 @@ pub struct Args {
     pub porto_base_url: Option<String>,
     /// The funder owner key for rebalance service.
     #[arg(long = "funder-owner-key", value_name = "KEY", env = "RELAY_FUNDER_OWNER_KEY")]
-    pub funder_owner_key: String,
+    pub funder_owner_key: Option<String>,
     /// The API key for Binance.
     #[arg(long = "binance-api-key", value_name = "KEY", env = "BINANCE_API_KEY")]
     pub binance_api_key: Option<String>,
