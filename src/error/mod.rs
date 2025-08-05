@@ -28,6 +28,12 @@ pub use quote::QuoteError;
 mod storage;
 pub use storage::StorageError;
 
+mod simulation;
+pub use simulation::SimulationError;
+
+mod pricing;
+pub use pricing::PricingError;
+
 use alloy::{
     primitives::{Address, Bytes, ChainId},
     providers::MulticallError,
@@ -95,6 +101,12 @@ pub enum RelayError {
     /// Settlement-related errors.
     #[error(transparent)]
     Settlement(#[from] crate::interop::SettlementError),
+    /// Simulation-related errors.
+    #[error(transparent)]
+    Simulation(#[from] SimulationError),
+    /// Pricing-related errors.
+    #[error(transparent)]
+    Pricing(#[from] PricingError),
 }
 
 impl RelayError {
@@ -149,7 +161,9 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
-            | RelayError::Settlement(_) => internal_rpc(err.to_string()),
+            | RelayError::Settlement(_)
+            | RelayError::Simulation(_)
+            | RelayError::Pricing(_) => internal_rpc(err.to_string()),
         }
     }
 }

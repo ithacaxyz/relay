@@ -50,6 +50,12 @@ pub enum IntentError {
     /// Merkle tree operation error.
     #[error(transparent)]
     Merkle(#[from] MerkleError),
+    /// Invalid execution data provided.
+    #[error("invalid execution data")]
+    InvalidExecution,
+    /// Invalid pre-calls data provided.
+    #[error("invalid pre-calls data")]
+    InvalidPreCalls,
 }
 
 impl IntentError {
@@ -69,7 +75,9 @@ impl From<IntentError> for jsonrpsee::types::error::ErrorObject<'static> {
             | IntentError::MissingSender
             | IntentError::UnallowedPreCall
             | IntentError::InvalidPreCallRecovery { .. }
-            | IntentError::InvalidIntentDigest { .. } => invalid_params(err.to_string()),
+            | IntentError::InvalidIntentDigest { .. }
+            | IntentError::InvalidExecution
+            | IntentError::InvalidPreCalls => invalid_params(err.to_string()),
             IntentError::Merkle(_) => internal_rpc(err.to_string()),
             IntentError::IntentRevert(err) => err.into(),
         }
