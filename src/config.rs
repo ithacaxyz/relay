@@ -173,6 +173,11 @@ pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
     pub signers_mnemonic: Mnemonic<English>,
+    /// The funder KMS key or private key
+    pub funder_key: String,
+    /// API key for protected RPC endpoints
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_api_key: Option<String>,
 }
 
 impl Default for SecretsConfig {
@@ -182,7 +187,152 @@ impl Default for SecretsConfig {
                 "test test test test test test test test test test test junk",
             )
             .unwrap(),
+            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
+            service_api_key: None,
         }
+    }
+}
+
+/// Interop configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteropConfig {
+    /// Interval for checking pending refunds.
+    #[serde(with = "crate::serde::duration")]
+    pub refund_check_interval: Duration,
+    /// Time threshold in seconds before refunds can be processed for escrows.
+    pub escrow_refund_threshold: u64,
+    /// Settler configuration.
+    pub settler: SettlerConfig,
+}
+
+/// Configuration for the rebalance service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebalanceServiceConfig {
+    /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binance: Option<BinanceBridgeConfig>,
+    /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simple: Option<SimpleBridgeConfig>,
+    /// The private key of the funder account owner. Required for pulling funds from the funders.
+    #[serde(default)]
+    pub funder_owner_key: String,
+    /// Mapping of [`CoinKind`] to rebalance threshold.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
+    pub thresholds: HashMap<CoinKind, U256>,
+}
+
+/// Configuration for the settler service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettlerConfig {
+    /// Settler implementation configuration.
+    #[serde(flatten)]
+    pub implementation: SettlerImplementation,
+    /// Timeout for waiting for settlement verification.
+    #[serde(with = "crate::serde::duration")]
+    pub wait_verification_timeout: Duration,
+}
+
+impl SettlerConfig {
+    /// Creates a settlement processor from this configuration.
+    pub async fn settlement_processor(
+        &self,
+        storage: RelayStorage,
+        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+        tx_service_handles: TransactionServiceHandles,
+    ) -> eyre::Result<SettlementProcessor> {
+        // Create the settler based on config
+        let settler: Box<dyn Settler> = match &self.implementation {
+            SettlerImplementation::LayerZero(config) => Box::new(
+                config.create_settler(providers, storage.clone(), tx_service_handles).await?,
+            ),
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
+        };
+
+        Ok(SettlementProcessor::new(settler))
+    }
+}
+
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
+}
+
+impl SettlerImplementation {
+    /// Address of the settler.
+    pub fn address(&self) -> Address {
+        match self {
+            Self::LayerZero(c) => c.settler_address,
+            Self::Simple(c) => c.settler_address,
+        }
+    }
+}
+
+/// Simple settler configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleSettlerConfig {
+    /// The address of the simple settler contract.
+    pub settler_address: Address,
+    /// Private key for signing settlement write operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+}
+
+impl SimpleSettlerConfig {
+    /// Creates a new simple settler instance.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SimpleSettler> {
+        let signer = self
+            .private_key
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("no settler private key"))?
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+        Ok(SimpleSettler::new(self.settler_address, signer, providers))
+    }
+}
+
+/// LayerZero configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerZeroConfig {
+    /// Mapping of chain ID to LayerZero endpoint ID.
+    /// Format: { chain_id: endpoint_id }
+    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_ids: HashMap<ChainId, EndpointId>,
+    /// Mapping of chain ID to LayerZero endpoint address.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_addresses: HashMap<ChainId, Address>,
+    /// LayerZero settler contract address.
+    pub settler_address: Address,
+}
+
+impl LayerZeroConfig {
+    /// Creates a new LayerZero settler instance with the given providers and storage.
+    pub async fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+        storage: RelayStorage,
+        tx_service_handles: TransactionServiceHandles,
+    ) -> Result<LayerZeroSettler, SettlementError> {
+        LayerZeroSettler::new(
+            self.endpoint_ids.clone(),
+            self.endpoint_addresses.clone(),
+            providers,
+            self.settler_address,
+            storage,
+            tx_service_handles,
+        )
+        .await
     }
 }
 

@@ -344,6 +344,19 @@ impl StorageApi for PgStorage {
         Ok(affected.rows_affected() > 0)
     }
 
+    #[instrument(skip_all)]
+    async fn get_verified_email(&self, account: Address) -> Result<Option<String>> {
+        let row = sqlx::query!(
+            "select email from emails where address = $1 and verified_at is not null",
+            account.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(row.map(|r| r.email))
+    }
+
     async fn ping(&self) -> Result<()> {
         // acquire a connection to ensure DB is reachable
         self.pool.acquire().await.map_err(eyre::Error::from).map_err(Into::into).map(drop)

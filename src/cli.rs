@@ -112,6 +112,17 @@ pub struct Args {
     /// The number of signers to derive from mnemonic and use to send transactions.
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
+    /// The funder signing key (hex private key or KMS ARN).
+    #[arg(
+        long = "funder-signing-key",
+        required_unless_present("config_only"),
+        value_name = "KEY",
+        env = "RELAY_FUNDER_KEY"
+    )]
+    pub funder_key: Option<String>,
+    /// The service API key for protected RPC endpoints.
+    #[arg(long = "service-api-key", value_name = "KEY", env = "RELAY_SERVICE_API_KEY")]
+    pub service_api_key: Option<String>,
     /// The RPC endpoints of the sequencers for OP rollups.
     #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub sequencer_endpoints: Vec<(Chain, Url)>,
@@ -181,6 +192,7 @@ impl Args {
             .with_legacy_delegation_proxies(&self.legacy_delegation_proxies.unwrap_or_default())
             .with_simulator(self.simulator)
             .with_intent_gas_buffer(self.intent_gas_buffer)
+            .with_service_api_key(self.service_api_key)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)

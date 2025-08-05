@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select email from emails where address = $1 and verified_at is not null",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5bfb9c1ab4700310b77f8bf2fd38d5e3c4e20b4f833f212b6c493f439a62483f"
+}
