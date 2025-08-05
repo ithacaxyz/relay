@@ -7,6 +7,7 @@ use crate::{
     types::{CoinKind, FeeTokens},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
+use core::fmt;
 use futures_util::{
     StreamExt,
     future::TryJoinAll,
@@ -24,6 +25,13 @@ pub struct Asset {
     chain_id: ChainId,
     /// Kind of the asset.
     kind: CoinKind,
+}
+
+impl fmt::Display for Asset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { address, chain_id, kind } = self;
+        write!(f, "{kind} @ {chain_id} ({address})")
+    }
 }
 
 /// An instruction to rebalance an asset from one chain to another.
@@ -102,8 +110,19 @@ impl RebalanceService {
     }
 
     /// Returns minimum amount for rebalancing to be performed.
-    fn get_min_rebalance(&self, asset: &Asset) -> U256 {
-        self.get_threshold(asset) / uint!(10_U256)
+    fn get_min_rebalance(&self, src: &Asset, dst: &Asset) -> U256 {
+        let min_supported = self
+            .bridges
+            .iter()
+            .filter_map(|bridge| {
+                bridge
+                    .supports((src.chain_id, src.address), (dst.chain_id, dst.address))
+                    .map(|direction| direction.min_amount)
+            })
+            .min()
+            .unwrap_or(U256::MAX);
+
+        (self.get_threshold(src) / uint!(10_U256)).max(min_supported)
     }
 
     /// Gets balance ranges for all assets.
@@ -145,9 +164,15 @@ impl RebalanceService {
 
         // Find bridge that supports the given asset.
         let Some(bridge) = self.bridges.iter_mut().find(|bridge| {
-            bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
+            let Some(direction) =
+                bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
+            else {
+                return false;
+            };
+
+            amount >= direction.min_amount
         }) else {
-            eyre::bail!("no bridge for the given asset");
+            eyre::bail!("no bridge for the given asset")
         };
 
         let transfer = BridgeTransfer {
@@ -157,6 +182,8 @@ impl RebalanceService {
             to: (to.chain_id, to.address),
             amount,
         };
+
+        info!(transfer_id=?transfer.id, "bridging {amount} of {from} to {to} via {}", bridge.id());
 
         // Lock liquidity and save transfer in database.
         self.tracker.try_lock_liquidity_for_bridge(&transfer).await?;
@@ -208,7 +235,7 @@ impl RebalanceService {
             let rebalance_amount =
                 U256::from((-(*min_negative.1.end())).min(*max_positive.1.start()));
 
-            if rebalance_amount >= self.get_min_rebalance(&min_negative.0) {
+            if rebalance_amount >= self.get_min_rebalance(&max_positive.0, &min_negative.0) {
                 return Ok(Some(AssetsToRebalance {
                     from: max_positive.0,
                     to: min_negative.0,

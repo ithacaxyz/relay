@@ -56,14 +56,21 @@ pub enum BridgeEvent {
     TransferState(BridgeTransferId, BridgeTransferState),
 }
 
+/// Information about a direction supported by a bridge.
+#[derive(Debug, Clone)]
+pub struct SupportedDirection {
+    /// Minimum amount supported for the direction.
+    pub min_amount: U256,
+}
+
 /// An abstraction over a bridge that is able to accept bridging requests and driving them to
 /// completion.
 pub trait Bridge: Stream<Item = BridgeEvent> + Send + Sync + Unpin + Debug {
     /// Unique identifier of the bridge.
     fn id(&self) -> &'static str;
 
-    /// Returns true if the bridge supports bridging the given assets.
-    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool;
+    /// Returns Some([`SupportedDirection`]) if the bridge supports bridging the given assets.
+    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> Option<SupportedDirection>;
 
     /// Triggers processing of the given transfer. The bridge is expected to return a future that
     /// would advance the transfer progress based on internally saved `bridge_data` in storage.`

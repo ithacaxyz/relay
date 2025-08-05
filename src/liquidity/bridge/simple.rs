@@ -1,6 +1,6 @@
 use crate::{
     liquidity::{
-        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState},
+        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState, SupportedDirection},
         tracker::ChainAddress,
     },
     signers::DynSigner,
@@ -80,8 +80,8 @@ impl Bridge for SimpleBridge {
         "simple"
     }
 
-    fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> bool {
-        true
+    fn supports(&self, _src: ChainAddress, _dst: ChainAddress) -> Option<SupportedDirection> {
+        Some(SupportedDirection { min_amount: U256::ZERO })
     }
 
     fn process(&self, transfer: BridgeTransfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
