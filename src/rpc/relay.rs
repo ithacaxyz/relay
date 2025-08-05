@@ -31,7 +31,6 @@ use crate::{
             UpgradeAccountDigests, ValidSignatureProof,
         },
     },
-    utils::provider_utils::ProviderUtils,
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
@@ -831,7 +830,7 @@ impl Relay {
         // Checks calls and precall calls in the request
         request.check_calls(self.delegation_implementation())?;
 
-        let provider = ProviderUtils::get_provider(&self.inner.chains, request.chain_id)?;
+        let provider = self.provider(request.chain_id)?;
 
         // Find if the address is delegated or if we have a stored account in storage that can use
         // to delegate.
@@ -1686,7 +1685,7 @@ impl RelayApiServer for Relay {
         let chain_id = request.chain_id.unwrap_or_else(|| {
             *self.inner.chains.chain_ids_iter().next().expect("there should be one")
         });
-        let provider = ProviderUtils::get_provider(&self.inner.chains, chain_id)?;
+        let provider = self.provider(chain_id)?;
 
         // Upgrading account should have at least one authorize admin key since
         // `wallet_prepareCalls` only accepts non-root keys.
