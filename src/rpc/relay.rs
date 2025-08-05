@@ -16,10 +16,11 @@ use crate::{
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
+    transport::wallet::{Asset, AssetRequest, WalletProviderExt},
     types::{
-        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, Call, ChainAssetDiffs, Escrow, FeeTokens, FundSource,
+        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -100,7 +101,7 @@ pub trait RelayApi {
 
     /// Get all assets for an account.
     #[method(name = "getAssets")]
-    async fn get_assets(&self, parameters: GetAssetsParameters) -> RpcResult<GetAssetsResponse>;
+    async fn get_assets(&self, parameters: AssetRequest) -> RpcResult<HashMap<ChainId, Asset>>;
 
     /// Prepares a call bundle for a user.
     #[method(name = "prepareCalls")]
@@ -1696,92 +1697,20 @@ impl RelayApiServer for Relay {
         Ok(self.get_keys(request).await?)
     }
 
-    async fn get_assets(&self, mut request: GetAssetsParameters) -> RpcResult<GetAssetsResponse> {
-        // If no explicit asset_filter was provided, build it from the other filters, the supported
-        // chains and supported fee tokens
-        if request.asset_filter.is_empty() {
-            // If there is no chain filter provided, just use all chains that the relay supports.
-            let chains = if request.chain_filter.is_empty() {
-                self.inner.chains.chain_ids_iter().copied().collect()
-            } else {
-                request.chain_filter
-            };
-
-            for chain in chains {
-                // If there is no asset type filter provided, just use all assets that the relay
-                // supports on this chain.
-                let mut items = vec![];
-
-                if request.asset_type_filter.is_empty()
-                    || request.asset_type_filter.contains(&AssetType::Native)
-                {
-                    items.push(AssetFilterItem {
-                        address: AddressOrNative::Native,
-                        asset_type: AssetType::Native,
-                    });
-                }
-
-                if (request.asset_type_filter.is_empty()
-                    || request.asset_type_filter.contains(&AssetType::ERC20))
-                    && let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain)
-                {
-                    for token in tokens {
-                        if token.address == Address::ZERO {
-                            continue;
-                        }
-
-                        items.push(AssetFilterItem {
-                            address: AddressOrNative::Address(token.address),
-                            asset_type: AssetType::ERC20,
-                        });
-                    }
-                }
-
-                request.asset_filter.insert(chain, items);
-            }
-        }
-
-        let chain_details = request.asset_filter.iter().map(async |(chain, assets)| {
-            let chain_provider = self.provider(*chain)?;
-
-            let txs =
-                assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
-                    if asset.asset_type.is_native() {
-                        return Ok::<_, RelayError>(Asset7811 {
-                            address: AddressOrNative::Native,
-                            balance: chain_provider.get_balance(request.account).await?,
-                            asset_type: asset.asset_type,
-                            metadata: None,
-                        });
-                    }
-
-                    let erc20 = IERC20::new(asset.address.address(), &chain_provider);
-
-                    let (balance, decimals, name, symbol) = chain_provider
-                        .multicall()
-                        .add(erc20.balanceOf(request.account))
-                        .add(erc20.decimals())
-                        .add(erc20.name())
-                        .add(erc20.symbol())
-                        .aggregate()
-                        .await?;
-
-                    Ok(Asset7811 {
-                        address: asset.address,
-                        balance,
-                        asset_type: asset.asset_type,
-                        metadata: Some(AssetMetadata {
-                            name: Some(name),
-                            symbol: Some(symbol),
-                            decimals: Some(decimals),
-                            uri: None,
-                        }),
-                    })
-                });
-            Ok::<_, RelayError>((*chain, try_join_all(txs).await?))
-        });
-
-        Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
+    async fn get_assets(&self, request: AssetRequest) -> RpcResult<HashMap<ChainId, Asset>> {
+        // todo: provide default
+        Ok(try_join_all(
+            self.chains()
+                .map(|chain| chain.provider())
+                .map(|provider| provider.get_assets(request.clone())),
+        )
+        .await
+        .map_err(RelayError::internal)?
+        .into_iter()
+        .fold(HashMap::default(), |mut accum, assets| {
+            accum.extend(assets.into_iter());
+            accum
+        }))
     }
 
     async fn prepare_calls(

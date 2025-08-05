@@ -20,6 +20,7 @@ use tower::{Layer, Service};
 use url::Url;
 
 pub mod error;
+pub mod wallet;
 
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
 
