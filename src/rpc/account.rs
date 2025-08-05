@@ -145,8 +145,7 @@ impl AccountApiServer for AccountRpc {
         GetVerifiedEmailParameters { wallet_address, email, api_key }: GetVerifiedEmailParameters,
     ) -> RpcResult<GetVerifiedEmailResponse> {
         // Check if API key is required and validate it
-        if let Some(expected_key) = &self.service_api_key
-            && api_key.as_ref() != Some(expected_key)
+        if self.service_api_key.is_none_or(|expected_key| api_key.as_ref() != Some(expected_key))
         {
             return Err(EmailError::Unauthorized.into());
         }
