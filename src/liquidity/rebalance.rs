@@ -7,6 +7,7 @@ use crate::{
     types::{CoinKind, FeeTokens},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
+use core::fmt;
 use futures_util::{
     StreamExt,
     future::TryJoinAll,
@@ -24,6 +25,13 @@ pub struct Asset {
     chain_id: ChainId,
     /// Kind of the asset.
     kind: CoinKind,
+}
+
+impl fmt::Display for Asset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { address, chain_id, kind } = self;
+        write!(f, "{kind} @ {chain_id} ({address})")
+    }
 }
 
 /// An instruction to rebalance an asset from one chain to another.
@@ -145,7 +153,13 @@ impl RebalanceService {
 
         // Find bridge that supports the given asset.
         let Some(bridge) = self.bridges.iter_mut().find(|bridge| {
-            bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
+            let Some(direction) =
+                bridge.supports((from.chain_id, from.address), (to.chain_id, to.address))
+            else {
+                return false;
+            };
+
+            amount >= direction.min_amount
         }) else {
             eyre::bail!("no bridge for the given asset");
         };
@@ -157,6 +171,8 @@ impl RebalanceService {
             to: (to.chain_id, to.address),
             amount,
         };
+
+        info!(transfer_id=?transfer.id, "bridging {amount} of {from} to {to} via {}", bridge.id());
 
         // Lock liquidity and save transfer in database.
         self.tracker.try_lock_liquidity_for_bridge(&transfer).await?;

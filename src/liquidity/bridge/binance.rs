@@ -1,7 +1,7 @@
 use crate::{
     liquidity::{
         ChainAddress,
-        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState},
+        bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState, SupportedDirection},
     },
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -28,6 +28,7 @@ use eyre::OptionExt;
 use futures_util::Stream;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use sqlx::types::BigDecimal;
 use std::{
     pin::Pin,
     str::FromStr,
@@ -36,7 +37,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 fn binance_network_to_chain(network: &str) -> Option<Chain> {
     match network {
@@ -70,6 +71,7 @@ struct WithdrawTokenData {
     network: String,
     token_decimals: u8,
     withdraw_decimals: u8,
+    min_amount: U256,
 }
 
 /// Configuration for the [`BinanceBridge`].
@@ -202,6 +204,20 @@ impl BinanceBridge {
                             continue;
                         };
 
+                    // Parse the minimum withdrawal amount.
+                    let Some(min_amount) = network.withdraw_min.as_ref().and_then(|min| {
+                        BigDecimal::from_str(min)
+                            .map(|min| {
+                                (min * BigDecimal::from(10u128.pow(token.decimals as u32)))
+                                    .try_into()
+                                    .ok()
+                            })
+                            .ok()
+                            .flatten()
+                    }) else {
+                        continue;
+                    };
+
                     supported_withdrawals.insert(
                         (chain.id(), contract_address),
                         WithdrawTokenData {
@@ -209,6 +225,7 @@ impl BinanceBridge {
                             network: network_name.clone(),
                             token_decimals: token.decimals,
                             withdraw_decimals,
+                            min_amount,
                         },
                     );
                 }
@@ -247,9 +264,14 @@ impl Bridge for BinanceBridge {
         "binance"
     }
 
-    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> bool {
-        self.inner.deposit_addresses.contains_key(&src)
-            && self.inner.supported_withdrawals.contains_key(&dst)
+    fn supports(&self, src: ChainAddress, dst: ChainAddress) -> Option<SupportedDirection> {
+        if !self.inner.deposit_addresses.contains_key(&src) {
+            return None;
+        }
+
+        let &WithdrawTokenData { min_amount, .. } = self.inner.supported_withdrawals.get(&dst)?;
+
+        Some(SupportedDirection { min_amount })
     }
 
     fn process(&self, transfer: BridgeTransfer) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -346,6 +368,7 @@ impl BinanceBridgeInner {
 
         // Send the transaction if it's not already sent.
         if self.storage.read_transaction_status(deposit_tx.id).await?.is_none() {
+            info!(transfer_id = %transfer.id, tx_id = %deposit_tx.id, "sending deposit transaction");
             tx_service.send_transaction(deposit_tx.clone()).await?;
         }
 
@@ -353,6 +376,8 @@ impl BinanceBridgeInner {
         let TransactionStatus::Confirmed(receipt) = status else {
             eyre::bail!("deposit transaction failed: {:?}", status);
         };
+
+        info!(transfer_id = %transfer.id, tx_id = %deposit_tx.id, tx_hash = %receipt.transaction_hash, "deposit transaction confirmed");
 
         bridge_data.deposit_tx_hash = Some(receipt.transaction_hash);
         self.save_bridge_data(transfer, bridge_data).await?;
@@ -422,8 +447,9 @@ impl BinanceBridgeInner {
 
         // Send withdrawal if it's not sent already.
         if self.find_withdrawal(transfer).await?.is_none() {
-            let Some(WithdrawTokenData { name, network, token_decimals, withdraw_decimals }) =
-                self.supported_withdrawals.get(&transfer.from)
+            let Some(WithdrawTokenData {
+                name, network, token_decimals, withdraw_decimals, ..
+            }) = self.supported_withdrawals.get(&transfer.to)
             else {
                 return Err(eyre::eyre!("No supported withdrawal for source chain"));
             };
@@ -438,6 +464,8 @@ impl BinanceBridgeInner {
                     .to(),
                 *withdraw_decimals as u32,
             )?;
+
+            info!(transfer_id = %transfer.id, amount = %amount, "sending withdrawal");
 
             // Send the withdrawal.
             // We are assigning a client side ID here to be able to lookup it later without dealing
@@ -495,7 +523,7 @@ impl BinanceBridgeInner {
                             state = BridgeTransferState::Sent(block_number);
                         }
                         Err(err) => {
-                            warn!(%err, "failed to send deposit");
+                            warn!(%err, transfer_id = %transfer.id, "failed to send deposit");
                             state = BridgeTransferState::OutboundFailed;
                         }
                     }
@@ -507,7 +535,7 @@ impl BinanceBridgeInner {
                             state = BridgeTransferState::Completed(block_number);
                         }
                         Err(err) => {
-                            warn!(%err, "failed to withdraw");
+                            warn!(%err, transfer_id = %transfer.id, "failed to withdraw");
                             state = BridgeTransferState::InboundFailed;
                         }
                     }
