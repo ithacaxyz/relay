@@ -4,4 +4,4 @@ pub mod fee_engine;
 pub mod pricer;
 
 pub use fee_engine::FeeEngine;
-pub use pricer::{QuoteGenerator, PricingContext};
+pub use pricer::{PricingContext, QuoteGenerator};

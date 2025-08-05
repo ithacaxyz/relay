@@ -12,8 +12,8 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
-    error::{IntentError, StorageError, SimulationError},
-    pricing::{QuoteGenerator, PricingContext, fee_engine::FeeEngine},
+    error::{IntentError, SimulationError, StorageError},
+    pricing::{PricingContext, QuoteGenerator, fee_engine::FeeEngine},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -198,7 +198,6 @@ impl Relay {
             .balance_on_chain(chain_id, fee_token.into()))
     }
 
-
     /// Builds a complete intent from partial user input with computed fields.
     ///
     /// This function takes a PartialIntent (user input) and fills in all the computed
@@ -282,7 +281,7 @@ impl Relay {
 
         // Clone context early to avoid borrow checker issues
         let context_clone = context.clone();
-        
+
         // Fetch the user's balance for the fee token
         let fee_token_balance =
             self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
@@ -341,9 +340,10 @@ impl Relay {
         };
 
         let delegation = self.has_supported_delegation(&account).await?;
-        
+
         // Create quote generator for fee calculation and quote creation
-        let quote_generator = QuoteGenerator::new(&self.inner.price_oracle, &self.inner.quote_config);
+        let quote_generator =
+            QuoteGenerator::new(&self.inner.price_oracle, &self.inner.quote_config);
 
         // Build intent from partial intent for simulation (matching original flow)
         let mut intent_to_sign = Intent {
@@ -362,7 +362,9 @@ impl Relay {
             encodedFundTransfers: intent
                 .fund_transfers
                 .iter()
-                .map(|(token, amount)| Transfer { token: *token, amount: *amount }.abi_encode().into())
+                .map(|(token, amount)| {
+                    Transfer { token: *token, amount: *amount }.abi_encode().into()
+                })
                 .collect(),
             isMultichain: false,
             ..Default::default()
@@ -382,9 +384,14 @@ impl Relay {
             .await
             .map_err(|e| RelayError::Simulation(SimulationError::ExecutionFailed(e.to_string())))?;
 
-        // Build final intent for pricing with gas estimate  
-        let intent_to_sign =
-            self.build_intent_to_sign(intent, token, delegation, &context, simulation_result.gCombined);
+        // Build final intent for pricing with gas estimate
+        let intent_to_sign = self.build_intent_to_sign(
+            intent,
+            token,
+            delegation,
+            &context,
+            simulation_result.gCombined,
+        );
 
         // Calculate intrinsic gas based on intent size
         let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
