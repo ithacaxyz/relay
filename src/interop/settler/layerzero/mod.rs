@@ -147,7 +147,7 @@ impl LayerZeroSettler {
                     let src_chain_id = self.eid_to_chain_id(packet.src_eid)?;
                     let dst_chain_id = self.eid_to_chain_id(packet.dst_eid)?;
 
-                    let receiver =  packet.receiver_addr();
+                    let receiver = packet.receiver_addr();
 
                     let dst_config = self.get_chain_config(dst_chain_id)?;
                     let src_config = self.get_chain_config(src_chain_id)?;
