@@ -1,4 +1,4 @@
-//! State override utilities for simulation.
+//! Simulation state override builder utilities.
 
 use crate::{
     error::RelayError,
@@ -103,25 +103,3 @@ impl SimulationStateBuilder {
     }
 }
 
-/// Helper for building specific override patterns.
-#[derive(Debug)]
-pub struct StateOverrideHelpers;
-
-impl StateOverrideHelpers {
-    /// Creates a 7702 delegation code override.
-    pub fn create_delegation_code(delegation_address: Address) -> Bytes {
-        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, delegation_address.as_slice()].concat())
-    }
-
-    /// Creates a balance override ensuring a minimum balance.
-    pub fn ensure_minimum_balance(current: U256, minimum: U256) -> U256 {
-        current.saturating_add(minimum.saturating_sub(current))
-    }
-
-    /// Creates overrides for an account with pending delegation.
-    pub fn pending_delegation_override(address: Address, delegation: Address) -> StateOverride {
-        StateOverridesBuilder::default()
-            .with_code(address, Self::create_delegation_code(delegation))
-            .build()
-    }
-}
