@@ -198,20 +198,6 @@ impl Relay {
             .balance_on_chain(chain_id, fee_token.into()))
     }
 
-    /// Validates account delegation and orchestrator support.
-    async fn validate_account_setup(
-        &self,
-        account: &Account<&DynProvider>,
-    ) -> Result<(Address, Address), RelayError> {
-        let orchestrator = account.get_orchestrator().await?;
-        if !self.is_supported_orchestrator(&orchestrator) {
-            return Err(RelayError::UnsupportedOrchestrator(orchestrator));
-        }
-
-        let delegation = self.has_supported_delegation(account).await?;
-
-        Ok((orchestrator, delegation))
-    }
 
     /// Builds a complete intent from partial user input with computed fields.
     ///
