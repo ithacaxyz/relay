@@ -112,14 +112,6 @@ pub struct Args {
     /// The number of signers to derive from mnemonic and use to send transactions.
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
     pub num_signers: usize,
-    /// The funder signing key (hex private key or KMS ARN).
-    #[arg(
-        long = "funder-signing-key",
-        required_unless_present("config_only"),
-        value_name = "KEY",
-        env = "RELAY_FUNDER_KEY"
-    )]
-    pub funder_key: Option<String>,
     /// The service API key for protected RPC endpoints.
     #[arg(long = "service-api-key", value_name = "KEY", env = "RELAY_SERVICE_API_KEY")]
     pub service_api_key: Option<String>,

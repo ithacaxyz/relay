@@ -43,7 +43,6 @@ async fn respawn_cli() -> eyre::Result<()> {
                 max_pending_transactions: Default::default(),
                 num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
-                funder_key: Some(B256::random().to_string()),
                 service_api_key: Default::default(),
                 sequencer_endpoints: Default::default(),
                 public_node_endpoints: Default::default(),
