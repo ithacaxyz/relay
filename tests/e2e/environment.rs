@@ -526,8 +526,8 @@ impl Environment {
                 .with_simulator(Some(contracts.simulator))
                 .with_funder(Some(contracts.funder))
                 .with_escrow(Some(contracts.escrow))
-                .with_intent_gas_buffer(50_000) // todo: temp
-                .with_tx_gas_buffer(75_000) // todo: temp
+                .with_intent_gas_buffer(20_000)
+                .with_tx_gas_buffer(10_000)
                 .with_transaction_service_config(config.transaction_service_config)
                 .with_interop_config(interop_config)
                 .with_rebalance_service_config(config.rebalance_service_config)

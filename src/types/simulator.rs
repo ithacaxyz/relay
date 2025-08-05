@@ -51,6 +51,6 @@ impl GasEstimate {
         quote_config: &QuoteConfig,
     ) -> Self {
         let intent = combined_gas + quote_config.intent_buffer();
-        Self { tx: (intent + 110_000) * 64 / 63 + intrinsic_gas + quote_config.tx_buffer(), intent }
+        Self { tx: (intent + 110_000 + quote_config.tx_buffer()) * 64 / 63 + intrinsic_gas, intent }
     }
 }

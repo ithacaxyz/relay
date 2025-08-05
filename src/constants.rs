@@ -21,7 +21,7 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(300);
 pub const DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS: u32 = 5_000;
 
 /// Extra buffer added to transaction gas estimates to pass the contract 63/64 check.
-pub const TX_GAS_BUFFER: u64 = 1_000_000; // todo: temporarily bumped to 1m from 50k to unblock
+pub const TX_GAS_BUFFER: u64 = 0;
 
 /// Default cap on maximum number of pending transactions per chain.
 pub const DEFAULT_MAX_TRANSACTIONS: usize = 100;
