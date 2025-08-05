@@ -45,6 +45,16 @@ pub enum QuoteError {
     /// Multichain functionality is disabled.
     #[error("multichain functionality is disabled: interop service not configured")]
     MultichainDisabled,
+    /// Insufficient balance to pay for the transaction.
+    #[error("insufficient balance: required {required}, available {available}, deficit {deficit}")]
+    InsufficientBalance {
+        /// The required amount for the transaction.
+        required: U256,
+        /// The available balance in the fee token.
+        available: U256,
+        /// The deficit amount (required - available).
+        deficit: U256,
+    },
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -57,6 +67,7 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidNumberOfIntents { .. }
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
+            | QuoteError::InsufficientBalance { .. }
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
                 internal_rpc(err.to_string())

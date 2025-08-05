@@ -6,7 +6,7 @@ use crate::{
     price::PriceOracle,
     error::PricingError,
     pricing::{
-        eip1559_fee_estimator::Eip1559FeeEstimator, gas_estimation::GasEstimator,
+        fee_estimator::FeeEstimator, gas_estimation::GasEstimator,
         fee_calculator::FeeCalculator,
     },
     types::{GasEstimate, Intent, Quote, Token},
@@ -63,7 +63,7 @@ impl<'a> IntentPricer<'a> {
     ) -> Result<Quote, PricingError> {
         // Step 1: Fetch and analyze fee history
         let fee_estimate =
-            Eip1559FeeEstimator::fetch_and_analyze(provider, context.priority_fee_percentile)
+            FeeEstimator::fetch_and_analyze(provider, context.priority_fee_percentile)
                 .await?;
 
         // Step 2: Calculate gas estimates

@@ -6,7 +6,7 @@ use crate::{
     error::SimulationError,
     simulation::{
         mock_keys::MockKeyGenerator,
-        state_overrides::SimulationStateBuilder,
+        state_overrides::build_simulation_state_overrides,
     },
     types::{
         Account, AssetDiffs, FeeEstimationContext, Intent, Key, Orchestrator, PartialIntent,
@@ -151,34 +151,23 @@ impl IntentSimulator {
         // Add 1 to the user's balance to ensure simulation passes
         let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Build state overrides
-        let mut builder = SimulationStateBuilder::with_capacity(2)
-            .with_simulator_balance(self.simulator_address)
-            .with_orchestrator_balance(self.orchestrator_address)
-            .with_eoa_overrides(
-                intent.eoa,
-                context.fee_token,
-                simulation_balance,
-                &context.account_key,
-                context.key_slot_override,
-                context.authorization_address,
-            )
-            .extend(context.state_overrides.clone());
+        // Build state overrides using simplified function
+        let overrides = build_simulation_state_overrides(
+            provider,
+            self.simulator_address,
+            self.orchestrator_address,
+            intent.eoa,
+            context.fee_token,
+            simulation_balance,
+            &context.account_key,
+            context.key_slot_override,
+            context.authorization_address,
+            context.state_overrides.clone(),
+            context.balance_overrides.clone(),
+        )
+        .await?;
 
-        // Add ERC20 balance overrides if needed
-        if !context.fee_token.is_zero() {
-            builder = builder
-                .extend_with_token_balances(
-                    provider,
-                    context.fee_token,
-                    intent.eoa,
-                    simulation_balance,
-                    context.balance_overrides.clone(),
-                )
-                .await?;
-        }
-
-        Ok(builder.build())
+        Ok(overrides)
     }
 
     /// Builds an Intent from a PartialIntent.
@@ -214,13 +203,18 @@ impl IntentSimulator {
     }
 
     /// Simulates account initialization.
+    /// 
+    /// Note: This function uses a mock key because during account initialization,
+    /// the user doesn't have a real key yet - the account is being created.
+    /// This is the only legitimate use of mock keys in production.
     pub async fn simulate_init<P: Provider + Clone>(
         &self,
         provider: &P,
         account: &crate::types::CreatableAccount,
         _chain_id: ChainId,
     ) -> Result<(), SimulationError> {
-        // Generate mock key for init simulation
+        // Use mock key for init simulation - this is required because the account
+        // is being created and doesn't have a real key yet
         let mock_key = MockKeyGenerator::generate_default_admin_key()?;
 
         // Build partial intent for init

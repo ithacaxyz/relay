@@ -362,10 +362,21 @@ impl Relay {
             )
             .await?;
 
-        // Update quote with fee token deficit
+        // Calculate fee token deficit and validate balance before proceeding
+        let fee_token_deficit = quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
+        
+        // Reject quotes when user has insufficient balance (allow small margin for gas price fluctuations)
+        if fee_token_deficit > U256::ZERO {
+            return Err(RelayError::Quote(QuoteError::InsufficientBalance {
+                required: quote.intent.totalPaymentMaxAmount,
+                available: fee_token_balance,
+                deficit: fee_token_deficit,
+            }));
+        }
+
+        // Update quote with fee token deficit (should be zero after validation)
         let mut final_quote = quote;
-        final_quote.fee_token_deficit =
-            final_quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
+        final_quote.fee_token_deficit = fee_token_deficit;
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
@@ -716,11 +727,17 @@ impl Relay {
     }
 
     /// Simulates the account initialization call.
+    /// 
+    /// Note: Uses a mock key because during account initialization, the user doesn't
+    /// have a real key yet - the account is being created. This is a legitimate
+    /// use of mock keys for initialization simulation only.
     async fn simulate_init(
         &self,
         account: &CreatableAccount,
         chain_id: ChainId,
     ) -> Result<(), RelayError> {
+        // Generate mock key for account initialization simulation
+        // This is required because the account is being created and doesn't have a real key yet
         let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
