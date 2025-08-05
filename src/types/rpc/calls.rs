@@ -615,7 +615,7 @@ pub struct CallsStatusCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy::primitives::address;
     use std::str::FromStr;
 
     #[test]

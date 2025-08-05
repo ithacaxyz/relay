@@ -6,12 +6,11 @@ use crate::e2e::{
 };
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{B256, Bytes},
+    primitives::{Address, B256, Bytes, U256},
     providers::{Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolValue},
 };
-use alloy_primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,

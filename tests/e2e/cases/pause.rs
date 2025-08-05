@@ -2,12 +2,11 @@ use crate::e2e::{
     await_calls_status, environment::Environment, eoa::MockAccount, send_prepared_calls,
 };
 use alloy::{
-    primitives::B256,
+    primitives::{Address, B256, U256},
     providers::{Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
-use alloy_primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,

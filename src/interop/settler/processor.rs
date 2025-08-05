@@ -243,8 +243,10 @@ mod tests {
     use crate::{
         interop::SimpleSettler, transactions::interop::InteropBundle, types::rpc::BundleId,
     };
-    use alloy::{primitives::Address, signers::local::PrivateKeySigner};
-    use alloy_primitives::B256;
+    use alloy::{
+        primitives::{Address, B256},
+        signers::local::PrivateKeySigner,
+    };
 
     #[tokio::test]
     async fn test_settler_id_validation_in_build_settlements() {
