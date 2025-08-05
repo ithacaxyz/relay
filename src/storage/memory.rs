@@ -157,12 +157,11 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn get_verified_email(&self, account: Address) -> Result<Option<String>> {
-        for entry in self.verified_emails.iter() {
-            if *entry.value() == account {
-                return Ok(Some(entry.key().clone()));
-            }
-        }
-        Ok(None)
+        Ok(self
+            .verified_emails
+            .iter()
+            .find(|entry| *entry.value() == account)
+            .map(|entry| entry.key().clone()))
     }
 
     async fn ping(&self) -> Result<()> {

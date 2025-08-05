@@ -206,9 +206,8 @@ pub struct GetVerifiedEmailParameters {
     pub wallet_address: Address,
     /// The email address to check. If not provided, returns any verified email for the wallet.
     pub email: Option<String>,
-    /// Service API key for authentication (required if server is configured with a service API
-    /// key).
-    pub api_key: Option<String>,
+    /// Service API key for authentication.
+    pub api_key: String,
 }
 
 /// Response for `account_getVerifiedEmail`.

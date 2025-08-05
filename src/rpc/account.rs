@@ -145,14 +145,14 @@ impl AccountApiServer for AccountRpc {
         GetVerifiedEmailParameters { wallet_address, email, api_key }: GetVerifiedEmailParameters,
     ) -> RpcResult<GetVerifiedEmailResponse> {
         // Check if API key is required and validate it
-        if self.service_api_key.is_none_or(|expected_key| api_key.as_ref() != Some(expected_key))
-        {
+        if self.service_api_key.as_ref().is_none_or(|expected_key| api_key != *expected_key) {
             return Err(EmailError::Unauthorized.into());
         }
 
+        let verified_email = self.storage.get_verified_email(wallet_address).await?;
+
         if let Some(specific_email) = email {
             // Check if specific email is verified for this wallet
-            let verified_email = self.storage.get_verified_email(wallet_address).await?;
             let verified = verified_email.as_ref() == Some(&specific_email);
             Ok(GetVerifiedEmailResponse {
                 verified,
@@ -160,7 +160,6 @@ impl AccountApiServer for AccountRpc {
             })
         } else {
             // Check if any email is verified for this wallet
-            let verified_email = self.storage.get_verified_email(wallet_address).await?;
             Ok(GetVerifiedEmailResponse {
                 verified: verified_email.is_some(),
                 email: verified_email,
