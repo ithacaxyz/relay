@@ -178,11 +178,6 @@ impl<P: Provider> Orchestrator<P> {
         self.orchestrator.address()
     }
 
-    /// Get the version of the orchestrator.
-    pub async fn version(&self) -> TransportResult<String> {
-        Ok(self.eip712_domain(false).await?.version.unwrap_or_default().to_string())
-    }
-
     /// Sets overrides for all calls on this orchestrator.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;

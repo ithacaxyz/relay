@@ -5160,7 +5160,6 @@ version = "18.1.7"
 dependencies = [
  "alloy",
  "alloy-chains",
- "alloy-primitives",
  "async-trait",
  "aws-config",
  "aws-sdk-kms",

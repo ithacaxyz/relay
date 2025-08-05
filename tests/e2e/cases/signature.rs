@@ -3,7 +3,7 @@ use crate::e2e::{
     cases::{upgrade_account_eagerly, upgrade_account_lazily},
     environment::Environment,
 };
-use alloy_primitives::{Address, B256};
+use alloy::primitives::{Address, B256};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,

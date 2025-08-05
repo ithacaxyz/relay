@@ -4,8 +4,10 @@ use crate::e2e::{
     environment::{Environment, EnvironmentConfig},
     send_prepared_calls,
 };
-use alloy::providers::Provider;
-use alloy_primitives::{Address, U256};
+use alloy::{
+    primitives::{Address, U256},
+    providers::Provider,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
     config::TransactionServiceConfig,

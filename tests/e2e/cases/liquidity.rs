@@ -1,7 +1,7 @@
 //! Multi-chain relay end-to-end test cases
 
 use crate::e2e::{cases::upgrade_account_eagerly, *};
-use alloy_primitives::U256;
+use alloy::primitives::U256;
 use eyre::Result;
 use relay::{
     config::RebalanceServiceConfig,

@@ -1,12 +1,32 @@
 use crate::{
-    config::RelayConfig,
-    error::RelayError,
-    types::{Account, DelegationProxy::DelegationProxyInstance, Orchestrator},
+    config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
-use alloy::{primitives::Address, providers::Provider, transports::TransportErrorKind};
+use alloy::{primitives::Address, providers::Provider, sol, transports::TransportErrorKind};
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use tokio::try_join;
+
+sol! {
+    #[sol(rpc)]
+    interface Eip712Contract {
+        /// Returns the EIP712 domain of the delegation.
+        ///
+        /// See: https://eips.ethereum.org/EIPS/eip-5267
+        function eip712Domain()
+            public
+            view
+            virtual
+            returns (
+                bytes1 fields,
+                string memory name,
+                string memory version,
+                uint256 chainId,
+                address verifyingContract,
+                bytes32 salt,
+                uint256[] memory extensions
+            );
+    }
+}
 
 /// Contract address with optional version.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,8 +40,17 @@ pub struct VersionedContract {
 
 impl VersionedContract {
     /// Creates a [`VersionedContract`].
-    pub fn new(address: Address, version: String) -> Self {
-        Self { address, version: Some(version) }
+    ///
+    /// This fetches the contract version by calling `eip712Domain()` on the contract.
+    pub async fn new<P: Provider>(address: Address, provider: P) -> Self {
+        let version = Eip712Contract::new(address, provider)
+            .eip712Domain()
+            .call()
+            .await
+            .map(|domain| domain.version)
+            .ok();
+
+        Self { address, version }
     }
 
     /// Creates a [`VersionedContract`] without a version.
@@ -62,10 +91,7 @@ impl VersionedContracts {
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&address| {
-                Ok::<_, RelayError>(VersionedContract::new(
-                    address,
-                    Orchestrator::new(address, provider).version().await?,
-                ))
+                Ok::<_, RelayError>(VersionedContract::new(address, provider).await)
             }));
 
         let legacy_delegations =
@@ -76,18 +102,11 @@ impl VersionedContracts {
                     .await
                     .map_err(TransportErrorKind::custom)?;
 
-                Ok(VersionedContract::new(
-                    implementation,
-                    Account::new(implementation, provider).version().await?,
-                ))
+                Ok(VersionedContract::new(implementation, provider).await)
             }));
 
-        let orchestrator = async {
-            Ok(VersionedContract::new(
-                config.orchestrator,
-                Orchestrator::new(config.orchestrator, provider).version().await?,
-            ))
-        };
+        let orchestrator =
+            async { Ok(VersionedContract::new(config.orchestrator, provider).await) };
 
         let delegation_implementation = async {
             let delegation_implementation =
@@ -97,10 +116,7 @@ impl VersionedContracts {
                     .await
                     .map_err(TransportErrorKind::custom)?;
 
-            Ok(VersionedContract::new(
-                delegation_implementation,
-                Account::new(delegation_implementation, provider).version().await?,
-            ))
+            Ok(VersionedContract::new(delegation_implementation, provider).await)
         };
 
         let (legacy_orchestrators, legacy_delegations, orchestrator, delegation_implementation) = try_join!(

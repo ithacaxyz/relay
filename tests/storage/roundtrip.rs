@@ -12,10 +12,9 @@ use crate::e2e::SIGNERS_MNEMONIC;
 use alloy::{
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, B256, U256, bytes},
+    primitives::{Address, B256, ChainId, U256, bytes},
     rpc::types::Authorization,
 };
-use alloy_primitives::ChainId;
 use chrono::Utc;
 use opentelemetry::Context;
 use relay::{
