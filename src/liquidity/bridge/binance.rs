@@ -13,7 +13,7 @@ use alloy::{
     providers::{DynProvider, Provider},
     sol_types::SolCall,
 };
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use binance_sdk::{
     config::ConfigurationRestApi,
     wallet::{
@@ -43,6 +43,9 @@ fn binance_network_to_chain(network: &str) -> Option<Chain> {
         "ETH" => Some(Chain::mainnet()),
         "BASE" => Some(Chain::base_mainnet()),
         "ARBITRUM" => Some(Chain::arbitrum_mainnet()),
+        "OPTIMISM" => Some(Chain::optimism_mainnet()),
+        "BSC" => Some(Chain::bsc_mainnet()),
+        "MATIC" => Some(Chain::from_named(NamedChain::Polygon)),
         _ => None,
     }
 }
@@ -53,6 +56,9 @@ fn binance_network_to_native_coin(network: &str) -> Option<&'static str> {
         "ETH" => Some("ETH"),
         "BASE" => Some("ETH"),
         "ARBITRUM" => Some("ETH"),
+        "OPTIMISM" => Some("ETH"),
+        "BSC" => Some("BNB"),
+        "MATIC" => Some("POL"),
         _ => None,
     }
 }
