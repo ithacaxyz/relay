@@ -9,7 +9,7 @@ use crate::{
 use alloy::primitives::{ChainId, map::HashMap};
 use std::collections::BTreeMap;
 use tokio::sync::{mpsc, oneshot, watch};
-use tracing::info;
+use tracing::{debug, info};
 
 /// Handle for interacting with the LayerZeroBatchPool.
 #[derive(Debug, Clone)]
@@ -38,6 +38,7 @@ impl LayerZeroPoolHandle {
         let settlement = LayerZeroBatchMessage { chain_id, src_eid, nonce, calls };
 
         // Send the message with the sender separately
+        debug!(?chain_id, ?nonce, "Sending settlement for processing.");
         let _ = self.sender.send(LayerZeroPoolMessages::Settlement { settlement, response: tx });
         rx.await.map_err(|_| SettlementError::InternalError("Channel closed".to_string()))?
     }
