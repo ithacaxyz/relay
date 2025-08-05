@@ -12,7 +12,7 @@
 //! - **Message Delivery**: Executes lzReceive on destination endpoints
 //! - **Duplicate Prevention**: Tracks delivered GUIDs to prevent redelivery
 
-use super::utils::{bytes32_to_address, create_origin, deliver_layerzero_message};
+use super::utils::{create_origin, deliver_layerzero_message};
 use alloy::{
     primitives::{Address, B256},
     providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
