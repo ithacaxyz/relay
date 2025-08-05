@@ -1,4 +1,4 @@
-//! Fee history analysis and EIP-1559 estimation utilities.
+//! EIP-1559 fee estimation utilities.
 
 use crate::error::PricingError;
 use alloy::{
@@ -11,11 +11,15 @@ use alloy::{
 };
 use tracing::instrument;
 
-/// Fee history analyzer for EIP-1559 gas price estimation.
+/// EIP-1559 fee estimator for dynamic gas price calculation.
+///
+/// This component handles the estimation of EIP-1559 gas prices by analyzing
+/// historical fee data from recent blocks. It provides accurate fee predictions
+/// for transactions by considering base fees and priority fees.
 #[derive(Debug)]
-pub struct FeeHistoryAnalyzer;
+pub struct Eip1559FeeEstimator;
 
-impl FeeHistoryAnalyzer {
+impl Eip1559FeeEstimator {
     /// Fetches fee history and analyzes it to produce fee estimates.
     #[instrument(skip_all)]
     pub async fn fetch_and_analyze<P: Provider>(
