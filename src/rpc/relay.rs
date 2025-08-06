@@ -19,7 +19,7 @@ use crate::{
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo, Orchestrator,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
@@ -35,14 +35,18 @@ use crate::{
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192},
-    providers::{DynProvider, Provider},
+    providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rpc::types::{
         Authorization,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
 };
-use futures_util::{future::try_join_all, join};
+use futures_util::{
+    TryFutureExt,
+    future::{try_join_all, try_join4},
+    join,
+};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -320,18 +324,53 @@ impl Relay {
                     // if the account has sufficient balance naturally
                 }
             }
+            overrides = overrides.extend(
+                context
+                    .balance_overrides
+                    .modify_token(context.fee_token, |balance| {
+                        balance.add_balance(intent.eoa, new_fee_token_balance);
+                    })
+                    .into_state_overrides(&provider)
+                    .await?,
+            );
         }
 
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        // Validate the orchestrator is supported
-        let orchestrator_addr = account.get_orchestrator().await?;
-        if !self.is_supported_orchestrator(&orchestrator_addr) {
-            return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
-        }
-
-        let delegation = self.has_supported_delegation(&account).await?;
+        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
+            // fetch orchestrator from the account and ensure it is supported
+            async {
+                let orchestrator = account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+                }
+                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
+            },
+            // fetch delegation from the account and ensure it is supported
+            self.has_supported_delegation(&account).map_err(RelayError::from),
+            // fetch chain fees
+            provider
+                .get_fee_history(
+                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                    Default::default(),
+                    &[self.inner.priority_fee_percentile],
+                )
+                .map_err(RelayError::from),
+            // fetch price in eth
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
+            },
+        )
+        .await?;
+        debug!(
+            %chain_id,
+            fee_token = ?token,
+            ?fee_history,
+            ?eth_price,
+            "Got fee parameters"
+        );
 
         // Create fee engine for fee calculation and quote creation
         let fee_engine =
@@ -368,7 +407,7 @@ impl Relay {
         // Execute simulation using the estimation framework
         let contracts = SimulationContracts {
             simulator: self.simulator(),
-            orchestrator: orchestrator_addr,
+            orchestrator: *orchestrator.address(),
             delegation_implementation: self.delegation_implementation(),
         };
 
@@ -399,7 +438,12 @@ impl Relay {
             .abi_encode(),
             context.authorization_address.is_some(),
         );
-        // Calculate fees and generate quote
+
+        let Some(eth_price) = eth_price else {
+            return Err(RelayError::Quote(QuoteError::UnavailablePrice(token.address)));
+        };
+
+        // Calculate fees and generate quote using pre-fetched data
         let quote = fee_engine
             .calculate_fees(
                 &provider,
@@ -414,8 +458,10 @@ impl Relay {
                     fee_token_balance,
                     priority_fee_percentile: self.inner.priority_fee_percentile,
                 },
-                orchestrator_addr,
+                *orchestrator.address(),
                 context.authorization_address,
+                fee_history,
+                eth_price,
             )
             .await?;
 

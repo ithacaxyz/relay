@@ -120,6 +120,31 @@ impl FeeEngine {
         Ok(payment_per_gas)
     }
 
+    /// Calculates payment per gas in fee token units using pre-fetched ETH price.
+    ///
+    /// This is an optimized version that avoids redundant price oracle calls.
+    fn calculate_payment_per_gas_with_price(
+        &self,
+        fee_estimate: &Eip1559Estimation,
+        token: &Token,
+        eth_price: U256,
+    ) -> Result<f64, QuoteError> {
+        // Convert from wei to token units
+        // Formula: (gas_price_wei * 10^token_decimals) / eth_price_in_token
+        let eth_price_f64 = f64::from(eth_price);
+
+        // Prevent division by zero
+        if eth_price_f64 == 0.0 {
+            return Err(QuoteError::PriceCalculationFailed("ETH price is zero".to_string()));
+        }
+
+        let payment_per_gas = (fee_estimate.max_fee_per_gas as f64
+            * 10u128.pow(token.decimals as u32) as f64)
+            / eth_price_f64;
+
+        Ok(payment_per_gas)
+    }
+
     /// Estimates combined gas for intent and transaction.
     ///
     /// The recommended transaction gas is calculated according to the contracts recommendation:
@@ -242,10 +267,10 @@ impl FeeEngine {
     // Quote Generation and Orchestration
     // =================================
 
-    /// Generates a complete quote with calculated fees for an intent.
+    /// Generates a complete quote with pre-fetched fee history and ETH price.
     ///
     /// This orchestrates the entire quote generation process:
-    /// 1. Fetches and analyzes fee history for gas pricing
+    /// 1. Analyzes pre-fetched fee history for gas pricing
     /// 2. Calculates gas estimates and payment per gas
     /// 3. Computes L1 data availability fees (for rollups)
     /// 4. Converts fees to the specified fee token
@@ -262,24 +287,21 @@ impl FeeEngine {
         context: PricingContext,
         orchestrator: Address,
         authorization_address: Option<Address>,
+        fee_history: alloy::rpc::types::FeeHistory,
+        eth_price: U256,
     ) -> Result<Quote, QuoteError> {
-        // Step 1: Fetch and analyze fee history
-        let fee_estimate =
-            Self::fetch_and_analyze(provider, context.priority_fee_percentile).await?;
+        // Step 1: Analyze pre-fetched fee history
+        let fee_estimate = Self::estimate_fees(&fee_history)?;
 
         // Step 2: Calculate gas estimates
         let gas_estimate = self.estimate_combined_gas(simulation_gas, intrinsic_gas);
 
-        // Step 3: Calculate payment per gas in fee token units
-        let payment_per_gas =
-            self.calculate_payment_per_gas(&fee_estimate, &context.fee_token).await?;
-
-        // Get ETH price for the quote
-        let eth_price = self
-            .price_oracle
-            .eth_price(context.fee_token.kind)
-            .await
-            .ok_or(QuoteError::UnavailablePrice(context.fee_token.address))?;
+        // Step 3: Calculate payment per gas in fee token units using pre-fetched ETH price
+        let payment_per_gas = self.calculate_payment_per_gas_with_price(
+            &fee_estimate,
+            &context.fee_token,
+            eth_price,
+        )?;
 
         // Step 4: Calculate extra fees (L1 data availability, etc.)
         let extra_payment_native = Self::estimate_extra_fee(provider, chain, &intent).await?;
