@@ -13,13 +13,13 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    estimation::{FeeEngine, PricingContext, SimulationContracts, simulate_intent},
+    estimation::{FeeEngine, PricingContext, SimulationContracts, simulate_init, simulate_intent},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo, Orchestrator,
+        KeyHash, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo, Orchestrator,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
@@ -66,8 +66,8 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, PartialIntent,
-        Quote, Signature, SignedQuotes,
+        Account, CreatableAccount, FeeEstimationContext, Intent, PartialIntent, Quote, Signature,
+        SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
             GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
@@ -795,43 +795,6 @@ impl Relay {
         if self.delegation_implementation() != address {
             return Err(AuthError::InvalidDelegation(address).into());
         }
-        Ok(())
-    }
-
-    /// Simulates the account initialization call.
-    async fn simulate_init(
-        &self,
-        account: &CreatableAccount,
-        chain_id: ChainId,
-    ) -> Result<(), RelayError> {
-        let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
-            .map_err(RelayError::from)
-            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
-
-        // Ensures that initialization precall works
-        self.estimate_fee(
-            PartialIntent {
-                eoa: account.address,
-                execution_data: Vec::<Call>::new().abi_encode().into(),
-                nonce: U256::from_be_bytes(B256::random().into()) << 64,
-                payer: None,
-                pre_calls: vec![account.pre_call.clone()],
-                fund_transfers: vec![],
-            },
-            chain_id,
-            false,
-            FeeEstimationContext {
-                fee_token: Address::ZERO,
-                authorization_address: Some(account.signed_authorization.address),
-                account_key: mock_key.key().clone(),
-                key_slot_override: true,
-                intent_kind: IntentKind::Single,
-                state_overrides: Default::default(),
-                balance_overrides: Default::default(),
-            },
-        )
-        .await?;
-
         Ok(())
     }
 
@@ -1896,7 +1859,17 @@ impl RelayApiServer for Relay {
             // Ensure it's using the lasted delegation implementation.
             self.ensure_latest_delegation(&delegated_account,),
             // Ensures the initialization precall is successful.
-            self.simulate_init(&storage_account, context.chain_id),
+            simulate_init(
+                &provider,
+                &storage_account,
+                context.chain_id,
+                SimulationContracts {
+                    simulator: self.simulator(),
+                    orchestrator: self.orchestrator(),
+                    delegation_implementation: self.delegation_implementation(),
+                },
+                self.inner.asset_info.clone(),
+            ),
             // Calculate precall digest.
             async {
                 storage_account

@@ -2,15 +2,19 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::{RelayError, SimulationError},
+    error::{KeysError, RelayError, SimulationError},
     estimation::types::SimulationResponse,
-    types::{FeeEstimationContext, Intent, Key, Orchestrator, rpc::BalanceOverrides},
+    types::{
+        Call, CreatableAccount, FeeEstimationContext, Intent, IntentKind, Key, KeyType,
+        KeyWith712Signer, Orchestrator, PartialIntent, rpc::BalanceOverrides,
+    },
 };
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256},
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverride, StateOverridesBuilder},
+    sol_types::SolValue,
 };
 use tracing::{debug, instrument};
 
@@ -183,4 +187,84 @@ pub async fn simulate_intent<P: Provider + Clone>(
     );
 
     Ok(SimulationResponse::new(asset_diffs, simulation_result.gCombined, simulation_result))
+}
+
+/// Simulates the account initialization call to ensure precall works.
+///
+/// This function validates that an account initialization precall will execute
+/// successfully by running it through the simulation pipeline.
+#[instrument(skip_all)]
+pub async fn simulate_init<P: Provider + Clone>(
+    provider: &P,
+    account: &CreatableAccount,
+    _chain_id: ChainId,
+    contracts: SimulationContracts,
+    asset_info: AssetInfoServiceHandle,
+) -> Result<(), RelayError> {
+    // Create a mock admin key for simulation
+    let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
+        .map_err(RelayError::from)
+        .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+
+    // Create a dummy PartialIntent that includes the initialization precall
+    let partial_intent = PartialIntent {
+        eoa: account.address,
+        execution_data: Vec::<Call>::new().abi_encode().into(),
+        nonce: U256::from_be_bytes(B256::random().into()) << 64,
+        payer: None,
+        pre_calls: vec![account.pre_call.clone()],
+        fund_transfers: vec![],
+    };
+
+    // Create the fee estimation context for simulation
+    let context = FeeEstimationContext {
+        fee_token: Address::ZERO, // Use native token
+        authorization_address: Some(account.signed_authorization.address),
+        account_key: mock_key.key().clone(),
+        key_slot_override: true,
+        intent_kind: IntentKind::Single,
+        state_overrides: Default::default(),
+        balance_overrides: Default::default(),
+    };
+
+    // Build intent for simulation with minimal payment amount
+    let mut intent_to_sign = Intent {
+        eoa: partial_intent.eoa,
+        executionData: partial_intent.execution_data.clone(),
+        nonce: partial_intent.nonce,
+        payer: partial_intent.payer.unwrap_or_default(),
+        paymentToken: Address::ZERO,
+        paymentRecipient: Address::ZERO, // Will be set by caller if needed
+        supportedAccountImplementation: contracts.delegation_implementation,
+        encodedPreCalls: partial_intent
+            .pre_calls
+            .iter()
+            .map(|pre_call| pre_call.abi_encode().into())
+            .collect(),
+        encodedFundTransfers: partial_intent
+            .fund_transfers
+            .iter()
+            .map(|(token, amount)| {
+                crate::types::Transfer { token: *token, amount: *amount }.abi_encode().into()
+            })
+            .collect(),
+        isMultichain: false,
+        ..Default::default()
+    };
+
+    // Set minimal payment amount for simulation
+    intent_to_sign.set_legacy_payment_amount(U256::from(1));
+
+    // Run the simulation to ensure initialization precall works
+    simulate_intent(
+        provider,
+        &intent_to_sign,
+        context,
+        U256::ZERO, // fee_token_balance (not relevant for init simulation)
+        contracts,
+        asset_info,
+    )
+    .await?;
+
+    Ok(())
 }
