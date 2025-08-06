@@ -2,10 +2,11 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    error::RelayError,
+    error::{RelayError, SimulationError},
+    estimation::types::SimulationResponse,
     types::{
-        Account, AssetDiffs, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer,
-        Orchestrator, PartialIntent, SimulationResult, Transfer, rpc::BalanceOverrides,
+        Account, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer,
+        Orchestrator, PartialIntent, Transfer, rpc::BalanceOverrides,
     },
 };
 use alloy::{
@@ -120,7 +121,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     simulator_address: Address,
     orchestrator_address: Address,
     asset_info: AssetInfoServiceHandle,
-) -> Result<(AssetDiffs, U256, SimulationResult), RelayError> {
+) -> Result<SimulationResponse, RelayError> {
     let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
     let params = SimulationOverrideParams {
         simulator_address,
@@ -136,7 +137,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     };
     let overrides = build_simulation_state_overrides(provider, params)
         .await
-        .map_err(|e| RelayError::StateOverrideFailed(e.to_string()))?;
+        .map_err(|e| SimulationError::StateOverrideFailed(e.to_string()))?;
 
     let _account = Account::new(intent.eoa, provider).with_overrides(overrides.clone());
     let orchestrator = Orchestrator::new(orchestrator_address, provider).with_overrides(overrides);
@@ -156,7 +157,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
             asset_info,
         )
         .await
-        .map_err(|e| RelayError::ExecutionFailed(e.to_string()))?;
+        .map_err(|e| SimulationError::ExecutionFailed(e.to_string()))?;
 
     debug!(
         eoa = %intent.eoa,
@@ -164,7 +165,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
         "Simulation completed"
     );
 
-    Ok((asset_diffs, simulation_result.gCombined, simulation_result))
+    Ok(SimulationResponse::new(asset_diffs, simulation_result.gCombined, simulation_result))
 }
 
 /// Builds an Intent from a PartialIntent.
@@ -212,9 +213,9 @@ pub async fn simulate_init<P: Provider + Clone>(
     asset_info: AssetInfoServiceHandle,
 ) -> Result<(), RelayError> {
     let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
-        .map_err(|e| RelayError::MockKeyFailed(e.to_string()))?
+        .map_err(|e| SimulationError::MockKeyFailed(e.to_string()))?
         .ok_or_else(|| {
-            RelayError::MockKeyFailed("Failed to generate Secp256k1 admin key".to_string())
+            SimulationError::MockKeyFailed("Failed to generate Secp256k1 admin key".to_string())
         })?;
 
     let intent = PartialIntent {

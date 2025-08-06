@@ -13,13 +13,13 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    estimation::{FeeEngine, PricingContext},
+    estimation::{FeeEngine, PricingContext, simulate_intent},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo, Orchestrator,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
@@ -329,14 +329,11 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        // Create components with the same overrides
-        let orchestrator = {
-            let orchestrator_addr = account.get_orchestrator().await?;
-            if !self.is_supported_orchestrator(&orchestrator_addr) {
-                return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
-            }
-            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone())
-        };
+        // Validate the orchestrator is supported
+        let orchestrator_addr = account.get_orchestrator().await?;
+        if !self.is_supported_orchestrator(&orchestrator_addr) {
+            return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
+        }
 
         let delegation = self.has_supported_delegation(&account).await?;
 
@@ -371,16 +368,17 @@ impl Relay {
         // Set payment amount for simulation
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
-        // Execute simulation using the orchestrator with correct overrides
-        let (asset_diffs, simulation_result) = orchestrator
-            .simulate_execute(
-                self.simulator(),
-                &intent_to_sign,
-                context.account_key.keyType,
-                self.inner.asset_info.clone(),
-            )
-            .await
-            .map_err(|e| RelayError::ExecutionFailed(e.to_string()))?;
+        // Execute simulation using the estimation framework
+        let simulation_response = simulate_intent(
+            &provider,
+            &intent,
+            context.clone(),
+            fee_token_balance,
+            self.simulator(),
+            orchestrator_addr,
+            self.inner.asset_info.clone(),
+        )
+        .await?;
 
         // Build final intent for pricing with gas estimate
         let intent_to_sign = self.build_intent_to_sign(
@@ -388,7 +386,7 @@ impl Relay {
             token,
             delegation,
             &context,
-            simulation_result.gCombined,
+            simulation_response.gas_combined,
         );
 
         // Calculate intrinsic gas based on intent size
@@ -405,7 +403,7 @@ impl Relay {
                 &provider,
                 &chain,
                 intent_to_sign,
-                simulation_result.gCombined,
+                simulation_response.gas_combined,
                 intrinsic_gas,
                 PricingContext {
                     chain_id,
@@ -414,7 +412,7 @@ impl Relay {
                     fee_token_balance,
                     priority_fee_percentile: self.inner.priority_fee_percentile,
                 },
-                account.get_orchestrator().await?,
+                orchestrator_addr,
                 context.authorization_address,
             )
             .await?;
@@ -429,7 +427,7 @@ impl Relay {
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
-            asset_diffs,
+            simulation_response.asset_diffs,
             &final_quote,
             &self.inner.fee_tokens,
             &self.inner.price_oracle,

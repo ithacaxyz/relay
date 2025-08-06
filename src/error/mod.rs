@@ -25,6 +25,9 @@ pub use merkle::MerkleError;
 mod quote;
 pub use quote::QuoteError;
 
+mod simulation;
+pub use simulation::SimulationError;
+
 mod storage;
 pub use storage::StorageError;
 
@@ -96,24 +99,9 @@ pub enum RelayError {
     /// Settlement-related errors.
     #[error(transparent)]
     Settlement(#[from] crate::interop::SettlementError),
-    /// State override creation failed.
-    #[error("State override creation failed: {0}")]
-    StateOverrideFailed(String),
-    /// Mock key generation failed.
-    #[error("Mock key generation failed: {0}")]
-    MockKeyFailed(String),
-    /// Simulation execution failed.
-    #[error("Simulation execution failed: {0}")]
-    ExecutionFailed(String),
-    /// Asset diff calculation failed.
-    #[error("Asset diff calculation failed: {0}")]
-    AssetDiffFailed(String),
-    /// Invalid simulation context provided.
-    #[error("Invalid simulation context: {0}")]
-    InvalidContext(String),
-    /// Orchestrator interaction failed.
-    #[error("Orchestrator interaction failed: {0}")]
-    OrchestratorFailed(String),
+    /// Simulation-related errors.
+    #[error(transparent)]
+    Simulation(#[from] SimulationError),
 }
 
 impl RelayError {
@@ -169,12 +157,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
             | RelayError::Settlement(_)
-            | RelayError::StateOverrideFailed(_)
-            | RelayError::MockKeyFailed(_)
-            | RelayError::ExecutionFailed(_)
-            | RelayError::AssetDiffFailed(_)
-            | RelayError::InvalidContext(_)
-            | RelayError::OrchestratorFailed(_) => internal_rpc(err.to_string()),
+            | RelayError::Simulation(_) => internal_rpc(err.to_string()),
         }
     }
 }
