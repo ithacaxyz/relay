@@ -175,11 +175,8 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
-    /// Estimates additional fees to be paid for a intent (e.g L1 DA fees).
-    ///
-    /// Returns fees in ETH.
-    #[instrument(skip_all)]
     /// Fetches the user's balance for a fee token.
+    #[instrument(skip_all)]
     async fn get_fee_token_balance(
         &self,
         account: Address,
@@ -257,18 +254,6 @@ impl Relay {
         _prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        // Validate input size limits to prevent DoS attacks
-        const MAX_EXECUTION_DATA_SIZE: usize = 1024 * 1024; // 1MB
-        const MAX_PRE_CALLS_COUNT: usize = 100;
-
-        if intent.execution_data.len() > MAX_EXECUTION_DATA_SIZE {
-            return Err(RelayError::Intent(Box::new(IntentError::InvalidExecution)));
-        }
-
-        if intent.pre_calls.len() > MAX_PRE_CALLS_COUNT {
-            return Err(RelayError::Intent(Box::new(IntentError::InvalidPreCalls)));
-        }
-
         // Validate chain and token
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
@@ -279,7 +264,6 @@ impl Relay {
             .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
         let provider = chain.provider.clone();
 
-        // Clone context early to avoid borrow checker issues
         let context_clone = context.clone();
 
         // Fetch the user's balance for the fee token
@@ -289,8 +273,8 @@ impl Relay {
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Build comprehensive state overrides
-        let mut overrides = StateOverridesBuilder::with_capacity(3)
+        // mocking key storage for the eoa, and the balance for the mock signer
+        let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))

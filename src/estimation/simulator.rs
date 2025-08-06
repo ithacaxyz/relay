@@ -5,8 +5,8 @@ use crate::{
     error::{RelayError, SimulationError},
     estimation::types::SimulationResponse,
     types::{
-        Account, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer, Orchestrator,
-        PartialIntent, Transfer, rpc::BalanceOverrides,
+        FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer, Orchestrator, PartialIntent,
+        Transfer, rpc::BalanceOverrides,
     },
 };
 use alloy::{
