@@ -40,7 +40,7 @@ pub mod types;
 pub use types::EndpointId;
 /// Verification monitoring logic.
 pub mod verification;
-use verification::{LayerZeroVerificationMonitor, VerificationResult, is_message_available};
+use verification::{LayerZeroVerificationMonitor, VerificationResult};
 /// Layerzero batch processing.
 pub mod batcher;
 use batcher::{LayerZeroBatchProcessor, LayerZeroPoolHandle};
@@ -116,7 +116,7 @@ impl LayerZeroSettler {
 
     /// Gets the cached chain configuration for a given chain ID.
     fn get_chain_config(&self, chain_id: u64) -> Result<&LZChainConfig, SettlementError> {
-        self.chain_configs.get(&chain_id).ok_or_else(|| SettlementError::UnsupportedChain(chain_id))
+        self.chain_configs.ensure_chain_config(chain_id)
     }
 
     /// Converts a LayerZero endpoint ID to a chain ID.
@@ -375,7 +375,7 @@ impl Settler for LayerZeroSettler {
 
         // Check which packets are actually available for execute receive
         let availability_results: Vec<bool> = try_join_all(
-            all_packet_infos.iter().map(|packet| is_message_available(packet, &self.chain_configs)),
+            all_packet_infos.iter().map(|packet| self.chain_configs.is_message_available(packet)),
         )
         .await?;
 

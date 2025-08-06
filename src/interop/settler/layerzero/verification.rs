@@ -111,7 +111,7 @@ impl ChainMonitor {
 
                                     if let Some(packet) = packet_lookup.get(&keccak256(&event.header)) {
                                         // Each DVN will emit its own PayloadVerified log, and only when we meet the configured threshold does the following call return true.
-                                        match is_message_available(packet, &chain_configs).await {
+                                        match chain_configs.is_message_available(packet).await {
                                             Ok(true) => {
                                                 verified_guids.push(packet.guid);
                                                 remaining -= 1;
@@ -264,9 +264,7 @@ impl LayerZeroVerificationMonitor {
                 let chain_configs = self.chain_configs.clone();
 
                 tokio::spawn(async move {
-                    let config = chain_configs
-                        .get(&chain_id)
-                        .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
+                    let config = chain_configs.ensure_chain_config(chain_id)?;
 
                     // Get the receive library address for monitoring PayloadVerified events
                     let first_packet = packets.first().ok_or_else(|| {
@@ -324,7 +322,7 @@ impl LayerZeroVerificationMonitor {
         for monitor in monitors {
             let mut pending = Vec::with_capacity(monitor.packets.len());
             for packet in &monitor.packets {
-                if !is_message_available(packet, &self.chain_configs).await? {
+                if !self.chain_configs.is_message_available(packet).await? {
                     pending.push(packet.clone());
                 } else {
                     already_verified_guids.push(packet.guid);
@@ -443,8 +441,10 @@ impl LayerZeroVerificationMonitor {
                     .flat_map(|packets| packets.iter())
                     .filter(|packet| !verified_guid_set.contains_key(&packet.guid))
                     .map(|packet| async move {
-                        let is_verified = is_message_available(packet, &self.chain_configs).await?;
-                        Ok::<_, SettlementError>((packet.clone(), is_verified))
+                        self.chain_configs
+                            .is_message_available(packet)
+                            .await
+                            .map(|is_verified| (packet.clone(), is_verified))
                     }),
             )
             .await?;
@@ -483,24 +483,4 @@ impl LayerZeroVerificationMonitor {
 
         Ok(VerificationResult { verified_packets, failed_packets })
     }
-}
-
-/// Checks if a LayerZero message is verified and available for execution.
-///
-/// This checks if the ReceiveLib reports it as verifiable (DVN threshold met)
-pub(super) async fn is_message_available(
-    packet: &LayerZeroPacketInfo,
-    chain_configs: &LZChainConfigs,
-) -> Result<bool, SettlementError> {
-    let dst_config = chain_configs
-        .get(&packet.dst_chain_id)
-        .ok_or(SettlementError::UnsupportedChain(packet.dst_chain_id))?;
-
-    let receive_lib = IReceiveUln302::new(packet.receive_lib_address, &dst_config.provider);
-
-    // Check if all required DVNs have verified.
-    Ok(receive_lib
-        .verifiable(packet.uln_config.clone(), packet.header_hash, packet.payload_hash)
-        .call()
-        .await?)
 }
