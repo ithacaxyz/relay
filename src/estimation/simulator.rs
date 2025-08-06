@@ -169,7 +169,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     let (asset_diffs, simulation_result) = orchestrator
         .simulate_execute(
             contracts.simulator,
-            &intent_to_sign,
+            intent_to_sign,
             context.account_key.keyType,
             asset_info,
         )
