@@ -9,6 +9,7 @@ use alloy::{
     providers::{DynProvider, MulticallError, Provider},
 };
 use futures_util::future::TryJoinAll;
+use metrics::gauge;
 use std::{ops::RangeInclusive, time::Duration};
 use tracing::error;
 
@@ -114,6 +115,12 @@ impl LiquidityTracker {
         let total_locked =
             self.storage.get_total_locked_at((chain_id, asset), block_number).await?;
         let min_balance = max_balance.saturating_sub(total_locked);
+        // TODO(onbjerg): more robustly we adjust these for the asset decimals before converting it
+        // to f64. we likely should also map asset addresses.
+        gauge!("rebalancer.balance.unlocked", "asset" => asset.to_string(), "chain_id" => chain_id.to_string())
+            .set(min_balance.to::<u64>() as f64);
+        gauge!("rebalancer.balance.total", "asset" => asset.to_string(), "chain_id" => chain_id.to_string())
+            .set(max_balance.to::<u64>() as f64);
         Ok(min_balance..=max_balance)
     }
 
