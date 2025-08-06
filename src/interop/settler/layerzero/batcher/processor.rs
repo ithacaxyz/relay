@@ -289,10 +289,7 @@ impl LayerZeroBatchProcessor {
         chain_id: ChainId,
         batch: &[LayerZeroBatchMessage],
     ) -> Result<RelayTransaction, SettlementError> {
-        let config = self
-            .chain_configs
-            .get(&chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
+        let config = self.chain_configs.ensure_chain_config(chain_id)?;
 
         // Build multicall with all batch operations
         let all_calls: Vec<Call3> =
@@ -325,10 +322,7 @@ impl LayerZeroBatchProcessor {
         chain_id: ChainId,
         src_eid: EndpointId,
     ) -> Result<u64, SettlementError> {
-        let config = self
-            .chain_configs
-            .get(&chain_id)
-            .ok_or_else(|| SettlementError::UnsupportedChain(chain_id))?;
+        let config = self.chain_configs.ensure_chain_config(chain_id)?;
 
         // Query the endpoint for the current inbound nonce
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
