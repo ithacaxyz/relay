@@ -268,8 +268,6 @@ impl Relay {
             .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
         let provider = chain.provider.clone();
 
-        let context_clone = context.clone();
-
         // Fetch the user's balance for the fee token
         let fee_token_balance =
             self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
@@ -298,35 +296,15 @@ impl Relay {
                         Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
                     })),
             )
-            .extend(context_clone.state_overrides);
+            .extend(context.state_overrides.clone());
 
         // If the fee token is an ERC20, we do a balance override, merging it with the client
         // supplied balance override if necessary.
         if !context.fee_token.is_zero() {
-            match context_clone
-                .balance_overrides
-                .modify_token(context.fee_token, |balance| {
-                    balance.add_balance(intent.eoa, new_fee_token_balance);
-                })
-                .into_state_overrides(&provider)
-                .await
-            {
-                Ok(token_overrides) => {
-                    overrides = overrides.extend(token_overrides);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to create ERC20 balance overrides for token {}: {}. Continuing without balance override.",
-                        context.fee_token,
-                        e
-                    );
-                    // Continue without balance override - the transaction might still work
-                    // if the account has sufficient balance naturally
-                }
-            }
             overrides = overrides.extend(
                 context
                     .balance_overrides
+                    .clone()
                     .modify_token(context.fee_token, |balance| {
                         balance.add_balance(intent.eoa, new_fee_token_balance);
                     })
@@ -404,7 +382,6 @@ impl Relay {
         // Set payment amount for simulation
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
-        // Execute simulation using the estimation framework
         let contracts = SimulationContracts {
             simulator: self.simulator(),
             orchestrator: *orchestrator.address(),
@@ -413,7 +390,7 @@ impl Relay {
 
         let simulation_response = simulate_intent(
             &provider,
-            &intent,
+            &intent_to_sign,
             context.clone(),
             fee_token_balance,
             contracts,
