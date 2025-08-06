@@ -136,7 +136,7 @@ async fn build_simulation_state_overrides<P: Provider>(
 #[instrument(skip_all)]
 pub async fn simulate_intent<P: Provider + Clone>(
     provider: &P,
-    intent: &PartialIntent,
+    intent_to_sign: &Intent,
     context: FeeEstimationContext,
     fee_token_balance: U256,
     contracts: SimulationContracts,
@@ -146,7 +146,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     let params = SimulationOverrideParams {
         simulator_address: contracts.simulator,
         orchestrator_address: contracts.orchestrator,
-        eoa: intent.eoa,
+        eoa: intent_to_sign.eoa,
         fee_token: context.fee_token,
         fee_token_balance: simulation_balance,
         account_key: &context.account_key,
@@ -162,9 +162,6 @@ pub async fn simulate_intent<P: Provider + Clone>(
     let orchestrator =
         Orchestrator::new(contracts.orchestrator, provider).with_overrides(overrides);
 
-    let mut intent_to_sign =
-        build_intent_from_partial(intent, context.fee_token, contracts.delegation_implementation);
-
     // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
     // should be enough to simulate the gas cost of paying for the intent for most (if not all)
     // ERC20s.
@@ -173,7 +170,6 @@ pub async fn simulate_intent<P: Provider + Clone>(
     // which ensures the simulation never reverts. Whether the user can actually really
     // pay for the intent execution or not is determined later and communicated to the
     // client.
-    intent_to_sign.set_legacy_payment_amount(U256::from(1));
     let (asset_diffs, simulation_result) = orchestrator
         .simulate_execute(
             contracts.simulator,
@@ -185,7 +181,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
         .map_err(|e| SimulationError::ExecutionFailed(e.to_string()))?;
 
     debug!(
-        eoa = %intent.eoa,
+        eoa = %intent_to_sign.eoa,
         gas_combined = %simulation_result.gCombined,
         "Simulation completed"
     );
@@ -220,54 +216,4 @@ fn build_intent_from_partial(
         isMultichain: false,
         ..Default::default()
     }
-}
-
-/// Simulates account initialization.
-///
-/// Note: This function uses a mock key because during account initialization,
-/// the user doesn't have a real key yet - the account is being created.
-/// This is the only legitimate use of mock keys in production.
-pub async fn simulate_init<P: Provider + Clone>(
-    provider: &P,
-    account: &crate::types::CreatableAccount,
-    _chain_id: ChainId,
-    simulator_address: Address,
-    orchestrator_address: Address,
-    delegation_implementation: Address,
-    asset_info: AssetInfoServiceHandle,
-) -> Result<(), RelayError> {
-    let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
-        .map_err(|e| SimulationError::MockKeyFailed(e.to_string()))?
-        .ok_or_else(|| {
-            SimulationError::MockKeyFailed("Failed to generate Secp256k1 admin key".to_string())
-        })?;
-
-    let intent = PartialIntent {
-        eoa: account.address,
-        execution_data: Bytes::default(),
-        nonce: U256::ZERO,
-        payer: None,
-        pre_calls: vec![],
-        fund_transfers: vec![],
-    };
-
-    let context = FeeEstimationContext {
-        fee_token: Address::ZERO,
-        account_key: mock_key.key().clone(),
-        authorization_address: Some(account.signed_authorization.address),
-        key_slot_override: true,
-        intent_kind: crate::types::IntentKind::Single,
-        state_overrides: Default::default(),
-        balance_overrides: Default::default(),
-    };
-
-    let contracts = SimulationContracts {
-        simulator: simulator_address,
-        orchestrator: orchestrator_address,
-        delegation_implementation,
-    };
-
-    simulate_intent(provider, &intent, context, U256::ZERO, contracts, asset_info).await?;
-
-    Ok(())
 }
