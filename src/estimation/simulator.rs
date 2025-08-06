@@ -147,13 +147,20 @@ pub async fn simulate_intent<P: Provider + Clone>(
         .await
         .map_err(|e| SimulationError::StateOverrideFailed(e.to_string()))?;
 
-    let _account = Account::new(intent.eoa, provider).with_overrides(overrides.clone());
     let orchestrator =
         Orchestrator::new(contracts.orchestrator, provider).with_overrides(overrides);
 
     let mut intent_to_sign =
         build_intent_from_partial(intent, context.fee_token, contracts.delegation_implementation);
 
+    // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
+    // should be enough to simulate the gas cost of paying for the intent for most (if not all)
+    // ERC20s.
+    //
+    // Additionally, we included a balance override of `balance + 1` unit of the fee token,
+    // which ensures the simulation never reverts. Whether the user can actually really
+    // pay for the intent execution or not is determined later and communicated to the
+    // client.
     intent_to_sign.set_legacy_payment_amount(U256::from(1));
     let (asset_diffs, simulation_result) = orchestrator
         .simulate_execute(

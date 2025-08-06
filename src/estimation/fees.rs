@@ -149,11 +149,11 @@ impl FeeEngine {
         BASE_TX_COST + data_gas + auth_gas
     }
 
-    /// Calculates L1 data availability fees for rollup chains.
+    /// Estimates additional fees to be paid for a intent (e.g L1 DA fees).
     ///
-    /// This includes L1 data availability fees for Optimism rollups and other L2s.
+    /// Returns fees in ETH.
     #[instrument(skip_all)]
-    pub async fn estimate_l1_fee<P: Provider>(
+    pub async fn estimate_extra_fee<P: Provider>(
         provider: &P,
         chain: &Chain,
         intent: &Intent,
@@ -184,7 +184,7 @@ impl FeeEngine {
             provider
                 .estimate_l1_fee(encoded.into())
                 .await
-                .map_err(|e| QuoteError::PriceCalculationFailed(e.to_string()))?
+                .map_err(|e| QuoteError::GasEstimationFailed(e.to_string()))?
         } else {
             U256::ZERO
         };
@@ -282,7 +282,7 @@ impl FeeEngine {
             .ok_or(QuoteError::UnavailablePrice(context.fee_token.address))?;
 
         // Step 4: Calculate extra fees (L1 data availability, etc.)
-        let extra_payment_native = Self::estimate_l1_fee(provider, chain, &intent).await?;
+        let extra_payment_native = Self::estimate_extra_fee(provider, chain, &intent).await?;
 
         // Convert extra payment to fee token units
         let extra_payment = if extra_payment_native.is_zero() {
