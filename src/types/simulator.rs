@@ -8,6 +8,7 @@ sol! {
     ///
     /// - `gCombined` is the recommendation for `gCombined` in the Intent.
     /// - `gUsed` is the amount of gas that has definitely been used by the Intent.
+    #[derive(Debug)]
     struct SimulationResult {
         uint256 gUsed;
         uint256 gCombined;

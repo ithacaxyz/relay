@@ -57,7 +57,6 @@ impl FeeEngine {
         Self { price_oracle, quote_config }
     }
 
-
     /// Fetches fee history and analyzes it to produce fee estimates.
     #[instrument(skip_all)]
     pub async fn fetch_and_analyze<P: Provider>(
@@ -121,13 +120,16 @@ impl FeeEngine {
         Ok(payment_per_gas)
     }
 
-
     /// Estimates combined gas for intent and transaction.
     ///
     /// The recommended transaction gas is calculated according to the contracts recommendation:
     /// https://github.com/ithacaxyz/account/blob/feffa280d5de487223e43a69126f5b6b3d99a10a/test/SimulateExecute.t.sol#L205-L206
     pub fn estimate_combined_gas(&self, simulation_gas: U256, intrinsic_gas: u64) -> GasEstimate {
-        GasEstimate::from_combined_gas(simulation_gas.to::<u64>(), intrinsic_gas, &self.quote_config)
+        GasEstimate::from_combined_gas(
+            simulation_gas.to::<u64>(),
+            intrinsic_gas,
+            &self.quote_config,
+        )
     }
 
     /// Calculates the intrinsic cost of a transaction.
@@ -146,8 +148,6 @@ impl FeeEngine {
 
         BASE_TX_COST + data_gas + auth_gas
     }
-
-
 
     /// Calculates L1 data availability fees for rollup chains.
     ///

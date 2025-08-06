@@ -70,14 +70,12 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
-            QuoteError::UnavailablePrice(..) 
+            QuoteError::UnavailablePrice(..)
             | QuoteError::UnavailablePriceFeed(_)
             | QuoteError::FeeHistoryUnavailable(_)
             | QuoteError::GasEstimationFailed(_)
             | QuoteError::PriceCalculationFailed(_)
-            | QuoteError::UnsupportedToken(_) => {
-                internal_rpc(err.to_string())
-            }
+            | QuoteError::UnsupportedToken(_) => internal_rpc(err.to_string()),
         }
     }
 }

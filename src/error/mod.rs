@@ -31,7 +31,6 @@ pub use simulation::SimulationError;
 mod storage;
 pub use storage::StorageError;
 
-
 use alloy::{
     primitives::{Address, Bytes, ChainId},
     providers::MulticallError,

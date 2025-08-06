@@ -4,7 +4,7 @@ use crate::types::{AssetDiffs, SimulationResult};
 use alloy::primitives::U256;
 
 /// Response from intent simulation containing all necessary data for fee calculation.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SimulationResponse {
     /// Asset differences calculated during simulation.
     pub asset_diffs: AssetDiffs,
@@ -16,11 +16,11 @@ pub struct SimulationResponse {
 
 impl SimulationResponse {
     /// Creates a new simulation response.
-    pub fn new(asset_diffs: AssetDiffs, gas_combined: U256, simulation_result: SimulationResult) -> Self {
-        Self {
-            asset_diffs,
-            gas_combined,
-            simulation_result,
-        }
+    pub fn new(
+        asset_diffs: AssetDiffs,
+        gas_combined: U256,
+        simulation_result: SimulationResult,
+    ) -> Self {
+        Self { asset_diffs, gas_combined, simulation_result }
     }
 }

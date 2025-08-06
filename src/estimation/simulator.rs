@@ -5,8 +5,8 @@ use crate::{
     error::{RelayError, SimulationError},
     estimation::types::SimulationResponse,
     types::{
-        Account, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer,
-        Orchestrator, PartialIntent, Transfer, rpc::BalanceOverrides,
+        Account, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer, Orchestrator,
+        PartialIntent, Transfer, rpc::BalanceOverrides,
     },
 };
 use alloy::{
@@ -46,8 +46,6 @@ pub struct SimulationOverrideParams<'a> {
     /// Balance overrides for ERC20 tokens.
     pub balance_overrides: BalanceOverrides,
 }
-
-
 
 /// Builds simulation state overrides for intent execution.
 ///
@@ -190,9 +188,7 @@ fn build_intent_from_partial(
         encodedFundTransfers: partial
             .fund_transfers
             .iter()
-            .map(|(token, amount)| {
-                Transfer { token: *token, amount: *amount }.abi_encode().into()
-            })
+            .map(|(token, amount)| Transfer { token: *token, amount: *amount }.abi_encode().into())
             .collect(),
         isMultichain: false,
         ..Default::default()

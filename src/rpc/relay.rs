@@ -338,7 +338,8 @@ impl Relay {
         let delegation = self.has_supported_delegation(&account).await?;
 
         // Create fee engine for fee calculation and quote creation
-        let fee_engine = FeeEngine::new(self.inner.price_oracle.clone(), self.inner.quote_config.clone());
+        let fee_engine =
+            FeeEngine::new(self.inner.price_oracle.clone(), self.inner.quote_config.clone());
 
         // Build intent from partial intent for simulation
         let mut intent_to_sign = Intent {
