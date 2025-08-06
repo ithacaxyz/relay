@@ -41,7 +41,4 @@ relay.yaml
 registry.yaml
 
 # Scratchpad
-_
-
-# Implementation plans
-plan/clean-commit.sh
+plans/
