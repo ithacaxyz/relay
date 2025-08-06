@@ -5,7 +5,7 @@ use crate::{
     error::{RelayError, SimulationError},
     simulation::state_overrides::build_simulation_state_overrides,
     types::{
-        Account, AssetDiffs, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer, 
+        Account, AssetDiffs, FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer,
         Orchestrator, PartialIntent, SimulationResult, Transfer, rpc::BalanceOverrides,
     },
 };
@@ -212,7 +212,9 @@ impl IntentSimulator {
         // is being created and doesn't have a real key yet
         let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
             .map_err(|e| SimulationError::MockKeyFailed(e.to_string()))?
-            .ok_or_else(|| SimulationError::MockKeyFailed("Failed to generate Secp256k1 admin key".to_string()))?;
+            .ok_or_else(|| {
+                SimulationError::MockKeyFailed("Failed to generate Secp256k1 admin key".to_string())
+            })?;
 
         // Build partial intent for init
         let intent = PartialIntent {

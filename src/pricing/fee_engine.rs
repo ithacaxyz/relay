@@ -124,7 +124,6 @@ impl<'a> FeeEngine<'a> {
         Ok(payment_per_gas)
     }
 
-
     // =================================
     // Gas Estimation and Intrinsic Costs
     // =================================
@@ -160,7 +159,6 @@ impl<'a> FeeEngine<'a> {
     pub fn calculate_intrinsic_for_encoded(encoded_call: &[u8], has_authorization: bool) -> u64 {
         Self::calculate_intrinsic_cost(encoded_call, has_authorization)
     }
-
 
     // =================================
     // L1 Fee Estimation for Rollups
