@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    pricing::{FeeEngine, PricingContext},
+    estimation::{FeeEngine, PricingContext},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
