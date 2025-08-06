@@ -313,7 +313,8 @@ impl Relay {
                 Err(e) => {
                     tracing::warn!(
                         "Failed to create ERC20 balance overrides for token {}: {}. Continuing without balance override.",
-                        context.fee_token, e
+                        context.fee_token,
+                        e
                     );
                     // Continue without balance override - the transaction might still work
                     // if the account has sufficient balance naturally

@@ -121,7 +121,8 @@ async fn build_simulation_state_overrides<P: Provider>(
             Err(e) => {
                 tracing::warn!(
                     "Failed to create ERC20 balance overrides for token {} in simulation: {}. Continuing without balance override.",
-                    params.fee_token, e
+                    params.fee_token,
+                    e
                 );
                 // Continue without balance override for simulation
             }
