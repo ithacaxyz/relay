@@ -30,7 +30,7 @@ use alloy::{
 use async_trait::async_trait;
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
@@ -76,6 +76,8 @@ pub struct LayerZeroSettler {
     chain_configs: LZChainConfigs,
     /// Handle to the batch pool for processing settlements.
     settlement_pool: LayerZeroPoolHandle,
+    /// DVN verification monitor.
+    verification_monitor: Arc<LayerZeroVerificationMonitor>,
 }
 
 impl LayerZeroSettler {
@@ -95,6 +97,10 @@ impl LayerZeroSettler {
         let chain_configs =
             LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
 
+        // Create LayerZero verification monitor for shared WebSocket connections
+        let verification_monitor =
+            Arc::new(LayerZeroVerificationMonitor::new(chain_configs.clone()));
+
         // Create batch processor with pool
         let settlement_pool =
             LayerZeroBatchProcessor::run(chain_configs.clone(), tx_service_handles).await?;
@@ -106,6 +112,7 @@ impl LayerZeroSettler {
             storage,
             chain_configs,
             settlement_pool,
+            verification_monitor,
         })
     }
 
@@ -355,9 +362,7 @@ impl Settler for LayerZeroSettler {
     ) -> Result<VerificationResult, SettlementError> {
         // Extract packet infos from bundle
         let packet_infos = self.extract_packet_infos(bundle).await?;
-        LayerZeroVerificationMonitor::new(self.chain_configs.clone())
-            .wait_for_verifications(packet_infos, timeout.as_secs())
-            .await
+        self.verification_monitor.wait_for_verifications(packet_infos, timeout.as_secs()).await
     }
 
     /// Builds transactions to execute verified LayerZero messages on their destination chains.
