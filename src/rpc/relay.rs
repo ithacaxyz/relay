@@ -287,10 +287,9 @@ impl Relay {
             self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
 
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
-        // simulation (preserving original business logic)
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Build comprehensive state overrides (matching original logic exactly)
+        // Build comprehensive state overrides
         let mut overrides = StateOverridesBuilder::with_capacity(3)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
@@ -330,7 +329,7 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        // Create components with the same overrides (matching original approach)
+        // Create components with the same overrides
         let orchestrator = {
             let orchestrator_addr = account.get_orchestrator().await?;
             if !self.is_supported_orchestrator(&orchestrator_addr) {
@@ -344,7 +343,7 @@ impl Relay {
         // Create fee engine for fee calculation and quote creation
         let fee_engine = FeeEngine::new(&self.inner.price_oracle, &self.inner.quote_config);
 
-        // Build intent from partial intent for simulation (matching original flow)
+        // Build intent from partial intent for simulation
         let mut intent_to_sign = Intent {
             eoa: intent.eoa,
             executionData: intent.execution_data.clone(),
