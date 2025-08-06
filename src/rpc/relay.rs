@@ -362,7 +362,7 @@ impl Relay {
                     Transfer { token: *token, amount: *amount }.abi_encode().into()
                 })
                 .collect(),
-            isMultichain: false,
+            isMultichain: !context.intent_kind.is_single(),
             ..Default::default()
         };
 
