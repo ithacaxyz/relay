@@ -424,17 +424,7 @@ impl Relay {
         let fee_token_deficit =
             quote.intent.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
 
-        // Reject quotes when user has insufficient balance (allow small margin for gas price
-        // fluctuations)
-        if fee_token_deficit > U256::ZERO {
-            return Err(RelayError::Quote(QuoteError::InsufficientBalance {
-                required: quote.intent.totalPaymentMaxAmount,
-                available: fee_token_balance,
-                deficit: fee_token_deficit,
-            }));
-        }
-
-        // Update quote with fee token deficit (should be zero after validation)
+        // Update quote with fee token deficit (will be > 0 if user has insufficient balance)
         let mut final_quote = quote;
         final_quote.fee_token_deficit = fee_token_deficit;
 
