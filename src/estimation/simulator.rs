@@ -118,6 +118,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     fee_token_balance: U256,
     simulator_address: Address,
     orchestrator_address: Address,
+    delegation_implementation: Address,
     asset_info: AssetInfoServiceHandle,
 ) -> Result<SimulationResponse, RelayError> {
     let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
@@ -143,7 +144,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
     let mut intent_to_sign = build_intent_from_partial(
         intent,
         context.fee_token,
-        context.authorization_address.unwrap_or_default(),
+        delegation_implementation,
     );
 
     intent_to_sign.set_legacy_payment_amount(U256::from(1));
@@ -170,7 +171,7 @@ pub async fn simulate_intent<P: Provider + Clone>(
 fn build_intent_from_partial(
     partial: &PartialIntent,
     fee_token: Address,
-    delegation: Address,
+    delegation_implementation: Address,
 ) -> Intent {
     Intent {
         eoa: partial.eoa,
@@ -179,7 +180,7 @@ fn build_intent_from_partial(
         payer: partial.payer.unwrap_or_default(),
         paymentToken: fee_token,
         paymentRecipient: Address::ZERO, // Will be set later
-        supportedAccountImplementation: delegation,
+        supportedAccountImplementation: delegation_implementation,
         encodedPreCalls: partial
             .pre_calls
             .iter()
@@ -206,6 +207,7 @@ pub async fn simulate_init<P: Provider + Clone>(
     _chain_id: ChainId,
     simulator_address: Address,
     orchestrator_address: Address,
+    delegation_implementation: Address,
     asset_info: AssetInfoServiceHandle,
 ) -> Result<(), RelayError> {
     let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
@@ -240,6 +242,7 @@ pub async fn simulate_init<P: Provider + Clone>(
         U256::ZERO,
         simulator_address,
         orchestrator_address,
+        delegation_implementation,
         asset_info,
     )
     .await?;

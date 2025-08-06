@@ -377,6 +377,7 @@ impl Relay {
             fee_token_balance,
             self.simulator(),
             orchestrator_addr,
+            self.delegation_implementation(),
             self.inner.asset_info.clone(),
         )
         .await?;
