@@ -4,17 +4,13 @@ use crate::{
     asset::AssetInfoServiceHandle,
     error::{RelayError, SimulationError},
     estimation::types::SimulationResponse,
-    types::{
-        FeeEstimationContext, Intent, Key, KeyType, KeyWith712Signer, Orchestrator, PartialIntent,
-        Transfer, rpc::BalanceOverrides,
-    },
+    types::{FeeEstimationContext, Intent, Key, Orchestrator, rpc::BalanceOverrides},
 };
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{Address, Bytes, ChainId, U256},
+    primitives::{Address, Bytes, U256},
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverride, StateOverridesBuilder},
-    sol_types::SolValue,
 };
 use tracing::{debug, instrument};
 
@@ -187,33 +183,4 @@ pub async fn simulate_intent<P: Provider + Clone>(
     );
 
     Ok(SimulationResponse::new(asset_diffs, simulation_result.gCombined, simulation_result))
-}
-
-/// Builds an Intent from a PartialIntent.
-fn build_intent_from_partial(
-    partial: &PartialIntent,
-    fee_token: Address,
-    delegation_implementation: Address,
-) -> Intent {
-    Intent {
-        eoa: partial.eoa,
-        executionData: partial.execution_data.clone(),
-        nonce: partial.nonce,
-        payer: partial.payer.unwrap_or_default(),
-        paymentToken: fee_token,
-        paymentRecipient: Address::ZERO, // Will be set later
-        supportedAccountImplementation: delegation_implementation,
-        encodedPreCalls: partial
-            .pre_calls
-            .iter()
-            .map(|pre_call| pre_call.abi_encode().into())
-            .collect(),
-        encodedFundTransfers: partial
-            .fund_transfers
-            .iter()
-            .map(|(token, amount)| Transfer { token: *token, amount: *amount }.abi_encode().into())
-            .collect(),
-        isMultichain: false,
-        ..Default::default()
-    }
 }
