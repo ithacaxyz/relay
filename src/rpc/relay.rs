@@ -13,7 +13,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
-    estimation::{FeeEngine, PricingContext, simulate_intent},
+    estimation::{FeeEngine, PricingContext, SimulationContracts, simulate_intent},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -370,14 +370,18 @@ impl Relay {
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
         // Execute simulation using the estimation framework
+        let contracts = SimulationContracts {
+            simulator: self.simulator(),
+            orchestrator: orchestrator_addr,
+            delegation_implementation: self.delegation_implementation(),
+        };
+
         let simulation_response = simulate_intent(
             &provider,
             &intent,
             context.clone(),
             fee_token_balance,
-            self.simulator(),
-            orchestrator_addr,
-            self.delegation_implementation(),
+            contracts,
             self.inner.asset_info.clone(),
         )
         .await?;

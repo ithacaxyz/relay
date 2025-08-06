@@ -22,6 +22,17 @@ use tracing::{debug, instrument};
 /// Set to U256::MAX to meet contract requirements for proper simulation.
 const SIMULATION_CONTRACT_BALANCE: U256 = U256::MAX;
 
+/// Contract addresses needed for simulation.
+#[derive(Debug, Clone, Copy)]
+pub struct SimulationContracts {
+    /// The simulator contract address.
+    pub simulator: Address,
+    /// The orchestrator contract address.
+    pub orchestrator: Address,
+    /// The delegation implementation contract address.
+    pub delegation_implementation: Address,
+}
+
 /// Parameters for building simulation state overrides.
 #[derive(Debug)]
 pub struct SimulationOverrideParams<'a> {
@@ -116,15 +127,13 @@ pub async fn simulate_intent<P: Provider + Clone>(
     intent: &PartialIntent,
     context: FeeEstimationContext,
     fee_token_balance: U256,
-    simulator_address: Address,
-    orchestrator_address: Address,
-    delegation_implementation: Address,
+    contracts: SimulationContracts,
     asset_info: AssetInfoServiceHandle,
 ) -> Result<SimulationResponse, RelayError> {
     let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
     let params = SimulationOverrideParams {
-        simulator_address,
-        orchestrator_address,
+        simulator_address: contracts.simulator,
+        orchestrator_address: contracts.orchestrator,
         eoa: intent.eoa,
         fee_token: context.fee_token,
         fee_token_balance: simulation_balance,
@@ -139,18 +148,16 @@ pub async fn simulate_intent<P: Provider + Clone>(
         .map_err(|e| SimulationError::StateOverrideFailed(e.to_string()))?;
 
     let _account = Account::new(intent.eoa, provider).with_overrides(overrides.clone());
-    let orchestrator = Orchestrator::new(orchestrator_address, provider).with_overrides(overrides);
+    let orchestrator =
+        Orchestrator::new(contracts.orchestrator, provider).with_overrides(overrides);
 
-    let mut intent_to_sign = build_intent_from_partial(
-        intent,
-        context.fee_token,
-        delegation_implementation,
-    );
+    let mut intent_to_sign =
+        build_intent_from_partial(intent, context.fee_token, contracts.delegation_implementation);
 
     intent_to_sign.set_legacy_payment_amount(U256::from(1));
     let (asset_diffs, simulation_result) = orchestrator
         .simulate_execute(
-            simulator_address,
+            contracts.simulator,
             &intent_to_sign,
             context.account_key.keyType,
             asset_info,
@@ -235,17 +242,13 @@ pub async fn simulate_init<P: Provider + Clone>(
         balance_overrides: Default::default(),
     };
 
-    simulate_intent(
-        provider,
-        &intent,
-        context,
-        U256::ZERO,
-        simulator_address,
-        orchestrator_address,
+    let contracts = SimulationContracts {
+        simulator: simulator_address,
+        orchestrator: orchestrator_address,
         delegation_implementation,
-        asset_info,
-    )
-    .await?;
+    };
+
+    simulate_intent(provider, &intent, context, U256::ZERO, contracts, asset_info).await?;
 
     Ok(())
 }
