@@ -1,6 +1,5 @@
 use super::{
-    Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo,
-    OrchestratorContract,
+    Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo, OrchestratorContract,
 };
 use crate::{
     error::{IntentError, MerkleError},
@@ -8,7 +7,10 @@ use crate::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
         Orchestrator, Signature,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission, SpendPermission},
+        rpc::{
+            AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
+            SpendPermission,
+        },
     },
 };
 use alloy::{
@@ -627,7 +629,7 @@ pub struct FundingIntentContext {
     /// The chain where funds will be escrowed
     pub chain_id: ChainId,
     /// The asset to be escrowed (native or ERC20)
-    pub asset: Asset,
+    pub asset: AddressOrNative,
     /// The amount to escrow
     pub amount: U256,
     /// The fee token to use for gas payment
