@@ -315,15 +315,26 @@ impl Relay {
         // If the fee token is an ERC20, we do a balance override, merging it with the client
         // supplied balance override if necessary.
         if !context.fee_token.is_zero() {
-            overrides = overrides.extend(
-                context_clone
-                    .balance_overrides
-                    .modify_token(context.fee_token, |balance| {
-                        balance.add_balance(intent.eoa, new_fee_token_balance);
-                    })
-                    .into_state_overrides(&provider)
-                    .await?,
-            );
+            match context_clone
+                .balance_overrides
+                .modify_token(context.fee_token, |balance| {
+                    balance.add_balance(intent.eoa, new_fee_token_balance);
+                })
+                .into_state_overrides(&provider)
+                .await
+            {
+                Ok(token_overrides) => {
+                    overrides = overrides.extend(token_overrides);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to create ERC20 balance overrides for token {}: {}. Continuing without balance override.",
+                        context.fee_token, e
+                    );
+                    // Continue without balance override - the transaction might still work
+                    // if the account has sufficient balance naturally
+                }
+            }
         }
 
         let overrides = overrides.build();

@@ -107,14 +107,25 @@ async fn build_simulation_state_overrides<P: Provider>(
 
     // Add ERC20 balance overrides if needed
     if !params.fee_token.is_zero() {
-        let token_overrides = params
+        match params
             .balance_overrides
             .modify_token(params.fee_token, |balance| {
                 balance.add_balance(params.eoa, params.fee_token_balance);
             })
             .into_state_overrides(provider)
-            .await?;
-        builder = builder.extend(token_overrides);
+            .await
+        {
+            Ok(token_overrides) => {
+                builder = builder.extend(token_overrides);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create ERC20 balance overrides for token {} in simulation: {}. Continuing without balance override.",
+                    params.fee_token, e
+                );
+                // Continue without balance override for simulation
+            }
+        }
     }
 
     Ok(builder.build())
