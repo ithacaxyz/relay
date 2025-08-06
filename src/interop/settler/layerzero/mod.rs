@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
 use std::time::Duration;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
 pub mod contracts;
@@ -298,11 +298,26 @@ impl Settler for LayerZeroSettler {
             .value(native_lz_fee)
             .input(calldata.clone().into());
 
-        let gas_limit = current_config
-            .provider
-            .estimate_gas(tx_request)
-            .account_override(from, AccountOverride::default().with_balance(U256::MAX))
-            .await?;
+        // todo(joshie): we retry since the node might not be in sync with flashblocks. once it's
+        // fixed, this should be removed.
+        let mut attempt = 0;
+        let gas_limit = loop {
+            let gas_limit = current_config
+                .provider
+                .estimate_gas(tx_request.clone())
+                .account_override(from, AccountOverride::default().with_balance(U256::MAX))
+                .await;
+
+            if gas_limit.is_ok() {
+                break gas_limit?;
+            } else if attempt < 4 {
+                attempt += 1;
+                debug!(error = ?gas_limit, "gas estimation failed, retrying... (attempt {attempt}/4)");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            } else {
+                gas_limit?;
+            }
+        };
 
         // Add 20% buffer to the gas estimate
         let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
