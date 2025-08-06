@@ -775,17 +775,11 @@ impl Relay {
     }
 
     /// Simulates the account initialization call.
-    ///
-    /// Note: Uses a mock key because during account initialization, the user doesn't
-    /// have a real key yet - the account is being created. This is a legitimate
-    /// use of mock keys for initialization simulation only.
     async fn simulate_init(
         &self,
         account: &CreatableAccount,
         chain_id: ChainId,
     ) -> Result<(), RelayError> {
-        // Generate mock key for account initialization simulation
-        // This is required because the account is being created and doesn't have a real key yet
         let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
