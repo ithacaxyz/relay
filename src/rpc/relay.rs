@@ -2218,7 +2218,11 @@ impl Relay {
             salt,
             depositor: context.eoa,
             recipient: self.inner.contracts.funder.address,
-            token: context.asset.address(),
+            token: if context.asset.is_native() {
+                Address::ZERO
+            } else {
+                context.asset.address()
+            },
             settler: self
                 .inner
                 .chains
