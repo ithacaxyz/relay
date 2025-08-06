@@ -17,21 +17,9 @@ pub enum PricingError {
     #[error("Price calculation failed: {0}")]
     PriceCalculationFailed(String),
 
-    /// Quote generation failed.
-    #[error("Quote generation failed: {0}")]
-    QuoteGenerationFailed(String),
-
-    /// Price oracle is unavailable.
-    #[error("Price oracle unavailable for token: {0}")]
-    PriceOracleUnavailable(String),
-
-    /// Invalid pricing context provided.
-    #[error("Invalid pricing context: {0}")]
-    InvalidContext(String),
-
     /// Fee token not supported for pricing.
     #[error("Unsupported fee token: {0}")]
-    UnsupportedFeeToken(String),
+    UnsupportedFeeToken(Address),
 
     /// Token not supported by price oracle.
     #[error("Unsupported token: {0}")]

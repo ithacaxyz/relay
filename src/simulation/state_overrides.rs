@@ -11,10 +11,9 @@ use alloy::{
     rpc::types::state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
 
-/// Large but bounded balance for simulation contracts (10 million ETH).
-/// This prevents unlimited balance exploits while providing enough funds for legitimate
-/// simulations.
-const SIMULATION_CONTRACT_BALANCE: U256 = U256::from_limbs([0, 0, 2_116_545_850_052_128_256, 0]);
+/// Maximum balance for simulation contracts as required by contract.
+/// Set to U256::MAX to meet contract requirements for proper simulation.
+const SIMULATION_CONTRACT_BALANCE: U256 = U256::MAX;
 
 /// Parameters for building simulation state overrides.
 #[derive(Debug)]

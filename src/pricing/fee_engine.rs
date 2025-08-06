@@ -114,7 +114,7 @@ impl<'a> FeeEngine<'a> {
 
         // Prevent division by zero
         if eth_price_f64 == 0.0 {
-            return Err(PricingError::PriceOracleUnavailable("ETH price is zero".to_string()));
+            return Err(PricingError::PriceCalculationFailed("ETH price is zero".to_string()));
         }
 
         let payment_per_gas = (fee_estimate.max_fee_per_gas as f64
@@ -124,15 +124,6 @@ impl<'a> FeeEngine<'a> {
         Ok(payment_per_gas)
     }
 
-    /// Extracts the priority fee from an EIP-1559 estimate.
-    pub fn get_priority_fee(estimate: &Eip1559Estimation) -> U256 {
-        U256::from(estimate.max_priority_fee_per_gas)
-    }
-
-    /// Extracts the max fee per gas from an EIP-1559 estimate.
-    pub fn get_max_fee(estimate: &Eip1559Estimation) -> U256 {
-        U256::from(estimate.max_fee_per_gas)
-    }
 
     // =================================
     // Gas Estimation and Intrinsic Costs
@@ -148,20 +139,16 @@ impl<'a> FeeEngine<'a> {
 
     /// Calculates the intrinsic cost of a transaction.
     ///
-    /// This function assumes Prague rules and includes:
+    /// This function uses overcharge model and includes:
     /// - Base transaction cost (21000 gas)
-    /// - Data cost (4 gas per zero byte, 16 gas per non-zero byte per Istanbul rules)
+    /// - Data cost (16 gas per byte regardless of whether it's zero or non-zero)
     /// - Optional EIP-7702 authorization cost
     pub fn calculate_intrinsic_cost(call_data: &[u8], has_authorization: bool) -> u64 {
-        let zero_data_len = call_data.iter().filter(|v| **v == 0).count() as u64;
-        let non_zero_data_len = call_data.len() as u64 - zero_data_len;
-
-        // Gas costs per Istanbul rules
-        const NON_ZERO_DATA_COST: u64 = 16;
-        const ZERO_DATA_COST: u64 = 4;
+        // Gas costs - overcharge model (16 gas per byte regardless of content)
+        const DATA_COST_PER_BYTE: u64 = 16;
         const BASE_TX_COST: u64 = 21000;
 
-        let data_gas = zero_data_len * ZERO_DATA_COST + non_zero_data_len * NON_ZERO_DATA_COST;
+        let data_gas = call_data.len() as u64 * DATA_COST_PER_BYTE;
         let auth_gas = if has_authorization { PER_EMPTY_ACCOUNT_COST } else { 0 };
 
         BASE_TX_COST + data_gas + auth_gas
@@ -174,15 +161,6 @@ impl<'a> FeeEngine<'a> {
         Self::calculate_intrinsic_cost(encoded_call, has_authorization)
     }
 
-    /// Extracts the intent gas limit from a gas estimate.
-    pub fn get_intent_gas_limit(estimate: &GasEstimate) -> U256 {
-        U256::from(estimate.intent)
-    }
-
-    /// Extracts the transaction gas limit from a gas estimate.
-    pub fn get_tx_gas_limit(estimate: &GasEstimate) -> U256 {
-        U256::from(estimate.tx)
-    }
 
     // =================================
     // L1 Fee Estimation for Rollups

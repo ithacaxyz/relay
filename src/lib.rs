@@ -27,5 +27,4 @@ pub mod storage;
 pub mod transactions;
 pub mod transport;
 pub mod types;
-pub mod utils;
 pub mod version;
