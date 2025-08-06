@@ -12,7 +12,7 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     constants::ESCROW_SALT_LENGTH,
-    error::{IntentError, SimulationError, StorageError},
+    error::{IntentError, StorageError},
     pricing::{FeeEngine, PricingContext},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
@@ -341,7 +341,7 @@ impl Relay {
         let delegation = self.has_supported_delegation(&account).await?;
 
         // Create fee engine for fee calculation and quote creation
-        let fee_engine = FeeEngine::new(&self.inner.price_oracle, &self.inner.quote_config);
+        let fee_engine = FeeEngine::new(self.inner.price_oracle.clone(), self.inner.quote_config.clone());
 
         // Build intent from partial intent for simulation
         let mut intent_to_sign = Intent {
@@ -380,7 +380,7 @@ impl Relay {
                 self.inner.asset_info.clone(),
             )
             .await
-            .map_err(|e| RelayError::Simulation(SimulationError::ExecutionFailed(e.to_string())))?;
+            .map_err(|e| RelayError::ExecutionFailed(e.to_string()))?;
 
         // Build final intent for pricing with gas estimate
         let intent_to_sign = self.build_intent_to_sign(

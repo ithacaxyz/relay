@@ -28,11 +28,6 @@ pub use quote::QuoteError;
 mod storage;
 pub use storage::StorageError;
 
-mod simulation;
-pub use simulation::SimulationError;
-
-mod pricing;
-pub use pricing::PricingError;
 
 use alloy::{
     primitives::{Address, Bytes, ChainId},
@@ -62,12 +57,6 @@ pub enum RelayError {
     /// Errors related to storage.
     #[error(transparent)]
     Storage(#[from] StorageError),
-    /// Errors related to simulation.
-    #[error(transparent)]
-    Simulation(#[from] SimulationError),
-    /// Errors related to pricing.
-    #[error(transparent)]
-    Pricing(#[from] PricingError),
     /// The chain is not supported.
     #[error("unsupported chain {0}")]
     UnsupportedChain(ChainId),
@@ -107,6 +96,24 @@ pub enum RelayError {
     /// Settlement-related errors.
     #[error(transparent)]
     Settlement(#[from] crate::interop::SettlementError),
+    /// State override creation failed.
+    #[error("State override creation failed: {0}")]
+    StateOverrideFailed(String),
+    /// Mock key generation failed.
+    #[error("Mock key generation failed: {0}")]
+    MockKeyFailed(String),
+    /// Simulation execution failed.
+    #[error("Simulation execution failed: {0}")]
+    ExecutionFailed(String),
+    /// Asset diff calculation failed.
+    #[error("Asset diff calculation failed: {0}")]
+    AssetDiffFailed(String),
+    /// Invalid simulation context provided.
+    #[error("Invalid simulation context: {0}")]
+    InvalidContext(String),
+    /// Orchestrator interaction failed.
+    #[error("Orchestrator interaction failed: {0}")]
+    OrchestratorFailed(String),
 }
 
 impl RelayError {
@@ -153,8 +160,6 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::Intent(inner) => (*inner).into(),
             RelayError::Keys(inner) => inner.into(),
             RelayError::Storage(inner) => inner.into(),
-            RelayError::Simulation(inner) => internal_rpc(inner.to_string()),
-            RelayError::Pricing(inner) => internal_rpc(inner.to_string()),
             RelayError::UnsupportedChain(_)
             | RelayError::AbiError(_)
             | RelayError::RpcError(_)
@@ -163,7 +168,13 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
-            | RelayError::Settlement(_) => internal_rpc(err.to_string()),
+            | RelayError::Settlement(_)
+            | RelayError::StateOverrideFailed(_)
+            | RelayError::MockKeyFailed(_)
+            | RelayError::ExecutionFailed(_)
+            | RelayError::AssetDiffFailed(_)
+            | RelayError::InvalidContext(_)
+            | RelayError::OrchestratorFailed(_) => internal_rpc(err.to_string()),
         }
     }
 }

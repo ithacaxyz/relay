@@ -45,6 +45,18 @@ pub enum QuoteError {
     /// Multichain functionality is disabled.
     #[error("multichain functionality is disabled: interop service not configured")]
     MultichainDisabled,
+    /// Fee history is unavailable or invalid.
+    #[error("Fee history unavailable: {0}")]
+    FeeHistoryUnavailable(String),
+    /// Gas estimation failed.
+    #[error("Gas estimation failed: {0}")]
+    GasEstimationFailed(String),
+    /// Price calculation failed.
+    #[error("Price calculation failed: {0}")]
+    PriceCalculationFailed(String),
+    /// Token not supported by price oracle.
+    #[error("Unsupported token: {0}")]
+    UnsupportedToken(Address),
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -58,7 +70,12 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
-            QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
+            QuoteError::UnavailablePrice(..) 
+            | QuoteError::UnavailablePriceFeed(_)
+            | QuoteError::FeeHistoryUnavailable(_)
+            | QuoteError::GasEstimationFailed(_)
+            | QuoteError::PriceCalculationFailed(_)
+            | QuoteError::UnsupportedToken(_) => {
                 internal_rpc(err.to_string())
             }
         }

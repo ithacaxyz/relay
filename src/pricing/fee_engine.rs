@@ -10,7 +10,7 @@
 use crate::{
     chains::Chain,
     config::QuoteConfig,
-    error::PricingError,
+    error::QuoteError,
     price::PriceOracle,
     provider::ProviderExt,
     types::{GasEstimate, Intent, Quote, Token},
@@ -46,27 +46,24 @@ pub struct PricingContext {
 /// intrinsic gas costs, L1 data availability fees, and price conversions between
 /// native ETH and ERC20 fee tokens.
 #[derive(Debug)]
-pub struct FeeEngine<'a> {
-    price_oracle: &'a PriceOracle,
-    quote_config: &'a QuoteConfig,
+pub struct FeeEngine {
+    price_oracle: PriceOracle,
+    quote_config: QuoteConfig,
 }
 
-impl<'a> FeeEngine<'a> {
+impl FeeEngine {
     /// Creates a new fee engine with the given price oracle and quote configuration.
-    pub fn new(price_oracle: &'a PriceOracle, quote_config: &'a QuoteConfig) -> Self {
+    pub fn new(price_oracle: PriceOracle, quote_config: QuoteConfig) -> Self {
         Self { price_oracle, quote_config }
     }
 
-    // =================================
-    // EIP-1559 Fee Estimation
-    // =================================
 
     /// Fetches fee history and analyzes it to produce fee estimates.
     #[instrument(skip_all)]
     pub async fn fetch_and_analyze<P: Provider>(
         provider: &P,
         priority_fee_percentile: f64,
-    ) -> Result<Eip1559Estimation, PricingError> {
+    ) -> Result<Eip1559Estimation, QuoteError> {
         use alloy::providers::utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS;
 
         let fee_history = provider
@@ -76,13 +73,13 @@ impl<'a> FeeEngine<'a> {
                 &[priority_fee_percentile],
             )
             .await
-            .map_err(|e| PricingError::FeeHistoryUnavailable(e.to_string()))?;
+            .map_err(|e| QuoteError::FeeHistoryUnavailable(e.to_string()))?;
 
         Self::estimate_fees(&fee_history)
     }
 
     /// Estimates fees from fee history data.
-    pub fn estimate_fees(fee_history: &FeeHistory) -> Result<Eip1559Estimation, PricingError> {
+    pub fn estimate_fees(fee_history: &FeeHistory) -> Result<Eip1559Estimation, QuoteError> {
         use alloy::providers::utils::Eip1559Estimator;
 
         let estimator = Eip1559Estimator::default();
@@ -100,13 +97,13 @@ impl<'a> FeeEngine<'a> {
         &self,
         fee_estimate: &Eip1559Estimation,
         token: &Token,
-    ) -> Result<f64, PricingError> {
+    ) -> Result<f64, QuoteError> {
         // Get ETH price in token units
         let eth_price = self
             .price_oracle
             .eth_price(token.kind)
             .await
-            .ok_or(PricingError::UnavailablePrice(token.address))?;
+            .ok_or(QuoteError::UnavailablePrice(token.address))?;
 
         // Convert from wei to token units
         // Formula: (gas_price_wei * 10^token_decimals) / eth_price_in_token
@@ -114,7 +111,7 @@ impl<'a> FeeEngine<'a> {
 
         // Prevent division by zero
         if eth_price_f64 == 0.0 {
-            return Err(PricingError::PriceCalculationFailed("ETH price is zero".to_string()));
+            return Err(QuoteError::PriceCalculationFailed("ETH price is zero".to_string()));
         }
 
         let payment_per_gas = (fee_estimate.max_fee_per_gas as f64
@@ -124,16 +121,13 @@ impl<'a> FeeEngine<'a> {
         Ok(payment_per_gas)
     }
 
-    // =================================
-    // Gas Estimation and Intrinsic Costs
-    // =================================
 
     /// Estimates combined gas for intent and transaction.
     ///
     /// The recommended transaction gas is calculated according to the contracts recommendation:
     /// https://github.com/ithacaxyz/account/blob/feffa280d5de487223e43a69126f5b6b3d99a10a/test/SimulateExecute.t.sol#L205-L206
     pub fn estimate_combined_gas(&self, simulation_gas: U256, intrinsic_gas: u64) -> GasEstimate {
-        GasEstimate::from_combined_gas(simulation_gas.to::<u64>(), intrinsic_gas, self.quote_config)
+        GasEstimate::from_combined_gas(simulation_gas.to::<u64>(), intrinsic_gas, &self.quote_config)
     }
 
     /// Calculates the intrinsic cost of a transaction.
@@ -153,16 +147,7 @@ impl<'a> FeeEngine<'a> {
         BASE_TX_COST + data_gas + auth_gas
     }
 
-    /// Calculates the intrinsic cost for an encoded call.
-    ///
-    /// Convenience method that takes encoded call data directly.
-    pub fn calculate_intrinsic_for_encoded(encoded_call: &[u8], has_authorization: bool) -> u64 {
-        Self::calculate_intrinsic_cost(encoded_call, has_authorization)
-    }
 
-    // =================================
-    // L1 Fee Estimation for Rollups
-    // =================================
 
     /// Calculates L1 data availability fees for rollup chains.
     ///
@@ -172,7 +157,7 @@ impl<'a> FeeEngine<'a> {
         provider: &P,
         chain: &Chain,
         intent: &Intent,
-    ) -> Result<U256, PricingError> {
+    ) -> Result<U256, QuoteError> {
         // Include the L1 DA fees if we're on an OP rollup
         let fee = if chain.is_optimism {
             // Create a dummy transaction with all fields set to max values
@@ -199,7 +184,7 @@ impl<'a> FeeEngine<'a> {
             provider
                 .estimate_l1_fee(encoded.into())
                 .await
-                .map_err(|e| PricingError::PriceCalculationFailed(e.to_string()))?
+                .map_err(|e| QuoteError::PriceCalculationFailed(e.to_string()))?
         } else {
             U256::ZERO
         };
@@ -218,12 +203,12 @@ impl<'a> FeeEngine<'a> {
         &self,
         native_amount: U256,
         token: &Token,
-    ) -> Result<U256, PricingError> {
+    ) -> Result<U256, QuoteError> {
         let eth_price = self
             .price_oracle
             .eth_price(token.kind)
             .await
-            .ok_or(PricingError::UnavailablePrice(token.address))?;
+            .ok_or(QuoteError::UnavailablePrice(token.address))?;
 
         // Convert from native to token units
         let token_amount =
@@ -239,12 +224,12 @@ impl<'a> FeeEngine<'a> {
         &self,
         token_amount: U256,
         token: &Token,
-    ) -> Result<U256, PricingError> {
+    ) -> Result<U256, QuoteError> {
         let eth_price = self
             .price_oracle
             .eth_price(token.kind)
             .await
-            .ok_or(PricingError::UnavailablePrice(token.address))?;
+            .ok_or(QuoteError::UnavailablePrice(token.address))?;
 
         // Convert from token to native units
         let native_amount =
@@ -277,7 +262,7 @@ impl<'a> FeeEngine<'a> {
         context: PricingContext,
         orchestrator: Address,
         authorization_address: Option<Address>,
-    ) -> Result<Quote, PricingError> {
+    ) -> Result<Quote, QuoteError> {
         // Step 1: Fetch and analyze fee history
         let fee_estimate =
             Self::fetch_and_analyze(provider, context.priority_fee_percentile).await?;
@@ -294,7 +279,7 @@ impl<'a> FeeEngine<'a> {
             .price_oracle
             .eth_price(context.fee_token.kind)
             .await
-            .ok_or(PricingError::UnavailablePrice(context.fee_token.address))?;
+            .ok_or(QuoteError::UnavailablePrice(context.fee_token.address))?;
 
         // Step 4: Calculate extra fees (L1 data availability, etc.)
         let extra_payment_native = Self::estimate_l1_fee(provider, chain, &intent).await?;
@@ -337,7 +322,7 @@ impl<'a> FeeEngine<'a> {
         eth_price: U256,
         orchestrator: Address,
         authorization_address: Option<Address>,
-    ) -> Result<Quote, PricingError> {
+    ) -> Result<Quote, QuoteError> {
         // Calculate total payment
         let gas_payment = U256::from((payment_per_gas * gas_estimate.tx as f64).ceil() as u128);
         let total_payment = gas_payment.saturating_add(extra_payment);

@@ -1,6 +1,5 @@
 //! Simulation module for intent simulation and state management.
 
 pub mod simulator;
-pub mod state_overrides;
 
-pub use simulator::IntentSimulator;
+pub use simulator::{simulate_intent, simulate_init};
