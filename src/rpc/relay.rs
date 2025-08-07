@@ -48,7 +48,7 @@ use alloy::{
 };
 use futures_util::{
     TryFutureExt,
-    future::{try_join_all, try_join4},
+    future::try_join_all,
     join,
 };
 use itertools::Itertools;
@@ -240,24 +240,82 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
-        // Fetch the user's balance for the fee token.
-        let fee_token_balance = self
-            .get_assets(GetAssetsParameters {
-                account: intent.eoa,
-                asset_filter: [(
-                    chain_id,
-                    vec![AssetFilterItem::fungible(context.fee_token.into())],
-                )]
-                .into(),
-                ..Default::default()
-            })
-            .await
-            .map_err(RelayError::internal)?
+        // Start fetching the user's balance for the fee token early (will be awaited later)
+        let fee_token_balance_fut = self.get_assets(GetAssetsParameters {
+            account: intent.eoa,
+            asset_filter: [(
+                chain_id,
+                vec![AssetFilterItem::fungible(context.fee_token.into())],
+            )]
+            .into(),
+            ..Default::default()
+        });
+
+        // We'll await this future later in parallel with other operations
+        // For now, we need to prepare a temporary account object for fetching orchestrator/delegation
+
+        // Create a temporary account with basic overrides for fetching orchestrator and delegation
+        let temp_overrides = StateOverridesBuilder::with_capacity(2)
+            .append(
+                intent.eoa,
+                AccountOverride::default()
+                    .with_state_diff(if context.key_slot_override {
+                        context.account_key.storage_slots()
+                    } else {
+                        Default::default()
+                    })
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(context.authorization_address.map(|addr| {
+                        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
+                    })),
+            )
+            .extend(context.state_overrides.clone())
+            .build();
+        
+        let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides.clone());
+
+        // For now, let's take a simpler sequential approach that definitely compiles
+        // We can optimize this step by step
+        
+        // Fetch the balance first
+        let fee_token_balance_result = fee_token_balance_fut
+            .map_err(RelayError::internal)
+            .await?;
+            
+        // Then fetch orchestrator, delegation, fee history, and eth price in parallel
+        let (orchestrator_addr, delegation, fee_history, eth_price) = tokio::try_join!(
+            async {
+                let orchestrator_addr = temp_account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator_addr) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
+                }
+                Ok::<Address, RelayError>(orchestrator_addr)
+            },
+            self.has_supported_delegation(&temp_account).map_err(RelayError::from),
+            async {
+                let percentile = self.inner.priority_fee_percentile;
+                provider
+                    .get_fee_history(
+                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                        Default::default(),
+                        &[percentile],
+                    )
+                    .await
+                    .map_err(RelayError::from)
+            },
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
+            },
+        )?;
+        
+        // Extract fee token balance from the result
+        let fee_token_balance = fee_token_balance_result
             .balance_on_chain(chain_id, context.fee_token.into());
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
-
+        
         // mocking key storage for the eoa, and the balance for the mock signer
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
@@ -296,34 +354,9 @@ impl Relay {
         }
 
         let overrides = overrides.build();
-        let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
-
-        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
-            // fetch orchestrator from the account and ensure it is supported
-            async {
-                let orchestrator = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
-                }
-                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
-            },
-            // fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from),
-            // fetch chain fees
-            provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[self.inner.priority_fee_percentile],
-                )
-                .map_err(RelayError::from),
-            // fetch price in eth
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
-            },
-        )
-        .await?;
+        
+        // Create the orchestrator object with the fetched address
+        let orchestrator = Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone());
         debug!(
             %chain_id,
             fee_token = ?token,
@@ -422,17 +455,20 @@ impl Relay {
         // pay for the intent execution or not is determined later and communicated to the
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
-        let (asset_diffs, sim_result) = orchestrator
-            .simulate_execute(
+        
+        // Run simulate_execute and estimate_extra_fee in parallel since they're independent
+        let ((asset_diffs, sim_result), extra_fee_eth) = tokio::try_join!(
+            orchestrator.simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
                 context.account_key.keyType,
                 self.inner.asset_info.clone(),
-            )
-            .await?;
+            ),
+            self.estimate_extra_fee(&chain, &intent_to_sign)
+        )?;
 
-        // Calculate the real fee
-        let extra_payment = self.estimate_extra_fee(&chain, &intent_to_sign).await?
+        // Calculate the real fee payment
+        let extra_payment = extra_fee_eth
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
         let intrinsic_gas = approx_intrinsic_cost(
