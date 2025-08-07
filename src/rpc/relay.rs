@@ -470,6 +470,10 @@ impl Relay {
             &self.inner.quote_config,
         );
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
+
+        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
+
+        // Calculate the real fee
         let extra_payment = self
             .estimate_extra_fee(
                 &chain,
@@ -481,7 +485,6 @@ impl Relay {
             .await?
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
-        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
 
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
