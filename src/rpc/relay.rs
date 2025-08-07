@@ -280,7 +280,7 @@ impl Relay {
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Build state overrides for simulation
+        // mocking key storage for the eoa, and the balance for the mock signer
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
@@ -288,9 +288,7 @@ impl Relay {
             .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
             .append(
                 intent.eoa,
-                build_eoa_override(
-                    &context,
-                    // If the fee token is the native token, we override it
+                AccountOverride::default()
                     .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
                     .with_state_diff(if context.key_slot_override {
                         context.account_key.storage_slots()
