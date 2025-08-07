@@ -46,11 +46,7 @@ use alloy::{
     },
     sol_types::{SolCall, SolValue},
 };
-use futures_util::{
-    TryFutureExt,
-    future::try_join_all,
-    join,
-};
+use futures_util::{TryFutureExt, future::try_join_all, join};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -271,12 +267,12 @@ impl Relay {
             )
             .extend(context.state_overrides.clone())
             .build();
-        
+
         let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides);
 
         // Fetch orchestrator, delegation, fee history, and eth price in parallel
         let (orchestrator_addr, delegation, fee_history, eth_price) = tokio::try_join!(
-            // Fetch and validate orchestrator 
+            // Fetch and validate orchestrator
             async {
                 let orchestrator_addr = temp_account.get_orchestrator().await?;
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
@@ -284,10 +280,8 @@ impl Relay {
                 }
                 Ok::<Address, RelayError>(orchestrator_addr)
             },
-            
             // Fetch delegation from the account
             self.has_supported_delegation(&temp_account).map_err(RelayError::from),
-            
             // Fetch fee history
             async {
                 let percentile = self.inner.priority_fee_percentile;
@@ -300,7 +294,6 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            
             // Fetch ETH price
             async {
                 // TODO: only handles eth as native fee token
@@ -308,8 +301,8 @@ impl Relay {
             },
         )?;
 
-        let fee_token_balance = fee_token_balance_result
-            .balance_on_chain(chain_id, context.fee_token.into());
+        let fee_token_balance =
+            fee_token_balance_result.balance_on_chain(chain_id, context.fee_token.into());
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
@@ -352,9 +345,10 @@ impl Relay {
         }
 
         let overrides = overrides.build();
-        
+
         // Create the orchestrator object with the fetched address
-        let orchestrator = Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone());
+        let orchestrator =
+            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone());
         debug!(
             %chain_id,
             fee_token = ?token,
@@ -453,7 +447,7 @@ impl Relay {
         // pay for the intent execution or not is determined later and communicated to the
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
-        
+
         // Run simulate_execute and estimate_extra_fee in parallel since they're independent
         let ((asset_diffs, sim_result), extra_fee_eth) = tokio::try_join!(
             orchestrator.simulate_execute(
@@ -466,9 +460,8 @@ impl Relay {
         )?;
 
         // Calculate the real fee payment
-        let extra_payment = extra_fee_eth
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
+        let extra_payment =
+            extra_fee_eth * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
         let intrinsic_gas = approx_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
