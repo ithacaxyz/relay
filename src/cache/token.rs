@@ -210,33 +210,40 @@ impl TokenCache {
         F: FnOnce(Vec<(Address, ChainId)>) -> Fut,
         Fut: Future<Output = Result<Vec<(Address, ChainId, TokenMetadata)>, RelayError>>,
     {
-        let mut results = Vec::new();
-        let mut missing = Vec::new();
+        // Convert to keys
+        let keys: Vec<TokenKey> = tokens
+            .iter()
+            .map(|(address, chain_id)| TokenKey::new(*address, *chain_id))
+            .collect();
         
-        // Check cache for each token
-        for (address, chain_id) in tokens {
-            let key = TokenKey::new(address, chain_id);
-            if let Some(metadata) = self.cache.cache.get(&key).await {
-                results.push((address, chain_id, metadata));
-            } else {
-                missing.push((address, chain_id));
-            }
-        }
-        
-        // Fetch missing entries
-        if !missing.is_empty() {
-            let fetched = fetcher(missing).await?;
+        // Create a wrapper fetcher that converts between formats
+        let wrapper_fetcher = |missing_keys: Vec<TokenKey>| {
+            // Convert keys back to (Address, ChainId) format
+            let missing_tokens: Vec<(Address, ChainId)> = missing_keys
+                .iter()
+                .map(|key| (key.address, key.chain_id))
+                .collect();
             
-            // Cache the fetched results
-            for (address, chain_id, metadata) in &fetched {
-                let key = TokenKey::new(*address, *chain_id);
-                self.cache.cache.insert(key, metadata.clone()).await;
+            // Call the original fetcher and convert results
+            async move {
+                let results = fetcher(missing_tokens).await?;
+                Ok(results
+                    .into_iter()
+                    .map(|(address, chain_id, metadata)| {
+                        (TokenKey::new(address, chain_id), metadata)
+                    })
+                    .collect())
             }
-            
-            results.extend(fetched);
-        }
+        };
         
-        Ok(results)
+        // Use the cache's get_many_or_fetch with proper metrics tracking
+        let cached_results = self.cache.get_many_or_fetch(keys, wrapper_fetcher).await?;
+        
+        // Convert back to expected format
+        Ok(cached_results
+            .into_iter()
+            .map(|(key, metadata)| (key.address, key.chain_id, metadata))
+            .collect())
     }
     
     /// Pre-populate cache with known token metadata
@@ -245,7 +252,7 @@ impl TokenCache {
     /// to improve performance on first requests.
     pub async fn populate(&self, address: Address, chain_id: ChainId, metadata: TokenMetadata) {
         let key = TokenKey::new(address, chain_id);
-        self.cache.cache.insert(key, metadata).await;
+        self.cache.inner().insert(key, metadata).await;
     }
     
     /// Pre-populate cache with multiple tokens
@@ -262,11 +269,35 @@ impl TokenCache {
     }
     
     /// Clear all cached metadata for a specific chain
-    pub async fn invalidate_chain(&self, _chain_id: ChainId) {
-        // For now, clear entire cache since we don't have efficient
-        // chain-specific invalidation. This is rarely needed since
-        // token metadata is immutable.
-        self.cache.clear().await;
+    pub async fn invalidate_chain(&self, chain_id: ChainId) {
+        // Use Moka's scan functionality to find and invalidate entries for the specific chain
+        // Note: This is rarely needed since token metadata is immutable
+        let cache = self.cache.inner();
+        
+        // Collect keys to invalidate (we need to collect first to avoid iterator invalidation)
+        let keys_to_invalidate: Vec<TokenKey> = cache
+            .iter()
+            .filter_map(|(key, _)| {
+                if key.chain_id == chain_id {
+                    Some((*key).clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Invalidate each key for the specific chain
+        let invalidated_count = keys_to_invalidate.len();
+        for key in keys_to_invalidate {
+            cache.invalidate(&key).await;
+        }
+        
+        tracing::debug!(
+            cache = "token_metadata",
+            chain_id = chain_id,
+            invalidated_count = invalidated_count,
+            "Invalidated chain-specific token cache entries"
+        );
     }
     
     /// Clear all cached token metadata

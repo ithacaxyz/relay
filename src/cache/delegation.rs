@@ -100,33 +100,40 @@ impl DelegationCache {
         F: FnOnce(Vec<(Address, ChainId)>) -> Fut,
         Fut: Future<Output = Result<Vec<(Address, ChainId, DelegationInfo)>, RelayError>>,
     {
-        let mut results = Vec::new();
-        let mut missing = Vec::new();
+        // Convert to keys
+        let keys: Vec<DelegationKey> = accounts
+            .iter()
+            .map(|(account, chain_id)| DelegationKey::new(*account, *chain_id))
+            .collect();
         
-        // Check cache for each account
-        for (account, chain_id) in accounts {
-            let key = DelegationKey::new(account, chain_id);
-            if let Some(info) = self.cache.cache.get(&key).await {
-                results.push((account, chain_id, info));
-            } else {
-                missing.push((account, chain_id));
-            }
-        }
-        
-        // Fetch missing entries
-        if !missing.is_empty() {
-            let fetched = fetcher(missing).await?;
+        // Create a wrapper fetcher that converts between formats
+        let wrapper_fetcher = |missing_keys: Vec<DelegationKey>| {
+            // Convert keys back to (Address, ChainId) format
+            let missing_accounts: Vec<(Address, ChainId)> = missing_keys
+                .iter()
+                .map(|key| (key.account, key.chain_id))
+                .collect();
             
-            // Cache the fetched results
-            for (account, chain_id, info) in &fetched {
-                let key = DelegationKey::new(*account, *chain_id);
-                self.cache.cache.insert(key, info.clone()).await;
+            // Call the original fetcher and convert results
+            async move {
+                let results = fetcher(missing_accounts).await?;
+                Ok(results
+                    .into_iter()
+                    .map(|(account, chain_id, info)| {
+                        (DelegationKey::new(account, chain_id), info)
+                    })
+                    .collect())
             }
-            
-            results.extend(fetched);
-        }
+        };
         
-        Ok(results)
+        // Use the cache's get_many_or_fetch with proper metrics tracking
+        let cached_results = self.cache.get_many_or_fetch(keys, wrapper_fetcher).await?;
+        
+        // Convert back to expected format
+        Ok(cached_results
+            .into_iter()
+            .map(|(key, info)| (key.account, key.chain_id, info))
+            .collect())
     }
     
     /// Check if an account is delegated (cached lookup)
@@ -169,10 +176,35 @@ impl DelegationCache {
     }
     
     /// Invalidate all cached delegation info for a specific chain
-    pub async fn invalidate_chain(&self, _chain_id: ChainId) {
-        // For now, clear entire cache since we don't have efficient
-        // chain-specific invalidation. This could be optimized in the future.
-        self.cache.clear().await;
+    pub async fn invalidate_chain(&self, chain_id: ChainId) {
+        // Use Moka's scan functionality to find and invalidate entries for the specific chain
+        // Note: This is more efficient than clearing the entire cache
+        let cache = self.cache.inner();
+        
+        // Collect keys to invalidate (we need to collect first to avoid iterator invalidation)
+        let keys_to_invalidate: Vec<DelegationKey> = cache
+            .iter()
+            .filter_map(|(key, _)| {
+                if key.chain_id == chain_id {
+                    Some((*key).clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Invalidate each key for the specific chain
+        let invalidated_count = keys_to_invalidate.len();
+        for key in keys_to_invalidate {
+            cache.invalidate(&key).await;
+        }
+        
+        tracing::debug!(
+            cache = "delegation",
+            chain_id = chain_id,
+            invalidated_count = invalidated_count,
+            "Invalidated chain-specific cache entries"
+        );
     }
     
     /// Update cached delegation info if conditions are met
@@ -183,14 +215,14 @@ impl DelegationCache {
         let key = DelegationKey::new(account, chain_id);
         
         // Check if we should update (e.g., if nonce is higher)
-        if let Some(existing) = self.cache.cache.get(&key).await {
+        if let Some(existing) = self.cache.inner().get(&key).await {
             // We don't have nonce anymore, so just skip the check
             // and always update with new info
             _ = existing;
         }
         
         // Update cache with newer info
-        self.cache.cache.insert(key, new_info).await;
+        self.cache.inner().insert(key, new_info).await;
     }
     
     /// Clear all cached delegation info

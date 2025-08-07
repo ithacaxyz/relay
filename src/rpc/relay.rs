@@ -66,6 +66,7 @@ use crate::{
     config::QuoteConfig,
     error::{AuthError, KeysError, QuoteError, RelayError},
     price::PriceOracle,
+    rpc::MulticallBatcher,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
@@ -302,40 +303,103 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
-            // fetch orchestrator from the account and ensure it is supported
-            async {
-                let orchestrator = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
-                }
-                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
-            },
-            // fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from),
-            // fetch chain fees
-            provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[self.inner.priority_fee_percentile],
-                )
-                .map_err(RelayError::from),
-            // fetch price in eth with caching
-            async {
-                // TODO: only handles eth as native fee token
-                let price_key = crate::cache::price::PriceKey::current(token.address, chain_id);
-                let price_result = self.inner.price_cache.get_eth_price(
-                    price_key,
-                    || async { 
-                        self.inner.price_oracle.eth_price(token.kind).await
-                            .ok_or_else(|| QuoteError::UnavailablePrice(token.address).into())
+        // Try to use Multicall3 for batching account queries
+        let multicall_batcher = MulticallBatcher::new(provider.clone());
+        let use_multicall = multicall_batcher.is_available().await;
+        
+        let (orchestrator, delegation, fee_history, eth_price) = if use_multicall {
+            // Batch mode: Use Multicall3 to batch account queries
+            let delegation_proxy = account.address();
+            
+            // Execute batched account queries and other calls in parallel
+            let ((account_queries, fee_history), eth_price) = try_join!(
+                // Batch account queries together
+                async {
+                    let queries = multicall_batcher
+                        .batch_account_queries(intent.eoa, delegation_proxy)
+                        .await
+                        .map_err(|e| RelayError::InternalError(eyre::eyre!("Multicall failed: {}", e)))?;
+                    
+                    // Validate orchestrator
+                    if !self.is_supported_orchestrator(&queries.orchestrator) {
+                        return Err(RelayError::UnsupportedOrchestrator(queries.orchestrator));
                     }
-                ).await?;
-                Ok(Some(price_result))
-            },
-        )
-        .await?;
+                    
+                    // Validate delegation
+                    if self.delegation_implementation() != queries.implementation
+                        && !self.legacy_delegations().any(|c| c == queries.implementation) {
+                        return Err(AuthError::InvalidDelegation(queries.implementation).into());
+                    }
+                    
+                    let fee_history = provider
+                        .get_fee_history(
+                            EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                            Default::default(),
+                            &[self.inner.priority_fee_percentile],
+                        )
+                        .await
+                        .map_err(RelayError::from)?;
+                    
+                    Ok((queries, fee_history))
+                },
+                // fetch price in eth with caching
+                async {
+                    // TODO: only handles eth as native fee token
+                    let price_key = crate::cache::price::PriceKey::current(token.address, chain_id);
+                    let price_result = self.inner.price_cache.get_eth_price(
+                        price_key,
+                        || async { 
+                            self.inner.price_oracle.eth_price(token.kind).await
+                                .ok_or_else(|| QuoteError::UnavailablePrice(token.address).into())
+                        }
+                    ).await?;
+                    Ok(Some(price_result))
+                }
+            )?;
+            
+            let orchestrator = Orchestrator::new(account_queries.orchestrator, &provider)
+                .with_overrides(overrides.clone());
+            
+            (orchestrator, account_queries.implementation, fee_history, eth_price)
+        } else {
+            // Fallback mode: Use original parallel queries
+            let (orchestrator, delegation, fee_history, eth_price) = try_join4(
+                // fetch orchestrator from the account and ensure it is supported
+                async {
+                    let orchestrator = account.get_orchestrator().await?;
+                    if !self.is_supported_orchestrator(&orchestrator) {
+                        return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+                    }
+                    Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
+                },
+                // fetch delegation from the account and ensure it is supported
+                self.has_supported_delegation(&account).map_err(RelayError::from),
+                // fetch chain fees
+                provider
+                    .get_fee_history(
+                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                        Default::default(),
+                        &[self.inner.priority_fee_percentile],
+                    )
+                    .map_err(RelayError::from),
+                // fetch price in eth with caching
+                async {
+                    // TODO: only handles eth as native fee token
+                    let price_key = crate::cache::price::PriceKey::current(token.address, chain_id);
+                    let price_result = self.inner.price_cache.get_eth_price(
+                        price_key,
+                        || async { 
+                            self.inner.price_oracle.eth_price(token.kind).await
+                                .ok_or_else(|| QuoteError::UnavailablePrice(token.address).into())
+                        }
+                    ).await?;
+                    Ok(Some(price_result))
+                },
+            )
+            .await?;
+            
+            (orchestrator, delegation, fee_history, eth_price)
+        };
         debug!(
             %chain_id,
             fee_token = ?token,

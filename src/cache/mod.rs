@@ -124,6 +124,69 @@ where
             metrics: self.metrics.get_stats(),
         }
     }
+
+    /// Get multiple values from cache or fetch missing ones
+    /// Properly tracks metrics for batch operations
+    pub async fn get_many_or_fetch<F, Fut>(
+        &self,
+        keys: Vec<K>,
+        fetcher: F,
+    ) -> Result<Vec<(K, V)>, RelayError>
+    where
+        F: FnOnce(Vec<K>) -> Fut,
+        Fut: Future<Output = Result<Vec<(K, V)>, RelayError>>,
+    {
+        let mut results = Vec::with_capacity(keys.len());
+        let mut missing_keys = Vec::new();
+        
+        // Check cache for each key
+        for key in keys {
+            if let Some(value) = self.cache.get(&key).await {
+                self.metrics.record_hit();
+                results.push((key, value));
+            } else {
+                self.metrics.record_miss();
+                missing_keys.push(key);
+            }
+        }
+        
+        // Fetch missing values if any
+        if !missing_keys.is_empty() {
+            tracing::debug!(
+                cache = self.name,
+                missing_count = missing_keys.len(),
+                "Batch cache miss, fetching from source"
+            );
+            
+            let start = std::time::Instant::now();
+            let fetched = fetcher(missing_keys).await?;
+            let duration = start.elapsed();
+            
+            self.metrics.record_fetch_duration(duration);
+            
+            // Insert fetched values into cache and results
+            for (key, value) in fetched {
+                self.cache.insert(key.clone(), value.clone()).await;
+                results.push((key, value));
+            }
+            
+            tracing::debug!(
+                cache = self.name,
+                duration_ms = duration.as_millis(),
+                fetched_count = results.len(),
+                "Batch fetched and cached values"
+            );
+        }
+        
+        Ok(results)
+    }
+
+    /// Direct access to the underlying cache (for migration purposes)
+    /// WARNING: This bypasses metrics tracking - use only when necessary
+    #[doc(hidden)]
+    pub fn inner(&self) -> &Arc<Cache<K, V>> {
+        &self.cache
+    }
 }
 
 /// Cache statistics

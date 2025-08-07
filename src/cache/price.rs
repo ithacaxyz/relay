@@ -1,8 +1,8 @@
 //! Price Oracle Caching
 //!
 //! This module implements caching for price oracle data to reduce external API calls
-//! to services like CoinGecko. Prices are cached with a short TTL (60 seconds) since
-//! they change relatively frequently but don't need to be real-time accurate for fee estimation.
+//! to services like CoinGecko. Prices are cached with a 5-minute TTL (300 seconds) which
+//! provides a good balance between data freshness and cache efficiency for fee estimation.
 
 use alloy::primitives::{Address, ChainId, U256};
 use std::{
@@ -79,10 +79,10 @@ impl PriceCache {
     /// Create a new price cache with default configuration
     ///
     /// Default configuration:
-    /// - TTL: 60 seconds
+    /// - TTL: 300 seconds (5 minutes) - optimized for fee estimation where slight staleness is acceptable
     /// - Max entries: 1000
     pub fn new() -> Self {
-        Self::with_config(Duration::from_secs(60), 1000)
+        Self::with_config(Duration::from_secs(300), 1000)
     }
     
     /// Create a new price cache with custom configuration
@@ -172,11 +172,34 @@ impl PriceCache {
     }
     
     /// Invalidate all cached prices for a specific chain
-    pub async fn invalidate_chain(&self, _chain_id: ChainId) {
-        // For now, clear entire cache since we don't have efficient
-        // chain-specific invalidation. This could be optimized in the future
-        // by maintaining chain-specific indices.
-        self.cache.clear().await;
+    pub async fn invalidate_chain(&self, chain_id: ChainId) {
+        // Use Moka's scan functionality to find and invalidate entries for the specific chain
+        let cache = self.cache.inner();
+        
+        // Collect keys to invalidate (we need to collect first to avoid iterator invalidation)
+        let keys_to_invalidate: Vec<PriceKey> = cache
+            .iter()
+            .filter_map(|(key, _)| {
+                if key.chain_id == chain_id {
+                    Some((*key).clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Invalidate each key for the specific chain
+        let invalidated_count = keys_to_invalidate.len();
+        for key in keys_to_invalidate {
+            cache.invalidate(&key).await;
+        }
+        
+        tracing::debug!(
+            cache = "price_oracle",
+            chain_id = chain_id,
+            invalidated_count = invalidated_count,
+            "Invalidated chain-specific price cache entries"
+        );
     }
     
     /// Clear all cached prices
