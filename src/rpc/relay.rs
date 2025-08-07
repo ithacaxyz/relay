@@ -264,7 +264,7 @@ impl Relay {
         let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides);
 
         // Fetch orchestrator, delegation, fee history, and eth price in parallel
-        let (orchestrator_addr, delegation, fee_history, eth_price) = tokio::try_join!(
+        let (orchestrator_addr, delegation, fee_history, eth_price) = try_join!(
             // Fetch and validate orchestrator
             async {
                 let orchestrator_addr = temp_account.get_orchestrator().await?;
@@ -428,7 +428,7 @@ impl Relay {
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
         // simulate_execute and estimate_extra_fee in parallel
-        let ((asset_diffs, sim_result), estimated_extra_fee) = tokio::try_join!(
+        let ((asset_diffs, sim_result), estimated_extra_fee) = try_join!(
             orchestrator.simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
