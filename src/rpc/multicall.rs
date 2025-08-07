@@ -61,6 +61,27 @@ impl<P> MulticallBatcher<P> {
     /// See: https://github.com/mds1/multicall#multicall3-contract-addresses
     const MULTICALL3_ADDRESS: Address = address!("cA11bde05977b3631167028862bE2a173976CA11");
     
+    /// Maximum calls per batch to avoid hitting gas limits
+    /// Conservative default that works across most chains
+    const DEFAULT_MAX_BATCH_SIZE: usize = 100;
+    
+    /// Base gas cost for multicall3 operation
+    const MULTICALL_BASE_GAS: u64 = 30_000;
+    
+    /// Estimated gas per call in a batch
+    const GAS_PER_CALL: u64 = 5_000;
+    
+    /// Dynamic buffer percentage based on batch size
+    /// Larger batches need higher buffer to account for complexity
+    const fn gas_buffer_percentage(batch_size: usize) -> u64 {
+        match batch_size {
+            0..=10 => 10,   // 10% buffer for small batches
+            11..=50 => 15,  // 15% buffer for medium batches  
+            51..=100 => 20, // 20% buffer for large batches
+            _ => 25,        // 25% buffer for very large batches
+        }
+    }
+    
     /// Create a new multicall batcher
     pub fn new(provider: P) -> Self {
         Self {
@@ -191,9 +212,54 @@ impl<P> MulticallBatcher<P> {
             .collect()
     }
     
-    /// Execute arbitrary calls in batch
+    /// Calculate estimated gas for a batch of calls with dynamic buffering
+    pub fn estimate_batch_gas(&self, batch_size: usize) -> u64 {
+        let base_gas = Self::MULTICALL_BASE_GAS + (Self::GAS_PER_CALL * batch_size as u64);
+        let buffer_percentage = Self::gas_buffer_percentage(batch_size);
+        
+        // Apply dynamic buffer based on batch size
+        base_gas + (base_gas * buffer_percentage / 100)
+    }
+    
+    /// Optimize batch size based on network gas limits
+    /// Returns the optimal number of calls to include in a single batch
+    pub async fn optimize_batch_size(&self, total_calls: usize) -> usize
+    where
+        P: Provider,
+    {
+        // Get current network gas limit
+        let block_gas_limit = match self.provider.get_block(alloy::rpc::types::BlockId::latest()).await {
+            Ok(Some(block)) => block.header.gas_limit,
+            _ => 30_000_000, // Default to 30M gas if we can't fetch
+        };
+        
+        // Use at most 25% of block gas limit for safety
+        let max_gas_for_batch = block_gas_limit / 4;
+        
+        // Calculate maximum batch size that fits within gas constraints
+        let mut optimal_size = Self::DEFAULT_MAX_BATCH_SIZE;
+        
+        while optimal_size > 1 {
+            let estimated_gas = self.estimate_batch_gas(optimal_size);
+            if estimated_gas <= max_gas_for_batch {
+                break;
+            }
+            optimal_size = optimal_size * 3 / 4; // Reduce by 25%
+        }
+        
+        debug!(
+            total_calls,
+            optimal_size,
+            block_gas_limit,
+            "Calculated optimal batch size"
+        );
+        
+        optimal_size.min(total_calls)
+    }
+    
+    /// Execute arbitrary calls in batch with automatic chunking
     ///
-    /// Generic batching for any set of contract calls
+    /// Generic batching for any set of contract calls with network-aware chunking
     #[instrument(skip(self, calls))]
     pub async fn execute_batch(
         &self,
@@ -206,15 +272,47 @@ impl<P> MulticallBatcher<P> {
             return Ok(Vec::new());
         }
         
-        debug!(calls_count = calls.len(), "Executing batch of calls");
+        // Optimize batch size based on network conditions
+        let optimal_batch_size = self.optimize_batch_size(calls.len()).await;
         
-        let results = IMulticall3::new(self.multicall_address, &self.provider)
-            .aggregate3(calls)
-            .call()
-            .await
-            .map_err(|e| MulticallError::ExecutionFailed(format!("Batch execution failed: {e}")))?;
+        // If all calls fit in one batch, execute directly
+        if calls.len() <= optimal_batch_size {
+            debug!(
+                calls_count = calls.len(),
+                estimated_gas = self.estimate_batch_gas(calls.len()),
+                "Executing single batch of calls"
+            );
             
-        Ok(results)
+            let results = IMulticall3::new(self.multicall_address, &self.provider)
+                .aggregate3(calls)
+                .call()
+                .await
+                .map_err(|e| MulticallError::ExecutionFailed(format!("Batch execution failed: {e}")))?;
+                
+            return Ok(results);
+        }
+        
+        // Split into multiple batches if needed
+        debug!(
+            total_calls = calls.len(),
+            batch_size = optimal_batch_size,
+            num_batches = (calls.len() + optimal_batch_size - 1) / optimal_batch_size,
+            "Splitting calls into multiple batches"
+        );
+        
+        let mut all_results = Vec::with_capacity(calls.len());
+        
+        for chunk in calls.chunks(optimal_batch_size) {
+            let batch_results = IMulticall3::new(self.multicall_address, &self.provider)
+                .aggregate3(chunk.to_vec())
+                .call()
+                .await
+                .map_err(|e| MulticallError::ExecutionFailed(format!("Batch execution failed: {e}")))?;
+                
+            all_results.extend(batch_results);
+        }
+        
+        Ok(all_results)
     }
 }
 
@@ -374,5 +472,36 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert!(!calls[0].allowFailure);
         assert!(calls[1].allowFailure);
+    }
+    
+    #[test]
+    fn test_gas_buffer_percentage() {
+        // Test dynamic gas buffer calculation
+        assert_eq!(MulticallBatcher::<()>::gas_buffer_percentage(5), 10);
+        assert_eq!(MulticallBatcher::<()>::gas_buffer_percentage(25), 15);
+        assert_eq!(MulticallBatcher::<()>::gas_buffer_percentage(75), 20);
+        assert_eq!(MulticallBatcher::<()>::gas_buffer_percentage(150), 25);
+    }
+    
+    #[test]
+    fn test_estimate_batch_gas() {
+        let batcher = MulticallBatcher::<()> {
+            provider: (),
+            multicall_address: Address::ZERO,
+        };
+        
+        // Test gas estimation with different batch sizes
+        let gas_small = batcher.estimate_batch_gas(5);
+        let gas_medium = batcher.estimate_batch_gas(30);
+        let gas_large = batcher.estimate_batch_gas(80);
+        
+        // Verify base calculation and buffer
+        assert_eq!(gas_small, (30_000 + 5 * 5_000) * 110 / 100); // 10% buffer
+        assert_eq!(gas_medium, (30_000 + 30 * 5_000) * 115 / 100); // 15% buffer
+        assert_eq!(gas_large, (30_000 + 80 * 5_000) * 120 / 100); // 20% buffer
+        
+        // Verify gas increases with batch size
+        assert!(gas_small < gas_medium);
+        assert!(gas_medium < gas_large);
     }
 }
