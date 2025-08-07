@@ -427,7 +427,7 @@ impl Relay {
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
-        // Run simulate_execute and estimate_extra_fee in parallel since they're independent
+        // simulate_execute and estimate_extra_fee in parallel
         let ((asset_diffs, sim_result), estimated_extra_fee) = tokio::try_join!(
             orchestrator.simulate_execute(
                 self.simulator(),
