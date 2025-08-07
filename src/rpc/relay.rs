@@ -275,14 +275,13 @@ impl Relay {
             },
             // Fetch delegation from the account
             self.has_supported_delegation(&temp_account).map_err(RelayError::from),
-            // Fetch fee history
+            // Fetch chain fee
             async {
-                let percentile = self.inner.priority_fee_percentile;
                 provider
                     .get_fee_history(
                         EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
                         Default::default(),
-                        &[percentile],
+                        &[self.inner.priority_fee_percentile],
                     )
                     .await
                     .map_err(RelayError::from)
