@@ -35,71 +35,133 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tokio::{
-    sync::{RwLock, broadcast},
+    sync::{RwLock, broadcast, mpsc},
     time::{Duration, Instant, sleep_until},
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Represents an active subscription for a specific chain.
-#[derive(Debug)]
 struct ChainSubscription {
     /// Broadcasts decoded PayloadVerified events to all consumers
     event_sender: broadcast::Sender<IReceiveUln302::PayloadVerified>,
-    /// Number of active consumers to this subscription.
-    subscribers_count: Arc<AtomicUsize>,
+    /// Handle for cleanup requests and subscriber tracking
+    handle: ChainSubscriptionHandle,
+}
+
+impl std::fmt::Debug for ChainSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainSubscription")
+            .field("subscribers_count", &self.handle.subscribers_count.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 impl ChainSubscription {
     /// Spawns a new chain log subscription.
     ///
     /// Only one per chain should be spawned.
-    fn spawn(chain_id: ChainId, mut stream: Subscription<Log>) -> Self {
+    fn spawn(
+        chain_id: ChainId,
+        mut stream: Subscription<Log>,
+        monitor: LayerZeroVerificationMonitor,
+    ) -> Self {
         let (tx, _rx) = broadcast::channel(10000);
+        let subscribers_count = Arc::new(AtomicUsize::new(0));
+        let (cleanup_tx, mut cleanup_rx) = mpsc::unbounded_channel();
 
-        // Spawn background task to process the stream
+        // Create the cleanup handle
+        let handle =
+            ChainSubscriptionHandle { cleanup_tx, subscribers_count: subscribers_count.clone() };
+
+        // Spawn background task to process the stream and handle cleanup
         let event_sender = tx.clone();
         tokio::spawn(async move {
             loop {
-                let Ok(log) = stream.recv().await else {
-                    warn!(chain_id, "Stream error - subscription ended");
-                    break;
-                };
+                tokio::select! {
+                    // Process stream events
+                    result = stream.recv() => {
+                        let Ok(log) = result else {
+                            warn!(chain_id, "Stream error - subscription ended");
+                            break;
+                        };
 
-                if let Ok(decoded) = IReceiveUln302::PayloadVerified::decode_log(&log.inner) {
-                    let _ = tx.send(decoded.data);
+                        if let Ok(decoded) = IReceiveUln302::PayloadVerified::decode_log(&log.inner) {
+                            let _ = tx.send(decoded.data);
+                        }
+                    }
+                    // Handle cleanup requests
+                    Some(()) = cleanup_rx.recv() => {
+                        if monitor.try_cleanup(chain_id).await {
+                            debug!(chain_id, "Cleanup successful, terminating stream task");
+                            break;
+                        }
+                    }
                 }
             }
             info!(chain_id, "Stream processing ended");
         });
 
-        Self { event_sender, subscribers_count: Arc::new(AtomicUsize::new(0)) }
+        Self { event_sender, handle }
     }
 
     /// Generates a new InternalSubscription.
     fn subscribe(&self, packet: LayerZeroPacketInfo) -> InternalSubscription {
-        self.subscribers_count.fetch_add(1, Ordering::Relaxed);
+        self.handle.subscribers_count.fetch_add(1, Ordering::Relaxed);
         InternalSubscription {
             packet,
             inner: self.event_sender.subscribe(),
-            chain_subscription_counter: self.subscribers_count.clone(),
+            chain_handle: self.handle.clone(),
         }
     }
 }
 
-/// LayerZero verification monitor that maintains one subscription per destination chain and
-/// broadcasts events to all interested consumers.
+/// Handle for requesting cleanup of a chain subscription and track subscribers.
+#[derive(Clone, Debug)]
+struct ChainSubscriptionHandle {
+    /// Channel to request cleanup
+    cleanup_tx: mpsc::UnboundedSender<()>,
+    /// Shared counter tracking total subscribers
+    subscribers_count: Arc<AtomicUsize>,
+}
+
+impl ChainSubscriptionHandle {
+    /// Notify that a subscriber is being dropped
+    fn notify_drop(&self) {
+        let prev = self.subscribers_count.fetch_sub(1, Ordering::Relaxed);
+
+        // If we were the last subscriber, request cleanup
+        if prev == 1 {
+            // Send cleanup request - ignore error if receiver is gone (shutting down)
+            let _ = self.cleanup_tx.send(());
+        }
+    }
+}
+
+/// Inner state for the verification monitor.
 #[derive(Debug)]
-pub struct LayerZeroVerificationMonitor {
+struct LayerZeroVerificationMonitorInner {
     /// One node subscription per destination chain
     log_subscriptions: RwLock<HashMap<ChainId, ChainSubscription>>,
     /// Chain configurations for accessing providers and endpoints
     chain_configs: LZChainConfigs,
 }
 
+/// LayerZero verification monitor that maintains one subscription per destination chain and
+/// broadcasts events to all interested consumers.
+#[derive(Debug, Clone)]
+pub struct LayerZeroVerificationMonitor {
+    inner: Arc<LayerZeroVerificationMonitorInner>,
+}
+
 impl LayerZeroVerificationMonitor {
     /// Creates a new LayerZero verification monitor with the given chain configurations.
     pub fn new(chain_configs: LZChainConfigs) -> Self {
-        Self { log_subscriptions: RwLock::new(HashMap::default()), chain_configs }
+        Self {
+            inner: Arc::new(LayerZeroVerificationMonitorInner {
+                log_subscriptions: RwLock::new(HashMap::default()),
+                chain_configs,
+            }),
+        }
     }
 
     /// Waits for LayerZero packets to be verified on their destination chains.
@@ -159,11 +221,7 @@ impl LayerZeroVerificationMonitor {
         // Check availability for all packets in parallel and partition results
         let (already_verified_guids, pending): (Vec<_>, Vec<_>) =
             try_join_all(packet_subscriptions.into_iter().map(async |rx| {
-                if self.chain_configs.is_message_available(&rx.packet).await? {
-                    // Packet already verified - extract GUID and clean up
-                    if rx.chain_subscription_counter.load(Ordering::Relaxed) == 1 {
-                        self.cleanup_chain_if_unused(rx.packet.dst_chain_id).await;
-                    }
+                if self.inner.chain_configs.is_message_available(&rx.packet).await? {
                     Ok::<_, SettlementError>(Either::Left(rx.packet.guid))
                 } else {
                     // Packet still pending - keep subscription
@@ -202,7 +260,7 @@ impl LayerZeroVerificationMonitor {
                     Ok(event) = rx.recv() => {
                         // check if this event is for our packet
                         if keccak256(&event.header) == rx.packet.header_hash
-                            && self.chain_configs.is_message_available(&rx.packet).await.unwrap_or(false) {
+                            && self.inner.chain_configs.is_message_available(&rx.packet).await.unwrap_or(false) {
                                 info!(
                                     guid = ?rx.packet.guid,
                                     "Packet verified on chain"
@@ -215,12 +273,6 @@ impl LayerZeroVerificationMonitor {
                     }
                 }
             };
-
-            // Check if we're the last receiver and cleanup if needed
-            let dst_chain_id = rx.packet.dst_chain_id;
-            if rx.chain_subscription_counter.load(Ordering::Relaxed) == 1 {
-                self.cleanup_chain_if_unused(dst_chain_id).await;
-            }
 
             Ok::<_, SettlementError>(result)
         });
@@ -238,7 +290,7 @@ impl LayerZeroVerificationMonitor {
     ) -> Result<InternalSubscription, SettlementError> {
         // Find the source endpoint ID from the source chain config
         let Some((_src_chain_id, src_config)) =
-            self.chain_configs.iter().find(|(id, _)| **id == packet.src_chain_id)
+            self.inner.chain_configs.iter().find(|(id, _)| **id == packet.src_chain_id)
         else {
             return Err(SettlementError::InternalError(format!(
                 "No config found for source chain {}",
@@ -249,21 +301,21 @@ impl LayerZeroVerificationMonitor {
 
         // check if node subscription already exists for this chain
         {
-            let subs = self.log_subscriptions.read().await;
+            let subs = self.inner.log_subscriptions.read().await;
             if let Some(sub) = subs.get(&packet.dst_chain_id) {
                 return Ok(sub.subscribe(packet.clone()));
             }
         } // Drop read lock here
 
         // create node subscription
-        let mut subs = self.log_subscriptions.write().await;
+        let mut subs = self.inner.log_subscriptions.write().await;
 
         // double-check - another task may have created it while we waited for write lock
         if let Some(sub) = subs.get(&packet.dst_chain_id) {
             return Ok(sub.subscribe(packet.clone()));
         }
 
-        let Some(config) = self.chain_configs.get(&packet.dst_chain_id) else {
+        let Some(config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
             // should have been caught by the preflight diagnostics
             return Err(SettlementError::UnsupportedChain(packet.dst_chain_id));
         };
@@ -284,7 +336,7 @@ impl LayerZeroVerificationMonitor {
             .await?;
 
         // spawn the chain subscription
-        let subscription = ChainSubscription::spawn(packet.dst_chain_id, stream);
+        let subscription = ChainSubscription::spawn(packet.dst_chain_id, stream, self.clone());
         let rx = subscription.subscribe(packet.clone());
         subs.insert(packet.dst_chain_id, subscription);
 
@@ -297,15 +349,20 @@ impl LayerZeroVerificationMonitor {
         Ok(rx)
     }
 
-    /// Removes a specific chain subscription if it has no active receivers.
-    async fn cleanup_chain_if_unused(&self, chain_id: ChainId) {
-        let mut subs = self.log_subscriptions.write().await;
-        if let Some(subscription) = subs.get(&chain_id)
-            && subscription.subscribers_count.load(Ordering::Relaxed) == 0
-        {
-            subs.remove(&chain_id);
-            info!(chain_id, "Removed unused chain subscription");
+    /// Try to cleanup a chain subscription if it has no active receivers.
+    ///
+    /// Returns true if the subscription was removed, false otherwise.
+    async fn try_cleanup(&self, chain_id: ChainId) -> bool {
+        let mut subs = self.inner.log_subscriptions.write().await;
+        if let Some(subscription) = subs.get(&chain_id) {
+            // double-check that there are truly no subscribers
+            if subscription.handle.subscribers_count.load(Ordering::Relaxed) == 0 {
+                subs.remove(&chain_id);
+                info!(chain_id, "Removed unused chain subscription");
+                return true;
+            }
         }
+        false
     }
 }
 
@@ -335,8 +392,8 @@ pub struct InternalSubscription {
     packet: LayerZeroPacketInfo,
     /// The underlying broadcast receiver for PayloadVerified events
     inner: broadcast::Receiver<IReceiveUln302::PayloadVerified>,
-    /// Shared counter tracking total subscribers for this chain's subscription
-    chain_subscription_counter: Arc<AtomicUsize>,
+    /// Handle for cleanup when dropped
+    chain_handle: ChainSubscriptionHandle,
 }
 
 impl InternalSubscription {
@@ -349,7 +406,7 @@ impl InternalSubscription {
 
 impl Drop for InternalSubscription {
     fn drop(&mut self) {
-        self.chain_subscription_counter.fetch_sub(1, Ordering::Release);
+        self.chain_handle.notify_drop();
     }
 }
 
