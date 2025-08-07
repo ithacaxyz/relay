@@ -4,7 +4,7 @@
 //! It maintains a single subscription per destination chain to minimize connections while serving
 //! multiple concurrent verification requests through broadcast channels.
 
-use super::contracts::{ILayerZeroEndpointV2, IReceiveUln302};
+use super::contracts::ILayerZeroEndpointV2;
 use crate::{
     interop::settler::{
         SettlementError,
@@ -53,12 +53,13 @@ impl ChainSubscription {
         monitor: LayerZeroVerificationMonitor,
     ) -> Self {
         let (tx, _rx) = broadcast::channel(10000);
-        let subscribers_count = Arc::new(AtomicUsize::new(0));
         let (cleanup_tx, mut cleanup_rx) = mpsc::unbounded_channel();
 
-        // Create the cleanup handle
-        let handle =
-            ChainSubscriptionHandle { cleanup_tx, subscribers_count: subscribers_count.clone() };
+        // Create the cleanup request handle
+        let handle = ChainSubscriptionHandle {
+            cleanup_tx,
+            subscribers_count: Arc::new(AtomicUsize::new(0)),
+        };
 
         // Spawn background task to process the stream and handle cleanup
         let event_sender = tx.clone();
