@@ -451,26 +451,14 @@ impl Relay {
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
-        // simulate_execute and estimate_extra_fee in parallel
-        let ((asset_diffs, sim_result), estimated_extra_fee) = try_join!(
-            orchestrator.simulate_execute(
+        let (asset_diffs, sim_result) = orchestrator
+            .simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
                 context.account_key.keyType,
                 self.inner.asset_info.clone(),
-            ),
-            self.estimate_extra_fee(
-                &chain,
-                &intent_to_sign,
-                context.stored_authorization.clone(),
-                &native_fee_estimate,
-                &gas_estimate
             )
-        )?;
-
-        // Calculate the real fee payment
-        let extra_payment =
-            estimated_extra_fee * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
+            .await?;
         let intrinsic_gas = approx_intrinsic_cost(
             &intent_to_sign.encode_execute(),
             context.stored_authorization.is_some(),
@@ -482,11 +470,6 @@ impl Relay {
             &self.inner.quote_config,
         );
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
-
-        // Fill combinedGas
-        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
-
-        // Calculate the real fee
         let extra_payment = self
             .estimate_extra_fee(
                 &chain,
@@ -498,6 +481,7 @@ impl Relay {
             .await?
             * U256::from(10u128.pow(token.decimals as u32))
             / eth_price;
+        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
 
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
