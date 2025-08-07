@@ -530,11 +530,16 @@ impl Relay {
         .abi_encode_packed()
         .into();
 
-        // single chain workflow
-        if quotes.ty().multi_chain_root.is_none() {
-            self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
-        } else {
-            self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
+        // Route to appropriate execution workflow based on intent type
+        match quotes.ty().multi_chain_root {
+            // Multichain intent: requires cross-chain coordination and merkle proofs
+            Some(_) => {
+                self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
+            }
+            // Single chain intent: execute directly on the target chain
+            None => {
+                self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
+            }
         }
     }
 
