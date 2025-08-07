@@ -459,6 +459,7 @@ impl Relay {
                 self.inner.asset_info.clone(),
             )
             .await?;
+
         let intrinsic_gas = approx_intrinsic_cost(
             &intent_to_sign.encode_execute(),
             context.stored_authorization.is_some(),
@@ -471,8 +472,8 @@ impl Relay {
         );
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
+        // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
-
         // Calculate the real fee
         let extra_payment = self
             .estimate_extra_fee(
