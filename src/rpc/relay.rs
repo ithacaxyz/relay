@@ -311,6 +311,7 @@ impl Relay {
             .append(
                 intent.eoa,
                 AccountOverride::default()
+                    // If the fee token is the native token, we override it
                     .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
                     .with_state_diff(if context.key_slot_override {
                         context.account_key.storage_slots()
