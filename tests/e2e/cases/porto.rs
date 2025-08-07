@@ -136,7 +136,7 @@ async fn execution_guard_target_scope() -> Result<()> {
             },
             // Failing transfer (different target)
             TxContext {
-                calls: vec![Call::transfer(env.erc20s[1], Address::ZERO, U256::from(10000000u64))],
+                calls: vec![Call::transfer(env.usdc, Address::ZERO, U256::from(10000000u64))],
                 expected: ExpectedOutcome::FailEstimate,
                 key: Some(&session_key),
                 ..Default::default()

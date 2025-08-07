@@ -30,7 +30,7 @@ use relay::{
 async fn asset_info() -> eyre::Result<()> {
     // Setup environment
     let env = Environment::setup().await?;
-    let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.erc20s[1])];
+    let assets = vec![Asset::Native, Asset::Token(env.erc20), Asset::Token(env.usdc)];
     let provider = env.provider().clone();
 
     // Spawn AssetInfoService
@@ -102,7 +102,7 @@ async fn asset_diff() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
+    mint_erc20s(&[env.usdc], &[env.eoa.address()], env.provider()).await?;
 
     // create prepare_call request
     let params = PrepareCallsParameters {
@@ -153,13 +153,13 @@ async fn asset_diff() -> eyre::Result<()> {
     // test1: eoa should receive exactly one new ERC721, and spend the ERC20
     let resp1 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.usdc, Address::ZERO, U256::from(1u64)),
         mint_erc721.clone(),
     ])
     .await?;
     let erc721_id = find_diff(&resp1, env.eoa.address(), env.erc721, is_incoming)
         .expect("must have received ERC721");
-    assert!(find_diff(&resp1, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
+    assert!(find_diff(&resp1, env.eoa.address(), env.usdc, !is_incoming).is_some());
 
     // test2: eoa mints and transfers the NFT out. So, only the receiving address should have have
     // an inflow.
@@ -167,7 +167,7 @@ async fn asset_diff() -> eyre::Result<()> {
 
     let resp2 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.usdc, Address::ZERO, U256::from(1u64)),
         mint_erc721,
         common_calls::transfer_721(env.erc721, env.eoa.address(), random_eoa, erc721_id),
     ])
@@ -180,7 +180,7 @@ async fn asset_diff() -> eyre::Result<()> {
     assert_eq!(find_diff(&resp2, random_eoa, env.erc721, is_incoming), Some(erc721_id));
 
     // ERC20 spend repeats
-    assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
+    assert!(find_diff(&resp2, env.eoa.address(), env.usdc, !is_incoming).is_some());
 
     Ok(())
 }
@@ -194,7 +194,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
     let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], env.provider()).await?;
+    mint_erc20s(&[env.usdc], &[env.eoa.address()], env.provider()).await?;
 
     // ensure we always have the expected amount of unique tokens with URIs in our asset diffs.
     let ensure_tokens_with_uris = |resp: &PrepareCallsResponse, expected: usize| -> Vec<U256> {
@@ -303,7 +303,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_assets_with_filter() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+    mint_erc20s(&[env.usdc], &[env.eoa.address()], &env.provider()).await?;
 
     let response = env
         .relay_endpoint
@@ -317,7 +317,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
                         asset_type: AssetType::Native,
                     },
                     AssetFilterItem {
-                        address: AddressOrNative::Address(env.erc20s[5]),
+                        address: AddressOrNative::Address(env.usdc),
                         asset_type: AssetType::ERC20,
                     },
                     AssetFilterItem {
@@ -336,7 +336,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
     assert!(chain_user_assets.len() == 3);
 
     assert!(chain_user_assets[0].address == AddressOrNative::Native);
-    assert!(chain_user_assets[1].address == AddressOrNative::Address(env.erc20s[5]));
+    assert!(chain_user_assets[1].address == AddressOrNative::Address(env.usdc));
     assert!(chain_user_assets[2].address == AddressOrNative::Address(env.fee_token));
 
     assert!(chain_user_assets[0].asset_type == AssetType::Native);
@@ -358,7 +358,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_assets_no_filter() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+    mint_erc20s(&[env.usdc], &[env.eoa.address()], &env.provider()).await?;
 
     let response = env
         .relay_endpoint

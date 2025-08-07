@@ -33,6 +33,7 @@ use relay::{
 };
 use sqlx::{ConnectOptions, Executor, PgPool, postgres::PgConnectOptions};
 use std::{
+    iter::once,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -107,12 +108,14 @@ pub struct Environment {
     pub orchestrator: Address,
     pub delegation: Address,
     pub funder: Address,
-    /// Minted to the eoa.
+    /// Fee token - defaults to USDC, can be set to Address::ZERO for native
     pub fee_token: Address,
-    /// Minted to the eoa.
+    /// USDC token (different per chain)
+    pub usdc: Address,
+    /// ERC20 token (same address across chains)
     pub erc20: Address,
-    /// Bunch of deployed erc20 which have not been minted to the eoa.
-    pub erc20s: Vec<Address>,
+    /// ERC20 token with no balance - used for testing insufficient balance scenarios
+    pub no_balance_erc20: Address,
     /// Usable ERC721 contract.
     pub erc721: Address,
     /// Escrow contract for cross-chain intents.
@@ -134,7 +137,10 @@ impl std::fmt::Debug for Environment {
             .field("eoa", &self.eoa.address())
             .field("orchestrator", &self.orchestrator)
             .field("delegation", &self.delegation)
-            .field("erc20", &self.erc20)
+            .field("fee_token", &self.fee_token)
+            .field("usdc", &self.usdc)
+            .field("usdt", &self.erc20)
+            .field("no_balance_erc20", &self.no_balance_erc20)
             .field("escrow", &self.escrow)
             .field("settler", &self.settler)
             .field("num_chains", &self.anvils.len())
@@ -246,7 +252,8 @@ struct ContractAddresses {
     funder: Address,
     escrow: Address,
     settler: Address,
-    erc20s: Vec<Address>,
+    usdc: Address,
+    usdt: Address,
     erc721: Address,
 }
 
@@ -290,7 +297,8 @@ async fn setup_chain_with_contracts<P: Provider>(
         .chain(signers.iter().map(|s| s.address()))
         .collect::<Vec<_>>();
 
-    mint_erc20s(&contracts.erc20s[..2], holders, provider).await?;
+    // Mint USDC and USDT to holders
+    mint_erc20s(&[contracts.usdc, contracts.usdt], holders, provider).await?;
 
     // Fund EOA with ETH
     provider
@@ -326,7 +334,7 @@ async fn setup_chain<P: Provider + WalletProvider>(
     // Additional minting for funder on secondary chains
     if !is_primary {
         for _ in 0..5 {
-            mint_erc20s(&contracts.erc20s[..2], &[contracts.funder], provider).await?;
+            mint_erc20s(&[contracts.usdc, contracts.usdt], &[contracts.funder], provider).await?;
         }
     }
 
@@ -453,15 +461,37 @@ impl Environment {
         let chain_ids =
             try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
 
+        // Deploy USDC tokens with different addresses on each chain if config.num_chains > 1
+        let usdc_tokens = deploy_usdc(
+            &providers,
+            &chain_ids,
+            once(eoa.address())
+                .chain(once(contracts.funder))
+                .chain(signers.iter().map(|s| s.address())),
+            contracts.usdc,
+        )
+        .await?;
+
+        // Create an ERC20 token with no balance for testing insufficient balance scenarios
+        let no_balance_erc20 = Address::random();
+        let erc20_code = providers[0].get_code_at(contracts.usdc).await?;
+        for provider in &providers {
+            provider
+                .anvil_set_code(no_balance_erc20, erc20_code.clone())
+                .await?;
+        }
+
         // Build registry with tokens from all chains
         let mut registry = CoinRegistry::default();
-        for &chain_id in &chain_ids {
-            registry.extend(
-                contracts
-                    .erc20s
-                    .iter()
-                    .map(|contract| ((chain_id, Some(*contract)), CoinKind::USDT)),
-            );
+        for (i, &chain_id) in chain_ids.iter().enumerate() {
+            // Register USDC token for this chain (different per chain)
+            registry.extend([((chain_id, Some(usdc_tokens[i])), CoinKind::USDC)]);
+
+            // Register USDT token (same across all chains)
+            registry.extend([((chain_id, Some(contracts.usdt)), CoinKind::USDT)]);
+
+            // Register no_balance_erc20 as a fee token (same across all chains)
+            registry.extend([((chain_id, Some(no_balance_erc20)), CoinKind::EXP1)]);
         }
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
@@ -507,7 +537,7 @@ impl Environment {
         }
 
         // Start relay service with all endpoints
-        let skip_diagnostics = false;
+        let skip_diagnostics = true;
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(0)
@@ -518,8 +548,10 @@ impl Environment {
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
                 .with_quote_constant_rate(Some(1.0))
-                .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
-                .with_interop_tokens(&[contracts.erc20s[0]])
+                .with_fee_tokens(
+                    &[vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()].concat(),
+                )
+                .with_interop_tokens(&[contracts.usdt, usdc_tokens[0], Address::ZERO])
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(contracts.orchestrator))
                 .with_delegation_proxy(Some(contracts.delegation))
@@ -559,10 +591,11 @@ impl Environment {
             eoa,
             orchestrator: contracts.orchestrator,
             delegation: contracts.delegation,
-            fee_token: contracts.erc20s[1],
             funder: contracts.funder,
-            erc20: contracts.erc20s[0],
-            erc20s: contracts.erc20s[2..].to_vec(),
+            fee_token: usdc_tokens[0], // Default fee token is first deployed USDC
+            usdc: usdc_tokens[0],
+            erc20: contracts.usdt,
+            no_balance_erc20,
             erc721: contracts.erc721,
             escrow: contracts.escrow,
             settler: contracts.settler,
@@ -574,7 +607,7 @@ impl Environment {
         })
     }
 
-    /// Sets [`Environment::fee_token`] to the native token.
+    /// Sets the fee token to native (Address::ZERO) instead of USDC.
     pub fn with_native_payment(mut self) -> Self {
         self.fee_token = Address::ZERO;
         self
@@ -860,17 +893,18 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         deploy_simulator(provider, &contracts_path).await?
     };
 
-    // Deploy ERC20 tokens
-    let erc20s = if let Ok(address) = std::env::var("TEST_ERC20") {
-        let mut erc20s = Vec::with_capacity(10);
-        erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
-        // Deploy remaining ERC20s
-        while erc20s.len() < 10 {
-            erc20s.push(deploy_erc20(provider, &contracts_path).await?);
-        }
-        erc20s
+    // Deploy USDC (different per chain) - used as fee token
+    let usdc = if let Ok(address) = std::env::var("TEST_USDC") {
+        Address::from_str(&address).wrap_err("USDC address parse failed.")?
     } else {
-        deploy_erc20_tokens(provider, &contracts_path, 10).await?
+        deploy_erc20(provider, &contracts_path).await?
+    };
+
+    // Deploy or use existing USDT (same address across chains)
+    let usdt = if let Ok(address) = std::env::var("TEST_USDT") {
+        Address::from_str(&address).wrap_err("USDT address parse failed.")?
+    } else {
+        deploy_erc20(provider, &contracts_path).await?
     };
 
     let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
@@ -904,7 +938,8 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         funder,
         escrow,
         settler,
-        erc20s,
+        usdc,
+        usdt,
         erc721,
     })
 }
@@ -996,22 +1031,79 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
     .await
 }
 
-/// Deploy multiple ERC20 tokens
-async fn deploy_erc20_tokens<P: Provider>(
+/// Deploy a single ERC20 token with a specific signer
+async fn deploy_erc20_with_signer<P: Provider>(
     provider: &P,
     contracts_path: &Path,
-    count: usize,
-) -> eyre::Result<Vec<Address>> {
-    let mut erc20s = Vec::with_capacity(count);
-    for _ in 0..count {
-        erc20s.push(deploy_erc20(provider, contracts_path).await?);
-    }
-    Ok(erc20s)
+    signer: PrivateKeySigner,
+) -> eyre::Result<Address> {
+    let wallet = EthereumWallet::new(signer);
+    let provider = ProviderBuilder::new().wallet(wallet).connect_provider(provider);
+
+    deploy_contract(
+        &provider,
+        &contracts_path.join("MockERC20.sol/MockERC20.json"),
+        Some(
+            MockErc20::constructorCall {
+                name_: "MockUSDC".into(),
+                symbol_: "USDC".into(),
+                decimals_: 6,
+            }
+            .abi_encode()
+            .into(),
+        ),
+    )
+    .await
 }
 
 /// Deploy an ERC721 token
 async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
     deploy_contract(provider, &contracts_path.join("MockERC721.sol/MockERC721.json"), None).await
+}
+
+/// Deploy USDC tokens - different addresses for multi-chain, or use existing for single chain
+async fn deploy_usdc<P, I>(
+    providers: &[P],
+    chain_ids: &[u64],
+    recipients: I,
+    default_usdc: Address,
+) -> eyre::Result<Vec<Address>>
+where
+    P: Provider + Clone,
+    I: IntoIterator<Item = Address>,
+{
+    if providers.len() > 1 {
+        let contracts_path = PathBuf::from(
+            std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
+        );
+
+        let recipients: Vec<Address> = recipients.into_iter().collect();
+
+        // Prepare deployment futures
+        let deployed_usdcs =
+            try_join_all(providers.iter().enumerate().map(async |(i, provider)| {
+                let deployer_signer = PrivateKeySigner::from_bytes(&B256::random()).unwrap();
+
+                // Fund the deployer
+                provider.anvil_set_balance(deployer_signer.address(), U256::from(10e18)).await?;
+
+                // Deploy USDC
+                let usdc =
+                    deploy_erc20_with_signer(provider, &contracts_path, deployer_signer).await?;
+
+                // Mint USDC to the recipients
+                mint_erc20s(&[usdc], &recipients, provider).await?;
+
+                eprintln!("Deployed USDC on chain {}: {}", chain_ids[i], usdc);
+                Ok::<_, eyre::Error>(usdc)
+            }))
+            .await?;
+
+        Ok(deployed_usdcs)
+    } else {
+        // For single chain, use the default USDC
+        Ok(vec![default_usdc])
+    }
 }
 
 /// Deploy the Escrow contract

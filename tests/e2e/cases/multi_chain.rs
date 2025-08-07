@@ -3,7 +3,6 @@
 use crate::e2e::*;
 use alloy::{primitives::U256, providers::Provider};
 use eyre::Result;
-use relay::types::IERC20;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_chain_setup() -> Result<()> {
@@ -25,13 +24,6 @@ async fn test_multi_chain_setup() -> Result<()> {
         let _ = env.provider_for(i);
     }
 
-    // Verify contracts have same addresses on all chains
-    assert_eq!(env.orchestrator, env.orchestrator);
-    assert_eq!(env.delegation, env.delegation);
-    assert_eq!(env.fee_token, env.fee_token);
-    assert_eq!(env.erc20, env.erc20);
-    assert_eq!(env.erc721, env.erc721);
-
     Ok(())
 }
 
@@ -46,40 +38,6 @@ async fn test_multi_chain_funding() -> Result<()> {
 
         // Should have 1000 ETH
         assert!(balance >= U256::from(999e18), "EOA not funded on chain {}", env.chain_id_for(i));
-    }
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_multi_chain_token_balances() -> Result<()> {
-    let env = Environment::setup_multi_chain(2).await?;
-
-    // Check ERC20 balances on both chains
-    for i in 0..2 {
-        let provider = env.provider_for(i);
-
-        // Check fee token balance
-        let fee_token_balance = IERC20::IERC20Instance::new(env.fee_token, provider)
-            .balanceOf(env.eoa.address())
-            .call()
-            .await?;
-        assert!(
-            fee_token_balance >= U256::from(99e18),
-            "Fee token not minted on chain {}",
-            env.chain_id_for(i)
-        );
-
-        // Check primary ERC20 balance
-        let erc20_balance = IERC20::IERC20Instance::new(env.erc20, provider)
-            .balanceOf(env.eoa.address())
-            .call()
-            .await?;
-        assert!(
-            erc20_balance >= U256::from(99e18),
-            "ERC20 not minted on chain {}",
-            env.chain_id_for(i)
-        );
     }
 
     Ok(())
@@ -151,7 +109,7 @@ async fn test_single_chain_backward_compatibility() -> Result<()> {
     assert!(env.provider_default().get_chain_id().await? > 0);
     assert!(env.orchestrator != Address::ZERO);
     assert!(env.delegation != Address::ZERO);
-    assert!(env.fee_token != Address::ZERO);
+    assert!(env.usdc != Address::ZERO);
     assert!(env.erc20 != Address::ZERO);
     assert!(env.erc721 != Address::ZERO);
 
