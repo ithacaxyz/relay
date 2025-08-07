@@ -13,22 +13,23 @@
 //! 3. Automatically cleaning up unused subscriptions when no receivers remain
 //! 4. Checking initial verification status to avoid unnecessary subscriptions
 
-use super::{
-    contracts::{ILayerZeroEndpointV2, IReceiveUln302},
-    types::EndpointId,
-};
+use super::contracts::{ILayerZeroEndpointV2, IReceiveUln302};
 use crate::{
     interop::settler::{SettlementError, layerzero::types::LayerZeroPacketInfo},
     types::LZChainConfigs,
 };
 use alloy::{
-    primitives::{B256, ChainId, keccak256, map::HashMap},
+    primitives::{
+        B256, ChainId, keccak256,
+        map::{HashMap, HashSet},
+    },
     providers::Provider,
     pubsub::Subscription,
     rpc::types::{Filter, Log},
     sol_types::SolEvent,
 };
 use futures_util::future::try_join_all;
+use itertools::{Either, Itertools};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -75,9 +76,10 @@ impl ChainSubscription {
     }
 
     /// Generates a new InternalSubscription.
-    fn subscribe(&self) -> InternalSubscription {
+    fn subscribe(&self, packet: LayerZeroPacketInfo) -> InternalSubscription {
         self.subscribers_count.fetch_add(1, Ordering::Relaxed);
         InternalSubscription {
+            packet,
             inner: self.event_sender.subscribe(),
             chain_subscription_counter: self.subscribers_count.clone(),
         }
@@ -88,7 +90,7 @@ impl ChainSubscription {
 /// broadcasts events to all interested consumers.
 #[derive(Debug)]
 pub struct LayerZeroVerificationMonitor {
-    /// One subscription per destination chain
+    /// One node subscription per destination chain
     log_subscriptions: RwLock<HashMap<ChainId, ChainSubscription>>,
     /// Chain configurations for accessing providers and endpoints
     chain_configs: LZChainConfigs,
@@ -119,49 +121,61 @@ impl LayerZeroVerificationMonitor {
             "Waiting for LayerZero message verifications"
         );
 
-        // Only subscribe to events for packets that aren't already verified
-        let status = self.check_initial_verification_status(&packets).await?;
+        // create subscriptions for all destination chains
+        let packet_subscriptions = try_join_all(
+            packets.iter().map(async |packet| self.subscribe_to_payload_events(packet).await),
+        )
+        .await?;
 
-        // If everything is already verified, no need to subscribe to events
+        // check initial verification status which will come only with the pending packet
+        // subscriptions
+        let status = self.check_initial_verification_status(packet_subscriptions).await?;
+
+        // if everything is already verified, return immediately
         if status.pending.is_empty() {
             info!("All {} messages already verified", status.already_verified_guids.len());
             return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
         }
 
+        // monitor pending packets with their subscriptions
         let verified_via_events = self.monitor_packets(status.pending, timeout_deadline).await?;
 
         // Combine pre-verified GUIDs with those verified via events
-        let mut all_verified_guids = status.already_verified_guids;
-        all_verified_guids.extend(verified_via_events);
-
-        final_verification_check(all_verified_guids, &packets).await
+        final_verification_check(
+            status.already_verified_guids.into_iter().chain(verified_via_events),
+            &packets,
+        )
     }
 
     /// Checks which packets are already verified on-chain.
+    ///
+    /// Returns pending packet subscriptions and GUIDs of already verified packets.
     async fn check_initial_verification_status(
         &self,
-        packets: &[LayerZeroPacketInfo],
+        packet_subscriptions: Vec<InternalSubscription>,
     ) -> Result<InitialVerificationStatus, SettlementError> {
-        let availability_checks = packets.iter().map(async |packet| {
-            let is_available = self.chain_configs.is_message_available(packet).await?;
-            Ok::<_, SettlementError>((packet.clone(), is_available))
-        });
+        let total_packets = packet_subscriptions.len();
 
-        let results = try_join_all(availability_checks).await?;
-
-        let mut pending = Vec::new();
-        let mut already_verified_guids = Vec::new();
-
-        for (packet, is_available) in results {
-            if is_available {
-                already_verified_guids.push(packet.guid);
-            } else {
-                pending.push(packet);
-            }
-        }
+        // Check availability for all packets in parallel and partition results
+        let (already_verified_guids, pending): (Vec<_>, Vec<_>) =
+            try_join_all(packet_subscriptions.into_iter().map(async |rx| {
+                if self.chain_configs.is_message_available(&rx.packet).await? {
+                    // Packet already verified - extract GUID and clean up
+                    if rx.chain_subscription_counter.load(Ordering::Relaxed) == 1 {
+                        self.cleanup_chain_if_unused(rx.packet.dst_chain_id).await;
+                    }
+                    Ok::<_, SettlementError>(Either::Left(rx.packet.guid))
+                } else {
+                    // Packet still pending - keep subscription
+                    Ok(Either::Right(rx))
+                }
+            }))
+            .await?
+            .into_iter()
+            .partition_map(|result| result);
 
         info!(
-            total_packets = packets.len(),
+            total_packets,
             pending_packets = pending.len(),
             already_verified = already_verified_guids.len(),
             "Initial verification status"
@@ -175,37 +189,26 @@ impl LayerZeroVerificationMonitor {
     /// Returns GUIDs of packets that were verified before the timeout.
     async fn monitor_packets(
         &self,
-        pending_packets: Vec<LayerZeroPacketInfo>,
+        pending_subscriptions: Vec<InternalSubscription>,
         timeout_deadline: Instant,
     ) -> Result<Vec<B256>, SettlementError> {
-        if pending_packets.is_empty() {
+        if pending_subscriptions.is_empty() {
             return Ok(Vec::new());
         }
 
-        let monitoring_futures = pending_packets.into_iter().map(async |packet| {
-            let Some((_, config)) = self
-                .chain_configs
-                .iter()
-                .find(|(other_chain_id, _)| **other_chain_id != packet.dst_chain_id)
-            else {
-                // should not happen, it would have been caught by the preflight diagnostics.
-                return Err(SettlementError::InternalError("No source endpoint found".to_string()));
-            };
-
-            let mut rx = self.subscribe_to_payload_events(packet.dst_chain_id, config.endpoint_id).await?;
-
+        let monitoring_futures = pending_subscriptions.into_iter().map(async |mut rx| {
             let result = loop {
                 tokio::select! {
                     Ok(event) = rx.recv() => {
                         // check if this event is for our packet
-                        if keccak256(&event.header) == packet.header_hash
-                            && self.chain_configs.is_message_available(&packet).await.unwrap_or(false) {
+                        if keccak256(&event.header) == rx.packet.header_hash
+                            && self.chain_configs.is_message_available(&rx.packet).await.unwrap_or(false) {
                                 info!(
-                                    ?packet.guid,
+                                    guid = ?rx.packet.guid,
                                     "Packet verified on chain"
                                 );
-                                break Some(packet.guid);
-                            }
+                                break Some(rx.packet.guid);
+                        }
                     }
                     _ = sleep_until(timeout_deadline) => {
                         break None;
@@ -213,73 +216,81 @@ impl LayerZeroVerificationMonitor {
                 }
             };
 
-            // Check if we're the last receiver before dropping
-            let was_last = rx.chain_subscription_counter.load(Ordering::Acquire) == 1;
-            drop(rx);
-
-            // Only try to clean up if we were the last receiver
-            if was_last {
-                self.cleanup_chain_if_unused(packet.dst_chain_id).await;
+            // Check if we're the last receiver and cleanup if needed
+            let dst_chain_id = rx.packet.dst_chain_id;
+            if rx.chain_subscription_counter.load(Ordering::Relaxed) == 1 {
+                self.cleanup_chain_if_unused(dst_chain_id).await;
             }
 
-            Ok(result)
+            Ok::<_, SettlementError>(result)
         });
 
         Ok(try_join_all(monitoring_futures).await?.into_iter().flatten().collect())
     }
 
-    /// Subscribes to PayloadVerified events on the specified chain.
+    /// Subscribes to PayloadVerified events for the specified packet.
     ///
     /// If a subscription already exists for the chain, returns a new receiver for the existing
     /// broadcast channel. Otherwise, creates a new subscription and returns a receiver for it.
     pub async fn subscribe_to_payload_events(
         &self,
-        chain_id: ChainId,
-        src_endpoint_id: EndpointId,
+        packet: &LayerZeroPacketInfo,
     ) -> Result<InternalSubscription, SettlementError> {
-        // check if subscription already exists for this chain
-        let subs = self.log_subscriptions.read().await;
-        if let Some(sub) = subs.get(&chain_id) {
-            return Ok(sub.subscribe());
-        }
+        // Find the source endpoint ID from the source chain config
+        let Some((_src_chain_id, src_config)) =
+            self.chain_configs.iter().find(|(id, _)| **id == packet.src_chain_id)
+        else {
+            return Err(SettlementError::InternalError(format!(
+                "No config found for source chain {}",
+                packet.src_chain_id
+            )));
+        };
+        let src_endpoint_id = src_config.endpoint_id;
 
-        // create subscription
+        // check if node subscription already exists for this chain
+        {
+            let subs = self.log_subscriptions.read().await;
+            if let Some(sub) = subs.get(&packet.dst_chain_id) {
+                return Ok(sub.subscribe(packet.clone()));
+            }
+        } // Drop read lock here
+
+        // create node subscription
         let mut subs = self.log_subscriptions.write().await;
 
         // double-check - another task may have created it while we waited for write lock
-        if let Some(sub) = subs.get(&chain_id) {
-            return Ok(sub.subscribe());
+        if let Some(sub) = subs.get(&packet.dst_chain_id) {
+            return Ok(sub.subscribe(packet.clone()));
         }
 
-        let Some(config) = self.chain_configs.get(&chain_id) else {
+        let Some(config) = self.chain_configs.get(&packet.dst_chain_id) else {
             // should have been caught by the preflight diagnostics
-            return Err(SettlementError::UnsupportedChain(chain_id));
+            return Err(SettlementError::UnsupportedChain(packet.dst_chain_id));
         };
 
         // get the receive library address
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
         let receive_lib_result =
             endpoint.getReceiveLibrary(config.settler_address, src_endpoint_id).call().await?;
-        let receive_lib_address = receive_lib_result.lib;
 
         // subscribe to events emitted by the library
         let stream = config
             .provider
             .subscribe_logs(
                 &Filter::new()
-                    .address(receive_lib_address)
+                    .address(receive_lib_result.lib)
                     .event_signature(IReceiveUln302::PayloadVerified::SIGNATURE_HASH),
             )
             .await?;
 
         // spawn the chain subscription
-        let subscription = ChainSubscription::spawn(chain_id, stream);
-        let rx = subscription.subscribe();
-        subs.insert(chain_id, subscription);
+        let subscription = ChainSubscription::spawn(packet.dst_chain_id, stream);
+        let rx = subscription.subscribe(packet.clone());
+        subs.insert(packet.dst_chain_id, subscription);
 
         info!(
-            chain_id,
-            receive_lib_address = ?receive_lib_address,
+            chain_id = packet.dst_chain_id,
+            receive_lib_address = ?receive_lib_result.lib,
             "Created global subscription for chain"
         );
 
@@ -308,10 +319,9 @@ pub struct VerificationResult {
 }
 
 /// Result of initial verification status check.
-#[derive(Debug)]
 struct InitialVerificationStatus {
-    /// Packets that still need verification
-    pending: Vec<LayerZeroPacketInfo>,
+    /// Subscriptions for packets that still need verification
+    pending: Vec<InternalSubscription>,
     /// GUIDs of packets that are already verified
     already_verified_guids: Vec<B256>,
 }
@@ -321,6 +331,8 @@ struct InitialVerificationStatus {
 /// When dropped, decrements the subscriber count for its chain subscription.
 #[derive(Debug)]
 pub struct InternalSubscription {
+    /// The packet being monitored
+    packet: LayerZeroPacketInfo,
     /// The underlying broadcast receiver for PayloadVerified events
     inner: broadcast::Receiver<IReceiveUln302::PayloadVerified>,
     /// Shared counter tracking total subscribers for this chain's subscription
@@ -337,34 +349,31 @@ impl InternalSubscription {
 
 impl Drop for InternalSubscription {
     fn drop(&mut self) {
-        self.chain_subscription_counter.fetch_sub(1, Ordering::Relaxed);
+        self.chain_subscription_counter.fetch_sub(1, Ordering::Release);
     }
 }
 
 /// Helper function for final verification check
-async fn final_verification_check(
-    verified_guids: Vec<B256>,
+fn final_verification_check(
+    verified_guids: impl IntoIterator<Item = B256>,
     all_packets: &[LayerZeroPacketInfo],
 ) -> Result<VerificationResult, SettlementError> {
     // Build set of verified GUIDs for quick lookup
-    let verified_guid_set: HashMap<B256, ()> =
-        verified_guids.into_iter().map(|g| (g, ())).collect();
+    let verified_guid_set: HashSet<B256> = verified_guids.into_iter().collect();
 
-    // Build final result by categorizing all packets
-    let mut verified_packets = Vec::new();
-    let mut failed_packets = Vec::new();
-
-    for packet in all_packets {
-        if verified_guid_set.contains_key(&packet.guid) {
-            verified_packets.push(packet.clone());
-        } else {
-            let error_msg = format!(
-                "Message verification timeout: GUID {}, src_chain {}, dst_chain {}",
-                packet.guid, packet.src_chain_id, packet.dst_chain_id
-            );
-            failed_packets.push((packet.clone(), error_msg));
-        }
-    }
+    // Build final result by categorizing all packets using partition_map
+    let (verified_packets, failed_packets): (Vec<_>, Vec<_>) =
+        all_packets.iter().partition_map(|packet| {
+            if verified_guid_set.contains(&packet.guid) {
+                Either::Left(packet.clone())
+            } else {
+                let error_msg = format!(
+                    "Message verification timeout: GUID {}, src_chain {}, dst_chain {}",
+                    packet.guid, packet.src_chain_id, packet.dst_chain_id
+                );
+                Either::Right((packet.clone(), error_msg))
+            }
+        });
 
     if !failed_packets.is_empty() {
         warn!("Failed to verify {} out of {} messages", failed_packets.len(), all_packets.len());
