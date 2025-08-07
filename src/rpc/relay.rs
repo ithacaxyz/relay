@@ -289,14 +289,15 @@ impl Relay {
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         // Fetch orchestrator, delegation, fee history, and eth price in parallel
-        let (orchestrator_addr, delegation, fee_history, eth_price) = try_join!(
+        let (orchestrator, delegation, fee_history, eth_price) = try_join!(
             // fetch orchestrator from the account and ensure it is supported
             async {
                 let orchestrator_addr = account.get_orchestrator().await?;
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
                     return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
                 }
-                Ok::<Address, RelayError>(orchestrator_addr)
+                Ok(Orchestrator::new(orchestrator_addr, &provider)
+                    .with_overrides(overrides.clone()))
             },
             // Fetch delegation from the account
             self.has_supported_delegation(&account).map_err(RelayError::from),
@@ -318,9 +319,6 @@ impl Relay {
             },
         )?;
 
-        // Create the orchestrator object with the fetched address
-        let orchestrator =
-            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides);
         debug!(
             %chain_id,
             fee_token = ?token,
