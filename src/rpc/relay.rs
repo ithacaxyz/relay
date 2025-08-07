@@ -251,6 +251,10 @@ impl Relay {
             .map_err(RelayError::internal)?
             .balance_on_chain(chain_id, context.fee_token.into());
 
+        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
+        // simulation
+        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
+
         // Create account with basic overrides for orchestrator/delegation queries
         let temp_overrides = StateOverridesBuilder::with_capacity(1)
             .append(intent.eoa, build_eoa_override(&context, None))
@@ -289,10 +293,6 @@ impl Relay {
                 Ok(self.inner.price_oracle.eth_price(token.kind).await)
             },
         )?;
-
-        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
-        // simulation
-        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
         // Build state overrides for simulation
         let mut overrides = StateOverridesBuilder::with_capacity(2)
