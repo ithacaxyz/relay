@@ -440,7 +440,8 @@ impl Relay {
         )?;
 
         // Calculate the real fee payment
-        let extra_payment = estimated_extra_fee * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
+        let extra_payment =
+            estimated_extra_fee * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
         let intrinsic_gas = approx_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
