@@ -290,7 +290,7 @@ impl Relay {
 
         // Fetch orchestrator, delegation, fee history, and eth price in parallel
         let (orchestrator, delegation, fee_history, eth_price) = try_join!(
-            // fetch orchestrator from the account and ensure it is supported
+            // Fetch orchestrator from the account and ensure it is supported
             async {
                 let orchestrator_addr = account.get_orchestrator().await?;
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
