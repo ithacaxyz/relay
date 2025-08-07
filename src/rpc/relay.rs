@@ -265,18 +265,17 @@ impl Relay {
         let (assets_response, fee_history, eth_price) = try_join!(
             // Fetch the user's balance for the fee token
             async {
-                self
-                    .get_assets(GetAssetsParameters {
-                        account: intent.eoa,
-                        asset_filter: [(
-                            chain_id,
-                            vec![AssetFilterItem::fungible(context.fee_token.into())],
-                        )]
-                        .into(),
-                        ..Default::default()
-                    })
-                    .await
-                    .map_err(RelayError::internal)
+                self.get_assets(GetAssetsParameters {
+                    account: intent.eoa,
+                    asset_filter: [(
+                        chain_id,
+                        vec![AssetFilterItem::fungible(context.fee_token.into())],
+                    )]
+                    .into(),
+                    ..Default::default()
+                })
+                .await
+                .map_err(RelayError::internal)
             },
             // Fetch chain fee history
             async {
@@ -296,7 +295,8 @@ impl Relay {
             }
         )?;
 
-        let fee_token_balance = assets_response.balance_on_chain(chain_id, context.fee_token.into());
+        let fee_token_balance =
+            assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
@@ -343,7 +343,8 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched above)
+        // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
+        // above)
         let (orchestrator, delegation) = try_join!(
             // Fetch orchestrator from the account and ensure it is supported
             async {
