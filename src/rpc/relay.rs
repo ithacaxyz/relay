@@ -179,7 +179,7 @@ impl Relay {
             asset_info,
             priority_fee_percentile,
             escrow_refund_threshold,
-            // Phase 3: Initialize caches with default configurations
+            // Initialize caches with default configurations
             price_cache: crate::cache::price::PriceCache::new(),
             delegation_cache: crate::cache::delegation::DelegationCache::new(),
             token_cache: crate::cache::token::TokenCache::new(),
@@ -321,7 +321,7 @@ impl Relay {
                     &[self.inner.priority_fee_percentile],
                 )
                 .map_err(RelayError::from),
-            // fetch price in eth (Phase 3: with caching)
+            // fetch price in eth with caching
             async {
                 // TODO: only handles eth as native fee token
                 let price_key = crate::cache::price::PriceKey::current(token.address, chain_id);
@@ -707,7 +707,7 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        // Phase 3: Use delegation cache for implementation address
+        // Use delegation cache for implementation address
         // For now, we'll use chain_id 1 as default - in production this should come from context
         let chain_id = 1u64;
         let delegation_key = crate::cache::delegation::DelegationKey::new(
@@ -1790,7 +1790,7 @@ impl RelayApiServer for Relay {
 
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
 
-                    // Phase 3: Use token cache for metadata
+                    // Use token cache for metadata
                     let token_key = crate::cache::token::TokenKey::new(asset.address.address(), *chain);
                     let metadata = self.inner.token_cache.get_or_fetch(
                         token_key.clone(),
@@ -2210,11 +2210,11 @@ pub(super) struct RelayInner {
     priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
-    /// Phase 3: Price cache for oracle data
+    /// Price cache for oracle data
     price_cache: crate::cache::price::PriceCache,
-    /// Phase 3: Delegation cache for account delegation info
+    /// Delegation cache for account delegation info
     delegation_cache: crate::cache::delegation::DelegationCache,
-    /// Phase 3: Token metadata cache
+    /// Token metadata cache
     token_cache: crate::cache::token::TokenCache,
 }
 

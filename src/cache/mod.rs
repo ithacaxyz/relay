@@ -1,7 +1,7 @@
 //! # Cache Module
 //!
 //! This module provides caching functionality to reduce redundant RPC calls and external API requests.
-//! It implements Phase 3 of the relay performance optimization strategy.
+//! It reduces latency through intelligent caching strategies with appropriate TTLs.
 //!
 //! ## Components
 //! - Generic cache infrastructure with TTL support
