@@ -476,9 +476,7 @@ impl Environment {
         let no_balance_erc20 = Address::random();
         let erc20_code = providers[0].get_code_at(contracts.usdc).await?;
         for provider in &providers {
-            provider
-                .anvil_set_code(no_balance_erc20, erc20_code.clone())
-                .await?;
+            provider.anvil_set_code(no_balance_erc20, erc20_code.clone()).await?;
         }
 
         // Build registry with tokens from all chains
@@ -549,7 +547,8 @@ impl Environment {
                 .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
                 .with_quote_constant_rate(Some(1.0))
                 .with_fee_tokens(
-                    &[vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()].concat(),
+                    &[vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()]
+                        .concat(),
                 )
                 .with_interop_tokens(&[contracts.usdt, usdc_tokens[0], Address::ZERO])
                 .with_fee_recipient(config.fee_recipient)
