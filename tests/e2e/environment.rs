@@ -550,7 +550,7 @@ impl Environment {
                     &[vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()]
                         .concat(),
                 )
-                .with_interop_tokens(&[contracts.usdt, usdc_tokens[0], Address::ZERO])
+                .with_interop_tokens(&[vec![contracts.usdt], usdc_tokens.clone(), vec![Address::ZERO]].concat())
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(contracts.orchestrator))
                 .with_delegation_proxy(Some(contracts.delegation))
