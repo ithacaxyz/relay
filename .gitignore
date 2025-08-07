@@ -42,3 +42,6 @@ registry.yaml
 
 # Scratchpad
 _
+
+# Planning documents (kept locally but not committed)
+plans/
