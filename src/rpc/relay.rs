@@ -255,44 +255,6 @@ impl Relay {
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
-        // Create account with basic overrides for orchestrator/delegation queries
-        let temp_overrides = StateOverridesBuilder::with_capacity(1)
-            .append(intent.eoa, build_eoa_override(&context, None))
-            .extend(context.state_overrides.clone())
-            .build();
-
-        let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides);
-
-        // Fetch orchestrator, delegation, fee history, and eth price in parallel
-        let (orchestrator_addr, delegation, fee_history, eth_price) = try_join!(
-            // Fetch and validate orchestrator
-            async {
-                let orchestrator_addr = temp_account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator_addr) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
-                }
-                Ok::<Address, RelayError>(orchestrator_addr)
-            },
-            // Fetch delegation from the account
-            self.has_supported_delegation(&temp_account).map_err(RelayError::from),
-            // Fetch chain fee
-            async {
-                provider
-                    .get_fee_history(
-                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                        Default::default(),
-                        &[self.inner.priority_fee_percentile],
-                    )
-                    .await
-                    .map_err(RelayError::from)
-            },
-            // Fetch ETH price
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
-            },
-        )?;
-
         // Build state overrides for simulation
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
@@ -324,10 +286,41 @@ impl Relay {
         }
 
         let overrides = overrides.build();
+        let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
+
+        // Fetch orchestrator, delegation, fee history, and eth price in parallel
+        let (orchestrator_addr, delegation, fee_history, eth_price) = try_join!(
+            // fetch orchestrator from the account and ensure it is supported
+            async {
+                let orchestrator_addr = account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator_addr) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
+                }
+                Ok::<Address, RelayError>(orchestrator_addr)
+            },
+            // Fetch delegation from the account
+            self.has_supported_delegation(&account).map_err(RelayError::from),
+            // Fetch chain fee
+            async {
+                provider
+                    .get_fee_history(
+                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                        Default::default(),
+                        &[self.inner.priority_fee_percentile],
+                    )
+                    .await
+                    .map_err(RelayError::from)
+            },
+            // Fetch ETH price
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
+            },
+        )?;
 
         // Create the orchestrator object with the fetched address
         let orchestrator =
-            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides.clone());
+            Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides);
         debug!(
             %chain_id,
             fee_token = ?token,
