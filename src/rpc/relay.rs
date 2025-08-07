@@ -14,6 +14,7 @@ use crate::{
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     provider::ProviderExt,
+    rpc::multicall::MulticallBatcher,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -298,32 +299,96 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
-            // fetch orchestrator from the account and ensure it is supported
-            async {
-                let orchestrator = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
-                }
-                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
-            },
-            // fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from),
-            // fetch chain fees
-            provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[self.inner.priority_fee_percentile],
-                )
-                .map_err(RelayError::from),
-            // fetch price in eth
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
-            },
-        )
-        .await?;
+        // Try to use Multicall3 for batch queries with fallback to individual calls
+        let multicall_batcher = MulticallBatcher::new(provider.clone());
+        let use_multicall = multicall_batcher.is_available().await;
+        
+        // Fetch orchestrator, delegation, fee history, and eth price
+        let (orchestrator, delegation, fee_history, eth_price) = if use_multicall {
+            debug!("Using Multicall3 for batched account queries");
+            
+            // Use multicall for account queries when available
+            let (account_info, fee_history, eth_price) = futures_util::future::try_join3(
+                // Batch account queries using multicall
+                async {
+                    // Use the EOA address as the delegation address for 7702 accounts
+                    multicall_batcher
+                        .batch_account_queries(intent.eoa, intent.eoa)
+                        .await
+                        .map_err(|e| RelayError::InternalError(eyre::eyre!("Multicall failed: {}", e)))
+                },
+                // Fetch chain fee
+                async {
+                    provider
+                        .get_fee_history(
+                            EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                            Default::default(),
+                            &[self.inner.priority_fee_percentile],
+                        )
+                        .await
+                        .map_err(RelayError::from)
+                },
+                // Fetch ETH price
+                async {
+                    // TODO: only handles eth as native fee token
+                    Ok(self.inner.price_oracle.eth_price(token.kind).await)
+                },
+            )
+            .await?;
+            
+            // Validate orchestrator and delegation from multicall results
+            if !self.is_supported_orchestrator(&account_info.orchestrator) {
+                return Err(RelayError::UnsupportedOrchestrator(account_info.orchestrator));
+            }
+            
+            if !account_info.is_delegated {
+                return Err(AuthError::EoaNotDelegated(intent.eoa).into());
+            }
+            
+            let delegation = account_info.implementation;
+            if self.delegation_implementation() != delegation
+                && !self.legacy_delegations().any(|c| c == delegation)
+            {
+                return Err(AuthError::InvalidDelegation(delegation).into());
+            }
+            
+            let orchestrator = Orchestrator::new(account_info.orchestrator, &provider)
+                .with_overrides(overrides.clone());
+            
+            (orchestrator, delegation, fee_history, eth_price)
+        } else {
+            // Fallback to individual calls when Multicall3 is not available
+            debug!("Multicall3 not available, falling back to individual calls");
+            
+            let (orchestrator, delegation, fee_history, eth_price) = try_join4(
+                // fetch orchestrator from the account and ensure it is supported
+                async {
+                    let orchestrator = account.get_orchestrator().await?;
+                    if !self.is_supported_orchestrator(&orchestrator) {
+                        return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+                    }
+                    Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
+                },
+                // fetch delegation from the account and ensure it is supported
+                self.has_supported_delegation(&account).map_err(RelayError::from),
+                // fetch chain fees
+                provider
+                    .get_fee_history(
+                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                        Default::default(),
+                        &[self.inner.priority_fee_percentile],
+                    )
+                    .map_err(RelayError::from),
+                // fetch price in eth
+                async {
+                    // TODO: only handles eth as native fee token
+                    Ok(self.inner.price_oracle.eth_price(token.kind).await)
+                },
+            )
+            .await?;
+            
+            (orchestrator, delegation, fee_history, eth_price)
+        };
         debug!(
             %chain_id,
             fee_token = ?token,
