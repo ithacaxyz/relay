@@ -95,6 +95,9 @@ pub enum RelayError {
     /// Settlement-related errors.
     #[error(transparent)]
     Settlement(#[from] crate::interop::SettlementError),
+    /// Multicall batching errors.
+    #[error("multicall error: {0}")]
+    Multicall(crate::rpc::multicall::MulticallError),
 }
 
 impl RelayError {
@@ -149,7 +152,8 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
-            | RelayError::Settlement(_) => internal_rpc(err.to_string()),
+            | RelayError::Settlement(_) 
+            | RelayError::Multicall(_) => internal_rpc(err.to_string()),
         }
     }
 }

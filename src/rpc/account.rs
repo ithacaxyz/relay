@@ -53,7 +53,6 @@ pub trait AccountApi {
 }
 
 /// Ithaca `account_` RPC module.
-#[derive(Debug)]
 pub struct AccountRpc {
     relay: Relay,
     client: Resend,

@@ -144,7 +144,7 @@ pub trait RelayApi {
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Relay {
     inner: Arc<RelayInner>,
 }
@@ -179,6 +179,10 @@ impl Relay {
             asset_info,
             priority_fee_percentile,
             escrow_refund_threshold,
+            // Phase 3: Initialize caches with default configurations
+            price_cache: crate::cache::price::PriceCache::new(),
+            delegation_cache: crate::cache::delegation::DelegationCache::new(),
+            token_cache: crate::cache::token::TokenCache::new(),
         };
         Self { inner: Arc::new(inner) }
     }
@@ -317,10 +321,18 @@ impl Relay {
                     &[self.inner.priority_fee_percentile],
                 )
                 .map_err(RelayError::from),
-            // fetch price in eth
+            // fetch price in eth (Phase 3: with caching)
             async {
                 // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
+                let price_key = crate::cache::price::PriceKey::current(token.address, chain_id);
+                let price_result = self.inner.price_cache.get_eth_price(
+                    price_key,
+                    || async { 
+                        self.inner.price_oracle.eth_price(token.kind).await
+                            .ok_or_else(|| QuoteError::UnavailablePrice(token.address).into())
+                    }
+                ).await?;
+                Ok(Some(price_result))
             },
         )
         .await?;
@@ -695,37 +707,58 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        if let Some(delegation) = account.delegation_implementation().await? {
-            return Ok(delegation);
-        }
-
-        // Attempt to retrieve the delegation proxy from storage, since it might not be
-        // deployed yet.
-        let Some(stored) = self.inner.storage.read_account(&account.address()).await? else {
-            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account.address()).boxed()));
-        };
-
-        let address = account.address();
-        let account = account.clone().with_overrides(
-            StateOverridesBuilder::default()
-                .with_code(
-                    address,
-                    Bytes::from(
-                        [
-                            &EIP7702_DELEGATION_DESIGNATOR,
-                            stored.signed_authorization.address().as_slice(),
-                        ]
-                        .concat(),
-                    ),
-                )
-                .build(),
+        // Phase 3: Use delegation cache for implementation address
+        // For now, we'll use chain_id 1 as default - in production this should come from context
+        let chain_id = 1u64;
+        let delegation_key = crate::cache::delegation::DelegationKey::new(
+            account.address(),
+            chain_id,
         );
+        
+        self.inner.delegation_cache.get_or_fetch(
+            delegation_key,
+            || async {
+                if let Some(delegation) = account.delegation_implementation().await? {
+                    return Ok(crate::cache::delegation::DelegationInfo {
+                        implementation: delegation,
+                        proxy: self.delegation_proxy(),
+                    });
+                }
 
-        account.delegation_implementation().await?.ok_or_else(|| {
-            RelayError::Auth(
-                AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
-            )
-        })
+                // Attempt to retrieve the delegation proxy from storage, since it might not be
+                // deployed yet.
+                let Some(stored) = self.inner.storage.read_account(&account.address()).await? else {
+                    return Err(RelayError::Auth(AuthError::EoaNotDelegated(account.address()).boxed()));
+                };
+
+                let address = account.address();
+                let account = account.clone().with_overrides(
+                    StateOverridesBuilder::default()
+                        .with_code(
+                            address,
+                            Bytes::from(
+                                [
+                                    &EIP7702_DELEGATION_DESIGNATOR,
+                                    stored.signed_authorization.address().as_slice(),
+                                ]
+                                .concat(),
+                            ),
+                        )
+                        .build(),
+                );
+
+                let implementation = account.delegation_implementation().await?.ok_or_else(|| {
+                    RelayError::Auth(
+                        AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
+                    )
+                })?;
+                
+                Ok(crate::cache::delegation::DelegationInfo {
+                    implementation,
+                    proxy: *stored.signed_authorization.address(),
+                })
+            }
+        ).await.map(|info| info.implementation)
     }
 
     /// Returns an iterator over all installed [`Chain`]s.
@@ -1757,23 +1790,39 @@ impl RelayApiServer for Relay {
 
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
 
-                    let (balance, decimals, name, symbol) = chain_provider
-                        .multicall()
-                        .add(erc20.balanceOf(request.account))
-                        .add(erc20.decimals())
-                        .add(erc20.name())
-                        .add(erc20.symbol())
-                        .aggregate()
-                        .await?;
+                    // Phase 3: Use token cache for metadata
+                    let token_key = crate::cache::token::TokenKey::new(asset.address.address(), *chain);
+                    let metadata = self.inner.token_cache.get_or_fetch(
+                        token_key.clone(),
+                        || async {
+                            let (decimals, name, symbol) = chain_provider
+                                .multicall()
+                                .add(erc20.decimals())
+                                .add(erc20.name())
+                                .add(erc20.symbol())
+                                .aggregate()
+                                .await?;
+                            
+                            Ok(crate::cache::token::TokenMetadata {
+                                name,
+                                symbol,
+                                decimals,
+                            })
+                        }
+                    ).await?;
+
+                    // Fetch balance separately (not cached as it changes frequently)
+                    let balance = erc20.balanceOf(request.account).call().await
+                        .map_err(|e| RelayError::InternalError(e.into()))?;
 
                     Ok(Asset7811 {
                         address: asset.address,
                         balance,
                         asset_type: asset.asset_type,
                         metadata: Some(AssetMetadata {
-                            name: Some(name),
-                            symbol: Some(symbol),
-                            decimals: Some(decimals),
+                            name: Some(metadata.name),
+                            symbol: Some(metadata.symbol),
+                            decimals: Some(metadata.decimals),
                             uri: None,
                         }),
                     })
@@ -2136,7 +2185,6 @@ impl RelayApiServer for Relay {
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
-#[derive(Debug)]
 pub(super) struct RelayInner {
     /// The contract addresses.
     contracts: VersionedContracts,
@@ -2162,6 +2210,12 @@ pub(super) struct RelayInner {
     priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
+    /// Phase 3: Price cache for oracle data
+    price_cache: crate::cache::price::PriceCache,
+    /// Phase 3: Delegation cache for account delegation info
+    delegation_cache: crate::cache::delegation::DelegationCache,
+    /// Phase 3: Token metadata cache
+    token_cache: crate::cache::token::TokenCache,
 }
 
 impl Relay {
