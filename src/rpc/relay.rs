@@ -20,7 +20,7 @@ use crate::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
         Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
-        OrchestratorContract::{self, IntentExecuted},
+        OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
@@ -33,8 +33,14 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559},
-    eips::eip7702::constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+    consensus::{TxEip1559, TxEip7702, transaction::RlpEcdsaEncodableTx},
+    eips::{
+        eip1559::Eip1559Estimation,
+        eip7702::{
+            SignedAuthorization,
+            constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
+        },
+    },
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
@@ -183,31 +189,50 @@ impl Relay {
     ///
     /// Returns fees in ETH.
     #[instrument(skip_all)]
-    async fn estimate_extra_fee(&self, chain: &Chain, intent: &Intent) -> Result<U256, RelayError> {
+    async fn estimate_extra_fee(
+        &self,
+        chain: &Chain,
+        intent: &Intent,
+        auth: Option<SignedAuthorization>,
+        fees: &Eip1559Estimation,
+        gas_estimate: &GasEstimate,
+    ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
-            // Create a dummy transactions with all fields set to max values to make sure that
-            // calldata is largest possible
-            let tx = TxEip1559 {
-                chain_id: chain.chain_id,
-                nonce: u64::MAX,
-                gas_limit: u64::MAX,
-                max_fee_per_gas: u128::MAX,
-                max_priority_fee_per_gas: u128::MAX,
-                to: (!Address::ZERO).into(),
-                input: intent.encode_execute(),
-                ..Default::default()
-            };
-            let signature = alloy::signers::Signature::new(U256::MAX, U256::MAX, true);
+            let mut buf = Vec::new();
 
-            let encoded = {
-                let tx = tx.into_signed(signature);
-                let mut buf = Vec::with_capacity(tx.eip2718_encoded_length());
-                tx.eip2718_encode(&mut buf);
-                buf
-            };
+            // Prepare a dummy transaction that will be used to estimate the L1 DA fees. We need to
+            // use random values for some of the fields to ensure that potential compression won't
+            // affect the outputs.
+            let signature = alloy::signers::Signature::new(U256::random(), U256::random(), true);
+            if let Some(auth) = auth {
+                TxEip7702 {
+                    chain_id: chain.chain_id,
+                    nonce: rand::random(),
+                    gas_limit: gas_estimate.tx,
+                    max_fee_per_gas: fees.max_fee_per_gas,
+                    max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+                    to: self.orchestrator(),
+                    input: intent.encode_execute(),
+                    authorization_list: vec![auth],
+                    ..Default::default()
+                }
+                .eip2718_encode(&signature, &mut buf);
+            } else {
+                TxEip1559 {
+                    chain_id: chain.chain_id,
+                    nonce: rand::random(),
+                    gas_limit: gas_estimate.tx,
+                    max_fee_per_gas: fees.max_fee_per_gas,
+                    max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+                    to: self.orchestrator().into(),
+                    input: intent.encode_execute(),
+                    ..Default::default()
+                }
+                .eip2718_encode(&signature, &mut buf);
+            }
 
-            chain.provider.estimate_l1_fee(encoded.into()).await?
+            chain.provider.estimate_l1_fee(buf.into()).await?
         } else {
             U256::ZERO
         };
@@ -266,8 +291,18 @@ impl Relay {
                 build_eoa_override(
                     &context,
                     // If the fee token is the native token, we override it
-                    context.fee_token.is_zero().then_some(new_fee_token_balance),
-                ),
+                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
+                    .with_state_diff(if context.key_slot_override {
+                        context.account_key.storage_slots()
+                    } else {
+                        Default::default()
+                    })
+                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    .with_code_opt(context.stored_authorization.as_ref().map(|auth| {
+                        Bytes::from(
+                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
+                        )
+                    })),
             )
             .extend(context.state_overrides);
 
@@ -433,12 +468,10 @@ impl Relay {
         let extra_payment =
             estimated_extra_fee * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
         let intrinsic_gas = approx_intrinsic_cost(
-            &OrchestratorContract::executeCall {
-                encodedIntent: intent_to_sign.abi_encode().into(),
-            }
-            .abi_encode(),
-            context.authorization_address.is_some(),
+            &intent_to_sign.encode_execute(),
+            context.stored_authorization.is_some(),
         );
+
         let gas_estimate = GasEstimate::from_combined_gas(
             sim_result.gCombined.to(),
             intrinsic_gas,
@@ -446,8 +479,23 @@ impl Relay {
         );
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
-        // Fill combinedGas and empty dummy signature
+        // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
+
+        // Calculate the real fee
+        let extra_payment = self
+            .estimate_extra_fee(
+                &chain,
+                &intent_to_sign,
+                context.stored_authorization.clone(),
+                &native_fee_estimate,
+                &gas_estimate,
+            )
+            .await?
+            * U256::from(10u128.pow(token.decimals as u32))
+            / eth_price;
+
+        // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
         intent_to_sign.funderSignature = bytes!("");
 
@@ -469,7 +517,7 @@ impl Relay {
             eth_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
-            authorization_address: context.authorization_address,
+            authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
         };
@@ -851,7 +899,7 @@ impl Relay {
             false,
             FeeEstimationContext {
                 fee_token: Address::ZERO,
-                authorization_address: Some(account.signed_authorization.address),
+                stored_authorization: Some(account.signed_authorization.clone()),
                 account_key: mock_key.key().clone(),
                 key_slot_override: true,
                 intent_kind: IntentKind::Single,
@@ -916,9 +964,9 @@ impl Relay {
                 request_key.prehash,
                 FeeEstimationContext {
                     fee_token: request.capabilities.meta.fee_token,
-                    authorization_address: maybe_stored
+                    stored_authorization: maybe_stored
                         .as_ref()
-                        .map(|acc| acc.signed_authorization.address),
+                        .map(|acc| acc.signed_authorization.clone()),
                     account_key: key,
                     key_slot_override: false,
                     intent_kind,
