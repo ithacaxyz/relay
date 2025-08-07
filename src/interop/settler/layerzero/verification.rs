@@ -42,7 +42,7 @@ use tracing::{debug, info, warn};
 
 /// Represents an active subscription for a specific chain.
 struct ChainSubscription {
-    /// Broadcasts decoded PayloadVerified events to all consumers
+    /// Broadcasts decoded `PayloadVerified` events to all consumers
     event_sender: broadcast::Sender<IReceiveUln302::PayloadVerified>,
     /// Handle for cleanup requests and subscriber tracking
     handle: ChainSubscriptionHandle,
@@ -104,10 +104,10 @@ impl ChainSubscription {
         Self { event_sender, handle }
     }
 
-    /// Generates a new InternalSubscription.
-    fn subscribe(&self, packet: LayerZeroPacketInfo) -> InternalSubscription {
+    /// Generates a new [`PacketSubscription`].
+    fn subscribe(&self, packet: LayerZeroPacketInfo) -> PacketSubscription {
         self.handle.subscribers_count.fetch_add(1, Ordering::Relaxed);
-        InternalSubscription {
+        PacketSubscription {
             packet,
             inner: self.event_sender.subscribe(),
             chain_handle: self.handle.clone(),
@@ -202,7 +202,6 @@ impl LayerZeroVerificationMonitor {
         // monitor pending packets with their subscriptions
         let verified_via_events = self.monitor_packets(status.pending, timeout_deadline).await?;
 
-        // Combine pre-verified GUIDs with those verified via events
         final_verification_check(
             status.already_verified_guids.into_iter().chain(verified_via_events),
             &packets,
@@ -214,7 +213,7 @@ impl LayerZeroVerificationMonitor {
     /// Returns pending packet subscriptions and GUIDs of already verified packets.
     async fn check_initial_verification_status(
         &self,
-        packet_subscriptions: Vec<InternalSubscription>,
+        packet_subscriptions: Vec<PacketSubscription>,
     ) -> Result<InitialVerificationStatus, SettlementError> {
         let total_packets = packet_subscriptions.len();
 
@@ -247,47 +246,26 @@ impl LayerZeroVerificationMonitor {
     /// Returns GUIDs of packets that were verified before the timeout.
     async fn monitor_packets(
         &self,
-        pending_subscriptions: Vec<InternalSubscription>,
+        pending_subscriptions: Vec<PacketSubscription>,
         timeout_deadline: Instant,
     ) -> Result<Vec<B256>, SettlementError> {
-        if pending_subscriptions.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let monitoring_futures = pending_subscriptions.into_iter().map(async |mut rx| {
-            let result = loop {
-                tokio::select! {
-                    Ok(event) = rx.recv() => {
-                        // check if this event is for our packet
-                        if keccak256(&event.header) == rx.packet.header_hash
-                            && self.inner.chain_configs.is_message_available(&rx.packet).await.unwrap_or(false) {
-                                info!(
-                                    guid = ?rx.packet.guid,
-                                    "Packet verified on chain"
-                                );
-                                break Some(rx.packet.guid);
-                        }
-                    }
-                    _ = sleep_until(timeout_deadline) => {
-                        break None;
-                    }
-                }
-            };
-
-            Ok::<_, SettlementError>(result)
-        });
-
-        Ok(try_join_all(monitoring_futures).await?.into_iter().flatten().collect())
+        Ok(try_join_all(pending_subscriptions.into_iter().map(async |mut pending| {
+            pending.wait(timeout_deadline, &self.inner.chain_configs).await
+        }))
+        .await?
+        .into_iter()
+        .flatten()
+        .collect())
     }
 
-    /// Subscribes to PayloadVerified events for the specified packet.
+    /// Subscribes to `PayloadVerified` events for the specified packet.
     ///
     /// If a subscription already exists for the chain, returns a new receiver for the existing
     /// broadcast channel. Otherwise, creates a new subscription and returns a receiver for it.
     pub async fn subscribe_to_payload_events(
         &self,
         packet: &LayerZeroPacketInfo,
-    ) -> Result<InternalSubscription, SettlementError> {
+    ) -> Result<PacketSubscription, SettlementError> {
         // Find the source endpoint ID from the source chain config
         let Some((_src_chain_id, src_config)) =
             self.inner.chain_configs.iter().find(|(id, _)| **id == packet.src_chain_id)
@@ -378,33 +356,58 @@ pub struct VerificationResult {
 /// Result of initial verification status check.
 struct InitialVerificationStatus {
     /// Subscriptions for packets that still need verification
-    pending: Vec<InternalSubscription>,
+    pending: Vec<PacketSubscription>,
     /// GUIDs of packets that are already verified
     already_verified_guids: Vec<B256>,
 }
 
-/// Handle to a chain's event stream that automatically tracks active receivers.
+/// Handle to a chain's event stream for a specific packet.
 ///
 /// When dropped, decrements the subscriber count for its chain subscription.
 #[derive(Debug)]
-pub struct InternalSubscription {
+pub struct PacketSubscription {
     /// The packet being monitored
     packet: LayerZeroPacketInfo,
-    /// The underlying broadcast receiver for PayloadVerified events
+    /// The underlying broadcast receiver for `PayloadVerified` events
     inner: broadcast::Receiver<IReceiveUln302::PayloadVerified>,
     /// Handle for cleanup when dropped
     chain_handle: ChainSubscriptionHandle,
 }
 
-impl InternalSubscription {
-    async fn recv(
+impl PacketSubscription {
+    /// Wait for this packet to be verified or timeout.
+    ///
+    /// Returns the packet GUID if verified, `None` if timeout.
+    async fn wait(
         &mut self,
-    ) -> Result<IReceiveUln302::PayloadVerified, broadcast::error::RecvError> {
-        self.inner.recv().await
+        timeout_deadline: Instant,
+        chain_configs: &LZChainConfigs,
+    ) -> Result<Option<B256>, SettlementError> {
+        loop {
+            tokio::select! {
+                Ok(event) = self.inner.recv() => {
+                    // Check if this event is for our packet
+                    if keccak256(&event.header) == self.packet.header_hash {
+                        // Double-check the message is actually available on-chain
+                        if chain_configs.is_message_available(&self.packet).await? {
+                            info!(
+                                guid = ?self.packet.guid,
+                                "Packet verified on chain"
+                            );
+                            return Ok(Some(self.packet.guid));
+                        }
+                    }
+                    // Not our packet, continue listening
+                }
+                _ = sleep_until(timeout_deadline) => {
+                    return Ok(None);
+                }
+            }
+        }
     }
 }
 
-impl Drop for InternalSubscription {
+impl Drop for PacketSubscription {
     fn drop(&mut self) {
         self.chain_handle.notify_drop();
     }
