@@ -6,7 +6,10 @@
 
 use super::contracts::{ILayerZeroEndpointV2, IReceiveUln302};
 use crate::{
-    interop::settler::{layerzero::{contracts::IReceiveUln302::PayloadVerified, types::LayerZeroPacketInfo}, SettlementError},
+    interop::settler::{
+        SettlementError,
+        layerzero::{contracts::IReceiveUln302::PayloadVerified, types::LayerZeroPacketInfo},
+    },
     types::LZChainConfigs,
 };
 use alloy::{
@@ -370,7 +373,11 @@ impl VerificationResult {
             });
 
         if !failed_packets.is_empty() {
-            warn!("Failed to verify {} out of {} messages", failed_packets.len(), all_packets.len());
+            warn!(
+                "Failed to verify {} out of {} messages",
+                failed_packets.len(),
+                all_packets.len()
+            );
         }
 
         Self { verified_packets, failed_packets }
