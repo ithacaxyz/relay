@@ -299,7 +299,7 @@ impl Relay {
                 Ok(Orchestrator::new(orchestrator_addr, &provider)
                     .with_overrides(overrides.clone()))
             },
-            // Fetch delegation from the account
+            // Fetch delegation from the account and ensure it is supported
             self.has_supported_delegation(&account).map_err(RelayError::from),
             // Fetch chain fee
             async {
