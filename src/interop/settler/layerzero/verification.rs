@@ -38,22 +38,15 @@ use tokio::{
     sync::{RwLock, broadcast, mpsc},
     time::{Duration, Instant, sleep_until},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Represents an active subscription for a specific chain.
+#[derive(Debug)]
 struct ChainSubscription {
     /// Broadcasts decoded `PayloadVerified` events to all consumers
     event_sender: broadcast::Sender<IReceiveUln302::PayloadVerified>,
     /// Handle for cleanup requests and subscriber tracking
     handle: ChainSubscriptionHandle,
-}
-
-impl std::fmt::Debug for ChainSubscription {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChainSubscription")
-            .field("subscribers_count", &self.handle.subscribers_count.load(Ordering::Relaxed))
-            .finish()
-    }
 }
 
 impl ChainSubscription {
@@ -92,7 +85,7 @@ impl ChainSubscription {
                     // Handle cleanup requests
                     Some(()) = cleanup_rx.recv() => {
                         if monitor.try_cleanup(chain_id).await {
-                            debug!(chain_id, "Cleanup successful, terminating stream task");
+                            debug!(chain_id, "Chain subscription cleaned up, terminating stream task");
                             break;
                         }
                     }
@@ -180,7 +173,7 @@ impl LayerZeroVerificationMonitor {
         info!(
             num_packets = packets.len(),
             timeout_secs = timeout_seconds,
-            "Waiting for LayerZero message verifications"
+            "Starting LayerZero verification monitoring"
         );
 
         // create subscriptions for all destination chains
@@ -195,11 +188,18 @@ impl LayerZeroVerificationMonitor {
 
         // if everything is already verified, return immediately
         if status.pending.is_empty() {
-            info!("All {} messages already verified", status.already_verified_guids.len());
+            info!(
+                num_verified = status.already_verified_guids.len(),
+                "All messages already verified on-chain"
+            );
             return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
         }
 
         // monitor pending packets with their subscriptions
+        debug!(
+            num_pending = status.pending.len(),
+            "Monitoring pending packets for verification events"
+        );
         let verified_via_events = self.monitor_packets(status.pending, timeout_deadline).await?;
 
         final_verification_check(
@@ -388,18 +388,35 @@ impl PacketSubscription {
                 Ok(event) = self.inner.recv() => {
                     // Check if this event is for our packet
                     if keccak256(&event.header) == self.packet.header_hash {
+                        trace!(
+                            guid = ?self.packet.guid,
+                            "Received matching PayloadVerified event, checking on-chain"
+                        );
                         // Double-check the message is actually available on-chain
                         if chain_configs.is_message_available(&self.packet).await? {
-                            info!(
+                            trace!(
                                 guid = ?self.packet.guid,
+                                src_chain = self.packet.src_chain_id,
+                                dst_chain = self.packet.dst_chain_id,
                                 "Packet verified on chain"
                             );
                             return Ok(Some(self.packet.guid));
+                        } else {
+                            trace!(
+                                guid = ?self.packet.guid,
+                                "Event received but message not yet available on-chain"
+                            );
                         }
                     }
                     // Not our packet, continue listening
                 }
                 _ = sleep_until(timeout_deadline) => {
+                    warn!(
+                        guid = ?self.packet.guid,
+                        src_chain = self.packet.src_chain_id,
+                        dst_chain = self.packet.dst_chain_id,
+                        "Packet verification timed out"
+                    );
                     return Ok(None);
                 }
             }
