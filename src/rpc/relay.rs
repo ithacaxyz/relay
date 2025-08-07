@@ -459,7 +459,13 @@ impl Relay {
                 context.account_key.keyType,
                 self.inner.asset_info.clone(),
             ),
-            self.estimate_extra_fee(&chain, &intent_to_sign)
+            self.estimate_extra_fee(
+                &chain,
+                &intent_to_sign,
+                context.stored_authorization.clone(),
+                &native_fee_estimate,
+                &gas_estimate
+            )
         )?;
 
         // Calculate the real fee payment
@@ -2367,24 +2373,4 @@ fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
     // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
     // an empty address on the chain the intent is for to get an estimte of the calldata.
     21000 + auth_cost + input.len() as u64 * 16
-}
-
-/// Create EOA account override with key storage and optional 7702 designator
-fn build_eoa_override(
-    context: &FeeEstimationContext,
-    balance_override: Option<U256>,
-) -> AccountOverride {
-    AccountOverride::default()
-        .with_balance_opt(balance_override)
-        .with_state_diff(if context.key_slot_override {
-            context.account_key.storage_slots()
-        } else {
-            Default::default()
-        })
-        // we manually etch the 7702 designator since we do not have a signed auth item
-        .with_code_opt(
-            context.authorization_address.map(|addr| {
-                Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, addr.as_slice()].concat())
-            }),
-        )
 }
