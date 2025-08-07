@@ -429,7 +429,7 @@ impl Relay {
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
         // Run simulate_execute and estimate_extra_fee in parallel since they're independent
-        let ((asset_diffs, sim_result), extra_fee_eth) = tokio::try_join!(
+        let ((asset_diffs, sim_result), estimated_extra_fee) = tokio::try_join!(
             orchestrator.simulate_execute(
                 self.simulator(),
                 &intent_to_sign,
@@ -440,8 +440,7 @@ impl Relay {
         )?;
 
         // Calculate the real fee payment
-        let extra_payment =
-            extra_fee_eth * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
+        let extra_payment = estimated_extra_fee * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
         let intrinsic_gas = approx_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
