@@ -240,22 +240,22 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
-        // Start fetching the user's balance for the fee token early (will be awaited later)
-        let fee_token_balance_fut = self.get_assets(GetAssetsParameters {
-            account: intent.eoa,
-            asset_filter: [(
-                chain_id,
-                vec![AssetFilterItem::fungible(context.fee_token.into())],
-            )]
-            .into(),
-            ..Default::default()
-        });
+        // Fetch user's balance for the fee token first
+        let fee_token_balance_result = self
+            .get_assets(GetAssetsParameters {
+                account: intent.eoa,
+                asset_filter: [(
+                    chain_id,
+                    vec![AssetFilterItem::fungible(context.fee_token.into())],
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .await
+            .map_err(RelayError::internal)?;
 
-        // We'll await this future later in parallel with other operations
-        // For now, we need to prepare a temporary account object for fetching orchestrator/delegation
-
-        // Create a temporary account with basic overrides for fetching orchestrator and delegation
-        let temp_overrides = StateOverridesBuilder::with_capacity(2)
+        // Create account with basic overrides for orchestrator/delegation queries
+        let temp_overrides = StateOverridesBuilder::with_capacity(1)
             .append(
                 intent.eoa,
                 AccountOverride::default()
@@ -272,18 +272,11 @@ impl Relay {
             .extend(context.state_overrides.clone())
             .build();
         
-        let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides.clone());
+        let temp_account = Account::new(intent.eoa, &provider).with_overrides(temp_overrides);
 
-        // For now, let's take a simpler sequential approach that definitely compiles
-        // We can optimize this step by step
-        
-        // Fetch the balance first
-        let fee_token_balance_result = fee_token_balance_fut
-            .map_err(RelayError::internal)
-            .await?;
-            
-        // Then fetch orchestrator, delegation, fee history, and eth price in parallel
+        // Fetch orchestrator, delegation, fee history, and eth price in parallel
         let (orchestrator_addr, delegation, fee_history, eth_price) = tokio::try_join!(
+            // Fetch and validate orchestrator 
             async {
                 let orchestrator_addr = temp_account.get_orchestrator().await?;
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
@@ -291,7 +284,11 @@ impl Relay {
                 }
                 Ok::<Address, RelayError>(orchestrator_addr)
             },
+            
+            // Fetch delegation from the account
             self.has_supported_delegation(&temp_account).map_err(RelayError::from),
+            
+            // Fetch fee history
             async {
                 let percentile = self.inner.priority_fee_percentile;
                 provider
@@ -303,20 +300,21 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
+            
+            // Fetch ETH price
             async {
                 // TODO: only handles eth as native fee token
                 Ok(self.inner.price_oracle.eth_price(token.kind).await)
             },
         )?;
-        
-        // Extract fee token balance from the result
+
         let fee_token_balance = fee_token_balance_result
             .balance_on_chain(chain_id, context.fee_token.into());
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
-        
-        // mocking key storage for the eoa, and the balance for the mock signer
+
+        // Build state overrides for simulation
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
