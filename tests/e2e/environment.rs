@@ -1083,7 +1083,11 @@ where
         // Prepare deployment futures
         let deployed_usdcs =
             try_join_all(providers.iter().enumerate().map(async |(i, provider)| {
-                let deployer_signer = PrivateKeySigner::from_bytes(&B256::random()).unwrap();
+                // Use deterministic key based on chain index to ensure consistent addresses
+                let mut deployer_key = [0u8; 32];
+                deployer_key[0] = 0x01; // Ensure non-zero key
+                deployer_key[31] = i as u8; // Differentiate by chain index
+                let deployer_signer = PrivateKeySigner::from_bytes(&B256::from(deployer_key)).unwrap();
 
                 // Fund the deployer
                 provider.anvil_set_balance(deployer_signer.address(), U256::from(10e18)).await?;
