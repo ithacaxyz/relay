@@ -3,19 +3,10 @@
 //! This module provides utilities for monitoring LayerZero message verifications.
 //! It maintains a single subscription per destination chain to minimize connections while serving
 //! multiple concurrent verification requests through broadcast channels.
-//!
-//! ## Architecture
-//!
-//! The monitor optimizes resource usage by:
-//!
-//! 1. Creating one WebSocket subscription per destination chain (not per packet)
-//! 2. Broadcasting `PayloadVerified` events to all interested receivers via channels
-//! 3. Automatically cleaning up unused subscriptions when no receivers remain
-//! 4. Checking initial verification status to avoid unnecessary subscriptions
 
 use super::contracts::{ILayerZeroEndpointV2, IReceiveUln302};
 use crate::{
-    interop::settler::{SettlementError, layerzero::types::LayerZeroPacketInfo},
+    interop::settler::{layerzero::{contracts::IReceiveUln302::PayloadVerified, types::LayerZeroPacketInfo}, SettlementError},
     types::LZChainConfigs,
 };
 use alloy::{
@@ -44,7 +35,7 @@ use tracing::{debug, info, trace, warn};
 #[derive(Debug)]
 struct ChainSubscription {
     /// Broadcasts decoded `PayloadVerified` events to all consumers
-    event_sender: broadcast::Sender<IReceiveUln302::PayloadVerified>,
+    event_sender: broadcast::Sender<PayloadVerified>,
     /// Handle for cleanup requests and subscriber tracking
     handle: ChainSubscriptionHandle,
 }
@@ -78,7 +69,7 @@ impl ChainSubscription {
                             break;
                         };
 
-                        if let Ok(decoded) = IReceiveUln302::PayloadVerified::decode_log(&log.inner) {
+                        if let Ok(decoded) = PayloadVerified::decode_log(&log.inner) {
                             let _ = tx.send(decoded.data);
                         }
                     }
@@ -108,7 +99,7 @@ impl ChainSubscription {
     }
 }
 
-/// Handle for requesting cleanup of a chain subscription and track subscribers.
+/// Handle for requesting cleanup of a chain subscription and track its subscribers.
 #[derive(Clone, Debug)]
 struct ChainSubscriptionHandle {
     /// Channel to request cleanup
@@ -124,7 +115,7 @@ impl ChainSubscriptionHandle {
 
         // If we were the last subscriber, request cleanup
         if prev == 1 {
-            // Send cleanup request - ignore error if receiver is gone (shutting down)
+            // notify cleanup request attempt
             let _ = self.cleanup_tx.send(());
         }
     }
@@ -202,10 +193,10 @@ impl LayerZeroVerificationMonitor {
         );
         let verified_via_events = self.monitor_packets(status.pending, timeout_deadline).await?;
 
-        final_verification_check(
+        Ok(VerificationResult::new(
             status.already_verified_guids.into_iter().chain(verified_via_events),
             &packets,
-        )
+        ))
     }
 
     /// Checks which packets are already verified on-chain.
@@ -309,7 +300,7 @@ impl LayerZeroVerificationMonitor {
             .subscribe_logs(
                 &Filter::new()
                     .address(receive_lib_result.lib)
-                    .event_signature(IReceiveUln302::PayloadVerified::SIGNATURE_HASH),
+                    .event_signature(PayloadVerified::SIGNATURE_HASH),
             )
             .await?;
 
@@ -353,6 +344,39 @@ pub struct VerificationResult {
     pub failed_packets: Vec<(LayerZeroPacketInfo, String)>,
 }
 
+impl VerificationResult {
+    /// Creates a new verification result by checking which packets were verified.
+    ///
+    /// Takes verified GUIDs and all packets, partitioning them into verified and failed.
+    fn new(
+        verified_guids: impl IntoIterator<Item = B256>,
+        all_packets: &[LayerZeroPacketInfo],
+    ) -> Self {
+        // Build set of verified GUIDs for quick lookup
+        let verified_guid_set: HashSet<B256> = verified_guids.into_iter().collect();
+
+        // Build final result by categorizing all packets using partition_map
+        let (verified_packets, failed_packets): (Vec<_>, Vec<_>) =
+            all_packets.iter().partition_map(|packet| {
+                if verified_guid_set.contains(&packet.guid) {
+                    Either::Left(packet.clone())
+                } else {
+                    let error_msg = format!(
+                        "Message verification timeout: GUID {}, src_chain {}, dst_chain {}",
+                        packet.guid, packet.src_chain_id, packet.dst_chain_id
+                    );
+                    Either::Right((packet.clone(), error_msg))
+                }
+            });
+
+        if !failed_packets.is_empty() {
+            warn!("Failed to verify {} out of {} messages", failed_packets.len(), all_packets.len());
+        }
+
+        Self { verified_packets, failed_packets }
+    }
+}
+
 /// Result of initial verification status check.
 struct InitialVerificationStatus {
     /// Subscriptions for packets that still need verification
@@ -369,7 +393,7 @@ pub struct PacketSubscription {
     /// The packet being monitored
     packet: LayerZeroPacketInfo,
     /// The underlying broadcast receiver for `PayloadVerified` events
-    inner: broadcast::Receiver<IReceiveUln302::PayloadVerified>,
+    inner: broadcast::Receiver<PayloadVerified>,
     /// Handle for cleanup when dropped
     chain_handle: ChainSubscriptionHandle,
 }
@@ -428,33 +452,4 @@ impl Drop for PacketSubscription {
     fn drop(&mut self) {
         self.chain_handle.notify_drop();
     }
-}
-
-/// Helper function for final verification check
-fn final_verification_check(
-    verified_guids: impl IntoIterator<Item = B256>,
-    all_packets: &[LayerZeroPacketInfo],
-) -> Result<VerificationResult, SettlementError> {
-    // Build set of verified GUIDs for quick lookup
-    let verified_guid_set: HashSet<B256> = verified_guids.into_iter().collect();
-
-    // Build final result by categorizing all packets using partition_map
-    let (verified_packets, failed_packets): (Vec<_>, Vec<_>) =
-        all_packets.iter().partition_map(|packet| {
-            if verified_guid_set.contains(&packet.guid) {
-                Either::Left(packet.clone())
-            } else {
-                let error_msg = format!(
-                    "Message verification timeout: GUID {}, src_chain {}, dst_chain {}",
-                    packet.guid, packet.src_chain_id, packet.dst_chain_id
-                );
-                Either::Right((packet.clone(), error_msg))
-            }
-        });
-
-    if !failed_packets.is_empty() {
-        warn!("Failed to verify {} out of {} messages", failed_packets.len(), all_packets.len());
-    }
-
-    Ok(VerificationResult { verified_packets, failed_packets })
 }
