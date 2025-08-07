@@ -259,7 +259,7 @@ impl Relay {
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
 
         // mocking key storage for the eoa, and the balance for the mock signer
-        let mut overrides = StateOverridesBuilder::with_capacity(2)
+        let mut overrides = StateOverridesBuilder::with_capacity(3)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
             .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
