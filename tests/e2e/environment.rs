@@ -209,11 +209,11 @@ pub async fn setup_anvil_instances(
 /// Helper function to spawn a local anvil instance
 fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<AnvilInstance> {
     let mut args = vec![];
-    
+
     // Check if we're forking
     let fork_url = std::env::var("TEST_FORK_URL");
     let is_forking = fork_url.is_ok();
-    
+
     // fork off a block a few blocks lower than `latest` by default
     let fork_block_number = config.fork_block_number.unwrap_or(-3).to_string();
     if let Ok(fork_url) = &fork_url {
@@ -231,14 +231,14 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
     }
 
     let mut anvil = Anvil::new();
-    
+
     // Only set chain_id if we're not forking
     // When forking, use the forked chain's actual chain ID
     if !is_forking {
         let chain_id = 31337 + index as u64;
         anvil = anvil.chain_id(chain_id);
     }
-    
+
     anvil
         .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
         .try_spawn()

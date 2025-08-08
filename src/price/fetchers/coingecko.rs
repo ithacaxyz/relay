@@ -307,12 +307,13 @@ impl CoinGecko {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::info;
 
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn test_coingecko_usd_prices() {
         let api_key = std::env::var("GECKO_API").unwrap();
-        println!("Using API key: {}", if api_key.is_empty() { "EMPTY" } else { "SET" });
+        info!("Using API key: {}", if api_key.is_empty() { "EMPTY" } else { "SET" });
 
         let registry = Arc::new(CoinRegistry::default());
         let (update_tx, mut update_rx) = mpsc::unbounded_channel();
@@ -322,7 +323,7 @@ mod tests {
             "simple/price",
             "ids=ethereum,binancecoin,matic-network&vs_currencies=usd",
         );
-        println!("ETH URL: {}", eth_url);
+        info!("ETH URL: {}", eth_url);
 
         let gecko = CoinGecko {
             request_urls: CoinGecko::build_request_urls(registry.clone(), &pairs),
@@ -331,26 +332,26 @@ mod tests {
             update_tx,
         };
 
-        println!("Fetching prices...");
+        info!("Fetching prices...");
         gecko.update_prices().await.expect("Failed to fetch prices");
 
         let mut usd_prices = HashMap::new();
         let mut eth_prices = HashMap::new();
 
-        println!("Processing messages...");
+        info!("Processing messages...");
         while let Ok(msg) = update_rx.try_recv() {
             match msg {
                 PriceOracleMessage::UpdateUsd { prices, .. } => {
-                    println!("Received USD prices update with {} prices", prices.len());
+                    info!("Received USD prices update with {} prices", prices.len());
                     for (coin, price) in prices {
-                        println!("  {} -> ${}", coin, price);
+                        info!("  {} -> ${}", coin, price);
                         usd_prices.insert(coin, price);
                     }
                 }
                 PriceOracleMessage::Update { prices, .. } => {
-                    println!("Received ETH prices update with {} prices", prices.len());
+                    info!("Received ETH prices update with {} prices", prices.len());
                     for (pair, price) in prices {
-                        println!("  {} -> {} ETH", pair.from, price);
+                        info!("  {} -> {} ETH", pair.from, price);
                         eth_prices.insert(pair.from, price);
                     }
                 }
@@ -358,15 +359,15 @@ mod tests {
             }
         }
 
-        println!("\nFinal USD prices collected: {:?}", usd_prices);
-        println!("Final ETH prices collected: {:?}", eth_prices);
+        info!("\nFinal USD prices collected: {:?}", usd_prices);
+        info!("Final ETH prices collected: {:?}", eth_prices);
 
         // Verify we got USD prices for all native coins (ETH, BNB, POL) and tokens
         for coin in [CoinKind::ETH, CoinKind::BNB, CoinKind::POL, CoinKind::USDT, CoinKind::USDC] {
             let price = usd_prices.get(&coin).copied().unwrap_or_else(|| {
                 panic!("Missing USD price for {coin:?}. Got USD prices: {usd_prices:?}")
             });
-            println!("Verified {} USD price: ${}", coin, price);
+            info!("Verified {} USD price: ${}", coin, price);
             assert!(price > 0.0, "Invalid USD price for {coin:?}: {price}");
         }
 
@@ -375,10 +376,10 @@ mod tests {
             let price = eth_prices.get(&coin).copied().unwrap_or_else(|| {
                 panic!("Missing ETH price for {coin:?}. Got ETH prices: {eth_prices:?}")
             });
-            println!("Verified {} ETH price: {} ETH", coin, price);
+            info!("Verified {} ETH price: {} ETH", coin, price);
             assert!(price > 0.0, "Invalid ETH price for {coin:?}: {price}");
         }
-        
-        println!("\nTest passed! All prices fetched successfully.");
+
+        info!("\nTest passed! All prices fetched successfully.");
     }
 }

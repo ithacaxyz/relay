@@ -82,7 +82,7 @@ impl CoinKind {
     /// Returns the native coin kind for a given chain ID.
     pub fn native_for_chain(chain_id: ChainId) -> Self {
         use alloy_chains::{Chain, NamedChain};
-        
+
         if chain_id == Chain::bsc_mainnet().id() || chain_id == Chain::bsc_testnet().id() {
             CoinKind::BNB
         } else if chain_id == Chain::from_named(NamedChain::Polygon).id()
