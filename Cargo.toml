@@ -12,6 +12,10 @@ name = "relay"
 path = "src/bin/stress.rs"
 name = "stress"
 
+[[bin]]
+path = "src/bin/cli.rs"
+name = "porto"
+
 [dependencies]
 alloy = { version = "1.0.23", features = [
     "std",
@@ -48,8 +52,10 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6.1.0"
+dirs = "5.0"
 eyre = "0.6.12"
 futures-util = "0.3"
+hex = "0.4"
 http = "1"
 http-body = "1"
 jsonrpsee = { version = "0.25", features = ["server", "client", "macros"] }
