@@ -1,3 +1,0 @@
-[submodule "tests/account"]
-	path = tests/account
-	url = https://github.com/ithacaxyz/account.git

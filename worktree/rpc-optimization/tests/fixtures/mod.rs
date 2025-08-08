@@ -1,3 +1,0 @@
-//! Test fixtures
-
-mod merkle;

@@ -1,1 +1,0 @@
-alter table pending_unlocks drop constraint pending_unlocks_pkey;

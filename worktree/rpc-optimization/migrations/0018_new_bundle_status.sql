@@ -1,1 +1,0 @@
-alter type bundle_status add value 'liquidity_locked';
