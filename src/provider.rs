@@ -18,7 +18,7 @@ pub trait ProviderExt: Provider {
     /// Heuristically determines whether this chain is an OP rollup.
     fn is_optimism(&self) -> impl Future<Output = TransportResult<bool>> + Send {
         async move {
-            let chain_id = self.get_chain_id().await.unwrap();
+            let chain_id = self.get_chain_id().await?;
             if alloy_chains::Chain::from(chain_id).is_optimism() {
                 Ok(true)
             } else {
@@ -171,9 +171,8 @@ pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle
             // Log cache statistics periodically
             let stats = cache.stats();
             debug!(
-                "Cache stats: chain_id={}, delegation_impl={}, fees={}, code={}, keys={}, fee_history={}, pending_calls={}",
+                "Cache stats: chain_id={}, fees={}, code={}, keys={}, fee_history={}, pending_calls={}",
                 stats.chain_id_cached,
-                stats.delegation_impl_cached,
                 stats.fee_cache_size,
                 stats.code_cache_size,
                 stats.keys_cache_size,

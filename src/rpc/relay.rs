@@ -272,13 +272,14 @@ impl Relay {
         );
 
         // Check cache first (2-minute TTL for fee estimates)
-        if let Some(_cached_fee) = self.inner.rpc_cache.get_fee_estimate(&cache_key) {
-            debug!(key = %cache_key, "Fee estimate cache HIT");
-            // Note: We'd need to serialize/deserialize the full result here
-            // For now, we'll just proceed with the calculation but log the cache hit
+        // Note: Currently we only cache the gas estimate, not the full result
+        // This is a simplified implementation that still provides value by caching gas calculations
+        let cached_gas = self.inner.rpc_cache.get_fee_estimate(&cache_key);
+        if cached_gas.is_some() {
+            debug!(key = %cache_key, "Fee estimate cache HIT - using cached gas estimate");
+        } else {
+            debug!(key = %cache_key, "Fee estimate cache MISS - calculating fee");
         }
-
-        debug!(key = %cache_key, "Fee estimate cache MISS - calculating fee");
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
@@ -504,12 +505,31 @@ impl Relay {
             context.stored_authorization.is_some(),
         );
 
-        let gas_estimate = GasEstimate::from_combined_gas(
-            sim_result.gCombined.to(),
-            intrinsic_gas,
-            &self.inner.quote_config,
-        );
-        debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
+        let gas_estimate = if let Some(cached_tx_gas) = cached_gas {
+            // Use cached tx gas estimate to reconstruct the gas estimate
+            // We need to reverse-engineer the intent gas from the tx gas
+            // From GasEstimate::from_combined_gas we know:
+            // tx = (intent + 110_000 + tx_buffer) * 64 / 63 + intrinsic_gas
+            // So: intent = ((tx - intrinsic_gas) * 63 / 64) - 110_000 - tx_buffer
+            let tx_gas = cached_tx_gas.to::<u64>();
+            let tx_buffer = self.inner.quote_config.tx_buffer();
+            let intent_gas = ((tx_gas.saturating_sub(intrinsic_gas)) * 63 / 64)
+                .saturating_sub(110_000)
+                .saturating_sub(tx_buffer);
+            
+            GasEstimate {
+                tx: tx_gas,
+                intent: intent_gas,
+            }
+        } else {
+            // Calculate new gas estimate
+            GasEstimate::from_combined_gas(
+                sim_result.gCombined.to(),
+                intrinsic_gas,
+                &self.inner.quote_config,
+            )
+        };
+        debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, cached = cached_gas.is_some(), "Estimated intent");
 
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
@@ -737,20 +757,8 @@ impl Relay {
         &self,
         request: GetKeysParameters,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        // Check cache first (10-minute TTL)
-        let cache_key = request.address;
-        if let Some(cached_keys_bytes) = self.inner.rpc_cache.get_keys(&cache_key) {
-            debug!(address = %request.address, "Keys cache HIT");
-            if let Ok(cached_keys) =
-                serde_json::from_slice::<Vec<AuthorizeKeyResponse>>(&cached_keys_bytes)
-            {
-                return Ok(cached_keys);
-            } else {
-                debug!(address = %request.address, "Failed to deserialize cached keys");
-            }
-        }
-
-        debug!(address = %request.address, "Keys cache MISS - fetching from provider");
+        // Note: We cannot cache keys because they can change dynamically
+        // and caching would return stale data when keys are added/removed
         let account = Account::new(request.address, self.provider(request.chain_id)?);
 
         let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
@@ -779,13 +787,7 @@ impl Relay {
             })
             .collect();
 
-        // Cache the result (10-minute TTL)
-        if let Ok(serialized) = serde_json::to_vec(&result) {
-            self.inner.rpc_cache.set_keys(cache_key, serialized);
-        } else {
-            debug!(address = %request.address, "Failed to serialize keys for caching");
-        }
-
+        // Note: We cannot cache keys because they can change dynamically
         Ok(result)
     }
 
@@ -797,16 +799,9 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        // Check static cache first (delegation implementation rarely changes)
-        if let Some(cached_impl) = self.inner.rpc_cache.get_delegation_impl() {
-            debug!(address = %cached_impl, "Delegation implementation cache HIT");
-            return Ok(cached_impl);
-        }
-
-        debug!("Delegation implementation cache MISS - fetching from provider");
+        // Note: We cannot cache delegation implementation globally because it's account-specific
+        // Different accounts can have different delegation implementations
         if let Some(delegation) = account.delegation_implementation().await? {
-            // Cache the delegation implementation (never expires)
-            self.inner.rpc_cache.set_delegation_impl(delegation);
             return Ok(delegation);
         }
 
@@ -838,8 +833,7 @@ impl Relay {
             )
         })?;
 
-        // Cache the delegation implementation (never expires)
-        self.inner.rpc_cache.set_delegation_impl(delegation);
+        // Note: We cannot cache delegation implementation globally because it's account-specific
         Ok(delegation)
     }
 
