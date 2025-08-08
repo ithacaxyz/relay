@@ -14,10 +14,9 @@ use alloy::{
 };
 use tracing::{debug, trace};
 
-use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
+use super::{SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::P256_GAS_BUFFER,
     error::{IntentError, RelayError},
     types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
@@ -191,13 +190,9 @@ impl<P: Provider> Orchestrator<P> {
         &self,
         simulator: Address,
         intent: &Intent,
-        key_type: KeyType,
         asset_info_handle: AssetInfoServiceHandle,
+        gas_validation_offset: U256,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
-        // Allows to account for gas variation in P256 sig verification.
-        let gas_validation_offset =
-            if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
-
         let simulate_block = SimBlock::default()
             .call(
                 SimulatorInstance::new(simulator, self.orchestrator.provider())
