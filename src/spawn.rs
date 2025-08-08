@@ -1,6 +1,7 @@
 //! Relay spawn utilities.
 use crate::{
     asset::AssetInfoService,
+    cache::RpcCache,
     chains::Chains,
     cli::Args,
     config::RelayConfig,
@@ -8,6 +9,7 @@ use crate::{
     diagnostics::run_diagnostics,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
+    provider::spawn_cache_cleanup_task,
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
@@ -234,6 +236,12 @@ pub async fn try_spawn(
         );
     }
 
+    // Create RPC cache for optimizing chain interactions
+    let rpc_cache = Arc::new(RpcCache::new());
+
+    // Spawn cache cleanup task
+    let _cache_cleanup_handle = spawn_cache_cleanup_task(rpc_cache.clone());
+
     let chains =
         Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;
 
@@ -265,6 +273,7 @@ pub async fn try_spawn(
             .as_ref()
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
+        rpc_cache,
     );
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
         AccountRpc::new(

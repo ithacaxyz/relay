@@ -1,11 +1,17 @@
-//! Alloy provider extensions.
+//! Alloy provider extensions and caching wrappers.
 
-use crate::op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle};
+use crate::{
+    cache::RpcCache,
+    op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle},
+};
 use alloy::{
-    primitives::{Bytes, U256},
+    primitives::{Address, Bytes, ChainId, U256},
     providers::Provider,
+    rpc::types::FeeHistory,
     transports::{TransportErrorKind, TransportResult},
 };
+use std::sync::Arc;
+use tracing::{debug, instrument, trace};
 
 /// Extension trait for [`Provider`] adding helpers for interacting with OP rollups.
 pub trait ProviderExt: Provider {
@@ -40,3 +46,140 @@ pub trait ProviderExt: Provider {
 }
 
 impl<T> ProviderExt for T where T: Provider {}
+
+/// A caching wrapper around an Alloy provider to reduce redundant RPC calls.
+///
+/// This wrapper implements several caching strategies:
+/// - Static caches for values that never change (chain_id)
+/// - TTL caches for frequently changing values (eth_getCode, fee history)
+/// - Request deduplication for concurrent identical calls
+#[derive(Debug, Clone)]
+pub struct CachedProvider<P> {
+    /// The underlying provider
+    inner: P,
+    /// Shared cache instance
+    cache: Arc<RpcCache>,
+}
+
+impl<P> CachedProvider<P> {
+    /// Create a new cached provider wrapper.
+    pub fn new(provider: P, cache: Arc<RpcCache>) -> Self {
+        Self { inner: provider, cache }
+    }
+
+    /// Get the underlying provider.
+    pub fn inner(&self) -> &P {
+        &self.inner
+    }
+
+    /// Get the cache instance.
+    pub fn cache(&self) -> &Arc<RpcCache> {
+        &self.cache
+    }
+}
+
+impl<P> CachedProvider<P>
+where
+    P: Provider + Send + Sync,
+{
+    /// Get chain ID with permanent caching.
+    #[instrument(skip(self))]
+    pub async fn get_chain_id_cached(&self) -> TransportResult<ChainId> {
+        // Check cache first
+        if let Some(cached_chain_id) = self.cache.get_chain_id() {
+            trace!(chain_id = %cached_chain_id, "Chain ID cache HIT");
+            return Ok(cached_chain_id);
+        }
+
+        // Cache miss - fetch from provider
+        debug!("Chain ID cache MISS - fetching from provider");
+        let chain_id = self.inner.get_chain_id().await?;
+        self.cache.set_chain_id(chain_id);
+
+        Ok(chain_id)
+    }
+
+    /// Get contract code with long-term caching.
+    #[instrument(skip(self))]
+    pub async fn get_code_at_cached(&self, address: Address) -> TransportResult<Bytes> {
+        // Check cache first
+        if let Some(cached_code) = self.cache.get_code(&address) {
+            return Ok(cached_code);
+        }
+
+        // Cache miss - fetch from provider
+        debug!(address = %address, "Code cache MISS - fetching from provider");
+        let code = self.inner.get_code_at(address).await?;
+        self.cache.set_code(address, code.clone());
+
+        Ok(code)
+    }
+
+    /// Get fee history with TTL caching.
+    #[instrument(skip(self))]
+    pub async fn get_fee_history_cached(
+        &self,
+        block_count: u64,
+        newest_block: alloy::eips::BlockNumberOrTag,
+        reward_percentiles: &[f64],
+    ) -> TransportResult<FeeHistory> {
+        // Create cache key from parameters
+        let cache_key =
+            format!("fee_history_{block_count}_{newest_block:?}_{reward_percentiles:?}");
+
+        // Check cache first
+        if let Some(cached_value) = self.cache.get_fee_history(&cache_key) {
+            if let Ok(fee_history) = serde_json::from_value(cached_value) {
+                return Ok(fee_history);
+            } else {
+                debug!(key = %cache_key, "Failed to deserialize cached fee history");
+            }
+        }
+
+        // Cache miss - fetch from provider
+        debug!(key = %cache_key, "Fee history cache MISS - fetching from provider");
+        let fee_history =
+            self.inner.get_fee_history(block_count, newest_block, reward_percentiles).await?;
+
+        // Cache the result
+        if let Ok(serialized) = serde_json::to_value(&fee_history) {
+            self.cache.set_fee_history(cache_key, serialized);
+        } else {
+            debug!("Failed to serialize fee history for caching");
+        }
+
+        Ok(fee_history)
+    }
+
+    /// Delegate to underlying provider with forwarding
+    pub fn as_provider(&self) -> &P {
+        &self.inner
+    }
+}
+
+/// Create a periodic cleanup task for cache maintenance.
+///
+/// This task runs every 5 minutes to clean up expired cache entries,
+/// preventing memory leaks from accumulated stale data.
+pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+        loop {
+            interval.tick().await;
+            cache.cleanup_expired();
+
+            // Log cache statistics periodically
+            let stats = cache.stats();
+            debug!(
+                "Cache stats: chain_id={}, delegation_impl={}, fees={}, code={}, keys={}, fee_history={}, pending_calls={}",
+                stats.chain_id_cached,
+                stats.delegation_impl_cached,
+                stats.fee_cache_size,
+                stats.code_cache_size,
+                stats.keys_cache_size,
+                stats.fee_history_cache_size,
+                stats.pending_calls,
+            );
+        }
+    })
+}

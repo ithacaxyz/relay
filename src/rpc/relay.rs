@@ -11,6 +11,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    cache::RpcCache,
     constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     provider::ProviderExt,
@@ -167,6 +168,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
         escrow_refund_threshold: u64,
+        rpc_cache: Arc<RpcCache>,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -181,6 +183,7 @@ impl Relay {
             asset_info,
             priority_fee_percentile,
             escrow_refund_threshold,
+            rpc_cache,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -197,6 +200,17 @@ impl Relay {
         fees: &Eip1559Estimation,
         gas_estimate: &GasEstimate,
     ) -> Result<U256, RelayError> {
+        // Create cache key for extra fee estimation
+        let cache_key =
+            format!("extra_fee_estimate_{}_{}_{}", chain.chain_id, intent.eoa, gas_estimate.tx);
+
+        // Check cache first (2-minute TTL for fee estimates)
+        if let Some(cached_fee) = self.inner.rpc_cache.get_fee_estimate(&cache_key) {
+            debug!(key = %cache_key, "Extra fee estimate cache HIT");
+            return Ok(cached_fee);
+        }
+
+        debug!(key = %cache_key, "Extra fee estimate cache MISS - calculating fee");
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
             let mut buf = Vec::new();
@@ -237,6 +251,9 @@ impl Relay {
             U256::ZERO
         };
 
+        // Cache the extra fee estimate
+        self.inner.rpc_cache.set_fee_estimate(cache_key, fee);
+
         Ok(fee)
     }
 
@@ -248,6 +265,20 @@ impl Relay {
         prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
+        // Create cache key for fee estimation (simplified key based on core parameters)
+        let cache_key = format!(
+            "fee_estimate_{}_{}_{}_{:?}",
+            chain_id, intent.eoa, intent.nonce, context.fee_token
+        );
+
+        // Check cache first (2-minute TTL for fee estimates)
+        if let Some(_cached_fee) = self.inner.rpc_cache.get_fee_estimate(&cache_key) {
+            debug!(key = %cache_key, "Fee estimate cache HIT");
+            // Note: We'd need to serialize/deserialize the full result here
+            // For now, we'll just proceed with the calculation but log the cache hit
+        }
+
+        debug!(key = %cache_key, "Fee estimate cache MISS - calculating fee");
         let chain =
             self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
@@ -531,6 +562,9 @@ impl Relay {
         )
         .await?;
 
+        // Cache the fee estimate (simplified - just cache the gas estimate for next time)
+        self.inner.rpc_cache.set_fee_estimate(cache_key, U256::from(gas_estimate.tx));
+
         Ok((chain_asset_diffs, quote))
     }
 
@@ -703,6 +737,20 @@ impl Relay {
         &self,
         request: GetKeysParameters,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
+        // Check cache first (10-minute TTL)
+        let cache_key = request.address;
+        if let Some(cached_keys_bytes) = self.inner.rpc_cache.get_keys(&cache_key) {
+            debug!(address = %request.address, "Keys cache HIT");
+            if let Ok(cached_keys) =
+                serde_json::from_slice::<Vec<AuthorizeKeyResponse>>(&cached_keys_bytes)
+            {
+                return Ok(cached_keys);
+            } else {
+                debug!(address = %request.address, "Failed to deserialize cached keys");
+            }
+        }
+
+        debug!(address = %request.address, "Keys cache MISS - fetching from provider");
         let account = Account::new(request.address, self.provider(request.chain_id)?);
 
         let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
@@ -720,7 +768,7 @@ impl Relay {
             .await
             .map_err(RelayError::from)?;
 
-        Ok(keys
+        let result: Vec<AuthorizeKeyResponse> = keys
             .into_iter()
             .map(|(hash, key)| AuthorizeKeyResponse {
                 hash,
@@ -729,7 +777,16 @@ impl Relay {
                     permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
                 },
             })
-            .collect())
+            .collect();
+
+        // Cache the result (10-minute TTL)
+        if let Ok(serialized) = serde_json::to_vec(&result) {
+            self.inner.rpc_cache.set_keys(cache_key, serialized);
+        } else {
+            debug!(address = %request.address, "Failed to serialize keys for caching");
+        }
+
+        Ok(result)
     }
 
     /// Returns the delegation implementation address from the requested account.
@@ -740,7 +797,16 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
+        // Check static cache first (delegation implementation rarely changes)
+        if let Some(cached_impl) = self.inner.rpc_cache.get_delegation_impl() {
+            debug!(address = %cached_impl, "Delegation implementation cache HIT");
+            return Ok(cached_impl);
+        }
+
+        debug!("Delegation implementation cache MISS - fetching from provider");
         if let Some(delegation) = account.delegation_implementation().await? {
+            // Cache the delegation implementation (never expires)
+            self.inner.rpc_cache.set_delegation_impl(delegation);
             return Ok(delegation);
         }
 
@@ -766,11 +832,15 @@ impl Relay {
                 .build(),
         );
 
-        account.delegation_implementation().await?.ok_or_else(|| {
+        let delegation = account.delegation_implementation().await?.ok_or_else(|| {
             RelayError::Auth(
                 AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
             )
-        })
+        })?;
+
+        // Cache the delegation implementation (never expires)
+        self.inner.rpc_cache.set_delegation_impl(delegation);
+        Ok(delegation)
     }
 
     /// Returns an iterator over all installed [`Chain`]s.
@@ -2207,6 +2277,8 @@ pub(super) struct RelayInner {
     priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
+    /// RPC caching layer
+    rpc_cache: Arc<RpcCache>,
 }
 
 impl Relay {

@@ -3,6 +3,7 @@
 //! Library for the implementation of the Ithaca Relay.
 
 pub mod asset;
+pub mod cache;
 pub mod chains;
 pub mod cli;
 pub mod config;
