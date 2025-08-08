@@ -15,24 +15,21 @@ use std::{
 use tokio::sync::broadcast;
 use tracing::{debug, trace, warn};
 
-/// Cache key constants and TTL values
-pub const CACHE_KEY_FEE_HISTORY_PREFIX: &str = "fee_history_";
-pub const CACHE_KEY_DELEGATION_PREFIX: &str = "delegation_impl_";
-pub const TTL_CONTRACT_CODE: Duration = Duration::from_secs(1800); // 30 minutes
-pub const TTL_DELEGATION_IMPL: Duration = Duration::from_secs(3600); // 1 hour - delegations rarely change
-pub const TTL_PENDING_CALL_TIMEOUT: Duration = Duration::from_secs(30); // 30 seconds
+/// Cache TTL constants
+/// TTL for delegation implementation cache entries (24 hours - delegations rarely change)
+pub const TTL_DELEGATION_IMPL: Duration = Duration::from_secs(86400);
+/// Timeout for pending call deduplication (30 seconds)
+pub const TTL_PENDING_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Thread-safe cache for RPC results with TTL support and request deduplication.
 #[derive(Debug)]
 pub struct RpcCache {
     /// Static cache for chain ID (never expires)
     chain_id: OnceLock<ChainId>,
-    /// TTL cache for contract code
-    pub code_cache: DashMap<Address, CachedValue<Bytes>>,
+    /// Static cache for contract code (never expires - code is immutable)
+    pub code_cache: DashMap<Address, Bytes>,
     /// TTL cache for delegation implementations (per account)
     pub delegation_cache: DashMap<Address, CachedValue<Address>>,
-    /// Cache for fee history data (no TTL for now)
-    pub fee_history_cache: DashMap<String, serde_json::Value>,
     /// Request deduplication for eth_call
     pub pending_calls: DashMap<CallKey, PendingCall>,
 }
@@ -104,11 +101,9 @@ impl RpcCache {
             chain_id: OnceLock::new(),
             code_cache: DashMap::new(),
             delegation_cache: DashMap::new(),
-            fee_history_cache: DashMap::new(),
             pending_calls: DashMap::new(),
         }
     }
-
 
     /// Get cached chain ID, or None if not cached.
     pub fn get_chain_id(&self) -> Option<ChainId> {
@@ -121,27 +116,17 @@ impl RpcCache {
         *self.chain_id.get_or_init(|| chain_id)
     }
 
-    /// Get cached contract code if valid.
+    /// Get cached contract code (static, never expires).
     pub fn get_code(&self, address: &Address) -> Option<Bytes> {
         let entry = self.code_cache.get(address)?;
-        if let Some(value) = entry.get_if_valid() {
-            debug!(address = %address, "Code cache HIT");
-            Some(value.clone())
-        } else {
-            debug!(address = %address, "Code cache EXPIRED");
-            // Clean up expired entry
-            self.code_cache.remove(address);
-            None
-        }
+        debug!(address = %address, "Code cache HIT");
+        Some(entry.value().clone())
     }
 
-    /// Cache contract code with long TTL (30 minutes).
+    /// Cache contract code permanently (code is immutable).
     pub fn set_code(&self, address: Address, code: Bytes) {
-        debug!(address = %address, code_len = code.len(), "Caching contract code");
-        self.code_cache.insert(
-            address,
-            CachedValue::new(code, TTL_CONTRACT_CODE),
-        );
+        debug!(address = %address, code_len = code.len(), "Caching contract code (static)");
+        self.code_cache.insert(address, code);
     }
 
     /// Get cached delegation implementation if valid.
@@ -161,23 +146,7 @@ impl RpcCache {
     /// Cache delegation implementation with 1 hour TTL.
     pub fn set_delegation_impl(&self, account: Address, delegation: Address) {
         debug!(account = %account, delegation = %delegation, "Caching delegation implementation");
-        self.delegation_cache.insert(
-            account,
-            CachedValue::new(delegation, TTL_DELEGATION_IMPL),
-        );
-    }
-
-    /// Get cached fee history.
-    pub fn get_fee_history(&self, key: &str) -> Option<serde_json::Value> {
-        let entry = self.fee_history_cache.get(key)?;
-        debug!(key = key, "Fee history cache HIT");
-        Some(entry.value().clone())
-    }
-
-    /// Cache fee history.
-    pub fn set_fee_history(&self, key: String, value: serde_json::Value) {
-        debug!(key = %key, "Caching fee history");
-        self.fee_history_cache.insert(key, value);
+        self.delegation_cache.insert(account, CachedValue::new(delegation, TTL_DELEGATION_IMPL));
     }
 
     /// Atomically check for an existing call or start a new one.
@@ -216,8 +185,8 @@ impl RpcCache {
         let start = Instant::now();
         let mut cleaned = 0;
 
-        // Clean code cache (only TTL cache currently)
-        self.code_cache.retain(|_, v| {
+        // Clean delegation cache (TTL-based)
+        self.delegation_cache.retain(|_, v| {
             let expired = v.is_expired();
             if expired {
                 cleaned += 1;
@@ -261,7 +230,6 @@ impl RpcCache {
             chain_id_cached: self.chain_id.get().is_some(),
             code_cache_size: self.code_cache.len(),
             delegation_cache_size: self.delegation_cache.len(),
-            fee_history_cache_size: self.fee_history_cache.len(),
             pending_calls: self.pending_calls.len(),
         }
     }
@@ -282,12 +250,9 @@ pub struct CacheStats {
     pub code_cache_size: usize,
     /// Number of cached delegation implementations
     pub delegation_cache_size: usize,
-    /// Number of cached fee histories
-    pub fee_history_cache_size: usize,
     /// Number of pending deduplicated calls
     pub pending_calls: usize,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -368,25 +333,32 @@ mod tests {
     async fn test_cleanup_expired() {
         let cache = RpcCache::new();
 
-        // Add some entries with short TTL
+        // Add static code entry (should not be cleaned up)
         let addr = address!("1234567890123456789012345678901234567890");
         let code = bytes!("608060405234801561001057600080fd5b50");
+        cache.set_code(addr, code.clone());
 
-        // Manually insert expired entries
-        cache.code_cache.insert(
-            addr,
+        // Add expired delegation entry
+        let account = address!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd");
+        cache.delegation_cache.insert(
+            account,
             CachedValue {
-                value: code,
-                cached_at: Instant::now() - Duration::from_secs(3600), // 1 hour ago
-                ttl: Duration::from_secs(1800),                        // 30 minute TTL
+                value: address!("1111111111111111111111111111111111111111"),
+                cached_at: Instant::now() - Duration::from_secs(100000), // More than 24 hours ago
+                ttl: Duration::from_secs(86400),                         // 24 hour TTL
             },
         );
 
         assert_eq!(cache.code_cache.len(), 1);
+        assert_eq!(cache.delegation_cache.len(), 1);
 
-        // Cleanup should remove expired entries
+        // Cleanup should only remove expired delegation entry
         cache.cleanup_expired();
-        assert_eq!(cache.code_cache.len(), 0);
+        assert_eq!(cache.code_cache.len(), 1); // Code cache unchanged (static)
+        assert_eq!(cache.delegation_cache.len(), 0); // Expired delegation removed
+
+        // Verify code is still cached
+        assert_eq!(cache.get_code(&addr), Some(code));
     }
 
     #[test]
@@ -396,7 +368,7 @@ mod tests {
         let stats = cache.stats();
         assert!(!stats.chain_id_cached);
         assert_eq!(stats.code_cache_size, 0);
-        assert_eq!(stats.fee_history_cache_size, 0);
+        assert_eq!(stats.delegation_cache_size, 0);
         assert_eq!(stats.pending_calls, 0);
 
         // Add some cached values

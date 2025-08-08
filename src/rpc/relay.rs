@@ -240,7 +240,6 @@ impl Relay {
             U256::ZERO
         };
 
-
         Ok(fee)
     }
 
@@ -535,7 +534,6 @@ impl Relay {
         )
         .await?;
 
-
         Ok((chain_asset_diffs, quote))
     }
 
@@ -751,12 +749,13 @@ impl Relay {
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
         let account_address = account.address();
-        
+
         // Check cache first
-        if let Some(cached_delegation) = self.inner.rpc_cache.get_delegation_impl(&account_address) {
+        if let Some(cached_delegation) = self.inner.rpc_cache.get_delegation_impl(&account_address)
+        {
             return Ok(cached_delegation);
         }
-        
+
         // Note: We cannot cache delegation implementation globally because it's account-specific
         // Different accounts can have different delegation implementations
         if let Some(delegation) = account.delegation_implementation().await? {

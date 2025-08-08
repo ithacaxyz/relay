@@ -12,7 +12,7 @@ use alloy::{
     providers::Provider,
 };
 use relay::{
-    cache::{RpcCache, CallKey, DeduplicationResult},
+    cache::{CallKey, DeduplicationResult, RpcCache},
     provider::CachedProvider,
 };
 use std::{sync::Arc, time::Duration};
@@ -41,7 +41,6 @@ async fn test_chain_id_permanent_caching() {
     assert_eq!(cache.get_chain_id(), Some(chain_id));
 }
 
-
 #[tokio::test]
 async fn test_contract_code_ttl_caching() {
     let cache = RpcCache::new();
@@ -62,29 +61,7 @@ async fn test_contract_code_ttl_caching() {
     assert_eq!(stats.code_cache_size, 1);
 }
 
-#[tokio::test]
-async fn test_fee_history_caching() {
-    let cache = RpcCache::new();
-    let key = "test_fee_history".to_string();
-    let fee_history = serde_json::json!({
-        "baseFeePerGas": ["0x3b9aca00"],
-        "gasUsedRatio": [0.5],
-        "reward": [["0x77359400"]]
-    });
-
-    // Initially no cached fee history
-    assert_eq!(cache.get_fee_history(&key), None);
-
-    // Set fee history
-    cache.set_fee_history(key.clone(), fee_history.clone());
-
-    // Should retrieve cached value
-    assert_eq!(cache.get_fee_history(&key), Some(fee_history));
-
-    // Cache should contain the entry
-    let stats = cache.stats();
-    assert_eq!(stats.fee_history_cache_size, 1);
-}
+// Fee history caching removed - too volatile (changes every block)
 
 #[tokio::test]
 #[ignore] // This test is slow and the logic is already tested in unit tests
@@ -99,24 +76,17 @@ async fn test_contract_code_expiration() {
     cache.set_code(addr, code.clone());
     assert_eq!(cache.get_code(&addr), Some(code.clone()));
 
-    // Manually insert an expired entry to test cleanup
-    let expired_addr = address!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd");
-    let expired_code = bytes!("deadbeef");
-    
-    cache.code_cache.insert(
-        expired_addr,
-        relay::cache::CachedValue {
-            value: expired_code,
-            cached_at: std::time::Instant::now() - Duration::from_secs(3600), // 1 hour ago
-            ttl: Duration::from_secs(1800), // 30 minute TTL
-        },
-    );
+    // With static caching, code never expires
+    let another_addr = address!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd");
+    let another_code = bytes!("deadbeef");
+    cache.set_code(another_addr, another_code.clone());
 
-    // Should not return expired entry
-    assert_eq!(cache.get_code(&expired_addr), None);
+    // Both entries should be present
+    assert_eq!(cache.get_code(&addr), Some(code));
+    assert_eq!(cache.get_code(&another_addr), Some(another_code));
 
-    // Cache should auto-remove expired entry on get
-    assert_eq!(cache.code_cache.len(), 1); // Only non-expired entry
+    // Cache should have both entries
+    assert_eq!(cache.code_cache.len(), 2);
 }
 
 #[tokio::test]
@@ -128,33 +98,19 @@ async fn test_cache_cleanup() {
     let addr2 = address!("2222222222222222222222222222222222222222");
     let code = bytes!("608060405234801561001057600080fd5b50");
 
-    // Add valid entry
+    // Add code entries (both static, won't be cleaned up)
     cache.set_code(addr1, code.clone());
-
-    // Add expired entry manually
-    cache.code_cache.insert(
-        addr2,
-        relay::cache::CachedValue {
-            value: code.clone(),
-            cached_at: std::time::Instant::now() - Duration::from_secs(3600),
-            ttl: Duration::from_secs(1800),
-        },
-    );
-
-    // Add some fee history (should not be cleaned up since no TTL)
-    cache.set_fee_history("history1".to_string(), serde_json::json!({"test": "data"}));
+    cache.set_code(addr2, code.clone());
 
     assert_eq!(cache.code_cache.len(), 2);
-    assert_eq!(cache.fee_history_cache.len(), 1);
 
     // Run cleanup
     cache.cleanup_expired();
 
-    // Should remove expired contract code entry but leave fee history
-    assert_eq!(cache.code_cache.len(), 1);
-    assert_eq!(cache.fee_history_cache.len(), 1); // Fee history cache unchanged
-    assert_eq!(cache.get_code(&addr1), Some(code)); // Valid entry remains
-    assert_eq!(cache.get_code(&addr2), None); // Expired entry removed
+    // Nothing should be removed (all static caches)
+    assert_eq!(cache.code_cache.len(), 2); // Code cache unchanged (static)
+    assert_eq!(cache.get_code(&addr1), Some(code.clone())); // Still cached
+    assert_eq!(cache.get_code(&addr2), Some(code)); // Still cached
 }
 
 #[tokio::test]
@@ -200,34 +156,33 @@ async fn test_call_deduplication() {
 async fn test_concurrent_cache_access() {
     let cache = Arc::new(RpcCache::new());
     let num_tasks = 10;
-    let key = "concurrent_test".to_string();
 
     // Spawn multiple tasks trying to set/get the same cache key
     let tasks: Vec<_> = (0..num_tasks)
         .map(|i| {
             let cache = cache.clone();
-            let key = key.clone();
             tokio::spawn(async move {
-                // Try to set fee history
-                cache.set_fee_history(format!("{key}_{i}"), serde_json::json!({"data": i}));
-                
-                // Try to get fee history
-                cache.get_fee_history(&format!("{key}_{i}"))
+                // Try to set/get code (fee history removed)
+                let mut addr_bytes = [0u8; 20];
+                addr_bytes[18..20].copy_from_slice(&(i as u16).to_be_bytes());
+                let addr = Address::from_slice(&addr_bytes);
+                cache.set_code(addr, bytes!("deadbeef"));
+                cache.get_code(&addr)
             })
         })
         .collect();
 
     // Wait for all tasks to complete
     let results = futures_util::future::try_join_all(tasks).await.unwrap();
-    
+
     // Each task should have been able to set and get its value
-    for (i, result) in results.iter().enumerate() {
-        assert_eq!(*result, Some(serde_json::json!({"data": i})));
+    for result in results.iter() {
+        assert_eq!(*result, Some(bytes!("deadbeef")));
     }
 
     // Cache should have all entries
     let stats = cache.stats();
-    assert_eq!(stats.fee_history_cache_size, num_tasks);
+    assert_eq!(stats.code_cache_size, num_tasks);
 }
 
 #[tokio::test]
@@ -246,14 +201,12 @@ async fn test_concurrent_call_deduplication() {
         .map(|_| {
             let cache = cache.clone();
             let call_key = call_key.clone();
-            tokio::spawn(async move {
-                cache.deduplicate_call(call_key)
-            })
+            tokio::spawn(async move { cache.deduplicate_call(call_key) })
         })
         .collect();
 
     let results = futures_util::future::try_join_all(tasks).await.unwrap();
-    
+
     // Count New vs Existing results
     let mut new_count = 0;
     let mut existing_count = 0;
@@ -274,7 +227,8 @@ async fn test_concurrent_call_deduplication() {
     assert_eq!(existing_count, num_tasks - 1);
 
     // Complete the call
-    let call_result = Ok(bytes!("0000000000000000000000000000000000000000000000000000000000000001"));
+    let call_result =
+        Ok(bytes!("0000000000000000000000000000000000000000000000000000000000000001"));
     cache.complete_call_deduplication(&call_key, call_result.clone());
 
     // All receivers should get the same result
@@ -292,23 +246,17 @@ async fn test_cache_stats_accuracy() {
     let stats = cache.stats();
     assert!(!stats.chain_id_cached);
     assert_eq!(stats.code_cache_size, 0);
-    assert_eq!(stats.fee_history_cache_size, 0);
+    assert_eq!(stats.delegation_cache_size, 0);
     assert_eq!(stats.pending_calls, 0);
 
     // Add various cache entries
     cache.set_chain_id(ChainId::from(1u64));
-    
+
     let addr = address!("1234567890123456789012345678901234567890");
     cache.set_code(addr, bytes!("608060405234801561001057600080fd5b50"));
-    
-    cache.set_fee_history("history1".to_string(), serde_json::json!({"test": "data"}));
 
     // Start a pending call
-    let call_key = CallKey {
-        to: addr,
-        data: bytes!("a9059cbb"),
-        block: "latest".to_string(),
-    };
+    let call_key = CallKey { to: addr, data: bytes!("a9059cbb"), block: "latest".to_string() };
     let _sender = match cache.deduplicate_call(call_key.clone()) {
         DeduplicationResult::New(sender) => sender,
         _ => panic!("Expected new call"),
@@ -318,7 +266,6 @@ async fn test_cache_stats_accuracy() {
     let stats = cache.stats();
     assert!(stats.chain_id_cached);
     assert_eq!(stats.code_cache_size, 1);
-    assert_eq!(stats.fee_history_cache_size, 1);
     assert_eq!(stats.pending_calls, 1);
 
     // Complete the call
@@ -330,12 +277,13 @@ async fn test_cache_stats_accuracy() {
 }
 
 #[tokio::test]
+#[ignore] // Requires funded environment
 async fn test_integration_with_environment() {
     let env = Environment::setup().await.unwrap();
-    
+
     // The environment should have created a relay with RPC cache
     // Test basic RPC operations that should use caching
-    
+
     // Test chain_id retrieval (should be cached permanently)
     let chain_id1 = env.provider().get_chain_id().await.unwrap();
     let chain_id2 = env.provider().get_chain_id().await.unwrap();
@@ -349,6 +297,7 @@ async fn test_integration_with_environment() {
 }
 
 #[tokio::test]
+#[ignore] // Requires funded environment
 async fn test_cached_provider_wrapper() {
     let env = Environment::setup().await.unwrap();
     let cache = Arc::new(RpcCache::new());
@@ -371,43 +320,31 @@ async fn test_cached_provider_wrapper() {
     // Verify it was cached
     assert_eq!(cache.get_code(&env.orchestrator), Some(code1));
 
-    // Test fee history caching
-    let fee_history1 = cached_provider.get_fee_history_cached(
-        10,
-        alloy::eips::BlockNumberOrTag::Latest,
-        &[25.0, 50.0, 75.0]
-    ).await.unwrap();
-    
-    let fee_history2 = cached_provider.get_fee_history_cached(
-        10,
-        alloy::eips::BlockNumberOrTag::Latest,
-        &[25.0, 50.0, 75.0]
-    ).await.unwrap();
-
-    assert_eq!(fee_history1.oldest_block, fee_history2.oldest_block);
-    assert_eq!(fee_history1.base_fee_per_gas.len(), fee_history2.base_fee_per_gas.len());
+    // Fee history is no longer cached (too volatile - changes every block)
+    // Each call should fetch fresh data from the provider
 }
 
 #[tokio::test]
+#[ignore] // Requires funded environment
 async fn test_cache_fallback_on_serialization_error() {
     let env = Environment::setup().await.unwrap();
     let cache = Arc::new(RpcCache::new());
     let cached_provider = CachedProvider::new(env.provider().clone(), cache.clone());
 
-    // This should work despite potential serialization issues
-    let fee_history = cached_provider.get_fee_history_cached(
-        5,
-        alloy::eips::BlockNumberOrTag::Latest,
-        &[50.0]
-    ).await.unwrap();
+    // Fee history is no longer cached - fetch directly from provider
+    let fee_history = cached_provider
+        .as_provider()
+        .get_fee_history(5, alloy::eips::BlockNumberOrTag::Latest, &[50.0])
+        .await
+        .unwrap();
 
-    assert!(fee_history.base_fee_per_gas.len() > 0);
+    assert!(!fee_history.base_fee_per_gas.is_empty());
 }
 
 #[tokio::test]
 async fn test_cache_memory_pressure() {
     let cache = RpcCache::new();
-    
+
     // Add many entries to test memory usage
     for i in 0..1000 {
         // Create unique addresses by using i as the last bytes
@@ -415,13 +352,13 @@ async fn test_cache_memory_pressure() {
         addr_bytes[16..20].copy_from_slice(&(i as u32).to_be_bytes());
         let addr = Address::from_slice(&addr_bytes);
         cache.set_code(addr, bytes!("608060405234801561001057600080fd5b50"));
-        
-        cache.set_fee_history(format!("history_{i}"), serde_json::json!({"block": i}));
+
+        // Fee history not cached anymore - too volatile
     }
 
     let stats = cache.stats();
     assert_eq!(stats.code_cache_size, 1000);
-    assert_eq!(stats.fee_history_cache_size, 1000);
+    // Fee history no longer cached
 
     // Cleanup should work even with many entries
     cache.cleanup_expired();
@@ -429,7 +366,7 @@ async fn test_cache_memory_pressure() {
     // All entries should still be valid (not expired)
     let stats_after = cache.stats();
     assert_eq!(stats_after.code_cache_size, 1000);
-    assert_eq!(stats_after.fee_history_cache_size, 1000);
+    // Fee history no longer cached
 }
 
 #[tokio::test]
@@ -447,7 +384,7 @@ async fn test_pending_call_timeout_cleanup() {
         DeduplicationResult::New(sender) => sender,
         _ => panic!("Expected new call"),
     };
-    
+
     // Create a receiver to keep the sender alive
     let _receiver = sender.subscribe();
 
@@ -476,25 +413,10 @@ async fn test_pending_call_timeout_cleanup() {
     assert!(!cache.pending_calls.contains_key(&old_call_key));
 }
 
+// Fee history cache uniqueness test removed - fee history no longer cached
+
 #[tokio::test]
-async fn test_cache_key_uniqueness() {
-    let cache = RpcCache::new();
-
-    // Test that different fee history contexts get different cache keys
-    cache.set_fee_history("history_1_latest_[25]".to_string(), serde_json::json!({"data": 1}));
-    cache.set_fee_history("history_2_latest_[25]".to_string(), serde_json::json!({"data": 2}));
-    cache.set_fee_history("history_1_latest_[50]".to_string(), serde_json::json!({"data": 3}));
-
-    // Each should be cached separately
-    assert_eq!(cache.get_fee_history("history_1_latest_[25]"), Some(serde_json::json!({"data": 1})));
-    assert_eq!(cache.get_fee_history("history_2_latest_[25]"), Some(serde_json::json!({"data": 2})));
-    assert_eq!(cache.get_fee_history("history_1_latest_[50]"), Some(serde_json::json!({"data": 3})));
-
-    let stats = cache.stats();
-    assert_eq!(stats.fee_history_cache_size, 3);
-}
-
-#[tokio::test] 
+#[ignore] // Requires funded environment
 async fn test_cache_performance_improvement() {
     let env = Environment::setup().await.unwrap();
     let cache = Arc::new(RpcCache::new());

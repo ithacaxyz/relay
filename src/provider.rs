@@ -7,7 +7,6 @@ use crate::{
 use alloy::{
     primitives::{Address, Bytes, ChainId, U256},
     providers::Provider,
-    rpc::types::FeeHistory,
     transports::{TransportErrorKind, TransportResult},
 };
 use std::sync::Arc;
@@ -115,42 +114,6 @@ where
         Ok(code)
     }
 
-    /// Get fee history with TTL caching.
-    #[instrument(skip(self))]
-    pub async fn get_fee_history_cached(
-        &self,
-        block_count: u64,
-        newest_block: alloy::eips::BlockNumberOrTag,
-        reward_percentiles: &[f64],
-    ) -> TransportResult<FeeHistory> {
-        // Create cache key from parameters
-        let cache_key =
-            format!("fee_history_{block_count}_{newest_block:?}_{reward_percentiles:?}");
-
-        // Check cache first
-        if let Some(cached_value) = self.cache.get_fee_history(&cache_key) {
-            if let Ok(fee_history) = serde_json::from_value(cached_value) {
-                return Ok(fee_history);
-            } else {
-                debug!(key = %cache_key, "Failed to deserialize cached fee history");
-            }
-        }
-
-        // Cache miss - fetch from provider
-        debug!(key = %cache_key, "Fee history cache MISS - fetching from provider");
-        let fee_history =
-            self.inner.get_fee_history(block_count, newest_block, reward_percentiles).await?;
-
-        // Cache the result
-        if let Ok(serialized) = serde_json::to_value(&fee_history) {
-            self.cache.set_fee_history(cache_key, serialized);
-        } else {
-            debug!("Failed to serialize fee history for caching");
-        }
-
-        Ok(fee_history)
-    }
-
     /// Delegate to underlying provider with forwarding
     pub fn as_provider(&self) -> &P {
         &self.inner
@@ -171,11 +134,10 @@ pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle
             // Log cache statistics periodically
             let stats = cache.stats();
             debug!(
-                "Cache stats: chain_id={}, code={}, delegation={}, fee_history={}, pending_calls={}",
+                "Cache stats: chain_id={}, code={}, delegation={}, pending_calls={}",
                 stats.chain_id_cached,
                 stats.code_cache_size,
                 stats.delegation_cache_size,
-                stats.fee_history_cache_size,
                 stats.pending_calls,
             );
         }
