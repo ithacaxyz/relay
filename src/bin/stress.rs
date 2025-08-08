@@ -4,8 +4,9 @@
 //!
 //! ```sh
 //! cargo r --bin stress -- \
-//!     --rpc-url https://relay-staging.ithaca.xyz \
-//!     --rpc-url https://relay.ithaca.xyz \
+//!     --relay-url https://relay-staging.ithaca.xyz \
+//!     --rpc-url https://rpc1.example.com \
+//!     --rpc-url https://rpc2.example.com \
 //!     --private-key $PRIVATE_KEY \
 //!     --fee-token 0x541a5505620A658932e326D0dC996C460f5AcBE1 \
 //!     --accounts 500
@@ -262,18 +263,10 @@ struct StressTester {
 
 impl StressTester {
     async fn new(args: Args) -> eyre::Result<Self> {
-        let relay_client = HttpClientBuilder::new().build(
-            args.rpc_urls
-                .first()
-                .ok_or_else(|| eyre::eyre!("at least one rpc url must be specified"))?,
-        )?;
+        let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
         let signer = DynSigner::from_signing_key(&args.private_key).await?;
         let health = relay_client.health().await?;
-        info!(
-            "Connected to relay at {}, version {}",
-            &args.rpc_urls.first().unwrap(),
-            health.version
-        );
+        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         let chain_ids = try_join_all(args.rpc_urls.iter().map(|rpc_url| async move {
             let provider = ProviderBuilder::new().connect(rpc_url.as_str()).await?.erased();
@@ -576,6 +569,9 @@ async fn settlement_worker(
 #[derive(Debug, Parser)]
 #[command(author, about = "Relay stress tester", long_about = None)]
 struct Args {
+    /// RPC URL of the relay for relay_ namespace calls.
+    #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
+    relay_url: Url,
     /// RPC URL of the chain we are testing on.
     #[arg(long = "rpc-url", value_name = "RPC_URL", required = true)]
     rpc_urls: Vec<Url>,
