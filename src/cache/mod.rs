@@ -378,4 +378,3 @@ mod tests {
         assert!(stats.chain_id_cached);
     }
 }
-// Trigger CI
