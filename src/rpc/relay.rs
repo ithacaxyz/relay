@@ -262,32 +262,27 @@ impl Relay {
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
         // Parallelize fetching of assets, fee history, and eth price as they are independent
+        let percentiles: [f64; 1] = [self.inner.priority_fee_percentile];
         let (assets_response, fee_history, eth_price) = try_join!(
             // Fetch the user's balance for the fee token
-            async {
-                self.get_assets(GetAssetsParameters {
-                    account: intent.eoa,
-                    asset_filter: [(
-                        chain_id,
-                        vec![AssetFilterItem::fungible(context.fee_token.into())],
-                    )]
-                    .into(),
-                    ..Default::default()
-                })
-                .await
-                .map_err(RelayError::internal)
-            },
+            self.get_assets(GetAssetsParameters {
+                account: intent.eoa,
+                asset_filter: [(
+                    chain_id,
+                    vec![AssetFilterItem::fungible(context.fee_token.into())],
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .map_err(RelayError::internal),
             // Fetch chain fee history
-            async {
-                provider
-                    .get_fee_history(
-                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                        Default::default(),
-                        &[self.inner.priority_fee_percentile],
-                    )
-                    .await
-                    .map_err(RelayError::from)
-            },
+            provider
+                .get_fee_history(
+                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                    Default::default(),
+                    &percentiles,
+                )
+                .map_err(RelayError::from),
             // Fetch ETH price
             async {
                 // TODO: only handles eth as native fee token
