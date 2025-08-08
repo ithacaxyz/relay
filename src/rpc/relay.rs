@@ -204,11 +204,14 @@ impl Relay {
     ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
-            // we only need the unsigned RLP data here because
+            // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
+            // signature overhead.
             let mut buf = Vec::new();
             if let Some(auth) = auth {
                 TxEip7702 {
                     chain_id: chain.chain_id,
+                    // we use random nonce as we don't yet know which signer will broadcast the
+                    // intent
                     nonce: rand::random(),
                     gas_limit: gas_estimate.tx,
                     max_fee_per_gas: fees.max_fee_per_gas,
