@@ -88,7 +88,7 @@ pub async fn try_spawn_with_args(
     } else {
         let mut config = RelayConfig::load_from_file(config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
-        config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
