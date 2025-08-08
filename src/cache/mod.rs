@@ -20,15 +20,15 @@ use tracing::{debug, trace, warn};
 pub struct RpcCache {
     /// Static cache for chain ID (never expires)
     chain_id: OnceLock<ChainId>,
-    /// TTL cache for fee estimates
-    fee_cache: DashMap<String, CachedValue<U256>>,
+    /// Cache for fee estimates (no TTL for now)
+    pub fee_cache: DashMap<String, U256>,
     /// TTL cache for contract code
-    code_cache: DashMap<Address, CachedValue<Bytes>>,
+    pub code_cache: DashMap<Address, CachedValue<Bytes>>,
     /// TTL cache for account keys
-    /// TTL cache for fee history data
-    fee_history_cache: DashMap<String, CachedValue<serde_json::Value>>,
+    /// Cache for fee history data (no TTL for now)
+    pub fee_history_cache: DashMap<String, serde_json::Value>,
     /// Request deduplication for eth_call
-    pending_calls: DashMap<CallKey, PendingCall>,
+    pub pending_calls: DashMap<CallKey, PendingCall>,
 }
 
 /// A cached value with TTL support.
@@ -37,9 +37,9 @@ pub struct CachedValue<T> {
     /// The cached value
     pub value: T,
     /// When this value was cached
-    cached_at: Instant,
+    pub cached_at: Instant,
     /// How long this value should be cached
-    ttl: Duration,
+    pub ttl: Duration,
 }
 
 impl<T> CachedValue<T> {
@@ -75,9 +75,11 @@ pub type CallResult = Result<Bytes, String>;
 
 /// A pending call with timestamp tracking for timeout cleanup.
 #[derive(Debug)]
-struct PendingCall {
-    sender: Arc<broadcast::Sender<CallResult>>,
-    started_at: Instant,
+pub struct PendingCall {
+    /// Broadcast sender for sending results to waiting receivers
+    pub sender: Arc<broadcast::Sender<CallResult>>,
+    /// When this call was started for timeout tracking
+    pub started_at: Instant,
 }
 
 /// Result of attempting to deduplicate a call.
@@ -101,6 +103,7 @@ impl RpcCache {
         }
     }
 
+
     /// Get cached chain ID, or None if not cached.
     pub fn get_chain_id(&self) -> Option<ChainId> {
         self.chain_id.get().copied()
@@ -112,27 +115,17 @@ impl RpcCache {
         *self.chain_id.get_or_init(|| chain_id)
     }
 
-    /// Get cached fee estimate if valid.
+    /// Get cached fee estimate.
     pub fn get_fee_estimate(&self, key: &str) -> Option<U256> {
         let entry = self.fee_cache.get(key)?;
-        if let Some(value) = entry.get_if_valid() {
-            debug!(key = key, "Fee estimate cache HIT");
-            Some(*value)
-        } else {
-            debug!(key = key, "Fee estimate cache EXPIRED");
-            // Clean up expired entry
-            self.fee_cache.remove(key);
-            None
-        }
+        debug!(key = key, "Fee estimate cache HIT");
+        Some(*entry.value())
     }
 
-    /// Cache a fee estimate with 2-minute TTL.
+    /// Cache a fee estimate.
     pub fn set_fee_estimate(&self, key: String, value: U256) {
         debug!(key = %key, value = %value, "Caching fee estimate");
-        self.fee_cache.insert(
-            key,
-            CachedValue::new(value, Duration::from_secs(120)), // 2 minutes
-        );
+        self.fee_cache.insert(key, value);
     }
 
     /// Get cached contract code if valid.
@@ -158,27 +151,17 @@ impl RpcCache {
         );
     }
 
-    /// Get cached fee history if valid.
+    /// Get cached fee history.
     pub fn get_fee_history(&self, key: &str) -> Option<serde_json::Value> {
         let entry = self.fee_history_cache.get(key)?;
-        if let Some(value) = entry.get_if_valid() {
-            debug!(key = key, "Fee history cache HIT");
-            Some(value.clone())
-        } else {
-            debug!(key = key, "Fee history cache EXPIRED");
-            // Clean up expired entry
-            self.fee_history_cache.remove(key);
-            None
-        }
+        debug!(key = key, "Fee history cache HIT");
+        Some(entry.value().clone())
     }
 
-    /// Cache fee history with 5-minute TTL.
+    /// Cache fee history.
     pub fn set_fee_history(&self, key: String, value: serde_json::Value) {
         debug!(key = %key, "Caching fee history");
-        self.fee_history_cache.insert(
-            key,
-            CachedValue::new(value, Duration::from_secs(300)), // 5 minutes
-        );
+        self.fee_history_cache.insert(key, value);
     }
 
     /// Atomically check for an existing call or start a new one.
@@ -212,31 +195,13 @@ impl RpcCache {
         }
     }
 
-    /// Clean up expired entries from all TTL caches.
+    /// Clean up expired entries from TTL caches.
     pub fn cleanup_expired(&self) {
         let start = Instant::now();
         let mut cleaned = 0;
 
-        // Clean fee cache
-        self.fee_cache.retain(|_, v| {
-            let expired = v.is_expired();
-            if expired {
-                cleaned += 1;
-            }
-            !expired
-        });
-
-        // Clean code cache
+        // Clean code cache (only TTL cache currently)
         self.code_cache.retain(|_, v| {
-            let expired = v.is_expired();
-            if expired {
-                cleaned += 1;
-            }
-            !expired
-        });
-
-        // Clean fee history cache
-        self.fee_history_cache.retain(|_, v| {
             let expired = v.is_expired();
             if expired {
                 cleaned += 1;
@@ -307,6 +272,7 @@ pub struct CacheStats {
     /// Number of pending deduplicated calls
     pub pending_calls: usize,
 }
+
 
 #[cfg(test)]
 mod tests {
