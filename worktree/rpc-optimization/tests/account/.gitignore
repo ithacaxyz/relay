@@ -1,0 +1,25 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+broadcast/
+
+# Dotenv file
+.env
+
+.DS_Store
+
+# Create2 build files
+.tmp
+create2
+
+# NodeJS files
+node_modules/
+coverage
+coverage.json
+typechain
+
+# IDE
+.vscode/
+.cursor/

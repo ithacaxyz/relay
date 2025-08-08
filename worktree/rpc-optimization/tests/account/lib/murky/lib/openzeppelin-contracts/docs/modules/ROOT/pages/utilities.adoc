@@ -1,0 +1,220 @@
+= Utilities
+
+The OpenZeppelin Contracts provide a ton of useful utilities that you can use in your project. For a complete list, check out the xref:api:utils.adoc[API Reference].
+Here are some of the more popular ones.
+
+[[cryptography]]
+== Cryptography
+
+=== Checking Signatures On-Chain
+
+xref:api:utils.adoc#ECDSA[`ECDSA`] provides functions for recovering and managing Ethereum account ECDSA signatures. These are often generated via https://web3js.readthedocs.io/en/v1.7.3/web3-eth.html#sign[`web3.eth.sign`], and are a 65 byte array (of type `bytes` in Solidity) arranged the following way: `[[v (1)], [r (32)], [s (32)]]`.
+
+The data signer can be recovered with xref:api:utils.adoc#ECDSA-recover-bytes32-bytes-[`ECDSA.recover`], and its address compared to verify the signature. Most wallets will hash the data to sign and add the prefix `\x19Ethereum Signed Message:\n`, so when attempting to recover the signer of an Ethereum signed message hash, you'll want to use xref:api:utils.adoc#MessageHashUtils-toEthSignedMessageHash-bytes32-[`toEthSignedMessageHash`].
+
+[source,solidity]
+----
+using ECDSA for bytes32;
+using MessageHashUtils for bytes32;
+
+function _verify(bytes32 data, bytes memory signature, address account) internal pure returns (bool) {
+    return data
+        .toEthSignedMessageHash()
+        .recover(signature) == account;
+}
+----
+
+WARNING: Getting signature verification right is not trivial: make sure you fully read and understand xref:api:utils.adoc#MessageHashUtils[`MessageHashUtils`]'s and xref:api:utils.adoc#ECDSA[`ECDSA`]'s documentation.
+
+=== Verifying Merkle Proofs
+
+Developers can build a Merkle Tree off-chain, which allows for verifying that an element (leaf) is part of a set by using a Merkle Proof. This technique is widely used for creating whitelists (e.g. for airdrops) and other advanced use cases.
+
+TIP: OpenZeppelin Contracts provides a https://github.com/OpenZeppelin/merkle-tree[JavaScript library] for building trees off-chain and generating proofs.
+
+xref:api:utils.adoc#MerkleProof[`MerkleProof`] provides:
+
+* xref:api:utils.adoc#MerkleProof-verify-bytes32---bytes32-bytes32-[`verify`] - can prove that some value is part of a https://en.wikipedia.org/wiki/Merkle_tree[Merkle tree].
+
+* xref:api:utils.adoc#MerkleProof-multiProofVerify-bytes32-bytes32---bytes32---bool---[`multiProofVerify`] - can prove multiple values are part of a Merkle tree.
+
+For an on-chain Merkle Tree, see the xref:api:utils.adoc#MerkleTree[`MerkleTree`] library.
+
+[[introspection]]
+== Introspection
+
+In Solidity, it's frequently helpful to know whether or not a contract supports an interface you'd like to use. ERC-165 is a standard that helps do runtime interface detection. Contracts provide helpers both for implementing ERC-165 in your contracts and querying other contracts:
+
+* xref:api:utils.adoc#IERC165[`IERC165`] — this is the ERC-165 interface that defines xref:api:utils.adoc#IERC165-supportsInterface-bytes4-[`supportsInterface`]. When implementing ERC-165, you'll conform to this interface.
+* xref:api:utils.adoc#ERC165[`ERC165`] — inherit this contract if you'd like to support interface detection using a lookup table in contract storage. You can register interfaces using xref:api:utils.adoc#ERC165-_registerInterface-bytes4-[`_registerInterface(bytes4)`]: check out example usage as part of the ERC-721 implementation.
+* xref:api:utils.adoc#ERC165Checker[`ERC165Checker`] — ERC165Checker simplifies the process of checking whether or not a contract supports an interface you care about.
+* include with `using ERC165Checker for address;`
+* xref:api:utils.adoc#ERC165Checker-_supportsInterface-address-bytes4-[`myAddress._supportsInterface(bytes4)`]
+* xref:api:utils.adoc#ERC165Checker-_supportsAllInterfaces-address-bytes4---[`myAddress._supportsAllInterfaces(bytes4[\])`]
+
+[source,solidity]
+----
+contract MyContract {
+    using ERC165Checker for address;
+
+    bytes4 private InterfaceId_ERC721 = 0x80ac58cd;
+
+    /**
+     * @dev transfer an ERC-721 token from this contract to someone else
+     */
+    function transferERC721(
+        address token,
+        address to,
+        uint256 tokenId
+    )
+        public
+    {
+        require(token.supportsInterface(InterfaceId_ERC721), "IS_NOT_721_TOKEN");
+        IERC721(token).transferFrom(address(this), to, tokenId);
+    }
+}
+----
+
+[[math]]
+== Math
+
+Although Solidity already provides math operators (i.e. `+`, `-`, etc.), Contracts includes xref:api:utils.adoc#Math[`Math`]; a set of utilities for dealing with mathematical operators, with support for extra operations (eg. xref:api:utils.adoc#Math-average-uint256-uint256-[`average`]) and xref:api:utils.adoc#SignedMath[`SignedMath`]; a library specialized in signed math operations.
+
+Include these contracts with `using Math for uint256` or `using SignedMath for int256` and then use their functions in your code:
+
+[source,solidity]
+----
+contract MyContract {
+    using Math for uint256;
+    using SignedMath for int256;
+
+    function tryOperations(uint256 a, uint256 b) internal pure {
+        (bool succeededAdd, uint256 resultAdd) = x.tryAdd(y);
+        (bool succeededSub, uint256 resultSub) = x.trySub(y);
+        (bool succeededMul, uint256 resultMul) = x.tryMul(y);
+        (bool succeededDiv, uint256 resultDiv) = x.tryDiv(y);
+        // ...
+    }
+
+    function unsignedAverage(int256 a, int256 b) {
+        int256 avg = a.average(b);
+        // ...
+    }
+}
+----
+
+Easy!
+
+TIP: While working with different data types that might require casting, you can use xref:api:utils.adoc#SafeCast[`SafeCast`] for type casting with added overflow checks.
+
+[[structures]]
+== Structures
+
+Some use cases require more powerful data structures than arrays and mappings offered natively in Solidity. Contracts provides these libraries for enhanced data structure management:
+
+- xref:api:utils.adoc#BitMaps[`BitMaps`]: Store packed booleans in storage.
+- xref:api:utils.adoc#Checkpoints[`Checkpoints`]: Checkpoint values with built-in lookups.
+- xref:api:utils.adoc#DoubleEndedQueue[`DoubleEndedQueue`]: Store items in a queue with `pop()` and `queue()` constant time operations.
+- xref:api:utils.adoc#EnumerableSet[`EnumerableSet`]: A https://en.wikipedia.org/wiki/Set_(abstract_data_type)[set] with enumeration capabilities.
+- xref:api:utils.adoc#EnumerableMap[`EnumerableMap`]: A `mapping` variant with enumeration capabilities.
+- xref:api:utils.adoc#MerkleTree[`MerkleTree`]: An on-chain https://wikipedia.org/wiki/Merkle_Tree[Merkle Tree] with helper functions.
+
+The `Enumerable*` structures are similar to mappings in that they store and remove elements in constant time and don't allow for repeated entries, but they also support _enumeration_, which means you can easily query all stored entries both on and off-chain.
+
+=== Building a Merkle Tree
+
+Building an on-chain Merkle Tree allow developers to keep track of the history of roots in a decentralized manner. For these cases, the xref:api:utils.adoc#MerkleTree[`MerkleTree`] includes a predefined structure with functions to manipulate the tree (e.g. pushing values or resetting the tree).
+
+The Merkle Tree does not keep track of the roots purposely, so that developers can choose their tracking mechanism. Setting up and using an Merkle Tree in Solidity is as simple as follows:
+
+[source,solidity]
+----
+// NOTE: Functions are exposed without access control for demonstration purposes
+
+using MerkleTree for MerkleTree.Bytes32PushTree;
+MerkleTree.Bytes32PushTree private _tree;
+
+function setup(uint8 _depth, bytes32 _zero) public /* onlyOwner */ {
+    root = _tree.setup(_depth, _zero);
+}
+
+function push(bytes32 leaf) public /* onlyOwner */ {
+    (uint256 leafIndex, bytes32 currentRoot) = _tree.push(leaf);
+    // Store the new root.
+}
+----
+
+[[misc]]
+== Misc
+
+=== Storage Slots
+
+Solidity allocates a storage pointer for each variable declared in a contract. However, there are cases when it's required to access storage pointers that can't be derived by using regular Solidity.
+For those cases, the xref:api:utils.adoc#StorageSlot[`StorageSlot`] library allows for manipulating storage slots directly.
+
+[source,solidity]
+----
+bytes32 internal constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+function _getImplementation() internal view returns (address) {
+    return StorageSlot.getAddressSlot(_IMPLEMENTATION_SLOT).value;
+}
+
+function _setImplementation(address newImplementation) internal {
+    require(newImplementation.code.length > 0);
+    StorageSlot.getAddressSlot(_IMPLEMENTATION_SLOT).value = newImplementation;
+}
+----
+
+WARNING: Manipulating storage slots directly is an advanced practice. Developers MUST make sure that the storage pointer is not colliding with other variables.
+
+One of the most common use cases for writing directly to storage slots is ERC-7201 for namespaced storage, which is guaranteed to not collide with other storage slots derived by Solidity.
+
+Users can leverage this standard using the xref:api:utils.adoc#SlotDerivation[`SlotDerivation`] library.
+
+[source,solidity]
+----
+using SlotDerivation for bytes32;
+string private constant _NAMESPACE = "<namespace>" // eg. example.main
+
+function erc7201Pointer() internal view returns (bytes32) {
+    return _NAMESPACE.erc7201Slot();
+}
+----
+
+=== Base64
+
+xref:api:utils.adoc#Base64[`Base64`] util allows you to transform `bytes32` data into its Base64 `string` representation.
+
+This is especially useful for building URL-safe tokenURIs for both xref:api:token/ERC721.adoc#IERC721Metadata-tokenURI-uint256-[`ERC-721`] or xref:api:token/ERC1155.adoc#IERC1155MetadataURI-uri-uint256-[`ERC-1155`]. This library provides a clever way to serve URL-safe https://developer.mozilla.org/docs/Web/HTTP/Basics_of_HTTP/Data_URIs/[Data URI] compliant strings to serve on-chain data structures.
+
+Here is an example to send JSON Metadata through a Base64 Data URI using an ERC-721:
+
+[source, solidity]
+----
+include::api:example$utilities/Base64NFT.sol[]
+----
+
+=== Multicall
+
+The `Multicall` abstract contract comes with a `multicall` function that bundles together multiple calls in a single external call. With it, external accounts may perform atomic operations comprising several function calls. This is not only useful for EOAs to make multiple calls in a single transaction, it's also a way to revert a previous call if a later one fails.
+
+Consider this dummy contract:
+
+[source,solidity]
+----
+include::api:example$utilities/Multicall.sol[]
+----
+
+This is how to call the `multicall` function using Ethers.js, allowing `foo` and `bar` to be called in a single transaction:
+[source,javascript]
+----
+// scripts/foobar.js
+
+const instance = await ethers.deployContract("Box");
+
+await instance.multicall([
+    instance.interface.encodeFunctionData("foo"),
+    instance.interface.encodeFunctionData("bar")
+]);
+----

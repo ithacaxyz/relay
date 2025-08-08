@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+pnpm-debug.log*
+pnpm-error.log*
+
+# Ignore deployments in examples folder when testing
+examples/deployments
+
+# Dependency directories
+node_modules/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Turbo cache
+.turbo
+
+# Optional eslint cache
+.eslintcache
+
+# Editor and OS files
+.DS_Store
+.idea
+.vscode
+
+# Build artifacts
+dist
+*.dbg.json
+
+# Github actions
+.netrc
+
+# Cache
+.cache
+.env

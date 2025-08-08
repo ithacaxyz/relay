@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select tx_id from bundle_transactions where bundle_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tx_id",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "12b6acfe38bc1f14b02f12a0a9e18af367ce91a9b1e57dc6f1b2e11b6122a52f"
+}

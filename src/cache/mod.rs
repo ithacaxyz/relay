@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// Thread-safe cache for RPC results with TTL support and request deduplication.
 #[derive(Debug)]
@@ -309,7 +309,6 @@ pub struct CacheStats {
     pub fee_cache_size: usize,
     /// Number of cached contract codes
     pub code_cache_size: usize,
-    /// Number of cached keys
     /// Number of cached fee histories
     pub fee_history_cache_size: usize,
     /// Number of pending deduplicated calls

@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO pending_bundles (bundle_id, status, bundle_data, created_at)\n            VALUES ($1, $2, $3, NOW())\n            ON CONFLICT (bundle_id) DO UPDATE SET\n                status = EXCLUDED.status,\n                bundle_data = EXCLUDED.bundle_data,\n                updated_at = NOW()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        {
+          "Custom": {
+            "name": "bundle_status",
+            "kind": {
+              "Enum": [
+                "init",
+                "source_queued",
+                "source_confirmed",
+                "source_failures",
+                "destination_queued",
+                "destination_failures",
+                "destination_confirmed",
+                "refunds_queued",
+                "withdrawals_queued",
+                "done",
+                "failed",
+                "liquidity_locked",
+                "settlements_queued",
+                "settlements_confirmed",
+                "refunds_scheduled",
+                "refunds_ready",
+                "settlements_processing",
+                "settlement_completion_queued"
+              ]
+            }
+          }
+        },
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "82e7c9cce1aa485db564962b021eaea9756ca73e5298e743ef0c37583fceb803"
+}

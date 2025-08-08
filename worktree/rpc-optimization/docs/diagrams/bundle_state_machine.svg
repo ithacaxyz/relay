@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1400" height="1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+    <style>
+      .state-box { fill: #f0f0f0; stroke: #333; stroke-width: 2; }
+      .state-success { fill: #d4edda; stroke: #28a745; }
+      .state-failure { fill: #f8d7da; stroke: #dc3545; }
+      .state-processing { fill: #fff3cd; stroke: #ffc107; }
+      .state-queued { fill: #d1ecf1; stroke: #17a2b8; }
+      .state-terminal { fill: #6c757d; stroke: #545b62; }
+      .state-text { font-family: monospace; font-size: 14px; text-anchor: middle; }
+      .arrow { stroke: #333; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .label { font-family: monospace; font-size: 12px; fill: #666; }
+    </style>
+  </defs>
+  
+  <!-- Title -->
+  <text x="700" y="30" style="font-family: monospace; font-size: 20px; text-anchor: middle; font-weight: bold;">Bundle State Machine - send_and_watch_bundle_with_status</text>
+  
+  <!-- States -->
+  <!-- Init -->
+  <rect x="600" y="60" width="200" height="40" class="state-box state-processing" rx="5"/>
+  <text x="700" y="85" class="state-text">Init</text>
+  
+  <!-- LiquidityLocked -->
+  <rect x="600" y="140" width="200" height="40" class="state-box state-processing" rx="5"/>
+  <text x="700" y="165" class="state-text">LiquidityLocked</text>
+  
+  <!-- SourceQueued -->
+  <rect x="600" y="220" width="200" height="40" class="state-box state-queued" rx="5"/>
+  <text x="700" y="245" class="state-text">SourceQueued</text>
+  
+  <!-- SourceConfirmed -->
+  <rect x="400" y="300" width="200" height="40" class="state-box state-success" rx="5"/>
+  <text x="500" y="325" class="state-text">SourceConfirmed</text>
+  
+  <!-- SourceFailures -->
+  <rect x="800" y="300" width="200" height="40" class="state-box state-failure" rx="5"/>
+  <text x="900" y="325" class="state-text">SourceFailures</text>
+  
+  <!-- DestinationQueued -->
+  <rect x="400" y="380" width="200" height="40" class="state-box state-queued" rx="5"/>
+  <text x="500" y="405" class="state-text">DestinationQueued</text>
+  
+  <!-- DestinationConfirmed -->
+  <rect x="200" y="460" width="200" height="40" class="state-box state-success" rx="5"/>
+  <text x="300" y="485" class="state-text">DestConfirmed</text>
+  
+  <!-- DestinationFailures -->
+  <rect x="600" y="460" width="200" height="40" class="state-box state-failure" rx="5"/>
+  <text x="700" y="485" class="state-text">DestFailures</text>
+  
+  <!-- SettlementsQueued -->
+  <rect x="200" y="540" width="200" height="40" class="state-box state-queued" rx="5"/>
+  <text x="300" y="565" class="state-text">SettlementsQueued</text>
+  
+  <!-- SettlementsProcessing -->
+  <rect x="200" y="620" width="200" height="40" class="state-box state-processing" rx="5"/>
+  <text x="300" y="645" class="state-text">SettlementsProcessing</text>
+  
+  <!-- SettlementCompletionQueued -->
+  <rect x="200" y="700" width="200" height="60" class="state-box state-queued" rx="5"/>
+  <text x="300" y="725" class="state-text">Settlement</text>
+  <text x="300" y="745" class="state-text">CompletionQueued</text>
+  
+  <!-- Done -->
+  <rect x="100" y="800" width="200" height="40" class="state-box state-terminal" rx="5"/>
+  <text x="200" y="825" class="state-text">Done</text>
+  
+  <!-- RefundsScheduled -->
+  <rect x="900" y="540" width="200" height="40" class="state-box state-failure" rx="5"/>
+  <text x="1000" y="565" class="state-text">RefundsScheduled</text>
+  
+  <!-- RefundsReady -->
+  <rect x="900" y="620" width="200" height="40" class="state-box state-failure" rx="5"/>
+  <text x="1000" y="645" class="state-text">RefundsReady</text>
+  
+  <!-- RefundsQueued -->
+  <rect x="900" y="700" width="200" height="40" class="state-box state-queued" rx="5"/>
+  <text x="1000" y="725" class="state-text">RefundsQueued</text>
+  
+  <!-- Failed -->
+  <rect x="600" y="900" width="200" height="40" class="state-box state-terminal" rx="5"/>
+  <text x="700" y="925" class="state-text">Failed</text>
+  
+  <!-- Arrows -->
+  <!-- Init -> LiquidityLocked -->
+  <path d="M 700 100 L 700 140" class="arrow"/>
+  
+  <!-- LiquidityLocked -> SourceQueued -->
+  <path d="M 700 180 L 700 220" class="arrow"/>
+  
+  <!-- SourceQueued -> SourceConfirmed -->
+  <path d="M 650 260 L 550 300" class="arrow"/>
+  
+  <!-- SourceQueued -> SourceFailures -->
+  <path d="M 750 260 L 850 300" class="arrow"/>
+  
+  <!-- SourceConfirmed -> DestinationQueued -->
+  <path d="M 500 340 L 500 380" class="arrow"/>
+  
+  <!-- DestinationQueued -> DestinationConfirmed -->
+  <path d="M 450 420 L 350 460" class="arrow"/>
+  
+  <!-- DestinationQueued -> DestinationFailures -->
+  <path d="M 550 420 L 650 460" class="arrow"/>
+  
+  <!-- DestinationConfirmed -> SettlementsQueued -->
+  <path d="M 300 500 L 300 540" class="arrow"/>
+  
+  <!-- SettlementsQueued -> SettlementsProcessing -->
+  <path d="M 300 580 L 300 620" class="arrow"/>
+  
+  <!-- SettlementsQueued -> Failed -->
+  <path d="M 350 580 L 650 900" class="arrow" stroke-dasharray="5,5"/>
+  
+  <!-- SettlementsProcessing -> SettlementCompletionQueued -->
+  <path d="M 300 660 L 300 700" class="arrow"/>
+  
+  <!-- SettlementCompletionQueued -> Done -->
+  <path d="M 250 760 L 200 800" class="arrow"/>
+  
+  <!-- SettlementCompletionQueued -> Failed -->
+  <path d="M 350 730 L 650 900" class="arrow" stroke-dasharray="5,5"/>
+  
+  <!-- SourceFailures -> RefundsScheduled -->
+  <path d="M 950 340 L 950 540" class="arrow"/>
+  
+  <!-- SourceFailures -> Failed -->
+  <path d="M 900 340 L 700 900" class="arrow" stroke-dasharray="5,5"/>
+  
+  <!-- DestinationFailures -> RefundsScheduled -->
+  <path d="M 750 480 L 900 540" class="arrow"/>
+  
+  <!-- DestinationFailures -> Failed -->
+  <path d="M 700 500 L 700 900" class="arrow" stroke-dasharray="5,5"/>
+  
+  <!-- RefundsScheduled -> RefundsReady -->
+  <path d="M 1000 580 L 1000 620" class="arrow"/>
+  
+  <!-- RefundsReady -> RefundsQueued -->
+  <path d="M 1000 660 L 1000 700" class="arrow"/>
+  
+  <!-- RefundsQueued -> Failed -->
+  <path d="M 950 740 L 750 900" class="arrow"/>
+  
+  
+</svg>

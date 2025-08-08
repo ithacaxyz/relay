@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select account from accounts where address = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3ad838e08ad45f17b15a76de133f2ad127c5b642478fca30f6ece0b847587ea3"
+}

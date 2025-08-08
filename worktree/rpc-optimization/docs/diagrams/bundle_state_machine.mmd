@@ -1,0 +1,52 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#232f3e', 'primaryTextColor':'#fff', 'primaryBorderColor':'#7FFF00', 'lineColor':'#F8B229', 'secondaryColor':'#006100', 'tertiaryColor':'#fff', 'fontFamily': 'monospace'}}}%%
+stateDiagram-v2
+    [*] --> Init
+
+    Init --> LiquidityLocked
+    
+    LiquidityLocked --> SourceQueued
+    
+    SourceQueued --> SourceConfirmed
+    SourceQueued --> SourceFailures
+    
+    SourceConfirmed --> DestinationQueued
+    
+    SourceFailures --> RefundsScheduled
+    SourceFailures --> Failed
+    
+    DestinationQueued --> DestinationConfirmed
+    DestinationQueued --> DestinationFailures
+    
+    DestinationConfirmed --> SettlementsQueued
+    
+    DestinationFailures --> RefundsScheduled
+    DestinationFailures --> Failed
+    
+    SettlementsQueued --> SettlementsProcessing
+    SettlementsQueued --> Failed
+    
+    SettlementsProcessing --> SettlementCompletionQueued
+    
+    SettlementCompletionQueued --> Done
+    SettlementCompletionQueued --> Failed
+    
+    RefundsScheduled --> RefundsReady
+    
+    RefundsReady --> RefundsQueued
+    
+    RefundsQueued --> Failed
+    
+    Done --> [*]
+    Failed --> [*]
+
+    classDef success fill:#28a745,stroke:#1e7e34,stroke-width:2px,color:#fff
+    classDef failure fill:#dc3545,stroke:#bd2130,stroke-width:2px,color:#fff
+    classDef processing fill:#ffc107,stroke:#d39e00,stroke-width:2px,color:#000
+    classDef queued fill:#17a2b8,stroke:#117a8b,stroke-width:2px,color:#fff
+    classDef terminal fill:#6c757d,stroke:#545b62,stroke-width:2px,color:#fff
+
+    class Init,LiquidityLocked processing
+    class SourceQueued,DestinationQueued,SettlementsQueued,SettlementCompletionQueued,RefundsQueued queued
+    class SourceConfirmed,DestinationConfirmed,Done success
+    class SourceFailures,DestinationFailures,RefundsScheduled,RefundsReady,Failed failure
+    class SettlementsProcessing processing

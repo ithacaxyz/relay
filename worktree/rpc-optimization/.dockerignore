@@ -1,0 +1,31 @@
+# exclude everything
+*
+
+# include source files
+!/bin
+!/crates
+!/src
+!Cargo.lock
+!Cargo.toml
+!Cross.toml
+!deny.toml
+!Makefile
+!build.rs
+!/tools
+
+# include for vergen constants
+!/.git
+
+# include licenses
+!LICENSE-*
+
+# include dist directory, where the reth binary is located after compilation
+!/dist
+
+# include example files
+!/examples
+
+# include migrations
+!/migrations
+# include
+!/.sqlx

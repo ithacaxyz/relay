@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select * from pending_txs where sender = $1 and chain_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "sender",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "tx_id",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "tx",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "envelopes",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "sent_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0e7a3fa8802afa71128f8195407a728fe5f09491fbcc77929268ce4bbc428055"
+}

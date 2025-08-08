@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO pending_refunds (bundle_id, refund_timestamp) \n            VALUES ($1, $2)\n            ON CONFLICT (bundle_id) DO UPDATE SET \n                refund_timestamp = GREATEST(pending_refunds.refund_timestamp, EXCLUDED.refund_timestamp)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c3023fa31c1966a2ea472058c01511f8526181d9f15dbbf00f64e27303129ff8"
+}
