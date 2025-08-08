@@ -52,11 +52,7 @@ use alloy::{
     },
     sol_types::{SolCall, SolValue},
 };
-use futures_util::{
-    TryFutureExt,
-    future::{try_join_all, try_join4},
-    join,
-};
+use futures_util::{TryFutureExt, future::try_join_all, join};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -265,20 +261,43 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
-        // Fetch the user's balance for the fee token.
-        let fee_token_balance = self
-            .get_assets(GetAssetsParameters {
-                account: intent.eoa,
-                asset_filter: [(
-                    chain_id,
-                    vec![AssetFilterItem::fungible(context.fee_token.into())],
-                )]
-                .into(),
-                ..Default::default()
-            })
-            .await
-            .map_err(RelayError::internal)?
-            .balance_on_chain(chain_id, context.fee_token.into());
+        // Parallelize fetching of assets, fee history, and eth price as they are independent
+        let (assets_response, fee_history, eth_price) = try_join!(
+            // Fetch the user's balance for the fee token
+            async {
+                self.get_assets(GetAssetsParameters {
+                    account: intent.eoa,
+                    asset_filter: [(
+                        chain_id,
+                        vec![AssetFilterItem::fungible(context.fee_token.into())],
+                    )]
+                    .into(),
+                    ..Default::default()
+                })
+                .await
+                .map_err(RelayError::internal)
+            },
+            // Fetch chain fee history
+            async {
+                provider
+                    .get_fee_history(
+                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+                        Default::default(),
+                        &[self.inner.priority_fee_percentile],
+                    )
+                    .await
+                    .map_err(RelayError::from)
+            },
+            // Fetch ETH price
+            async {
+                // TODO: only handles eth as native fee token
+                Ok(self.inner.price_oracle.eth_price(token.kind).await)
+            }
+        )?;
+
+        let fee_token_balance =
+            assets_response.balance_on_chain(chain_id, context.fee_token.into());
+
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
         let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
@@ -325,32 +344,22 @@ impl Relay {
         let overrides = overrides.build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        let (orchestrator, delegation, fee_history, eth_price) = try_join4(
-            // fetch orchestrator from the account and ensure it is supported
+        // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
+        // above)
+        let (orchestrator, delegation) = try_join!(
+            // Fetch orchestrator from the account and ensure it is supported
             async {
-                let orchestrator = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator));
+                let orchestrator_addr = account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator_addr) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
                 }
-                Ok(Orchestrator::new(orchestrator, &provider).with_overrides(overrides.clone()))
+                Ok(Orchestrator::new(orchestrator_addr, &provider)
+                    .with_overrides(overrides.clone()))
             },
-            // fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from),
-            // fetch chain fees
-            provider
-                .get_fee_history(
-                    EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                    Default::default(),
-                    &[self.inner.priority_fee_percentile],
-                )
-                .map_err(RelayError::from),
-            // fetch price in eth
-            async {
-                // TODO: only handles eth as native fee token
-                Ok(self.inner.price_oracle.eth_price(token.kind).await)
-            },
-        )
-        .await?;
+            // Fetch delegation from the account and ensure it is supported
+            self.has_supported_delegation(&account).map_err(RelayError::from)
+        )?;
+
         debug!(
             %chain_id,
             fee_token = ?token,
@@ -449,6 +458,7 @@ impl Relay {
         // pay for the intent execution or not is determined later and communicated to the
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
+
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 self.simulator(),
@@ -472,7 +482,6 @@ impl Relay {
 
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
-
         // Calculate the real fee
         let extra_payment = self
             .estimate_extra_fee(
