@@ -5,7 +5,7 @@
 //! - TTL-based caching for frequently changing values (fees, code, keys)
 //! - Request deduplication for concurrent identical calls
 
-use alloy::primitives::{Address, Bytes, ChainId, U256};
+use alloy::primitives::{Address, Bytes, ChainId};
 use dashmap::DashMap;
 use std::{
     hash::Hash,
@@ -15,16 +15,22 @@ use std::{
 use tokio::sync::broadcast;
 use tracing::{debug, trace, warn};
 
+/// Cache key constants and TTL values
+pub const CACHE_KEY_FEE_HISTORY_PREFIX: &str = "fee_history_";
+pub const CACHE_KEY_DELEGATION_PREFIX: &str = "delegation_impl_";
+pub const TTL_CONTRACT_CODE: Duration = Duration::from_secs(1800); // 30 minutes
+pub const TTL_DELEGATION_IMPL: Duration = Duration::from_secs(3600); // 1 hour - delegations rarely change
+pub const TTL_PENDING_CALL_TIMEOUT: Duration = Duration::from_secs(30); // 30 seconds
+
 /// Thread-safe cache for RPC results with TTL support and request deduplication.
 #[derive(Debug)]
 pub struct RpcCache {
     /// Static cache for chain ID (never expires)
     chain_id: OnceLock<ChainId>,
-    /// Cache for fee estimates (no TTL for now)
-    pub fee_cache: DashMap<String, U256>,
     /// TTL cache for contract code
     pub code_cache: DashMap<Address, CachedValue<Bytes>>,
-    /// TTL cache for account keys
+    /// TTL cache for delegation implementations (per account)
+    pub delegation_cache: DashMap<Address, CachedValue<Address>>,
     /// Cache for fee history data (no TTL for now)
     pub fee_history_cache: DashMap<String, serde_json::Value>,
     /// Request deduplication for eth_call
@@ -96,8 +102,8 @@ impl RpcCache {
     pub fn new() -> Self {
         Self {
             chain_id: OnceLock::new(),
-            fee_cache: DashMap::new(),
             code_cache: DashMap::new(),
+            delegation_cache: DashMap::new(),
             fee_history_cache: DashMap::new(),
             pending_calls: DashMap::new(),
         }
@@ -113,19 +119,6 @@ impl RpcCache {
     pub fn set_chain_id(&self, chain_id: ChainId) -> ChainId {
         trace!(chain_id = %chain_id, "Caching chain ID");
         *self.chain_id.get_or_init(|| chain_id)
-    }
-
-    /// Get cached fee estimate.
-    pub fn get_fee_estimate(&self, key: &str) -> Option<U256> {
-        let entry = self.fee_cache.get(key)?;
-        debug!(key = key, "Fee estimate cache HIT");
-        Some(*entry.value())
-    }
-
-    /// Cache a fee estimate.
-    pub fn set_fee_estimate(&self, key: String, value: U256) {
-        debug!(key = %key, value = %value, "Caching fee estimate");
-        self.fee_cache.insert(key, value);
     }
 
     /// Get cached contract code if valid.
@@ -147,7 +140,30 @@ impl RpcCache {
         debug!(address = %address, code_len = code.len(), "Caching contract code");
         self.code_cache.insert(
             address,
-            CachedValue::new(code, Duration::from_secs(1800)), // 30 minutes
+            CachedValue::new(code, TTL_CONTRACT_CODE),
+        );
+    }
+
+    /// Get cached delegation implementation if valid.
+    pub fn get_delegation_impl(&self, account: &Address) -> Option<Address> {
+        let entry = self.delegation_cache.get(account)?;
+        if let Some(value) = entry.get_if_valid() {
+            debug!(account = %account, "Delegation impl cache HIT");
+            Some(*value)
+        } else {
+            debug!(account = %account, "Delegation impl cache EXPIRED");
+            // Clean up expired entry
+            self.delegation_cache.remove(account);
+            None
+        }
+    }
+
+    /// Cache delegation implementation with 1 hour TTL.
+    pub fn set_delegation_impl(&self, account: Address, delegation: Address) {
+        debug!(account = %account, delegation = %delegation, "Caching delegation implementation");
+        self.delegation_cache.insert(
+            account,
+            CachedValue::new(delegation, TTL_DELEGATION_IMPL),
         );
     }
 
@@ -210,9 +226,8 @@ impl RpcCache {
         });
 
         // Clean up stale pending calls (no receivers or timed out after 30 seconds)
-        const PENDING_CALL_TIMEOUT: Duration = Duration::from_secs(30);
         self.pending_calls.retain(|call_key, pending_call| {
-            let timed_out = pending_call.started_at.elapsed() > PENDING_CALL_TIMEOUT;
+            let timed_out = pending_call.started_at.elapsed() > TTL_PENDING_CALL_TIMEOUT;
             let no_receivers = pending_call.sender.receiver_count() == 0;
 
             if timed_out || no_receivers {
@@ -244,8 +259,8 @@ impl RpcCache {
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             chain_id_cached: self.chain_id.get().is_some(),
-            fee_cache_size: self.fee_cache.len(),
             code_cache_size: self.code_cache.len(),
+            delegation_cache_size: self.delegation_cache.len(),
             fee_history_cache_size: self.fee_history_cache.len(),
             pending_calls: self.pending_calls.len(),
         }
@@ -263,10 +278,10 @@ impl Default for RpcCache {
 pub struct CacheStats {
     /// Whether chain ID is cached
     pub chain_id_cached: bool,
-    /// Number of cached fee estimates
-    pub fee_cache_size: usize,
     /// Number of cached contract codes
     pub code_cache_size: usize,
+    /// Number of cached delegation implementations
+    pub delegation_cache_size: usize,
     /// Number of cached fee histories
     pub fee_history_cache_size: usize,
     /// Number of pending deduplicated calls
@@ -294,14 +309,6 @@ mod tests {
     #[tokio::test]
     async fn test_ttl_caches() {
         let cache = RpcCache::new();
-
-        // Test fee estimate caching
-        let key = "test_fee".to_string();
-        let fee = U256::from(1000);
-
-        assert_eq!(cache.get_fee_estimate(&key), None);
-        cache.set_fee_estimate(key.clone(), fee);
-        assert_eq!(cache.get_fee_estimate(&key), Some(fee));
 
         // Test code caching
         let addr = address!("1234567890123456789012345678901234567890");
@@ -388,17 +395,14 @@ mod tests {
 
         let stats = cache.stats();
         assert!(!stats.chain_id_cached);
-        assert_eq!(stats.fee_cache_size, 0);
         assert_eq!(stats.code_cache_size, 0);
         assert_eq!(stats.fee_history_cache_size, 0);
         assert_eq!(stats.pending_calls, 0);
 
         // Add some cached values
         cache.set_chain_id(ChainId::from(1u64));
-        cache.set_fee_estimate("test".to_string(), U256::from(1000));
 
         let stats = cache.stats();
         assert!(stats.chain_id_cached);
-        assert_eq!(stats.fee_cache_size, 1);
     }
 }

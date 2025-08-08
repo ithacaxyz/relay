@@ -171,10 +171,10 @@ pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle
             // Log cache statistics periodically
             let stats = cache.stats();
             debug!(
-                "Cache stats: chain_id={}, fees={}, code={}, fee_history={}, pending_calls={}",
+                "Cache stats: chain_id={}, code={}, delegation={}, fee_history={}, pending_calls={}",
                 stats.chain_id_cached,
-                stats.fee_cache_size,
                 stats.code_cache_size,
+                stats.delegation_cache_size,
                 stats.fee_history_cache_size,
                 stats.pending_calls,
             );

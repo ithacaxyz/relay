@@ -8,7 +8,7 @@
 
 use crate::e2e::Environment;
 use alloy::{
-    primitives::{Address, ChainId, U256, address, bytes},
+    primitives::{Address, ChainId, address, bytes},
     providers::Provider,
 };
 use relay::{
@@ -41,30 +41,6 @@ async fn test_chain_id_permanent_caching() {
     assert_eq!(cache.get_chain_id(), Some(chain_id));
 }
 
-#[tokio::test]
-async fn test_fee_estimate_caching() {
-    let cache = RpcCache::new();
-    let key = "test_fee_estimate".to_string();
-    let fee = U256::from(1000);
-
-    // Initially no cached fee
-    assert_eq!(cache.get_fee_estimate(&key), None);
-
-    // Set fee estimate
-    cache.set_fee_estimate(key.clone(), fee);
-
-    // Should retrieve cached value
-    assert_eq!(cache.get_fee_estimate(&key), Some(fee));
-
-    // Update with new value
-    let new_fee = U256::from(2000);
-    cache.set_fee_estimate(key.clone(), new_fee);
-    assert_eq!(cache.get_fee_estimate(&key), Some(new_fee));
-
-    // Cache should contain the entry
-    let stats = cache.stats();
-    assert_eq!(stats.fee_cache_size, 1);
-}
 
 #[tokio::test]
 async fn test_contract_code_ttl_caching() {
@@ -165,24 +141,20 @@ async fn test_cache_cleanup() {
         },
     );
 
-    // Add some fee estimates (should not be cleaned up since no TTL)
-    cache.set_fee_estimate("fee1".to_string(), U256::from(1000));
+    // Add some fee history (should not be cleaned up since no TTL)
     cache.set_fee_history("history1".to_string(), serde_json::json!({"test": "data"}));
 
     assert_eq!(cache.code_cache.len(), 2);
-    assert_eq!(cache.fee_cache.len(), 1);
     assert_eq!(cache.fee_history_cache.len(), 1);
 
     // Run cleanup
     cache.cleanup_expired();
 
-    // Should remove expired contract code entry but leave fees/fee history
+    // Should remove expired contract code entry but leave fee history
     assert_eq!(cache.code_cache.len(), 1);
-    assert_eq!(cache.fee_cache.len(), 1); // Fee cache unchanged
     assert_eq!(cache.fee_history_cache.len(), 1); // Fee history cache unchanged
     assert_eq!(cache.get_code(&addr1), Some(code)); // Valid entry remains
     assert_eq!(cache.get_code(&addr2), None); // Expired entry removed
-    assert_eq!(cache.get_fee_estimate("fee1"), Some(U256::from(1000))); // Fee estimate remains
 }
 
 #[tokio::test]
@@ -236,11 +208,11 @@ async fn test_concurrent_cache_access() {
             let cache = cache.clone();
             let key = key.clone();
             tokio::spawn(async move {
-                // Try to set fee estimate
-                cache.set_fee_estimate(format!("{key}_{i}"), U256::from(i * 1000));
+                // Try to set fee history
+                cache.set_fee_history(format!("{key}_{i}"), serde_json::json!({"data": i}));
                 
-                // Try to get fee estimate
-                cache.get_fee_estimate(&format!("{key}_{i}"))
+                // Try to get fee history
+                cache.get_fee_history(&format!("{key}_{i}"))
             })
         })
         .collect();
@@ -250,12 +222,12 @@ async fn test_concurrent_cache_access() {
     
     // Each task should have been able to set and get its value
     for (i, result) in results.iter().enumerate() {
-        assert_eq!(*result, Some(U256::from(i * 1000)));
+        assert_eq!(*result, Some(serde_json::json!({"data": i})));
     }
 
     // Cache should have all entries
     let stats = cache.stats();
-    assert_eq!(stats.fee_cache_size, num_tasks);
+    assert_eq!(stats.fee_history_cache_size, num_tasks);
 }
 
 #[tokio::test]
@@ -319,15 +291,12 @@ async fn test_cache_stats_accuracy() {
     // Initially empty
     let stats = cache.stats();
     assert!(!stats.chain_id_cached);
-    assert_eq!(stats.fee_cache_size, 0);
     assert_eq!(stats.code_cache_size, 0);
     assert_eq!(stats.fee_history_cache_size, 0);
     assert_eq!(stats.pending_calls, 0);
 
     // Add various cache entries
     cache.set_chain_id(ChainId::from(1u64));
-    cache.set_fee_estimate("fee1".to_string(), U256::from(1000));
-    cache.set_fee_estimate("fee2".to_string(), U256::from(2000));
     
     let addr = address!("1234567890123456789012345678901234567890");
     cache.set_code(addr, bytes!("608060405234801561001057600080fd5b50"));
@@ -348,7 +317,6 @@ async fn test_cache_stats_accuracy() {
     // Check stats accuracy
     let stats = cache.stats();
     assert!(stats.chain_id_cached);
-    assert_eq!(stats.fee_cache_size, 2);
     assert_eq!(stats.code_cache_size, 1);
     assert_eq!(stats.fee_history_cache_size, 1);
     assert_eq!(stats.pending_calls, 1);
@@ -442,8 +410,6 @@ async fn test_cache_memory_pressure() {
     
     // Add many entries to test memory usage
     for i in 0..1000 {
-        cache.set_fee_estimate(format!("fee_{i}"), U256::from(i));
-        
         // Create unique addresses by using i as the last bytes
         let mut addr_bytes = [0u8; 20];
         addr_bytes[16..20].copy_from_slice(&(i as u32).to_be_bytes());
@@ -454,7 +420,6 @@ async fn test_cache_memory_pressure() {
     }
 
     let stats = cache.stats();
-    assert_eq!(stats.fee_cache_size, 1000);
     assert_eq!(stats.code_cache_size, 1000);
     assert_eq!(stats.fee_history_cache_size, 1000);
 
@@ -463,7 +428,6 @@ async fn test_cache_memory_pressure() {
 
     // All entries should still be valid (not expired)
     let stats_after = cache.stats();
-    assert_eq!(stats_after.fee_cache_size, 1000);
     assert_eq!(stats_after.code_cache_size, 1000);
     assert_eq!(stats_after.fee_history_cache_size, 1000);
 }
@@ -516,18 +480,18 @@ async fn test_pending_call_timeout_cleanup() {
 async fn test_cache_key_uniqueness() {
     let cache = RpcCache::new();
 
-    // Test that different fee estimation contexts get different cache keys
-    cache.set_fee_estimate("fee_estimate_1_0xa_123_Some(token1)".to_string(), U256::from(1000));
-    cache.set_fee_estimate("fee_estimate_1_0xa_124_Some(token1)".to_string(), U256::from(2000));
-    cache.set_fee_estimate("fee_estimate_2_0xa_123_Some(token1)".to_string(), U256::from(3000));
+    // Test that different fee history contexts get different cache keys
+    cache.set_fee_history("history_1_latest_[25]".to_string(), serde_json::json!({"data": 1}));
+    cache.set_fee_history("history_2_latest_[25]".to_string(), serde_json::json!({"data": 2}));
+    cache.set_fee_history("history_1_latest_[50]".to_string(), serde_json::json!({"data": 3}));
 
     // Each should be cached separately
-    assert_eq!(cache.get_fee_estimate("fee_estimate_1_0xa_123_Some(token1)"), Some(U256::from(1000)));
-    assert_eq!(cache.get_fee_estimate("fee_estimate_1_0xa_124_Some(token1)"), Some(U256::from(2000)));
-    assert_eq!(cache.get_fee_estimate("fee_estimate_2_0xa_123_Some(token1)"), Some(U256::from(3000)));
+    assert_eq!(cache.get_fee_history("history_1_latest_[25]"), Some(serde_json::json!({"data": 1})));
+    assert_eq!(cache.get_fee_history("history_2_latest_[25]"), Some(serde_json::json!({"data": 2})));
+    assert_eq!(cache.get_fee_history("history_1_latest_[50]"), Some(serde_json::json!({"data": 3})));
 
     let stats = cache.stats();
-    assert_eq!(stats.fee_cache_size, 3);
+    assert_eq!(stats.fee_history_cache_size, 3);
 }
 
 #[tokio::test] 
