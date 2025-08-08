@@ -659,6 +659,7 @@ impl Signer {
             if balance < min_balance {
                 warn!(
                     address=?self.address(),
+                    chain_id = %self.chain_id,
                     ?balance,
                     max_fee_per_gas = ?fees.max_fee_per_gas,
                     ?min_balance,
@@ -671,6 +672,7 @@ impl Signer {
                 self.pull_gas(&fees).await.inspect_err(|err| {
                     error!(
                         signer = %self.address(),
+                        chain_id = %self.chain_id,
                         ?err,
                         "Failed to pull gas"
                     );
