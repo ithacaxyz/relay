@@ -894,6 +894,7 @@ impl Signer {
         info!(
             amount = %funding_amount,
             signer = %self.address(),
+            chain_id = %self.chain_id,
             "pulling gas from SimpleFunder"
         );
 
@@ -964,10 +965,10 @@ impl Signer {
             Some(receipt) => Some(receipt),
             None => {
                 if self.provider.get_transaction_by_hash(tx_hash).await?.is_some() {
-                    info!(?tx_hash, "pull gas transaction found in pool, waiting for confirmation");
+                    info!(?tx_hash, chain_id = %self.chain_id, "pull gas transaction found in pool, waiting for confirmation");
                     self.monitor.watch_transaction(tx_hash, self.block_time * 2).await
                 } else {
-                    info!(?tx_hash, "pull gas transaction not found, attempting to send");
+                    info!(?tx_hash, chain_id = %self.chain_id, "pull gas transaction not found, attempting to send");
                     self.broadcast_and_monitor_pull_gas(&tx).await.ok()
                 }
             }
@@ -1030,6 +1031,7 @@ impl Signer {
         info!(
             tx_hash = %signed_tx.tx_hash(),
             signer = %self.address(),
+            chain_id = %self.chain_id,
             state = %state,
             amount = %amount,
             "pull gas transaction finalized"
