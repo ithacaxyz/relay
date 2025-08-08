@@ -43,6 +43,3 @@ registry.yaml
 # Scratchpad
 _
 plans/
-
-# Git worktrees
-worktree/
