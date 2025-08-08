@@ -158,7 +158,6 @@ impl RpcCache {
         );
     }
 
-
     /// Get cached fee history if valid.
     pub fn get_fee_history(&self, key: &str) -> Option<serde_json::Value> {
         let entry = self.fee_history_cache.get(key)?;
@@ -184,15 +183,12 @@ impl RpcCache {
 
     /// Atomically check for an existing call or start a new one.
     /// Returns either an existing receiver to wait for results, or a sender to broadcast results.
-    pub fn deduplicate_call(
-        &self,
-        call_key: CallKey,
-    ) -> DeduplicationResult {
+    pub fn deduplicate_call(&self, call_key: CallKey) -> DeduplicationResult {
         use dashmap::mapref::entry::Entry;
-        
+
         let (tx, _) = broadcast::channel(1);
         let tx = Arc::new(tx);
-        
+
         match self.pending_calls.entry(call_key.clone()) {
             Entry::Occupied(entry) => {
                 debug!(to = %call_key.to, "Call deduplication HIT - waiting for existing call");
@@ -200,10 +196,7 @@ impl RpcCache {
             }
             Entry::Vacant(entry) => {
                 debug!(to = %call_key.to, "Call deduplication MISS - starting new call");
-                entry.insert(PendingCall {
-                    sender: tx.clone(),
-                    started_at: Instant::now(),
-                });
+                entry.insert(PendingCall { sender: tx.clone(), started_at: Instant::now() });
                 DeduplicationResult::New(tx)
             }
         }
@@ -256,7 +249,7 @@ impl RpcCache {
         self.pending_calls.retain(|call_key, pending_call| {
             let timed_out = pending_call.started_at.elapsed() > PENDING_CALL_TIMEOUT;
             let no_receivers = pending_call.sender.receiver_count() == 0;
-            
+
             if timed_out || no_receivers {
                 if timed_out {
                     warn!(

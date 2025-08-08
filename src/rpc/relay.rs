@@ -516,11 +516,8 @@ impl Relay {
             let intent_gas = ((tx_gas.saturating_sub(intrinsic_gas)) * 63 / 64)
                 .saturating_sub(110_000)
                 .saturating_sub(tx_buffer);
-            
-            GasEstimate {
-                tx: tx_gas,
-                intent: intent_gas,
-            }
+
+            GasEstimate { tx: tx_gas, intent: intent_gas }
         } else {
             // Calculate new gas estimate
             GasEstimate::from_combined_gas(

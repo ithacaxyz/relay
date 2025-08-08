@@ -508,10 +508,10 @@ impl Environment {
 
         // Start relay service with all endpoints
         let skip_diagnostics = false;
-        
+
         // Create a fresh RPC cache for this test to ensure isolation
         let rpc_cache = std::sync::Arc::new(relay::cache::RpcCache::new());
-        
+
         let relay_handle = relay::spawn::try_spawn_with_cache(
             RelayConfig::default()
                 .with_port(0)
