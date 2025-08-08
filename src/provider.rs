@@ -66,11 +66,6 @@ impl<P> CachedProvider<P> {
         Self { inner: provider, cache }
     }
 
-    /// Get the underlying provider.
-    pub fn inner(&self) -> &P {
-        &self.inner
-    }
-
     /// Get the cache instance.
     pub fn cache(&self) -> &Arc<RpcCache> {
         &self.cache
