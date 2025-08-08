@@ -18,7 +18,6 @@
 use alloy::{
     hex,
     primitives::{Address, Bytes, U256},
-    providers::{Provider, ProviderBuilder},
     signers::{Signer, local::PrivateKeySigner},
 };
 use alloy_chains::Chain;
@@ -62,7 +61,7 @@ enum Commands {
         /// The account address to query assets for
         address: Address,
         /// RPC URL of the relay server
-        #[arg(long)]
+        #[arg(long, short)]
         rpc_url: String,
     },
     /// Send transaction
@@ -83,7 +82,7 @@ struct SendCommand {
     #[arg(long, default_value = "0")]
     value: U256,
     /// RPC URL of the relay server
-    #[arg(long)]
+    #[arg(long, short)]
     rpc_url: String,
     /// Fee token address (optional)
     #[arg(long)]
@@ -93,7 +92,7 @@ struct SendCommand {
     required_funds: Vec<String>,
     /// Override the chain ID (optional, will query from RPC if not provided)
     #[arg(long)]
-    chain: Option<Chain>,
+    chain: Chain,
 }
 
 impl SendCommand {
@@ -132,10 +131,7 @@ impl SendCommand {
             parsed_required_funds.push(RequiredAsset::new(address, amount));
         }
 
-        // Get chain ID from provider or use override
-        let provider = ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
-        let chain_id =
-            if let Some(chain) = self.chain { chain.id() } else { provider.get_chain_id().await? };
+        let chain_id = self.chain.id();
 
         // Prepare the call
         let call = Call { to: self.to, value: self.value, data: self.data };
@@ -194,7 +190,7 @@ impl SendCommand {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             attempts += 1;
 
-            match client.get_calls_status(send_response.id.clone()).await {
+            match client.get_calls_status(send_response.id).await {
                 Ok(status) => {
                     match status.status {
                         CallStatusCode::Pending => {
@@ -255,8 +251,11 @@ enum AccountSubcommands {
         /// Name for the new account
         name: String,
         /// RPC URL of the relay server
-        #[arg(long)]
+        #[arg(long, short)]
         rpc_url: String,
+        /// The chain to create the account on.
+        #[arg(long)]
+        chain: Chain,
     },
     #[command(about = "List saved account addresses")]
     Ls,
@@ -266,7 +265,7 @@ impl AccountSubcommands {
     /// Executes the account management subcommand.
     async fn run(self) -> Result<()> {
         match self {
-            AccountSubcommands::New { rpc_url, name } => {
+            AccountSubcommands::New { rpc_url, name, chain } => {
                 println!("Creating new Porto account...");
 
                 // Generate new keypair
@@ -284,10 +283,7 @@ impl AccountSubcommands {
 
                 // Create relay client
                 let client = HttpClientBuilder::default().build(&rpc_url)?;
-
-                // Get chain ID from provider
-                let provider = ProviderBuilder::new().connect_http(rpc_url.parse()?);
-                let chain_id = provider.get_chain_id().await?;
+                let chain_id = chain.id();
 
                 // Get relay capabilities to fetch delegation proxy address
                 let capabilities = client.get_capabilities(vec![chain_id]).await?;
