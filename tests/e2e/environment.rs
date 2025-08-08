@@ -242,7 +242,7 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
     anvil
         .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
         .try_spawn()
-        .wrap_err(format!("Failed to spawn Anvil (index {})", index))
+        .wrap_err(format!("Failed to spawn Anvil (index {index})"))
 }
 
 /// Contract addresses for deployed contracts
