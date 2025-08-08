@@ -1088,7 +1088,9 @@ impl Relay {
         // leave this as an exercise for later.
         // Check if funding is required
         // todo: this only supports one asset...
-        if let Some(required_funds) = request.capabilities.required_funds.first() {
+        if let Some(required_funds) = request.capabilities.required_funds.first()
+            && self.inner.chains.interop().is_some()
+        {
             self.determine_quote_strategy(
                 request,
                 required_funds.address,
