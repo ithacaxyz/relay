@@ -260,6 +260,8 @@ impl Relay {
         let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+        // create a mock transaction signer
+        let mock_from = Address::random();
 
         // Parallelize fetching of assets, fee history, and eth price as they are independent
         let (assets_response, fee_history, eth_price) = try_join!(
@@ -306,8 +308,7 @@ impl Relay {
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
-            .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
-            .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
+            .append(mock_from, AccountOverride::default().with_balance(U256::MAX))
             .append(
                 intent.eoa,
                 AccountOverride::default()
@@ -471,6 +472,7 @@ impl Relay {
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
+                mock_from,
                 self.simulator(),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),

@@ -188,6 +188,7 @@ impl<P: Provider> Orchestrator<P> {
     /// `simulator` contract address should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
+        mock_from: Address,
         simulator: Address,
         intent: &Intent,
         asset_info_handle: AssetInfoServiceHandle,
@@ -205,7 +206,8 @@ impl<P: Provider> Orchestrator<P> {
                         gas_validation_offset,
                         intent.abi_encode().into(),
                     )
-                    .into_transaction_request(),
+                    .into_transaction_request()
+                    .from(mock_from),
             )
             .with_state_overrides(self.overrides.clone());
 
