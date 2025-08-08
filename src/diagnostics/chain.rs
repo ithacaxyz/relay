@@ -294,20 +294,8 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             account,
             role,
         )| {
-            match role {
-                AddressRole::Signer => {
-                    if balance.is_zero() {
-                        warnings.push(format!(
-                            "Signer {account} has low balance: {} ETH",
-                            format_ether(balance)
-                        ));
-                    }
-                }
-                AddressRole::FunderContract => {
-                    if balance.is_zero() {
-                        errors.push(format!("Funder contract {account} has no balance"));
-                    }
-                }
+            if balance.is_zero() {
+                errors.push(format!("[{role:?}] {account}  has no balance"));
             }
         });
 
