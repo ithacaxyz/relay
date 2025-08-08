@@ -266,11 +266,7 @@ impl StressTester {
         let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
         let signer = DynSigner::from_signing_key(&args.private_key).await?;
         let health = relay_client.health().await?;
-        info!(
-            "Connected to relay at {}, version {}",
-            &args.relay_url,
-            health.version
-        );
+        info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         let chain_ids = try_join_all(args.rpc_urls.iter().map(|rpc_url| async move {
             let provider = ProviderBuilder::new().connect(rpc_url.as_str()).await?.erased();
