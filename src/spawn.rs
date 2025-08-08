@@ -9,7 +9,6 @@ use crate::{
     diagnostics::run_diagnostics,
     metrics::{self, RpcMetricsService, TraceLayer},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
-    provider::spawn_cache_cleanup_task,
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
@@ -250,9 +249,6 @@ pub async fn try_spawn_with_cache(
 
     // Create RPC cache for optimizing chain interactions
     let rpc_cache = rpc_cache.unwrap_or_else(|| Arc::new(RpcCache::new()));
-
-    // Spawn cache cleanup task
-    let _cache_cleanup_handle = spawn_cache_cleanup_task(rpc_cache.clone());
 
     let chains =
         Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;

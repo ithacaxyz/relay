@@ -115,26 +115,3 @@ where
     }
 }
 
-/// Create a periodic cleanup task for cache maintenance.
-///
-/// This task runs every 5 minutes to clean up expired cache entries,
-/// preventing memory leaks from accumulated stale data.
-pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
-        loop {
-            interval.tick().await;
-            cache.cleanup_expired();
-
-            // Log cache statistics periodically
-            let stats = cache.stats();
-            debug!(
-                "Cache stats: chain_id={}, code={}, delegation={}, pending_calls={}",
-                stats.chain_id_cached,
-                stats.code_cache_size,
-                stats.delegation_cache_size,
-                stats.pending_calls,
-            );
-        }
-    })
-}
