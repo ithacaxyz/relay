@@ -354,8 +354,7 @@ impl Relay {
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
                     return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
                 }
-                Ok(Orchestrator::new(orchestrator_addr, &provider)
-                    .with_overrides(overrides.clone()))
+                Ok(Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides))
             },
             // Fetch delegation from the account and ensure it is supported
             self.has_supported_delegation(&account).map_err(RelayError::from)
