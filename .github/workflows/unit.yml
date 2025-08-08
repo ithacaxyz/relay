@@ -59,9 +59,9 @@ jobs:
         if: ${{ matrix.variant == 'base_sepolia' }}
         run: |
           echo "TEST_FORK_URL=https://base-sepolia.rpc.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ORCHESTRATOR=0xE758e00D8C2ff1Df0cB20E1109Bf8A6410Be1A01" >> $GITHUB_ENV
-          echo "TEST_PROXY=0xf6c6AC93076BE50f087cdFCeE0002d34a6F672c0" >> $GITHUB_ENV
-          echo "TEST_SIMULATOR=0x4A40525f1D0E68b519FC71ca2C9B3ce015c4ffdA" >> $GITHUB_ENV
+          echo "TEST_ORCHESTRATOR=0xf2d86ffc5462789bd49dff291ca9466055b14328" >> $GITHUB_ENV
+          echo "TEST_PROXY=0x15dd5e7c8fc9dc9aca75f9c662808322dc97300c" >> $GITHUB_ENV
+          echo "TEST_SIMULATOR=0x86b0d32c48634218c08395d384e57948ec025047" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}

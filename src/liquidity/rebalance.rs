@@ -102,7 +102,7 @@ impl RebalanceService {
     /// Returns minimum balance that we need to hold for the given asset.
     fn get_threshold(&self, asset: &Asset) -> U256 {
         self.thresholds.get(&asset.kind).copied().unwrap_or_else(|| match asset.kind {
-            CoinKind::ETH => uint!(100_000_000_000_000_000_U256),
+            CoinKind::ETH | CoinKind::BNB | CoinKind::POL => uint!(100_000_000_000_000_000_U256),
             CoinKind::USDC | CoinKind::USDT | CoinKind::EXP1 | CoinKind::EXP2 => {
                 uint!(100_000_000_U256)
             }

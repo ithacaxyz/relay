@@ -10,6 +10,11 @@ use std::time::Duration;
 /// bet.
 pub const P256_GAS_BUFFER: U256 = uint!(10_000_U256);
 
+/// Extra buffer accounting for the cost of a cold storage write.
+///
+/// 20_000 - 2900 gas
+pub const COLD_SSTORE_GAS_BUFFER: U256 = uint!(17_100_U256);
+
 /// Extra buffer added to Intent gas estimates to cover execution overhead
 /// and ensure sufficient gas is provided.
 pub const INTENT_GAS_BUFFER: u64 = 0;

@@ -12,7 +12,7 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     cache::RpcCache,
-    constants::ESCROW_SALT_LENGTH,
+    constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
@@ -263,6 +263,8 @@ impl Relay {
         let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
+        // create a mock transaction signer
+        let mock_from = Address::random();
 
         // Parallelize fetching of assets, fee history, and eth price as they are independent
         let (assets_response, fee_history, eth_price) = try_join!(
@@ -309,8 +311,7 @@ impl Relay {
         let mut overrides = StateOverridesBuilder::with_capacity(2)
             // simulateV1Logs requires it, so the function can only be called under a testing
             // environment
-            .append(self.simulator(), AccountOverride::default().with_balance(U256::MAX))
-            .append(self.orchestrator(), AccountOverride::default().with_balance(U256::MAX))
+            .append(mock_from, AccountOverride::default().with_balance(U256::MAX))
             .append(
                 intent.eoa,
                 AccountOverride::default()
@@ -452,6 +453,16 @@ impl Relay {
             intent_to_sign.funder = self.inner.contracts.funder.address;
         }
 
+        let gas_validation_offset =
+            // Account for gas variation in P256 sig verification.
+            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
+                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
+                + if fee_token_balance.is_zero() && !new_fee_token_balance.is_zero() && !context.fee_token.is_zero() {
+                    COLD_SSTORE_GAS_BUFFER
+                } else {
+                    U256::ZERO
+                };
+
         // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
         // should be enough to simulate the gas cost of paying for the intent for most (if not all)
         // ERC20s.
@@ -464,10 +475,11 @@ impl Relay {
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
+                mock_from,
                 self.simulator(),
                 &intent_to_sign,
-                context.account_key.keyType,
                 self.inner.asset_info.clone(),
+                gas_validation_offset,
             )
             .await?;
 
