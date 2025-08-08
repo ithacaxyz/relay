@@ -20,18 +20,15 @@ use tracing::{debug, trace};
 pub struct RpcCache {
     /// Static cache for chain ID (never expires)
     chain_id: OnceLock<ChainId>,
-    /// Static cache for delegation implementation address (never expires)
-    delegation_impl: OnceLock<Address>,
     /// TTL cache for fee estimates
     fee_cache: DashMap<String, CachedValue<U256>>,
     /// TTL cache for contract code
     code_cache: DashMap<Address, CachedValue<Bytes>>,
     /// TTL cache for account keys
-    keys_cache: DashMap<Address, CachedValue<Vec<u8>>>, // Generic bytes for keys
     /// TTL cache for fee history data
     fee_history_cache: DashMap<String, CachedValue<serde_json::Value>>,
     /// Request deduplication for eth_call
-    pending_calls: DashMap<CallKey, Arc<broadcast::Sender<CallResult>>>,
+    pending_calls: DashMap<CallKey, PendingCall>,
 }
 
 /// A cached value with TTL support.
@@ -76,15 +73,29 @@ pub struct CallKey {
 /// Result of an eth_call operation for deduplication.
 pub type CallResult = Result<Bytes, String>;
 
+/// A pending call with timestamp tracking for timeout cleanup.
+#[derive(Debug)]
+struct PendingCall {
+    sender: Arc<broadcast::Sender<CallResult>>,
+    started_at: Instant,
+}
+
+/// Result of attempting to deduplicate a call.
+#[derive(Debug)]
+pub enum DeduplicationResult {
+    /// An existing call is in progress, wait for its result.
+    Existing(broadcast::Receiver<CallResult>),
+    /// No existing call, caller should proceed and broadcast the result.
+    New(Arc<broadcast::Sender<CallResult>>),
+}
+
 impl RpcCache {
     /// Create a new RPC cache instance.
     pub fn new() -> Self {
         Self {
             chain_id: OnceLock::new(),
-            delegation_impl: OnceLock::new(),
             fee_cache: DashMap::new(),
             code_cache: DashMap::new(),
-            keys_cache: DashMap::new(),
             fee_history_cache: DashMap::new(),
             pending_calls: DashMap::new(),
         }
@@ -99,17 +110,6 @@ impl RpcCache {
     pub fn set_chain_id(&self, chain_id: ChainId) -> ChainId {
         trace!(chain_id = %chain_id, "Caching chain ID");
         *self.chain_id.get_or_init(|| chain_id)
-    }
-
-    /// Get cached delegation implementation address, or None if not cached.
-    pub fn get_delegation_impl(&self) -> Option<Address> {
-        self.delegation_impl.get().copied()
-    }
-
-    /// Cache the delegation implementation address (never expires).
-    pub fn set_delegation_impl(&self, addr: Address) -> Address {
-        trace!(address = %addr, "Caching delegation implementation");
-        *self.delegation_impl.get_or_init(|| addr)
     }
 
     /// Get cached fee estimate if valid.
@@ -158,28 +158,6 @@ impl RpcCache {
         );
     }
 
-    /// Get cached keys if valid.
-    pub fn get_keys(&self, address: &Address) -> Option<Vec<u8>> {
-        let entry = self.keys_cache.get(address)?;
-        if let Some(value) = entry.get_if_valid() {
-            debug!(address = %address, "Keys cache HIT");
-            Some(value.clone())
-        } else {
-            debug!(address = %address, "Keys cache EXPIRED");
-            // Clean up expired entry
-            self.keys_cache.remove(address);
-            None
-        }
-    }
-
-    /// Cache keys with 10-minute TTL.
-    pub fn set_keys(&self, address: Address, keys: Vec<u8>) {
-        debug!(address = %address, keys_len = keys.len(), "Caching keys");
-        self.keys_cache.insert(
-            address,
-            CachedValue::new(keys, Duration::from_secs(600)), // 10 minutes
-        );
-    }
 
     /// Get cached fee history if valid.
     pub fn get_fee_history(&self, key: &str) -> Option<serde_json::Value> {
@@ -204,33 +182,37 @@ impl RpcCache {
         );
     }
 
-    /// Get or create a broadcast channel for deduplicating eth_call requests.
-    /// Returns None if a call is already in progress, Some(receiver) to wait for result.
-    pub fn deduplicate_call(&self, call_key: CallKey) -> Option<broadcast::Receiver<CallResult>> {
-        if let Some(existing) = self.pending_calls.get(&call_key) {
-            debug!(to = %call_key.to, "Call deduplication HIT - waiting for existing call");
-            Some(existing.subscribe())
-        } else {
-            // No existing call, caller should proceed and call complete_call when done
-            None
-        }
-    }
-
-    /// Start a new call deduplication entry. Returns the sender to broadcast results.
-    pub fn start_call_deduplication(
+    /// Atomically check for an existing call or start a new one.
+    /// Returns either an existing receiver to wait for results, or a sender to broadcast results.
+    pub fn deduplicate_call(
         &self,
         call_key: CallKey,
-    ) -> Arc<broadcast::Sender<CallResult>> {
+    ) -> DeduplicationResult {
+        use dashmap::mapref::entry::Entry;
+        
         let (tx, _) = broadcast::channel(1);
         let tx = Arc::new(tx);
-        self.pending_calls.insert(call_key, tx.clone());
-        tx
+        
+        match self.pending_calls.entry(call_key.clone()) {
+            Entry::Occupied(entry) => {
+                debug!(to = %call_key.to, "Call deduplication HIT - waiting for existing call");
+                DeduplicationResult::Existing(entry.get().sender.subscribe())
+            }
+            Entry::Vacant(entry) => {
+                debug!(to = %call_key.to, "Call deduplication MISS - starting new call");
+                entry.insert(PendingCall {
+                    sender: tx.clone(),
+                    started_at: Instant::now(),
+                });
+                DeduplicationResult::New(tx)
+            }
+        }
     }
 
     /// Complete a call deduplication by broadcasting the result and cleaning up.
     pub fn complete_call_deduplication(&self, call_key: &CallKey, result: CallResult) {
-        if let Some((_, sender)) = self.pending_calls.remove(call_key)
-            && sender.send(result).is_err()
+        if let Some((_, pending_call)) = self.pending_calls.remove(call_key)
+            && pending_call.sender.send(result).is_err()
         {
             // No receivers, which is fine
             trace!(to = %call_key.to, "No receivers waiting for deduplicated call result");
@@ -260,15 +242,6 @@ impl RpcCache {
             !expired
         });
 
-        // Clean keys cache
-        self.keys_cache.retain(|_, v| {
-            let expired = v.is_expired();
-            if expired {
-                cleaned += 1;
-            }
-            !expired
-        });
-
         // Clean fee history cache
         self.fee_history_cache.retain(|_, v| {
             let expired = v.is_expired();
@@ -278,9 +251,31 @@ impl RpcCache {
             !expired
         });
 
+        // Clean up stale pending calls (no receivers or timed out after 30 seconds)
+        const PENDING_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+        self.pending_calls.retain(|call_key, pending_call| {
+            let timed_out = pending_call.started_at.elapsed() > PENDING_CALL_TIMEOUT;
+            let no_receivers = pending_call.sender.receiver_count() == 0;
+            
+            if timed_out || no_receivers {
+                if timed_out {
+                    warn!(
+                        to = %call_key.to,
+                        elapsed_secs = pending_call.started_at.elapsed().as_secs(),
+                        "Removing timed out pending call"
+                    );
+                }
+                cleaned += 1;
+                false // Remove this entry
+            } else {
+                true // Keep this entry
+            }
+        });
+
         if cleaned > 0 {
             debug!(
                 cleaned = cleaned,
+                pending_calls = self.pending_calls.len(),
                 duration_ms = start.elapsed().as_millis(),
                 "Cleaned up expired cache entries"
             );
@@ -291,10 +286,8 @@ impl RpcCache {
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             chain_id_cached: self.chain_id.get().is_some(),
-            delegation_impl_cached: self.delegation_impl.get().is_some(),
             fee_cache_size: self.fee_cache.len(),
             code_cache_size: self.code_cache.len(),
-            keys_cache_size: self.keys_cache.len(),
             fee_history_cache_size: self.fee_history_cache.len(),
             pending_calls: self.pending_calls.len(),
         }
@@ -312,14 +305,11 @@ impl Default for RpcCache {
 pub struct CacheStats {
     /// Whether chain ID is cached
     pub chain_id_cached: bool,
-    /// Whether delegation implementation is cached
-    pub delegation_impl_cached: bool,
     /// Number of cached fee estimates
     pub fee_cache_size: usize,
     /// Number of cached contract codes
     pub code_cache_size: usize,
     /// Number of cached keys
-    pub keys_cache_size: usize,
     /// Number of cached fee histories
     pub fee_history_cache_size: usize,
     /// Number of pending deduplicated calls
@@ -341,12 +331,6 @@ mod tests {
         let chain_id = ChainId::from(1u64);
         cache.set_chain_id(chain_id);
         assert_eq!(cache.get_chain_id(), Some(chain_id));
-
-        // Test delegation implementation caching
-        assert_eq!(cache.get_delegation_impl(), None);
-        let addr = address!("1234567890123456789012345678901234567890");
-        cache.set_delegation_impl(addr);
-        assert_eq!(cache.get_delegation_impl(), Some(addr));
     }
 
     #[tokio::test]
@@ -394,22 +378,23 @@ mod tests {
             block: "latest".to_string(),
         };
 
-        // First call should return None (no existing call)
-        assert!(cache.deduplicate_call(call_key.clone()).is_none());
-
-        // Start deduplication
-        let _sender = cache.start_call_deduplication(call_key.clone());
+        // First call should return New (no existing call)
+        let _sender = match cache.deduplicate_call(call_key.clone()) {
+            DeduplicationResult::New(sender) => sender,
+            DeduplicationResult::Existing(_) => panic!("Expected New, got Existing"),
+        };
 
         // Second identical call should get a receiver
-        let receiver = cache.deduplicate_call(call_key.clone());
-        assert!(receiver.is_some());
+        let mut receiver = match cache.deduplicate_call(call_key.clone()) {
+            DeduplicationResult::Existing(receiver) => receiver,
+            DeduplicationResult::New(_) => panic!("Expected Existing, got New"),
+        };
 
         // Complete the call
         let result = Ok(bytes!("0000000000000000000000000000000000000000000000000000000000000001"));
         cache.complete_call_deduplication(&call_key, result.clone());
 
         // The receiver should get the result
-        let mut receiver = receiver.unwrap();
         let received = receiver.recv().await.unwrap();
         assert_eq!(received, result);
     }
@@ -445,10 +430,8 @@ mod tests {
 
         let stats = cache.stats();
         assert!(!stats.chain_id_cached);
-        assert!(!stats.delegation_impl_cached);
         assert_eq!(stats.fee_cache_size, 0);
         assert_eq!(stats.code_cache_size, 0);
-        assert_eq!(stats.keys_cache_size, 0);
         assert_eq!(stats.fee_history_cache_size, 0);
         assert_eq!(stats.pending_calls, 0);
 

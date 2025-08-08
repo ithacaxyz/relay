@@ -119,6 +119,18 @@ pub async fn try_spawn(
     registry: CoinRegistry,
     skip_diagnostics: bool,
 ) -> eyre::Result<RelayHandle> {
+    try_spawn_with_cache(config, registry, skip_diagnostics, None).await
+}
+
+/// Spawns the relay service with an optional RPC cache instance.
+/// If no cache is provided, a new global cache is created (for production use).
+/// If a cache is provided, it will be used instead (for test isolation).
+pub async fn try_spawn_with_cache(
+    config: RelayConfig,
+    registry: CoinRegistry,
+    skip_diagnostics: bool,
+    rpc_cache: Option<Arc<RpcCache>>,
+) -> eyre::Result<RelayHandle> {
     let registry = Arc::new(registry);
 
     // construct db
@@ -237,7 +249,7 @@ pub async fn try_spawn(
     }
 
     // Create RPC cache for optimizing chain interactions
-    let rpc_cache = Arc::new(RpcCache::new());
+    let rpc_cache = rpc_cache.unwrap_or_else(|| Arc::new(RpcCache::new()));
 
     // Spawn cache cleanup task
     let _cache_cleanup_handle = spawn_cache_cleanup_task(rpc_cache.clone());

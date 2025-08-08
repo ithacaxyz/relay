@@ -25,7 +25,7 @@ use relay::{
         SimpleSettlerConfig, TransactionServiceConfig,
     },
     signers::DynSigner,
-    spawn::{RETRY_LAYER, RelayHandle, try_spawn},
+    spawn::{RETRY_LAYER, RelayHandle},
     types::{
         CoinKind, CoinRegistry, IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
@@ -508,7 +508,11 @@ impl Environment {
 
         // Start relay service with all endpoints
         let skip_diagnostics = false;
-        let relay_handle = try_spawn(
+        
+        // Create a fresh RPC cache for this test to ensure isolation
+        let rpc_cache = std::sync::Arc::new(relay::cache::RpcCache::new());
+        
+        let relay_handle = relay::spawn::try_spawn_with_cache(
             RelayConfig::default()
                 .with_port(0)
                 .with_metrics_port(0)
@@ -534,6 +538,7 @@ impl Environment {
                 .with_database_url(database_url),
             registry,
             skip_diagnostics,
+            Some(rpc_cache),
         )
         .await?;
 
