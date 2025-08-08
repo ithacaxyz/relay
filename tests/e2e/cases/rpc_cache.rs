@@ -1,11 +1,3 @@
-//! Comprehensive RPC caching tests for the Ithaca relay.
-//!
-//! These tests verify that the RPC caching implementation works correctly for:
-//! - Cache hit/miss behavior (permanent for chain_id, TTL only for contract code)
-//! - Concurrent access and request deduplication
-//! - Integration with RPC methods
-//! - Error scenarios and fallback behavior
-
 use crate::e2e::Environment;
 use alloy::{
     primitives::{Address, ChainId, address, bytes},

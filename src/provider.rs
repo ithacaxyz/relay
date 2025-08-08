@@ -1,5 +1,3 @@
-//! Alloy provider extensions and caching wrappers.
-
 use crate::{
     cache::RpcCache,
     op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle},
@@ -46,32 +44,21 @@ pub trait ProviderExt: Provider {
 
 impl<T> ProviderExt for T where T: Provider {}
 
-/// A caching wrapper around an Alloy provider to reduce redundant RPC calls.
-///
-/// This wrapper implements several caching strategies:
-/// - Static caches for values that never change (chain_id)
-/// - TTL caches for frequently changing values (eth_getCode, fee history)
-/// - Request deduplication for concurrent identical calls
 #[derive(Debug, Clone)]
 pub struct CachedProvider<P> {
-    /// The underlying provider
     inner: P,
-    /// Shared cache instance
     cache: Arc<RpcCache>,
 }
 
 impl<P> CachedProvider<P> {
-    /// Create a new cached provider wrapper.
     pub fn new(provider: P, cache: Arc<RpcCache>) -> Self {
         Self { inner: provider, cache }
     }
 
-    /// Get the underlying provider.
     pub fn inner(&self) -> &P {
         &self.inner
     }
 
-    /// Get the cache instance.
     pub fn cache(&self) -> &Arc<RpcCache> {
         &self.cache
     }
@@ -81,7 +68,6 @@ impl<P> CachedProvider<P>
 where
     P: Provider + Send + Sync,
 {
-    /// Get chain ID with permanent caching.
     #[instrument(skip(self))]
     pub async fn get_chain_id_cached(&self) -> TransportResult<ChainId> {
         // Check cache first
@@ -98,7 +84,6 @@ where
         Ok(chain_id)
     }
 
-    /// Get contract code with long-term caching.
     #[instrument(skip(self))]
     pub async fn get_code_at_cached(&self, address: Address) -> TransportResult<Bytes> {
         // Check cache first
@@ -114,16 +99,11 @@ where
         Ok(code)
     }
 
-    /// Delegate to underlying provider with forwarding
     pub fn as_provider(&self) -> &P {
         &self.inner
     }
 }
 
-/// Create a periodic cleanup task for cache maintenance.
-///
-/// This task runs every 5 minutes to clean up expired cache entries,
-/// preventing memory leaks from accumulated stale data.
 pub fn spawn_cache_cleanup_task(cache: Arc<RpcCache>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
