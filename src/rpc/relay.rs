@@ -33,7 +33,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, transaction::RlpEcdsaEncodableTx},
+    consensus::{TxEip1559, TxEip7702},
     eips::{
         eip1559::Eip1559Estimation,
         eip7702::{
@@ -46,6 +46,7 @@ use alloy::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
+    rlp::Encodable,
     rpc::types::{
         Authorization,
         state::{AccountOverride, StateOverridesBuilder},
@@ -185,7 +186,11 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
-    /// Estimates additional fees to be paid for a intent (e.g L1 DA fees).
+    /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
+    ///
+    /// ## Opstack
+    ///
+    /// The fee is impacted by the L1 Base fee and the blob base fee.
     ///
     /// Returns fees in ETH.
     #[instrument(skip_all)]
@@ -199,12 +204,8 @@ impl Relay {
     ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
+            // we only need the unsigned RLP data here because
             let mut buf = Vec::new();
-
-            // Prepare a dummy transaction that will be used to estimate the L1 DA fees. We need to
-            // use random values for some of the fields to ensure that potential compression won't
-            // affect the outputs.
-            let signature = alloy::signers::Signature::new(U256::random(), U256::random(), true);
             if let Some(auth) = auth {
                 TxEip7702 {
                     chain_id: chain.chain_id,
@@ -217,7 +218,7 @@ impl Relay {
                     authorization_list: vec![auth],
                     ..Default::default()
                 }
-                .eip2718_encode(&signature, &mut buf);
+                .encode(&mut buf);
             } else {
                 TxEip1559 {
                     chain_id: chain.chain_id,
@@ -229,7 +230,7 @@ impl Relay {
                     input: intent.encode_execute(),
                     ..Default::default()
                 }
-                .eip2718_encode(&signature, &mut buf);
+                .encode(&mut buf);
             }
 
             chain.provider.estimate_l1_fee(buf.into()).await?
