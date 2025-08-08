@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{U256, utils::format_ether},
+    primitives::U256,
     providers::{CallItem, MULTICALL3_ADDRESS, Provider, bindings::IMulticall3::getEthBalanceCall},
     sol_types::SolCall,
 };
@@ -228,7 +228,6 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
         fee_tokens: &FeeTokens,
         signers: &[DynSigner],
     ) -> Result<ChainDiagnosticsResult> {
-        let mut warnings = Vec::new();
         let mut errors = Vec::new();
 
         // Ensure we only have a single interop-enabled token of each kind
@@ -294,20 +293,8 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             account,
             role,
         )| {
-            match role {
-                AddressRole::Signer => {
-                    if balance.is_zero() {
-                        warnings.push(format!(
-                            "Signer {account} has low balance: {} ETH",
-                            format_ether(balance)
-                        ));
-                    }
-                }
-                AddressRole::FunderContract => {
-                    if balance.is_zero() {
-                        errors.push(format!("Funder contract {account} has no balance"));
-                    }
-                }
+            if balance.is_zero() {
+                errors.push(format!("[{role:?}] {account}  has no balance"));
             }
         });
 
@@ -322,7 +309,7 @@ impl<'a, P: Provider> ChainDiagnostics<'a, P> {
             }
         );
 
-        Ok(ChainDiagnosticsResult { chain_id: self.chain_id, warnings, errors })
+        Ok(ChainDiagnosticsResult { chain_id: self.chain_id, warnings: vec![], errors })
     }
 }
 
