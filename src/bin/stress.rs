@@ -277,7 +277,7 @@ impl StressTester {
         info!("Output chain is {destination_chain_id}");
 
         // Get capabilities for all chains
-        let caps = relay_client.get_capabilities(chain_ids.clone()).await?;
+        let caps = relay_client.get_capabilities(Some(chain_ids.clone())).await?;
 
         // Build fee token mapping across all chains
         let fee_token_map = build_fee_token_map(&caps, &chain_ids, args.fee_token).await?;
