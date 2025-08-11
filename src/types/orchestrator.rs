@@ -244,7 +244,8 @@ impl<P: Provider> Orchestrator<P> {
 
         let mut asset_diffs = asset_info_handle
             .calculate_asset_diff(
-                simulate_block,
+                simulate_block.calls.first().expect("should exist"),
+                simulate_block.state_overrides.unwrap_or_default(),
                 result.logs.into_iter(),
                 self.orchestrator.provider(),
             )
