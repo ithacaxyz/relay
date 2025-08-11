@@ -64,7 +64,7 @@ pub struct RelayHandle {
     /// Coin registry.
     pub fee_tokens: Arc<FeeTokens>,
     /// RPC cache (for test access).
-    pub rpc_cache: Arc<RpcCache>,
+    pub rpc_cache: RpcCache,
 }
 
 impl RelayHandle {
@@ -130,7 +130,7 @@ pub async fn try_spawn_with_cache(
     config: RelayConfig,
     registry: CoinRegistry,
     skip_diagnostics: bool,
-    rpc_cache: Option<Arc<RpcCache>>,
+    rpc_cache: Option<RpcCache>,
 ) -> eyre::Result<RelayHandle> {
     let registry = Arc::new(registry);
 
@@ -250,7 +250,7 @@ pub async fn try_spawn_with_cache(
     }
 
     // Create RPC cache for optimizing chain interactions
-    let rpc_cache = rpc_cache.unwrap_or_else(|| Arc::new(RpcCache::new()));
+    let rpc_cache = rpc_cache.unwrap_or_default();
 
     let chains =
         Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;

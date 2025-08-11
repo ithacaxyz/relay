@@ -11,7 +11,6 @@ use alloy::{
     providers::DynProvider,
 };
 use futures_util::future::{TryFutureExt, try_join_all};
-use std::sync::Arc;
 
 /// A wrapper for multiple intents that provides merkle tree operations.
 ///
@@ -25,7 +24,7 @@ pub struct Intents {
     intents: Vec<(Intent, DynProvider, Address)>,
     cached_tree: Option<LazyMerkleTree>,
     /// Optional cache for EIP712Domain optimization
-    cache: Option<Arc<RpcCache>>,
+    cache: Option<RpcCache>,
 }
 
 impl Intents {
@@ -40,7 +39,7 @@ impl Intents {
     /// Builder method to attach a cache for EIP712Domain optimization.
     ///
     /// This enables O(1) RPC calls for multichain intents instead of O(n).
-    pub fn with_cache(mut self, cache: Arc<RpcCache>) -> Self {
+    pub fn with_cache(mut self, cache: RpcCache) -> Self {
         self.cache = Some(cache);
         self
     }

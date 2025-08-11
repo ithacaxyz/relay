@@ -168,7 +168,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
         escrow_refund_threshold: u64,
-        rpc_cache: Arc<RpcCache>,
+        rpc_cache: RpcCache,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -2240,7 +2240,7 @@ pub(super) struct RelayInner {
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
     /// RPC caching layer (used for chain_id, code, and delegation caching)
-    rpc_cache: Arc<RpcCache>,
+    rpc_cache: RpcCache,
 }
 
 impl Relay {

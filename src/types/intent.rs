@@ -26,7 +26,6 @@ use alloy::{
     uint,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
 pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
@@ -338,7 +337,7 @@ impl Intent {
         signer: &S,
         key_hash: B256,
         prehash: bool,
-        cache: Option<Arc<RpcCache>>,
+        cache: Option<RpcCache>,
     ) -> Result<Self, IntentError> {
         let leaf_info = intent_kind.merkle_leaf_info()?;
 
@@ -470,7 +469,7 @@ pub trait SignedCalls {
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-        cache: Option<Arc<RpcCache>>,
+        cache: Option<RpcCache>,
     ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
     where
         Self: Sync,

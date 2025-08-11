@@ -11,7 +11,6 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -44,7 +43,7 @@ impl Quotes {
     pub async fn with_merkle_payload(
         mut self,
         providers: Vec<DynProvider>,
-        cache: Option<Arc<RpcCache>>,
+        cache: Option<RpcCache>,
     ) -> Result<Self, RelayError> {
         if self.quotes.len() != providers.len() {
             return Err(QuoteError::InvalidNumberOfIntents {
