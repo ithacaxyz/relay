@@ -29,22 +29,7 @@ async fn test_multichain_refund() -> Result<()> {
             .await?;
 
     // Wait for source/origin transactions to be processed
-    // Instead of fixed sleep, wait for escrow to have funds (max 10 seconds)
-    let mut escrow_wait = 0;
-    loop {
-        sleep(Duration::from_secs(1)).await;
-        escrow_wait += 1;
-
-        let (_, escrow_balance) = fetch_balances(&setup, wallet).await?;
-        if escrow_balance > U256::ZERO {
-            eprintln!("Escrow funded after {escrow_wait} seconds");
-            break;
-        }
-
-        if escrow_wait >= 10 {
-            return Err(eyre::eyre!("Escrow was not funded within 10 seconds"));
-        }
-    }
+    sleep(Duration::from_secs(1)).await;
 
     let initial_total_balance: U256 = setup.balances.iter().sum();
     // We deduct the balance of the destination chain
@@ -70,7 +55,7 @@ async fn test_multichain_refund() -> Result<()> {
     setup.env.provider_for(2).anvil_set_code(setup.env.orchestrator, Bytes::default()).await?;
     setup.env.mine_block_on_chain(2).await;
 
-    // Bundle should have failed (await_calls_status now waits for final status)
+    // Bundle should have failed
     let status = await_calls_status(&setup.env, bundle_id).await?;
     assert!(
         status.status.is_final() && !status.status.is_confirmed(),
@@ -79,27 +64,7 @@ async fn test_multichain_refund() -> Result<()> {
     );
 
     // Wait for refund processing to have been triggered
-    // CI environments may be slower, so we'll wait a bit longer and check periodically
-    let mut refund_attempts = 0;
-    let max_refund_wait = 10; // seconds
-    loop {
-        sleep(Duration::from_secs(1)).await;
-        refund_attempts += 1;
-
-        // Check if refunds have been processed by checking escrow balance
-        let (_, current_escrow_balance) = fetch_balances(&setup, wallet).await?;
-        if current_escrow_balance == U256::ZERO {
-            eprintln!("Refunds processed after {refund_attempts} seconds");
-            break;
-        }
-
-        if refund_attempts >= max_refund_wait {
-            eprintln!(
-                "Warning: Refunds not processed after {max_refund_wait} seconds, escrow balance: {current_escrow_balance}"
-            );
-            break;
-        }
-    }
+    sleep(Duration::from_secs(2)).await;
 
     // Check that refunds have been processed.
     //
@@ -123,17 +88,11 @@ async fn test_multichain_refund() -> Result<()> {
     let future_time = chrono::Utc::now() + chrono::Duration::days(365);
     let pending_refunds =
         setup.env.relay_handle.storage.get_pending_refunds_ready(future_time).await?;
-    assert!(
-        pending_refunds.is_empty(),
-        "Expected no pending refunds but found: {pending_refunds:?}"
-    );
+    assert!(pending_refunds.is_empty());
 
     // Verify the bundle is no longer in pending bundles
     let pending_bundles = setup.env.relay_handle.storage.get_pending_bundles().await?;
-    assert!(
-        pending_bundles.is_empty(),
-        "Expected no pending bundles but found: {pending_bundles:?}"
-    );
+    assert!(pending_bundles.is_empty());
 
     Ok(())
 }

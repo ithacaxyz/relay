@@ -472,7 +472,7 @@ impl Environment {
             try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
 
         // Deploy USDC tokens with different addresses on each chain if config.num_chains > 1
-        let usdc_tokens = deploy_usdc(
+        let usdc_tokens = deploy_multichain_usdc(
             &providers,
             &chain_ids,
             once(eoa.address())
@@ -485,9 +485,10 @@ impl Environment {
         // Create an ERC20 token with no balance for testing insufficient balance scenarios
         let no_balance_erc20 = Address::random();
         let erc20_code = providers[0].get_code_at(contracts.usdc).await?;
-        for provider in &providers {
-            provider.anvil_set_code(no_balance_erc20, erc20_code.clone()).await?;
-        }
+        try_join_all(
+            providers.iter().map(|p| p.anvil_set_code(no_balance_erc20, erc20_code.clone())),
+        )
+        .await?;
 
         // Build registry with tokens from all chains
         let mut registry = CoinRegistry::default();
@@ -545,7 +546,7 @@ impl Environment {
         }
 
         // Start relay service with all endpoints
-        let skip_diagnostics = true;
+        let skip_diagnostics = false;
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(0)
@@ -908,14 +909,14 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
     let usdc = if let Ok(address) = std::env::var("TEST_USDC") {
         Address::from_str(&address).wrap_err("USDC address parse failed.")?
     } else {
-        deploy_erc20(provider, &contracts_path).await?
+        deploy_erc20(provider, &contracts_path, 6).await?
     };
 
     // Deploy or use existing USDT (same address across chains)
     let usdt = if let Ok(address) = std::env::var("TEST_USDT") {
         Address::from_str(&address).wrap_err("USDT address parse failed.")?
     } else {
-        deploy_erc20(provider, &contracts_path).await?
+        deploy_erc20(provider, &contracts_path, 18).await?
     };
 
     let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
@@ -1024,8 +1025,12 @@ async fn deploy_simulator<P: Provider>(
     deploy_contract(provider, &contracts_path.join("Simulator.sol/Simulator.json"), None).await
 }
 
-/// Deploy a single ERC20 token
-async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+/// Deploy a single ERC20 token with specific decimals
+async fn deploy_erc20<P: Provider>(
+    provider: &P,
+    contracts_path: &Path,
+    decimals: u8,
+) -> eyre::Result<Address> {
     deploy_contract(
         provider,
         &contracts_path.join("MockERC20.sol/MockERC20.json"),
@@ -1033,7 +1038,7 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
             MockErc20::constructorCall {
                 name_: "mockName".into(),
                 symbol_: "mockSymbol".into(),
-                decimals_: 18,
+                decimals_: decimals,
             }
             .abi_encode()
             .into(),
@@ -1046,25 +1051,13 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
 async fn deploy_erc20_with_signer<P: Provider>(
     provider: &P,
     contracts_path: &Path,
+    decimals: u8,
     signer: PrivateKeySigner,
 ) -> eyre::Result<Address> {
     let wallet = EthereumWallet::new(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_provider(provider);
 
-    deploy_contract(
-        &provider,
-        &contracts_path.join("MockERC20.sol/MockERC20.json"),
-        Some(
-            MockErc20::constructorCall {
-                name_: "MockUSDC".into(),
-                symbol_: "USDC".into(),
-                decimals_: 6,
-            }
-            .abi_encode()
-            .into(),
-        ),
-    )
-    .await
+    deploy_erc20(&provider, contracts_path, decimals).await
 }
 
 /// Deploy an ERC721 token
@@ -1073,7 +1066,7 @@ async fn deploy_erc721<P: Provider>(provider: &P, contracts_path: &Path) -> eyre
 }
 
 /// Deploy USDC tokens - different addresses for multi-chain, or use existing for single chain
-async fn deploy_usdc<P, I>(
+async fn deploy_multichain_usdc<P, I>(
     providers: &[P],
     chain_ids: &[u64],
     recipients: I,
@@ -1103,9 +1096,9 @@ where
                 // Fund the deployer
                 provider.anvil_set_balance(deployer_signer.address(), U256::from(10e18)).await?;
 
-                // Deploy USDC
+                // Deploy USDC with 6 decimals
                 let usdc =
-                    deploy_erc20_with_signer(provider, &contracts_path, deployer_signer).await?;
+                    deploy_erc20_with_signer(provider, &contracts_path, 6, deployer_signer).await?;
 
                 // Mint USDC to the recipients
                 mint_erc20s(&[usdc], &recipients, provider).await?;
