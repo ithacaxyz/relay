@@ -99,7 +99,6 @@ mod tests {
     use super::*;
     use alloy::primitives::{address, bytes};
 
-
     #[test]
     fn test_code_caching() {
         let cache = RpcCache::new();
