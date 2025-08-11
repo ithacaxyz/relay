@@ -5,12 +5,12 @@ use crate::{
     op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle},
 };
 use alloy::{
-    primitives::{Address, Bytes, ChainId, U256},
+    primitives::{Address, Bytes, U256},
     providers::Provider,
     transports::{TransportErrorKind, TransportResult},
 };
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 /// Extension trait for [`Provider`] adding helpers for interacting with OP rollups.
 pub trait ProviderExt: Provider {
@@ -74,22 +74,6 @@ impl<P> CachedProvider<P>
 where
     P: Provider + Send + Sync,
 {
-    /// Get chain ID with permanent caching.
-    pub async fn get_chain_id_cached(&self) -> TransportResult<ChainId> {
-        // Check cache first
-        if let Some(cached_chain_id) = self.cache.get_chain_id() {
-            trace!(chain_id = %cached_chain_id, "Chain ID cache HIT");
-            return Ok(cached_chain_id);
-        }
-
-        // Cache miss - fetch from provider
-        debug!("Chain ID cache MISS - fetching from provider");
-        let chain_id = self.inner.get_chain_id().await?;
-        self.cache.set_chain_id(chain_id);
-
-        Ok(chain_id)
-    }
-
     /// Get contract code with long-term caching.
     pub async fn get_code_at_cached(&self, address: Address) -> TransportResult<Bytes> {
         // Check cache first

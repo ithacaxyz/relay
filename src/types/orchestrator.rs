@@ -292,8 +292,9 @@ impl<P: Provider> Orchestrator<P> {
     /// If `multichain` is `true`, then the chain ID is omitted from the domain.
     /// Domains are cached per chain to reduce redundant RPC calls.
     pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
-        // Resolve chain id (cached when possible)
-        let chain_id = self.get_or_cache_chain_id().await?;
+        // Get chain id from provider
+        let provider_chain_id = self.orchestrator.provider().get_chain_id().await?;
+        let chain_id = ChainId::from(provider_chain_id);
 
         // Try cache first and return early if present
         if let Some(domain) =
@@ -332,22 +333,6 @@ impl<P: Provider> Orchestrator<P> {
         };
 
         Ok(result)
-    }
-
-    /// Resolve the current chain id, using cache when available.
-    async fn get_or_cache_chain_id(&self) -> TransportResult<ChainId> {
-        if let Some(cache) = &self.cache
-            && let Some(cached_chain_id) = cache.get_chain_id()
-        {
-            return Ok(cached_chain_id);
-        }
-
-        let provider_chain_id = self.orchestrator.provider().get_chain_id().await?;
-        let chain_id = ChainId::from(provider_chain_id);
-        if let Some(cache) = &self.cache {
-            cache.set_chain_id(chain_id);
-        }
-        Ok(chain_id)
     }
 
     /// Fetch the EIP712 domain from the RPC and convert into `Eip712Domain`.
