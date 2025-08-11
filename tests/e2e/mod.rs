@@ -39,8 +39,15 @@ use relay::{
         },
     },
 };
-use std::{iter, time::Duration};
+use std::{iter, path::PathBuf, time::Duration};
 use strum::IntoEnumIterator;
+
+/// Get the path to the test contracts directory
+pub fn get_contracts_path() -> PathBuf {
+    PathBuf::from(
+        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
+    )
+}
 
 /// Runs all configurations (in both ERC20 and native payment methods).
 pub async fn run_e2e<'a, F>(build_txs: F) -> Result<()>

@@ -1,7 +1,10 @@
 //! Relay end-to-end test constants
 
 use super::*;
-use crate::e2e::layerzero::{LayerZeroTestConfig, setup::deploy_layerzero_infrastructure};
+use crate::e2e::{
+    get_contracts_path,
+    layerzero::{LayerZeroTestConfig, setup::deploy_layerzero_infrastructure},
+};
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
     eips::Encodable2718,
@@ -32,12 +35,7 @@ use relay::{
     },
 };
 use sqlx::{ConnectOptions, Executor, PgPool, postgres::PgConnectOptions};
-use std::{
-    iter::once,
-    path::{Path, PathBuf},
-    str::FromStr,
-    time::Duration,
-};
+use std::{iter::once, path::Path, str::FromStr, time::Duration};
 use url::Url;
 
 /// Bytecode of the Multicall3 contract.
@@ -874,9 +872,7 @@ pub async fn mint_erc20s<P: Provider>(
 async fn deploy_all_contracts<P: Provider + WalletProvider>(
     provider: &P,
 ) -> Result<ContractAddresses, eyre::Error> {
-    let contracts_path = PathBuf::from(
-        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-    );
+    let contracts_path = get_contracts_path();
 
     // Deploy contracts using environment variables if provided, otherwise deploy new ones
     let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
@@ -1077,9 +1073,7 @@ where
     I: IntoIterator<Item = Address>,
 {
     if providers.len() > 1 {
-        let contracts_path = PathBuf::from(
-            std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-        );
+        let contracts_path = get_contracts_path();
 
         let recipients: Vec<Address> = recipients.into_iter().collect();
 
