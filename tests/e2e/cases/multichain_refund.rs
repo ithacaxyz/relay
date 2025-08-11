@@ -37,7 +37,7 @@ async fn test_multichain_refund() -> Result<()> {
 
         let (_, escrow_balance) = fetch_balances(&setup, wallet).await?;
         if escrow_balance > U256::ZERO {
-            eprintln!("Escrow funded after {} seconds", escrow_wait);
+            eprintln!("Escrow funded after {escrow_wait} seconds");
             break;
         }
 
@@ -89,14 +89,13 @@ async fn test_multichain_refund() -> Result<()> {
         // Check if refunds have been processed by checking escrow balance
         let (_, current_escrow_balance) = fetch_balances(&setup, wallet).await?;
         if current_escrow_balance == U256::ZERO {
-            eprintln!("Refunds processed after {} seconds", refund_attempts);
+            eprintln!("Refunds processed after {refund_attempts} seconds");
             break;
         }
 
         if refund_attempts >= max_refund_wait {
             eprintln!(
-                "Warning: Refunds not processed after {} seconds, escrow balance: {}",
-                max_refund_wait, current_escrow_balance
+                "Warning: Refunds not processed after {max_refund_wait} seconds, escrow balance: {current_escrow_balance}"
             );
             break;
         }
@@ -126,16 +125,14 @@ async fn test_multichain_refund() -> Result<()> {
         setup.env.relay_handle.storage.get_pending_refunds_ready(future_time).await?;
     assert!(
         pending_refunds.is_empty(),
-        "Expected no pending refunds but found: {:?}",
-        pending_refunds
+        "Expected no pending refunds but found: {pending_refunds:?}"
     );
 
     // Verify the bundle is no longer in pending bundles
     let pending_bundles = setup.env.relay_handle.storage.get_pending_bundles().await?;
     assert!(
         pending_bundles.is_empty(),
-        "Expected no pending bundles but found: {:?}",
-        pending_bundles
+        "Expected no pending bundles but found: {pending_bundles:?}"
     );
 
     Ok(())

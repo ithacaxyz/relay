@@ -1097,7 +1097,8 @@ where
                 let mut deployer_key = [0u8; 32];
                 deployer_key[0] = 0x01; // Ensure non-zero key
                 deployer_key[31] = i as u8; // Differentiate by chain index
-                let deployer_signer = PrivateKeySigner::from_bytes(&B256::from(deployer_key)).unwrap();
+                let deployer_signer =
+                    PrivateKeySigner::from_bytes(&B256::from(deployer_key)).unwrap();
 
                 // Fund the deployer
                 provider.anvil_set_balance(deployer_signer.address(), U256::from(10e18)).await?;
