@@ -47,7 +47,10 @@ impl CoinGecko {
         }
 
         let request_urls = Self::build_request_urls(coin_registry.clone(), pairs);
-        let eth_url = Self::build_url("simple/price", "ids=ethereum&vs_currencies=usd");
+        let eth_url = Self::build_url(
+            "simple/price",
+            "ids=ethereum,binancecoin,matic-network&vs_currencies=usd",
+        );
 
         let gecko = Self { coin_registry, request_urls, eth_url, update_tx };
 
@@ -166,23 +169,43 @@ impl CoinGecko {
             .map_err(|_| QuoteError::UnavailablePriceFeed(chain).into())
     }
 
-    /// Fetches ETH USD price using the simple price API.
+    /// Fetches ETH, BNB, and POL USD prices using the simple price API.
     async fn update_eth_price(&self, timestamp: Instant) -> Result<(), RelayError> {
         let resp = Self::fetch_url(&self.eth_url, Chain::mainnet().into()).await?;
 
         if let Ok(data) = serde_json::from_str::<HashMap<String, HashMap<String, f64>>>(&resp) {
+            let mut usd_prices = Vec::new();
+
             if let Some(eth_prices) = data.get("ethereum")
                 && let Some(&usd_price) = eth_prices.get("usd")
             {
                 trace!(eth_usd_price = usd_price, "Fetched ETH USD price");
+                usd_prices.push((CoinKind::ETH, usd_price));
+            }
+
+            if let Some(bnb_prices) = data.get("binancecoin")
+                && let Some(&usd_price) = bnb_prices.get("usd")
+            {
+                trace!(bnb_usd_price = usd_price, "Fetched BNB USD price");
+                usd_prices.push((CoinKind::BNB, usd_price));
+            }
+
+            if let Some(pol_prices) = data.get("matic-network")
+                && let Some(&usd_price) = pol_prices.get("usd")
+            {
+                trace!(pol_usd_price = usd_price, "Fetched POL USD price");
+                usd_prices.push((CoinKind::POL, usd_price));
+            }
+
+            if !usd_prices.is_empty() {
                 let _ = self.update_tx.send(PriceOracleMessage::UpdateUsd {
                     fetcher: PriceFetcher::CoinGecko,
-                    prices: vec![(CoinKind::ETH, usd_price)],
+                    prices: usd_prices,
                     timestamp,
                 });
             }
         } else {
-            error!(resp, "Not able to parse ETH price response.")
+            error!(resp, "Not able to parse price response.")
         }
 
         Ok(())
@@ -284,37 +307,51 @@ impl CoinGecko {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::info;
 
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn test_coingecko_usd_prices() {
-        let _ = std::env::var("GECKO_API").unwrap();
+        let api_key = std::env::var("GECKO_API").unwrap();
+        info!("Using API key: {}", if api_key.is_empty() { "EMPTY" } else { "SET" });
 
         let registry = Arc::new(CoinRegistry::default());
         let (update_tx, mut update_rx) = mpsc::unbounded_channel();
         let pairs = CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]);
 
+        let eth_url = CoinGecko::build_url(
+            "simple/price",
+            "ids=ethereum,binancecoin,matic-network&vs_currencies=usd",
+        );
+        info!("ETH URL: {}", eth_url);
+
         let gecko = CoinGecko {
             request_urls: CoinGecko::build_request_urls(registry.clone(), &pairs),
             coin_registry: registry,
-            eth_url: CoinGecko::build_url("simple/price", "ids=ethereum&vs_currencies=usd"),
+            eth_url,
             update_tx,
         };
 
+        info!("Fetching prices...");
         gecko.update_prices().await.expect("Failed to fetch prices");
 
         let mut usd_prices = HashMap::new();
         let mut eth_prices = HashMap::new();
 
+        info!("Processing messages...");
         while let Ok(msg) = update_rx.try_recv() {
             match msg {
                 PriceOracleMessage::UpdateUsd { prices, .. } => {
+                    info!("Received USD prices update with {} prices", prices.len());
                     for (coin, price) in prices {
+                        info!("  {} -> ${}", coin, price);
                         usd_prices.insert(coin, price);
                     }
                 }
                 PriceOracleMessage::Update { prices, .. } => {
+                    info!("Received ETH prices update with {} prices", prices.len());
                     for (pair, price) in prices {
+                        info!("  {} -> {} ETH", pair.from, price);
                         eth_prices.insert(pair.from, price);
                     }
                 }
@@ -322,11 +359,15 @@ mod tests {
             }
         }
 
-        // Verify we got USD prices for all coins
-        for coin in [CoinKind::ETH, CoinKind::USDT, CoinKind::USDC] {
+        info!("\nFinal USD prices collected: {:?}", usd_prices);
+        info!("Final ETH prices collected: {:?}", eth_prices);
+
+        // Verify we got USD prices for all native coins (ETH, BNB, POL) and tokens
+        for coin in [CoinKind::ETH, CoinKind::BNB, CoinKind::POL, CoinKind::USDT, CoinKind::USDC] {
             let price = usd_prices.get(&coin).copied().unwrap_or_else(|| {
                 panic!("Missing USD price for {coin:?}. Got USD prices: {usd_prices:?}")
             });
+            info!("Verified {} USD price: ${}", coin, price);
             assert!(price > 0.0, "Invalid USD price for {coin:?}: {price}");
         }
 
@@ -335,7 +376,10 @@ mod tests {
             let price = eth_prices.get(&coin).copied().unwrap_or_else(|| {
                 panic!("Missing ETH price for {coin:?}. Got ETH prices: {eth_prices:?}")
             });
+            info!("Verified {} ETH price: {} ETH", coin, price);
             assert!(price > 0.0, "Invalid ETH price for {coin:?}: {price}");
         }
+
+        info!("\nTest passed! All prices fetched successfully.");
     }
 }

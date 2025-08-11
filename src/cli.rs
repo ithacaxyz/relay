@@ -126,7 +126,7 @@ pub struct Args {
         long = "funder-signing-key",
         required_unless_present("config_only"),
         value_name = "KEY",
-        env = "RELAY_FUNDER_KEY"
+        env = "RELAY_FUNDER_SIGNER_KEY"
     )]
     pub funder_key: Option<String>,
     /// The service API key for protected RPC endpoints.

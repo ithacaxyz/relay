@@ -106,7 +106,7 @@ pub async fn run_diagnostics<P: Provider + Clone>(
         .await?;
 
     if config.chain.endpoints.len() > 1 && config.interop.is_none() {
-        report.global_errors.push(
+        report.global_warnings.push(
             "No configuration for interop found, but more than one endpoint was configured."
                 .to_string(),
         )

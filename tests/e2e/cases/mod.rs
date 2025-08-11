@@ -1,6 +1,7 @@
 //! Relay end-to-end test cases
 
 mod assets;
+mod bnb_chain;
 mod calls;
 mod cli;
 mod delegation;
