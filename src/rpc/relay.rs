@@ -14,14 +14,16 @@ use crate::{
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
     estimation::{FeeEngine, PricingContext, SimulationContracts, simulate_init, simulate_intent},
+    provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
         FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Intents, Key, KeyHash, KeyType, KeyWith712Signer, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Orchestrator, OrchestratorContract,
         OrchestratorContract::IntentExecuted,
-        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, Token, Transfer, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
             ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
@@ -36,16 +38,10 @@ use alloy::{
     consensus::{TxEip1559, TxEip7702},
     eips::{
         eip1559::Eip1559Estimation,
-        eip7702::{
-            SignedAuthorization,
-            constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-        },
+        eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
-    providers::{
-        DynProvider, Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
-    },
+    providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rlp::Encodable,
     rpc::types::{
         Authorization,
@@ -220,7 +216,7 @@ impl Relay {
         context: &FeeEstimationContext,
         combined_gas: U256,
     ) -> Intent {
-        let mut intent = Intent {
+        Intent {
             eoa: partial_intent.eoa,
             executionData: partial_intent.execution_data.clone(),
             nonce: partial_intent.nonce,
@@ -241,6 +237,9 @@ impl Relay {
             isMultichain: !context.intent_kind.is_single(),
             combinedGas: combined_gas,
             ..Default::default()
+        }
+    }
+
     /// Returns the [`RelayCapabilities`] for the given chain ids.
     pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
         let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
@@ -292,6 +291,7 @@ impl Relay {
     /// The fee is impacted by the L1 Base fee and the blob base fee.
     ///
     /// Returns fees in ETH.
+    #[allow(dead_code)]
     #[instrument(skip_all)]
     async fn estimate_extra_fee(
         &self,
@@ -340,20 +340,7 @@ impl Relay {
             U256::ZERO
         };
 
-        // For MultiOutput intents, set the settler address and context
-        if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind
-            && let Ok(interop) = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)
-        {
-            intent.settler = interop.settler_address();
-            intent.settlerContext = settler_context.clone();
-        }
-
-        // Add funder if needed
-        if !intent.encodedFundTransfers.is_empty() {
-            intent.funder = self.inner.contracts.funder.address;
-        }
-
-        intent
+        Ok(fee)
     }
 
     #[instrument(skip_all)]
@@ -375,10 +362,10 @@ impl Relay {
         let provider = chain.provider.clone();
 
         // Fetch the user's balance for the fee token
-        let fee_token_balance =
+        let _fee_token_balance =
             self.get_fee_token_balance(intent.eoa, chain_id, context.fee_token).await?;
         // create key
-        let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
+        let _mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
         // create a mock transaction signer
@@ -538,7 +525,7 @@ impl Relay {
         .await?;
 
         // Build final intent for pricing with gas estimate
-        let intent_to_sign = self.build_intent_to_sign(
+        let mut intent_to_sign = self.build_intent_to_sign(
             intent,
             token,
             delegation,
@@ -547,12 +534,12 @@ impl Relay {
         );
 
         // Calculate intrinsic gas based on intent size
-        let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
+        let _intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
             &OrchestratorContract::executeCall {
                 encodedIntent: intent_to_sign.abi_encode().into(),
             }
             .abi_encode(),
-            context.authorization_address.is_some(),
+            context.stored_authorization.is_some(),
         );
 
         let Some(eth_price) = eth_price else {
@@ -588,7 +575,7 @@ impl Relay {
             )
             .await?;
 
-        let intrinsic_gas = approx_intrinsic_cost(
+        let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
             &intent_to_sign.encode_execute(),
             context.stored_authorization.is_some(),
         );
@@ -598,22 +585,10 @@ impl Relay {
             intrinsic_gas,
             &self.inner.quote_config,
         );
-        debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
+        debug!(eoa = %intent_to_sign.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
-        // Calculate the real fee
-        let extra_payment = self
-            .estimate_extra_fee(
-                &chain,
-                &intent_to_sign,
-                context.stored_authorization.clone(),
-                &native_fee_estimate,
-                &gas_estimate,
-            )
-            .await?
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
 
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
@@ -625,7 +600,7 @@ impl Relay {
                 &provider,
                 &chain,
                 intent_to_sign,
-                simulation_response.gas_combined,
+                sim_result.gCombined.to(),
                 intrinsic_gas,
                 PricingContext {
                     chain_id,
@@ -635,7 +610,7 @@ impl Relay {
                     priority_fee_percentile: self.inner.priority_fee_percentile,
                 },
                 *orchestrator.address(),
-                context.authorization_address,
+                context.stored_authorization.as_ref().map(|auth| auth.address),
                 fee_history,
                 eth_price,
             )
@@ -648,23 +623,10 @@ impl Relay {
         // Update quote with fee token deficit (will be > 0 if user has insufficient balance)
         let mut final_quote = quote;
         final_quote.fee_token_deficit = fee_token_deficit;
-            intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
-        let quote = Quote {
-            chain_id,
-            payment_token_decimals: token.decimals,
-            intent: intent_to_sign,
-            extra_payment,
-            eth_price,
-            tx_gas: gas_estimate.tx,
-            native_fee_estimate,
-            authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
-            orchestrator: *orchestrator.address(),
-            fee_token_deficit,
-        };
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
-            simulation_response.asset_diffs,
+            asset_diffs,
             &final_quote,
             &self.inner.fee_tokens,
             &self.inner.price_oracle,
@@ -1011,6 +973,7 @@ impl Relay {
     }
 
     /// Simulates the account initialization call.
+    #[allow(dead_code)]
     async fn simulate_init(
         &self,
         account: &CreatableAccount,

@@ -56,6 +56,8 @@ pub struct SimulationOverrideParams<'a> {
     pub base_overrides: StateOverride,
     /// Balance overrides for ERC20 tokens.
     pub balance_overrides: BalanceOverrides,
+    /// Mock transaction signer address.
+    pub mock_from: Address,
 }
 
 /// Builds simulation state overrides for intent execution.
@@ -79,7 +81,8 @@ async fn build_simulation_state_overrides<P: Provider>(
         .append(
             params.orchestrator_address,
             AccountOverride::default().with_balance(SIMULATION_CONTRACT_BALANCE),
-        );
+        )
+        .append(params.mock_from, AccountOverride::default().with_balance(U256::MAX));
 
     // Build EOA overrides
     let mut eoa_override = AccountOverride::default();
@@ -142,6 +145,8 @@ pub async fn simulate_intent<P: Provider + Clone>(
     contracts: SimulationContracts,
     asset_info: AssetInfoServiceHandle,
 ) -> Result<SimulationResponse, RelayError> {
+    // Create a mock transaction signer
+    let mock_from = Address::random();
     let simulation_balance = fee_token_balance.saturating_add(U256::from(1));
     let params = SimulationOverrideParams {
         simulator_address: contracts.simulator,
@@ -151,9 +156,10 @@ pub async fn simulate_intent<P: Provider + Clone>(
         fee_token_balance: simulation_balance,
         account_key: &context.account_key,
         key_slot_override: context.key_slot_override,
-        authorization_address: context.authorization_address,
+        authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
         base_overrides: context.state_overrides.clone(),
         balance_overrides: context.balance_overrides.clone(),
+        mock_from,
     };
     let overrides = build_simulation_state_overrides(provider, params)
         .await
@@ -172,10 +178,11 @@ pub async fn simulate_intent<P: Provider + Clone>(
     // client.
     let (asset_diffs, simulation_result) = orchestrator
         .simulate_execute(
+            mock_from,
             contracts.simulator,
             intent_to_sign,
-            context.account_key.keyType,
             asset_info,
+            U256::ZERO, // gas_validation_offset
         )
         .await
         .map_err(|e| SimulationError::ExecutionFailed(e.to_string()))?;
@@ -219,7 +226,7 @@ pub async fn simulate_init<P: Provider + Clone>(
     // Create the fee estimation context for simulation
     let context = FeeEstimationContext {
         fee_token: Address::ZERO, // Use native token
-        authorization_address: Some(account.signed_authorization.address),
+        stored_authorization: Some(account.signed_authorization.clone()),
         account_key: mock_key.key().clone(),
         key_slot_override: true,
         intent_kind: IntentKind::Single,
