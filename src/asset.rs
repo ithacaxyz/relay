@@ -141,6 +141,9 @@ impl AssetInfoServiceHandle {
         let target =
             tx_request.to.as_ref().and_then(|to| to.to()).copied().unwrap_or(Address::ZERO);
         let calldata = tx_request.input.input().cloned().unwrap_or_default();
+
+        // Simulation requires tx.origin balance to be u256::max, so we need to set it alongside the
+        // state override below.
         let from = tx_request.from.unwrap_or(Address::ZERO);
 
         // Build multicall with three sections:
