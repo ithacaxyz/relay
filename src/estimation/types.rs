@@ -10,6 +10,8 @@ pub struct SimulationResponse {
     pub asset_diffs: AssetDiffs,
     /// Combined gas estimate for the intent.
     pub gas_combined: U256,
+    /// Intrinsic gas cost for the transaction.
+    pub intrinsic_gas: u64,
     /// Detailed simulation result.
     pub simulation_result: SimulationResult,
 }
@@ -19,8 +21,9 @@ impl SimulationResponse {
     pub fn new(
         asset_diffs: AssetDiffs,
         gas_combined: U256,
+        intrinsic_gas: u64,
         simulation_result: SimulationResult,
     ) -> Self {
-        Self { asset_diffs, gas_combined, simulation_result }
+        Self { asset_diffs, gas_combined, intrinsic_gas, simulation_result }
     }
 }

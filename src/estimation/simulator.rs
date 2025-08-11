@@ -3,7 +3,7 @@
 use crate::{
     asset::AssetInfoServiceHandle,
     error::{KeysError, RelayError, SimulationError},
-    estimation::types::SimulationResponse,
+    estimation::{FeeEngine, types::SimulationResponse},
     types::{
         Call, CreatableAccount, FeeEstimationContext, Intent, IntentKind, Key, KeyType,
         KeyWith712Signer, Orchestrator, PartialIntent, rpc::BalanceOverrides,
@@ -187,13 +187,25 @@ pub async fn simulate_intent<P: Provider + Clone>(
         .await
         .map_err(|e| SimulationError::ExecutionFailed(e.to_string()))?;
 
+    // Calculate intrinsic gas cost
+    let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
+        &intent_to_sign.encode_execute(),
+        context.stored_authorization.is_some(),
+    );
+
     debug!(
         eoa = %intent_to_sign.eoa,
         gas_combined = %simulation_result.gCombined,
+        intrinsic_gas = %intrinsic_gas,
         "Simulation completed"
     );
 
-    Ok(SimulationResponse::new(asset_diffs, simulation_result.gCombined, simulation_result))
+    Ok(SimulationResponse::new(
+        asset_diffs,
+        simulation_result.gCombined,
+        intrinsic_gas,
+        simulation_result,
+    ))
 }
 
 /// Simulates the account initialization call to ensure precall works.

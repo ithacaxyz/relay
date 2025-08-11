@@ -11,7 +11,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
+    constants::ESCROW_SALT_LENGTH,
     error::{IntentError, StorageError},
     estimation::{FeeEngine, PricingContext, SimulationContracts, simulate_init, simulate_intent},
     provider::ProviderExt,
@@ -545,50 +545,19 @@ impl Relay {
         let Some(eth_price) = eth_price else {
             return Err(RelayError::Quote(QuoteError::UnavailablePrice(token.address)));
         };
-        let gas_validation_offset =
-            // Account for gas variation in P256 sig verification.
-            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
-                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
-                + if fee_token_balance.is_zero() && !new_fee_token_balance.is_zero() && !context.fee_token.is_zero() {
-                    COLD_SSTORE_GAS_BUFFER
-                } else {
-                    U256::ZERO
-                };
-
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_legacy_payment_amount(U256::from(1));
-
-        let (asset_diffs, sim_result) = orchestrator
-            .simulate_execute(
-                mock_from,
-                self.simulator(),
-                &intent_to_sign,
-                self.inner.asset_info.clone(),
-                gas_validation_offset,
-            )
-            .await?;
-
-        let intrinsic_gas = FeeEngine::calculate_intrinsic_cost(
-            &intent_to_sign.encode_execute(),
-            context.stored_authorization.is_some(),
-        );
-
+        // Use the gas estimate from the initial simulation
         let gas_estimate = GasEstimate::from_combined_gas(
-            sim_result.gCombined.to(),
-            intrinsic_gas,
+            simulation_response.gas_combined.to(),
+            simulation_response.intrinsic_gas,
             &self.inner.quote_config,
         );
         debug!(eoa = %intent_to_sign.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
+
+        // Set payment amount for quote calculation
+        intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
@@ -600,8 +569,8 @@ impl Relay {
                 &provider,
                 &chain,
                 intent_to_sign,
-                sim_result.gCombined.to(),
-                intrinsic_gas,
+                simulation_response.gas_combined,
+                simulation_response.intrinsic_gas,
                 PricingContext {
                     chain_id,
                     fee_token: token.clone(),
@@ -626,7 +595,7 @@ impl Relay {
 
         // Create ChainAssetDiffs with populated fiat values including fee
         let chain_asset_diffs = ChainAssetDiffs::new(
-            asset_diffs,
+            simulation_response.asset_diffs,
             &final_quote,
             &self.inner.fee_tokens,
             &self.inner.price_oracle,
