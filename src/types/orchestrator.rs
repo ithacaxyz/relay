@@ -12,7 +12,6 @@ use alloy::{
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
-use std::sync::Arc;
 use tracing::{debug, trace};
 
 use super::{SimulationResult, Simulator::SimulatorInstance};
@@ -164,7 +163,7 @@ pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
     /// Optional cache for EIP712Domains
-    cache: Option<Arc<RpcCache>>,
+    cache: Option<RpcCache>,
 }
 
 impl<P: Provider> Orchestrator<P> {
@@ -189,7 +188,7 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Add cache support to orchestrator for EIP712Domain caching.
-    pub fn with_cache(mut self, cache: Arc<RpcCache>) -> Self {
+    pub fn with_cache(mut self, cache: RpcCache) -> Self {
         self.cache = Some(cache);
         self
     }

@@ -9,13 +9,17 @@ use alloy::primitives::U256;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, Bytes, ChainId},
+    providers::Provider,
 };
 use dashmap::DashMap;
+use std::sync::Arc;
 use tracing::debug;
 
-/// Thread-safe cache for RPC results.
+use crate::types::Orchestrator;
+
+/// Internal cache implementation that is shared across instances.
 #[derive(Debug)]
-pub struct RpcCache {
+struct CacheInner {
     /// Static cache for contract code (never expires - code is immutable)
     pub code_cache: DashMap<Address, Bytes>,
     /// Static cache for delegation implementations (rarely changes in production)
@@ -24,19 +28,33 @@ pub struct RpcCache {
     eip712_domain_cache: DashMap<(Address, ChainId), Eip712Domain>,
 }
 
+/// Thread-safe cache for RPC results with factory methods for creating cached contract instances.
+///
+/// This type uses a shareable container pattern to avoid explicit Arc usage in client code.
+#[derive(Debug, Clone)]
+pub struct RpcCache(Arc<CacheInner>);
+
 impl RpcCache {
     /// Create a new RPC cache instance.
     pub fn new() -> Self {
-        Self {
+        Self(Arc::new(CacheInner {
             code_cache: DashMap::new(),
             delegation_cache: DashMap::new(),
             eip712_domain_cache: DashMap::new(),
-        }
+        }))
+    }
+
+    /// Factory method to create an Orchestrator instance with cache support.
+    ///
+    /// This method encapsulates the creation of cached contract instances,
+    /// avoiding the need to pass around Optional cache references.
+    pub fn get_orchestrator<P: Provider>(&self, address: Address, provider: P) -> Orchestrator<P> {
+        Orchestrator::new(address, provider).with_cache(self.clone())
     }
 
     /// Get cached contract code (static, never expires).
     pub fn get_code(&self, address: &Address) -> Option<Bytes> {
-        let entry = self.code_cache.get(address)?;
+        let entry = self.0.code_cache.get(address)?;
         debug!(address = %address, "Code cache HIT");
         Some(entry.value().clone())
     }
@@ -44,12 +62,12 @@ impl RpcCache {
     /// Cache contract code for the instance (code is immutable).
     pub fn set_code(&self, address: Address, code: Bytes) {
         debug!(address = %address, code_len = code.len(), "Caching contract code (static)");
-        self.code_cache.insert(address, code);
+        self.0.code_cache.insert(address, code);
     }
 
     /// Get cached delegation implementation, or None if not cached.
     pub fn get_delegation(&self, account: &Address) -> Option<Address> {
-        let entry = self.delegation_cache.get(account)?;
+        let entry = self.0.delegation_cache.get(account)?;
         debug!(account = %account, delegation = %entry.value(), "Delegation cache HIT");
         Some(*entry.value())
     }
@@ -57,12 +75,12 @@ impl RpcCache {
     /// Cache delegation implementation for the instance.
     pub fn set_delegation(&self, account: Address, implementation: Address) {
         debug!(account = %account, implementation = %implementation, "Caching delegation implementation");
-        self.delegation_cache.insert(account, implementation);
+        self.0.delegation_cache.insert(account, implementation);
     }
 
     /// Clear all delegation cache entries (useful for tests).
     pub fn clear_delegation_cache(&self) {
-        self.delegation_cache.clear();
+        self.0.delegation_cache.clear();
     }
 
     /// Get cached EIP712Domain for an orchestrator on a specific chain.
@@ -71,7 +89,7 @@ impl RpcCache {
         orchestrator: &Address,
         chain_id: ChainId,
     ) -> Option<Eip712Domain> {
-        let entry = self.eip712_domain_cache.get(&(*orchestrator, chain_id))?;
+        let entry = self.0.eip712_domain_cache.get(&(*orchestrator, chain_id))?;
         debug!(orchestrator = %orchestrator, chain_id, "EIP712Domain cache HIT");
         Some(entry.value().clone())
     }
@@ -84,7 +102,7 @@ impl RpcCache {
         domain: Eip712Domain,
     ) {
         debug!(orchestrator = %orchestrator, chain_id, "Caching EIP712Domain");
-        self.eip712_domain_cache.insert((orchestrator, chain_id), domain);
+        self.0.eip712_domain_cache.insert((orchestrator, chain_id), domain);
     }
 }
 
