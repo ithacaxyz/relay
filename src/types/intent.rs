@@ -466,7 +466,6 @@ pub trait SignedCalls {
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
 
     /// Computes the EIP-712 digest that the user must sign.
-    /// Optionally accepts a cache to reduce redundant RPC calls for multichain domains.
     fn compute_eip712_data(
         &self,
         orchestrator_address: Address,

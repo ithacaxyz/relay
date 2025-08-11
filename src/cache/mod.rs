@@ -24,7 +24,6 @@ pub struct RpcCache {
     /// Static cache for delegation implementations (rarely changes in production)
     delegation_cache: DashMap<Address, Address>,
     /// Cache for EIP712Domains: key is (orchestrator_address, chain_id)
-    /// The orchestrator's EIP712Domain is fixed per chain
     eip712_domain_cache: DashMap<(Address, ChainId), Eip712Domain>,
 }
 

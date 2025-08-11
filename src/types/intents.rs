@@ -46,7 +46,6 @@ impl Intents {
     }
 
     /// Computes EIP-712 signing hashes for all intents.
-    /// Uses internal cache if available to reduce redundant RPC calls for multichain domains.
     pub async fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
         let futures = self.intents.iter().map(|(intent, provider, orchestrator_address)| {
             let cache = self.cache.clone();
