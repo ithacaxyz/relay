@@ -21,10 +21,7 @@ pub struct RpcCache {
 impl RpcCache {
     /// Create a new RPC cache instance.
     pub fn new() -> Self {
-        Self {
-            chain_id: OnceLock::new(),
-            code_cache: DashMap::new(),
-        }
+        Self { chain_id: OnceLock::new(), code_cache: DashMap::new() }
     }
 
     /// Get cached chain ID, or None if not cached.
@@ -50,7 +47,6 @@ impl RpcCache {
         debug!(address = %address, code_len = code.len(), "Caching contract code (static)");
         self.code_cache.insert(address, code);
     }
-
 
     /// Get cache statistics for monitoring.
     pub fn stats(&self) -> CacheStats {
@@ -104,7 +100,6 @@ mod tests {
         cache.set_code(addr, code.clone());
         assert_eq!(cache.get_code(&addr), Some(code));
     }
-
 
     #[test]
     fn test_cache_stats() {
