@@ -556,9 +556,6 @@ impl Relay {
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
 
-        // Set payment amount for quote calculation
-        intent_to_sign.set_legacy_payment_amount(U256::from(1));
-
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
         intent_to_sign.funderSignature = bytes!("");
