@@ -718,8 +718,6 @@ impl Relay {
         &self,
         request: GetKeysParameters,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        // Note: We cannot cache keys because they can change dynamically
-        // and caching would return stale data when keys are added/removed
         let account = Account::new(request.address, self.provider(request.chain_id)?);
 
         let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
@@ -737,7 +735,7 @@ impl Relay {
             .await
             .map_err(RelayError::from)?;
 
-        let result: Vec<AuthorizeKeyResponse> = keys
+        Ok(keys
             .into_iter()
             .map(|(hash, key)| AuthorizeKeyResponse {
                 hash,
@@ -746,10 +744,7 @@ impl Relay {
                     permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
                 },
             })
-            .collect();
-
-        // Note: We cannot cache keys because they can change dynamically
-        Ok(result)
+            .collect())
     }
 
     /// Returns the delegation implementation address from the requested account.
