@@ -10,7 +10,10 @@ use crate::{
 use alloy::{
     network::TransactionBuilder,
     primitives::{Address, ChainId, U256, map::HashMap},
-    providers::Provider,
+    providers::{
+        MULTICALL3_ADDRESS, Provider,
+        bindings::IMulticall3::{Call3, aggregate3Call},
+    },
     rpc::types::{
         Log, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
@@ -327,38 +330,50 @@ async fn get_info<P: Provider>(
     provider: &P,
     assets: Vec<Address>,
 ) -> Result<Vec<AssetWithInfo>, RelayError> {
-    let transactions = assets.iter().flat_map(|asset| {
-        let to_asset = TransactionRequest::default().with_to(*asset);
-        [
-            to_asset.clone().with_input(IERC20::decimalsCall::SELECTOR),
-            to_asset.clone().with_input(IERC20::symbolCall::SELECTOR),
-            to_asset.with_input(IERC20::nameCall::SELECTOR),
-        ]
-    });
+    let calls = assets
+        .iter()
+        .flat_map(|asset| {
+            [
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::decimalsCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::symbolCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::nameCall::SELECTOR.into(),
+                },
+            ]
+        })
+        .collect();
 
-    let Some(call_bundle) = provider
-        .simulate(
-            &SimulatePayload::default().extend(SimBlock::default().extend_calls(transactions)),
-        )
-        .await?
-        .pop()
-    else {
-        error!("Expected a bundle response, but found none.");
-        return Err(AssetError::InvalidAssetInfoResponse.into());
-    };
+    let call_bundle = aggregate3Call::abi_decode_returns(
+        &provider
+            .call(
+                TransactionRequest::default()
+                    .to(MULTICALL3_ADDRESS)
+                    .input(aggregate3Call { calls }.abi_encode().into()),
+            )
+            .await?,
+    )?;
 
-    // We should have 3 call responses per requested asset. (decimals, symbol, name)
-    if call_bundle.calls.len() != 3 * assets.len() {
+    if call_bundle.len() != 3 * assets.len() {
         error!(
-            "Expected {} responses in bundle but found {}.",
+            "Expected {} responses in multicall but found {}.",
             3 * assets.len(),
-            call_bundle.calls.len()
+            call_bundle.len()
         );
         return Err(AssetError::InvalidAssetInfoResponse.into());
     }
 
     let mut assets_with_info = Vec::with_capacity(assets.len());
-    let mut call_bundle_iter = call_bundle.calls.into_iter();
+    let mut call_bundle_iter = call_bundle.into_iter();
 
     for asset in assets {
         let decimals = call_bundle_iter.next().expect("qed");
@@ -370,9 +385,18 @@ async fn get_info<P: Provider>(
         assets_with_info.push(AssetWithInfo {
             asset: Asset::Token(asset),
             metadata: AssetMetadata {
-                decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data).ok(),
-                symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data).ok(),
-                name: IERC20::nameCall::abi_decode_returns(&name.return_data).ok(),
+                decimals: decimals
+                    .success
+                    .then(|| IERC20::decimalsCall::abi_decode_returns(&decimals.returnData).ok())
+                    .flatten(),
+                symbol: symbol
+                    .success
+                    .then(|| IERC20::symbolCall::abi_decode_returns(&symbol.returnData).ok())
+                    .flatten(),
+                name: name
+                    .success
+                    .then(|| IERC20::nameCall::abi_decode_returns(&name.returnData).ok())
+                    .flatten(),
                 uri: None,
             },
         })
