@@ -48,10 +48,8 @@ impl<T> ProviderExt for T where T: Provider {}
 
 /// A caching wrapper around an Alloy provider to reduce redundant RPC calls.
 ///
-/// This wrapper implements several caching strategies:
-/// - Static caches for values that never change (chain_id)
-/// - TTL caches for frequently changing values (eth_getCode, fee history)
-/// - Request deduplication for concurrent identical calls
+/// This wrapper implements the following caching strategies:
+/// - Static caches for values that never change (chain_id, delegation)
 #[derive(Debug, Clone)]
 pub struct CachedProvider<P> {
     /// The underlying provider
@@ -107,10 +105,5 @@ where
         self.cache.set_code(address, code.clone());
 
         Ok(code)
-    }
-
-    /// Delegate to underlying provider with forwarding
-    pub fn as_provider(&self) -> &P {
-        &self.inner
     }
 }
