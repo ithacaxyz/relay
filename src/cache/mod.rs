@@ -11,14 +11,14 @@ use alloy::{
     primitives::{Address, Bytes, ChainId},
 };
 use dashmap::DashMap;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 use tracing::{debug, trace};
 
 /// Thread-safe cache for RPC results.
 #[derive(Debug)]
 pub struct RpcCache {
-    /// Static cache for chain ID (never expires)
-    chain_id: OnceLock<ChainId>,
+    /// Static cache for chain ID (never expires, but can be cleared in tests)
+    chain_id: RwLock<Option<ChainId>>,
     /// Static cache for contract code (never expires - code is immutable)
     pub code_cache: DashMap<Address, Bytes>,
     /// Static cache for delegation implementations (rarely changes in production)
@@ -31,7 +31,7 @@ impl RpcCache {
     /// Create a new RPC cache instance.
     pub fn new() -> Self {
         Self {
-            chain_id: OnceLock::new(),
+            chain_id: RwLock::new(None),
             code_cache: DashMap::new(),
             delegation_cache: DashMap::new(),
             eip712_domain_cache: DashMap::new(),
@@ -40,13 +40,22 @@ impl RpcCache {
 
     /// Get cached chain ID, or None if not cached.
     pub fn get_chain_id(&self) -> Option<ChainId> {
-        self.chain_id.get().copied()
+        *self.chain_id.read().unwrap()
     }
 
     /// Cache the chain ID (never expires).
     pub fn set_chain_id(&self, chain_id: ChainId) -> ChainId {
         trace!(chain_id = %chain_id, "Caching chain ID");
-        *self.chain_id.get_or_init(|| chain_id)
+        let mut cached = self.chain_id.write().unwrap();
+        *cached = Some(chain_id);
+        chain_id
+    }
+
+    /// Clear the chain ID cache (useful for tests with multiple chains).
+    #[cfg(test)]
+    pub fn clear_chain_id(&self) {
+        let mut cached = self.chain_id.write().unwrap();
+        *cached = None;
     }
 
     /// Get cached contract code (static, never expires).
