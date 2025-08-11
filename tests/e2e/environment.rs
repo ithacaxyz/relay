@@ -537,8 +537,6 @@ impl Environment {
 
         // Start relay service with all endpoints
         let skip_diagnostics = false;
-        let tokens =
-            [vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()].concat();
         let relay_handle = try_spawn(
             RelayConfig::default()
                 .with_port(0)
@@ -549,8 +547,13 @@ impl Environment {
                 .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
                 .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
                 .with_quote_constant_rate(Some(1.0))
-                .with_fee_tokens(&tokens)
-                .with_interop_tokens(&tokens)
+                .with_fee_tokens(
+                    &[vec![contracts.usdt, Address::ZERO, no_balance_erc20], usdc_tokens.clone()]
+                        .concat(),
+                )
+                .with_interop_tokens(
+                    &[vec![contracts.usdt, Address::ZERO], usdc_tokens.clone()].concat(),
+                )
                 .with_fee_recipient(config.fee_recipient)
                 .with_orchestrator(Some(contracts.orchestrator))
                 .with_delegation_proxy(Some(contracts.delegation))
