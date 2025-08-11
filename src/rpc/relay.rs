@@ -760,19 +760,9 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        let account_address = account.address();
-
-        // Check cache first
-        if let Some(cached_delegation) = self.inner.rpc_cache.get_delegation_impl(&account_address)
-        {
-            return Ok(cached_delegation);
-        }
-
-        // Note: We cannot cache delegation implementation globally because it's account-specific
+        // Note: We cannot cache delegation implementation because it can change
         // Different accounts can have different delegation implementations
         if let Some(delegation) = account.delegation_implementation().await? {
-            // Cache the delegation implementation for this account
-            self.inner.rpc_cache.set_delegation_impl(account_address, delegation);
             return Ok(delegation);
         }
 
@@ -804,8 +794,6 @@ impl Relay {
             )
         })?;
 
-        // Cache the delegation implementation retrieved from storage
-        self.inner.rpc_cache.set_delegation_impl(account_address, delegation);
         Ok(delegation)
     }
 
@@ -2243,7 +2231,8 @@ pub(super) struct RelayInner {
     priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
-    /// RPC caching layer
+    /// RPC caching layer (currently used for chain_id and code caching in provider.rs)
+    #[allow(dead_code)]
     rpc_cache: Arc<RpcCache>,
 }
 

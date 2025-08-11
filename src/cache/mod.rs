@@ -16,8 +16,6 @@ pub struct RpcCache {
     chain_id: OnceLock<ChainId>,
     /// Static cache for contract code (never expires - code is immutable)
     pub code_cache: DashMap<Address, Bytes>,
-    /// Static cache for delegation implementations (per account)
-    pub delegation_cache: DashMap<Address, Address>,
 }
 
 impl RpcCache {
@@ -26,7 +24,6 @@ impl RpcCache {
         Self {
             chain_id: OnceLock::new(),
             code_cache: DashMap::new(),
-            delegation_cache: DashMap::new(),
         }
     }
 
@@ -54,25 +51,12 @@ impl RpcCache {
         self.code_cache.insert(address, code);
     }
 
-    /// Get cached delegation implementation.
-    pub fn get_delegation_impl(&self, account: &Address) -> Option<Address> {
-        let entry = self.delegation_cache.get(account)?;
-        debug!(account = %account, "Delegation impl cache HIT");
-        Some(*entry.value())
-    }
-
-    /// Cache delegation implementation permanently.
-    pub fn set_delegation_impl(&self, account: Address, delegation: Address) {
-        debug!(account = %account, delegation = %delegation, "Caching delegation implementation");
-        self.delegation_cache.insert(account, delegation);
-    }
 
     /// Get cache statistics for monitoring.
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             chain_id_cached: self.chain_id.get().is_some(),
             code_cache_size: self.code_cache.len(),
-            delegation_cache_size: self.delegation_cache.len(),
         }
     }
 }
@@ -90,8 +74,6 @@ pub struct CacheStats {
     pub chain_id_cached: bool,
     /// Number of cached contract codes
     pub code_cache_size: usize,
-    /// Number of cached delegation implementations
-    pub delegation_cache_size: usize,
 }
 
 #[cfg(test)]
@@ -123,18 +105,6 @@ mod tests {
         assert_eq!(cache.get_code(&addr), Some(code));
     }
 
-    #[test]
-    fn test_delegation_caching() {
-        let cache = RpcCache::new();
-
-        // Test delegation implementation caching
-        let account = address!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd");
-        let delegation = address!("1111111111111111111111111111111111111111");
-
-        assert_eq!(cache.get_delegation_impl(&account), None);
-        cache.set_delegation_impl(account, delegation);
-        assert_eq!(cache.get_delegation_impl(&account), Some(delegation));
-    }
 
     #[test]
     fn test_cache_stats() {
@@ -143,20 +113,15 @@ mod tests {
         let stats = cache.stats();
         assert!(!stats.chain_id_cached);
         assert_eq!(stats.code_cache_size, 0);
-        assert_eq!(stats.delegation_cache_size, 0);
 
         // Add some cached values
         cache.set_chain_id(ChainId::from(1u64));
         let addr = address!("1234567890123456789012345678901234567890");
         let code = bytes!("608060405234801561001057600080fd5b50");
         cache.set_code(addr, code);
-        let account = address!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd");
-        let delegation = address!("1111111111111111111111111111111111111111");
-        cache.set_delegation_impl(account, delegation);
 
         let stats = cache.stats();
         assert!(stats.chain_id_cached);
         assert_eq!(stats.code_cache_size, 1);
-        assert_eq!(stats.delegation_cache_size, 1);
     }
 }
