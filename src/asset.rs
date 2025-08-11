@@ -353,7 +353,11 @@ async fn get_info<P: Provider>(
     .returnData;
 
     if call_bundle.len() != 3 * assets.len() {
-        error!("Expected {} responses in multicall but found {}.", 3 * assets.len(), call_bundle.len());
+        error!(
+            "Expected {} responses in multicall but found {}.",
+            3 * assets.len(),
+            call_bundle.len()
+        );
         return Err(AssetError::InvalidAssetInfoResponse.into());
     }
 
