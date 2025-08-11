@@ -63,6 +63,8 @@ pub struct RelayHandle {
     pub price_oracle: PriceOracle,
     /// Coin registry.
     pub fee_tokens: Arc<FeeTokens>,
+    /// RPC cache (for test access).
+    pub rpc_cache: Arc<RpcCache>,
 }
 
 impl RelayHandle {
@@ -281,7 +283,7 @@ pub async fn try_spawn_with_cache(
             .as_ref()
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
-        rpc_cache,
+        rpc_cache.clone(),
     );
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
         AccountRpc::new(
@@ -349,5 +351,6 @@ pub async fn try_spawn_with_cache(
         metrics,
         price_oracle,
         fee_tokens,
+        rpc_cache,
     })
 }

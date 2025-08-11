@@ -144,6 +144,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
         // Reset proxy address on EOA
         env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code.clone()).await?;
+
+        // Clear delegation cache after resetting EOA code
+        env.relay_handle.rpc_cache.clear_delegation_cache();
     }
 
     // Change the delegation proxy bytecodecode and prepare_calls & send_prepared_calls should fail.
@@ -186,12 +189,18 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
                 expected_proxy_code,
             )
             .await?;
+
+        // Clear delegation cache after resetting proxy code
+        env.relay_handle.rpc_cache.clear_delegation_cache();
     }
 
     // Upgrade implementation to another one and expect it to fail.
     {
         env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code).await?;
         upgrade_delegation(&env, another_impl).await;
+
+        // Clear delegation cache after changing implementation
+        env.relay_handle.rpc_cache.clear_delegation_cache();
 
         assert!(
             env.relay_endpoint
@@ -224,6 +233,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             caps.chain(env.chain_id()).contracts.delegation_implementation.address,
         )
         .await;
+
+        // Clear delegation cache after changing implementation back
+        env.relay_handle.rpc_cache.clear_delegation_cache();
 
         let fresh_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
         let fresh_signed_payload = admin_key.sign_payload_hash(fresh_quote.digest).await?;
