@@ -479,7 +479,7 @@ pub trait SignedCalls {
         async move {
             // Create the orchestrator instance with the same overrides.
             let mut orchestrator = Orchestrator::new(orchestrator_address, provider);
-            
+
             // Inject cache if available
             if let Some(cache) = cache {
                 orchestrator = orchestrator.with_cache(cache);

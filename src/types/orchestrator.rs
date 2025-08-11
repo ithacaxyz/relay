@@ -336,10 +336,10 @@ impl<P: Provider> Orchestrator<P> {
 
     /// Resolve the current chain id, using cache when available.
     async fn get_or_cache_chain_id(&self) -> TransportResult<ChainId> {
-        if let Some(cache) = &self.cache {
-            if let Some(cached_chain_id) = cache.get_chain_id() {
-                return Ok(cached_chain_id);
-            }
+        if let Some(cache) = &self.cache
+            && let Some(cached_chain_id) = cache.get_chain_id()
+        {
+            return Ok(cached_chain_id);
         }
 
         let provider_chain_id = self.orchestrator.provider().get_chain_id().await?;

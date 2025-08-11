@@ -4,12 +4,12 @@
 //! All cached values persist for the lifetime of the application since they represent
 //! static or rarely-changing blockchain data.
 
+#[cfg(test)]
+use alloy::primitives::U256;
 use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, Bytes, ChainId},
 };
-#[cfg(test)]
-use alloy::primitives::U256;
 use dashmap::DashMap;
 use std::sync::OnceLock;
 use tracing::{debug, trace};
@@ -93,7 +93,12 @@ impl RpcCache {
     }
 
     /// Cache EIP712Domain for an orchestrator on a specific chain.
-    pub fn set_eip712_domain(&self, orchestrator: Address, chain_id: ChainId, domain: Eip712Domain) {
+    pub fn set_eip712_domain(
+        &self,
+        orchestrator: Address,
+        chain_id: ChainId,
+        domain: Eip712Domain,
+    ) {
         debug!(orchestrator = %orchestrator, chain_id, "Caching EIP712Domain");
         self.eip712_domain_cache.insert((orchestrator, chain_id), domain);
     }
@@ -178,12 +183,18 @@ mod tests {
         // Test caching for chain 1
         assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), None);
         cache.set_eip712_domain(orchestrator, chain_id_1, domain_chain_1.clone());
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), Some(domain_chain_1.clone()));
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_1),
+            Some(domain_chain_1.clone())
+        );
 
         // Test caching for chain 2
         assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), None);
         cache.set_eip712_domain(orchestrator, chain_id_2, domain_chain_2.clone());
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), Some(domain_chain_2.clone()));
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_2),
+            Some(domain_chain_2.clone())
+        );
 
         // Verify different chains have separate cache entries
         assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), Some(domain_chain_1));

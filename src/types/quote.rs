@@ -61,7 +61,7 @@ impl Quotes {
                 .map(|(quote, provider)| (quote.intent.clone(), provider, quote.orchestrator))
                 .collect(),
         );
-        
+
         // Apply cache if provided for optimization
         if let Some(cache) = cache {
             intents = intents.with_cache(cache);
