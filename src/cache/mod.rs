@@ -48,7 +48,7 @@ impl RpcCache {
         Some(entry.value().clone())
     }
 
-    /// Cache contract code permanently (code is immutable).
+    /// Cache contract code for the instance (code is immutable).
     pub fn set_code(&self, address: Address, code: Bytes) {
         debug!(address = %address, code_len = code.len(), "Caching contract code (static)");
         self.code_cache.insert(address, code);
@@ -61,7 +61,7 @@ impl RpcCache {
         Some(*entry.value())
     }
 
-    /// Cache delegation implementation permanently.
+    /// Cache delegation implementation for the instance.
     pub fn set_delegation(&self, account: Address, implementation: Address) {
         debug!(account = %account, implementation = %implementation, "Caching delegation implementation");
         self.delegation_cache.insert(account, implementation);
@@ -69,17 +69,7 @@ impl RpcCache {
 
     /// Clear all delegation cache entries (useful for tests).
     pub fn clear_delegation_cache(&self) {
-        debug!("Clearing delegation cache");
         self.delegation_cache.clear();
-    }
-
-    /// Get cache statistics for monitoring.
-    pub fn stats(&self) -> CacheStats {
-        CacheStats {
-            chain_id_cached: self.chain_id.get().is_some(),
-            code_cache_size: self.code_cache.len(),
-            delegation_cache_size: self.delegation_cache.len(),
-        }
     }
 }
 
@@ -87,17 +77,6 @@ impl Default for RpcCache {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Statistics about cache usage.
-#[derive(Debug, Clone)]
-pub struct CacheStats {
-    /// Whether chain ID is cached
-    pub chain_id_cached: bool,
-    /// Number of cached contract codes
-    pub code_cache_size: usize,
-    /// Number of cached delegation implementations
-    pub delegation_cache_size: usize,
 }
 
 #[cfg(test)]
@@ -144,30 +123,5 @@ mod tests {
         // Test cache clearing
         cache.clear_delegation_cache();
         assert_eq!(cache.get_delegation(&account), None);
-    }
-
-    #[test]
-    fn test_cache_stats() {
-        let cache = RpcCache::new();
-
-        let stats = cache.stats();
-        assert!(!stats.chain_id_cached);
-        assert_eq!(stats.code_cache_size, 0);
-        assert_eq!(stats.delegation_cache_size, 0);
-
-        // Add some cached values
-        cache.set_chain_id(ChainId::from(1u64));
-        let addr = address!("1234567890123456789012345678901234567890");
-        let code = bytes!("608060405234801561001057600080fd5b50");
-        cache.set_code(addr, code);
-
-        let account = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        let implementation = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        cache.set_delegation(account, implementation);
-
-        let stats = cache.stats();
-        assert!(stats.chain_id_cached);
-        assert_eq!(stats.code_cache_size, 1);
-        assert_eq!(stats.delegation_cache_size, 1);
     }
 }
