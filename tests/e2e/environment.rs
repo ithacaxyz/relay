@@ -327,6 +327,7 @@ async fn setup_chain<P: Provider + WalletProvider>(
     provider: &P,
     signers: &[DynSigner],
     eoa_address: Address,
+    is_primary: bool,
 ) -> eyre::Result<ContractAddresses> {
     // Fund signers
     fund_signers(provider, signers).await?;
@@ -337,6 +338,13 @@ async fn setup_chain<P: Provider + WalletProvider>(
 
     // Set up chain with deployed contracts
     setup_chain_with_contracts(provider, &contracts, signers, eoa_address).await?;
+
+    // Additional minting for funder on secondary chains
+    if !is_primary {
+        for _ in 0..5 {
+            mint_erc20s(&[contracts.usdc, contracts.usdt], &[contracts.funder], provider).await?;
+        }
+    }
 
     Ok(contracts)
 }
@@ -426,7 +434,7 @@ impl Environment {
             .wallet(EthereumWallet::from(deployer.0.clone()))
             .connect_client(client);
 
-        let contracts = setup_chain(&first_provider, &signers, eoa.address()).await?;
+        let contracts = setup_chain(&first_provider, &signers, eoa.address(), true).await?;
 
         providers.push(first_provider.erased());
 
@@ -448,7 +456,7 @@ impl Environment {
                         .wallet(EthereumWallet::from(deployer.0.clone()))
                         .connect_client(client);
 
-                    setup_chain(&provider, &signers, eoa_address).await?;
+                    setup_chain(&provider, &signers, eoa_address, false).await?;
                     Ok::<DynProvider, eyre::Error>(provider.erased())
                 }
             });
