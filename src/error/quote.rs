@@ -1,5 +1,5 @@
 use super::{internal_rpc, invalid_params};
-use alloy::primitives::{Address, ChainId, U256};
+use alloy::primitives::{Address, U256};
 use thiserror::Error;
 
 /// Errors related to quotes.
@@ -21,8 +21,8 @@ pub enum QuoteError {
     #[error("fee token price not currently available: {0}")]
     UnavailablePrice(Address),
     /// The chain price feed is not available.
-    #[error("price feed is currently not available on chain: {0}")]
-    UnavailablePriceFeed(ChainId),
+    #[error("price feed is currently not available")]
+    UnavailablePriceFeed,
     /// The payment amount in the intent did not match the amount in the quote.
     #[error("invalid fee amount, expected {expected}, got {got}")]
     InvalidFeeAmount {
@@ -58,7 +58,7 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
-            QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed(_) => {
+            QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed => {
                 internal_rpc(err.to_string())
             }
         }
