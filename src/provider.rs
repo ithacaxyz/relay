@@ -10,7 +10,7 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
 };
 use std::sync::Arc;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 /// Extension trait for [`Provider`] adding helpers for interacting with OP rollups.
 pub trait ProviderExt: Provider {
@@ -75,7 +75,6 @@ where
     P: Provider + Send + Sync,
 {
     /// Get chain ID with permanent caching.
-    #[instrument(skip(self))]
     pub async fn get_chain_id_cached(&self) -> TransportResult<ChainId> {
         // Check cache first
         if let Some(cached_chain_id) = self.cache.get_chain_id() {
@@ -92,7 +91,6 @@ where
     }
 
     /// Get contract code with long-term caching.
-    #[instrument(skip(self))]
     pub async fn get_code_at_cached(&self, address: Address) -> TransportResult<Bytes> {
         // Check cache first
         if let Some(cached_code) = self.cache.get_code(&address) {
