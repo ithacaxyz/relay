@@ -10,9 +10,7 @@ use alloy::{
     providers::{DynProvider, utils::Eip1559Estimation},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// A relay-signed [`Quotes`].
 pub type SignedQuotes = Signed<Quotes>;
