@@ -1,6 +1,7 @@
 //! Quote types.
 
 use crate::{
+    cache::RpcCache,
     error::{QuoteError, RelayError},
     types::{Intent, Intents, Signed},
 };
@@ -9,7 +10,10 @@ use alloy::{
     providers::{DynProvider, utils::Eip1559Estimation},
 };
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 /// A relay-signed [`Quotes`].
 pub type SignedQuotes = Signed<Quotes>;
@@ -36,9 +40,11 @@ pub struct Quotes {
 
 impl Quotes {
     /// Sets the merkle payload to every quote.
+    /// Optionally accepts a cache to reduce redundant RPC calls for multichain domains.
     pub async fn with_merkle_payload(
         mut self,
         providers: Vec<DynProvider>,
+        cache: Option<Arc<RpcCache>>,
     ) -> Result<Self, RelayError> {
         if self.quotes.len() != providers.len() {
             return Err(QuoteError::InvalidNumberOfIntents {
@@ -55,6 +61,11 @@ impl Quotes {
                 .map(|(quote, provider)| (quote.intent.clone(), provider, quote.orchestrator))
                 .collect(),
         );
+        
+        // Apply cache if provided for optimization
+        if let Some(cache) = cache {
+            intents = intents.with_cache(cache);
+        }
 
         self.multi_chain_root = Some(intents.root().await?);
 

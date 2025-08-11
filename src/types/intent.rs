@@ -2,6 +2,7 @@ use super::{
     Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo, OrchestratorContract,
 };
 use crate::{
+    cache::RpcCache,
     error::{IntentError, MerkleError},
     types::{
         CallPermission,
@@ -25,6 +26,7 @@ use alloy::{
     uint,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
 pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
@@ -327,6 +329,7 @@ impl Intent {
     /// This creates a merkle tree with random leaves except for the current intent's position,
     /// which uses the actual intent hash. It then signs the merkle root and sets the
     /// properly formatted merkle signature on the intent.
+    #[expect(clippy::too_many_arguments)]
     pub async fn with_mock_merkle_signature<S: crate::signers::Eip712PayLoadSigner>(
         mut self,
         intent_kind: &IntentKind,
@@ -335,12 +338,13 @@ impl Intent {
         signer: &S,
         key_hash: B256,
         prehash: bool,
+        cache: Option<Arc<RpcCache>>,
     ) -> Result<Self, IntentError> {
         let leaf_info = intent_kind.merkle_leaf_info()?;
 
         // Calculate the leaf hash for the current intent
         let (current_leaf_hash, _) = self
-            .compute_eip712_data(orchestrator, provider)
+            .compute_eip712_data(orchestrator, provider, cache)
             .await
             .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
 
@@ -462,17 +466,24 @@ pub trait SignedCalls {
     fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
 
     /// Computes the EIP-712 digest that the user must sign.
+    /// Optionally accepts a cache to reduce redundant RPC calls for multichain domains.
     fn compute_eip712_data(
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
+        cache: Option<Arc<RpcCache>>,
     ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
     where
         Self: Sync,
     {
         async move {
             // Create the orchestrator instance with the same overrides.
-            let orchestrator = Orchestrator::new(orchestrator_address, provider);
+            let mut orchestrator = Orchestrator::new(orchestrator_address, provider);
+            
+            // Inject cache if available
+            if let Some(cache) = cache {
+                orchestrator = orchestrator.with_cache(cache);
+            }
 
             // Prepare the EIP-712 payload and domain
             let payload = self.as_eip712()?;

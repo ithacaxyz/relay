@@ -424,6 +424,7 @@ impl Relay {
                     &mock_key,
                     context.account_key.key_hash(),
                     prehash,
+                    Some(self.inner.rpc_cache.clone()),
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -615,7 +616,7 @@ impl Relay {
 
         // Compute EIP-712 digest for the intent
         let (eip712_digest, _) = intent
-            .compute_eip712_data(quote.orchestrator, &provider)
+            .compute_eip712_data(quote.orchestrator, &provider, None)
             .await
             .map_err(RelayError::from)?;
 
@@ -1456,6 +1457,7 @@ impl Relay {
                     .compute_eip712_data(
                         output_quote.orchestrator,
                         &self.provider(request.chain_id)?,
+                        Some(self.inner.rpc_cache.clone()),
                     )
                     .await
                     .map_err(RelayError::from)?;
@@ -1511,6 +1513,7 @@ impl Relay {
                             .chain(iter::once(request.chain_id))
                             .map(|chain| self.provider(chain))
                             .collect::<Result<Vec<_>, _>>()?,
+                        Some(self.inner.rpc_cache.clone()),
                     )
                     .await?,
                 ));
@@ -1913,7 +1916,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) = pre_call
-            .compute_eip712_data(self.orchestrator(), &provider)
+            .compute_eip712_data(self.orchestrator(), &provider, None)
             .await
             .map_err(RelayError::from)?;
 
@@ -2002,7 +2005,7 @@ impl RelayApiServer for Relay {
             async {
                 storage_account
                     .pre_call
-                    .compute_eip712_data(self.orchestrator(), &provider)
+                    .compute_eip712_data(self.orchestrator(), &provider, None)
                     .await
                     .map_err(RelayError::from)
             },

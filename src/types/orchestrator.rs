@@ -1,7 +1,7 @@
 use OrchestratorContract::OrchestratorContractInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, ChainId, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{
         TransactionReceipt,
@@ -12,11 +12,13 @@ use alloy::{
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 use super::{SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
+    cache::RpcCache,
     error::{IntentError, RelayError},
     types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
@@ -161,6 +163,8 @@ sol! {
 pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
+    /// Optional cache for EIP712Domains
+    cache: Option<Arc<RpcCache>>,
 }
 
 impl<P: Provider> Orchestrator<P> {
@@ -169,6 +173,7 @@ impl<P: Provider> Orchestrator<P> {
         Self {
             orchestrator: OrchestratorContractInstance::new(address, provider),
             overrides: StateOverride::default(),
+            cache: None,
         }
     }
 
@@ -180,6 +185,12 @@ impl<P: Provider> Orchestrator<P> {
     /// Sets overrides for all calls on this orchestrator.
     pub fn with_overrides(mut self, overrides: StateOverride) -> Self {
         self.overrides = overrides;
+        self
+    }
+
+    /// Add cache support to orchestrator for EIP712Domain caching.
+    pub fn with_cache(mut self, cache: Arc<RpcCache>) -> Self {
+        self.cache = Some(cache);
         self
     }
 
@@ -279,7 +290,68 @@ impl<P: Provider> Orchestrator<P> {
     /// Get the [`Eip712Domain`] for this orchestrator.
     ///
     /// If `multichain` is `true`, then the chain ID is omitted from the domain.
+    /// Domains are cached per chain to reduce redundant RPC calls.
     pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
+        // Resolve chain id (cached when possible)
+        let chain_id = self.get_or_cache_chain_id().await?;
+
+        // Try cache first and return early if present
+        if let Some(domain) =
+            self.cache.as_ref().and_then(|cache| cache.get_eip712_domain(self.address(), chain_id))
+        {
+            let result = if multichain {
+                Eip712Domain::new(
+                    domain.name,
+                    domain.version,
+                    None,
+                    domain.verifying_contract,
+                    domain.salt,
+                )
+            } else {
+                domain
+            };
+            return Ok(result);
+        }
+
+        // Otherwise, fetch from RPC, cache it, and return
+        let fetched = self.fetch_eip712_domain_from_rpc().await?;
+        if let Some(cache) = &self.cache {
+            cache.set_eip712_domain(*self.address(), chain_id, fetched.clone());
+        }
+
+        let result = if multichain {
+            Eip712Domain::new(
+                fetched.name,
+                fetched.version,
+                None,
+                fetched.verifying_contract,
+                fetched.salt,
+            )
+        } else {
+            fetched
+        };
+
+        Ok(result)
+    }
+
+    /// Resolve the current chain id, using cache when available.
+    async fn get_or_cache_chain_id(&self) -> TransportResult<ChainId> {
+        if let Some(cache) = &self.cache {
+            if let Some(cached_chain_id) = cache.get_chain_id() {
+                return Ok(cached_chain_id);
+            }
+        }
+
+        let provider_chain_id = self.orchestrator.provider().get_chain_id().await?;
+        let chain_id = ChainId::from(provider_chain_id);
+        if let Some(cache) = &self.cache {
+            cache.set_chain_id(chain_id);
+        }
+        Ok(chain_id)
+    }
+
+    /// Fetch the EIP712 domain from the RPC and convert into `Eip712Domain`.
+    async fn fetch_eip712_domain_from_rpc(&self) -> TransportResult<Eip712Domain> {
         let domain = self
             .orchestrator
             .eip712Domain()
@@ -291,7 +363,7 @@ impl<P: Provider> Orchestrator<P> {
         Ok(Eip712Domain::new(
             Some(domain.name.into()),
             Some(domain.version.into()),
-            (!multichain).then_some(domain.chainId),
+            Some(domain.chainId),
             Some(domain.verifyingContract),
             None,
         ))

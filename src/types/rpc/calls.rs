@@ -451,7 +451,7 @@ impl PrepareCallsContext {
                 } else {
                     output_quote
                         .intent
-                        .compute_eip712_data(output_quote.orchestrator, provider)
+                        .compute_eip712_data(output_quote.orchestrator, provider, None)
                         .await
                 }
             }
@@ -470,7 +470,7 @@ impl PrepareCallsContext {
                         .map_err(RelayError::from)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator_address, provider).await
+                pre_call.compute_eip712_data(orchestrator_address, provider, None).await
             }
         }
     }

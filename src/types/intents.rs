@@ -2,6 +2,7 @@
 
 use super::{Intent, SignedCalls};
 use crate::{
+    cache::RpcCache,
     error::{IntentError, MerkleError},
     types::LazyMerkleTree,
 };
@@ -9,7 +10,8 @@ use alloy::{
     primitives::{Address, B256},
     providers::DynProvider,
 };
-use futures_util::future::try_join_all;
+use futures_util::future::{TryFutureExt, try_join_all};
+use std::sync::Arc;
 
 /// A wrapper for multiple intents that provides merkle tree operations.
 ///
@@ -22,6 +24,8 @@ pub struct Intents {
     /// Intents with respective provider and orchestrator address
     intents: Vec<(Intent, DynProvider, Address)>,
     cached_tree: Option<LazyMerkleTree>,
+    /// Optional cache for EIP712Domain optimization
+    cache: Option<Arc<RpcCache>>,
 }
 
 impl Intents {
@@ -30,19 +34,30 @@ impl Intents {
     ///
     /// The order of intents is preserved as provided.
     pub fn new(intents: Vec<(Intent, DynProvider, Address)>) -> Self {
-        Self { intents, cached_tree: None }
+        Self { intents, cached_tree: None, cache: None }
+    }
+
+    /// Builder method to attach a cache for EIP712Domain optimization.
+    ///
+    /// This enables O(1) RPC calls for multichain intents instead of O(n).
+    pub fn with_cache(mut self, cache: Arc<RpcCache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// Computes EIP-712 signing hashes for all intents.
+    /// Uses internal cache if available to reduce redundant RPC calls for multichain domains.
     pub async fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
-        Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
-            intent.compute_eip712_data(*orchestrator_address, provider)
-        }))
-        .await
-        .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?
-        .into_iter()
-        .map(|(hash, _)| hash)
-        .collect())
+        let futures = self.intents.iter().map(|(intent, provider, orchestrator_address)| {
+            let cache = self.cache.clone();
+            intent
+                .compute_eip712_data(*orchestrator_address, provider, cache)
+                .map_ok(|(hash, _)| hash)
+        });
+
+        try_join_all(futures)
+            .await
+            .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))
     }
 
     /// Gets or computes the cached tree and leaves.
