@@ -12,7 +12,7 @@ use crate::{
     signers::DynSigner,
     storage::RelayStorage,
     transport::{SequencerLayer, create_transport},
-    types::{CoinKind, CoinPair, CoinRegistry, FeeTokens, VersionedContracts},
+    types::{CoinRegistry, FeeTokens, VersionedContracts},
     version::RELAY_LONG_VERSION,
 };
 use ::metrics::counter;
@@ -88,7 +88,7 @@ pub async fn try_spawn_with_args(
     } else {
         let mut config = RelayConfig::load_from_file(config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
-        config.secrets.funder_key = std::env::var("RELAY_FUNDER_KEY")?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
@@ -227,11 +227,7 @@ pub async fn try_spawn(
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
     } else {
-        price_oracle.spawn_fetcher(
-            registry.clone(),
-            PriceFetcher::CoinGecko,
-            &CoinPair::ethereum_pairs(&[CoinKind::USDT, CoinKind::USDC]),
-        );
+        price_oracle.spawn_fetcher(PriceFetcher::CoinGecko);
     }
 
     let chains =

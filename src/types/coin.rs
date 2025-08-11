@@ -25,7 +25,7 @@ impl CoinPair {
 }
 
 /// Chain, address and contract agonistic coins.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, derive_more::FromStr, Serialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, derive_more::FromStr, Serialize, strum::EnumIter)]
 #[non_exhaustive]
 pub enum CoinKind {
     /// Ethereum
@@ -38,6 +38,10 @@ pub enum CoinKind {
     EXP1,
     /// EXP2.  TEMPORARY TEMPORARY TEMPORARY REMOVEME TODO
     EXP2,
+    /// BNB
+    BNB,
+    /// POL  
+    POL,
 }
 
 impl CoinKind {
@@ -75,6 +79,21 @@ impl CoinKind {
         registry.get(&CoinRegistryKey { chain, address: Some(address) }).copied()
     }
 
+    /// Returns the native coin kind for a given chain ID.
+    pub fn native_for_chain(chain_id: ChainId) -> Self {
+        use alloy_chains::{Chain, NamedChain};
+
+        if chain_id == Chain::bsc_mainnet().id() || chain_id == Chain::bsc_testnet().id() {
+            CoinKind::BNB
+        } else if chain_id == Chain::from_named(NamedChain::Polygon).id()
+            || chain_id == Chain::from_named(NamedChain::PolygonAmoy).id()
+        {
+            CoinKind::POL
+        } else {
+            CoinKind::ETH
+        }
+    }
+
     /// Returns the str identifier
     pub fn as_str(&self) -> &str {
         match self {
@@ -83,6 +102,8 @@ impl CoinKind {
             CoinKind::USDC => "USDC",
             CoinKind::EXP1 => "EXP1",
             CoinKind::EXP2 => "EXP2",
+            CoinKind::BNB => "BNB",
+            CoinKind::POL => "POL",
         }
     }
 }

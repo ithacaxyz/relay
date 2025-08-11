@@ -90,7 +90,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
 
     let kind = env
         .relay_endpoint
-        .get_capabilities(vec![env.chain_id()])
+        .get_capabilities(Some(vec![env.chain_id()]))
         .await?
         .chain(env.chain_id())
         .fees

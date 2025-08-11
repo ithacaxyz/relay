@@ -6,7 +6,7 @@ use super::{
 use crate::{
     error::{AssetError, RelayError},
     price::PriceOracle,
-    types::{AssetMetadata, FeeTokens, Quote},
+    types::{AssetMetadata, CoinKind, FeeTokens, Quote, Token},
 };
 use alloy::primitives::{
     Address, ChainId, U256, U512, address,
@@ -61,6 +61,11 @@ impl AssetDiffs {
             // only retain entries with asset diffs
             !diffs.is_empty()
         });
+    }
+
+    /// Returns a mutable iterator over all asset diffs across all addresses.
+    fn asset_diffs_iter_mut(&mut self) -> impl Iterator<Item = &mut AssetDiff> {
+        self.0.iter_mut().flat_map(|(_, diffs)| diffs.iter_mut())
     }
 }
 
@@ -354,6 +359,11 @@ pub struct ChainAssetDiffs {
 }
 
 impl ChainAssetDiffs {
+    /// Determines the correct coin kind for USD price lookup.
+    fn coin_for_usd(token: &Token, chain_id: ChainId) -> CoinKind {
+        if token.address.is_zero() { CoinKind::native_for_chain(chain_id) } else { token.kind }
+    }
+
     /// Creates a new ChainAssetDiffs with populated fiat values and calculated fee USD.
     pub async fn new(
         mut asset_diffs: AssetDiffs,
@@ -370,27 +380,26 @@ impl ChainAssetDiffs {
             .find(chain_id, &fee_token)
             .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken(fee_token)))?;
 
+        let native_coin = Self::coin_for_usd(token, chain_id);
         let usd_price = price_oracle
-            .usd_price(token.kind)
+            .usd_price(native_coin)
             .await
-            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token.kind)))?;
+            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(native_coin)))?;
 
         let fee_usd = calculate_usd_value(fee_amount, usd_price, token.decimals);
 
         // Populate fiat values for asset diffs
         join_all(
-            asset_diffs
-                .0
-                .iter_mut()
-                .flat_map(|(_, diffs)| diffs.iter_mut())
-                .filter(|diff| diff.metadata.decimals.is_some())
-                .map(async |diff| {
+            asset_diffs.asset_diffs_iter_mut().filter(|diff| diff.metadata.decimals.is_some()).map(
+                async |diff| {
                     let Some(token) =
                         fee_tokens.find(chain_id, &diff.address.unwrap_or(Address::ZERO))
                     else {
                         return;
                     };
-                    let Some(usd_price) = price_oracle.usd_price(token.kind).await else { return };
+
+                    let native_coin = Self::coin_for_usd(token, chain_id);
+                    let Some(usd_price) = price_oracle.usd_price(native_coin).await else { return };
 
                     diff.fiat = Some(FiatValue {
                         currency: "usd".to_string(),
@@ -400,7 +409,8 @@ impl ChainAssetDiffs {
                             diff.metadata.decimals.expect("qed"),
                         ),
                     });
-                }),
+                },
+            ),
         )
         .await;
         Ok(Self { fee_usd, asset_diffs })

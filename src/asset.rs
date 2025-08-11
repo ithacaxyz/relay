@@ -2,7 +2,7 @@
 use crate::{
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDiffs, AssetMetadata, AssetWithInfo, CoinKind,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
@@ -235,6 +235,16 @@ pub struct AssetInfoService {
 }
 
 impl AssetInfoService {
+    /// Determines the native coin symbol for a given chain ID.
+    fn native_coin_symbol(chain_id: ChainId) -> &'static str {
+        match CoinKind::native_for_chain(chain_id) {
+            CoinKind::BNB => "BNB",
+            CoinKind::POL => "POL",
+            CoinKind::ETH => "ETH",
+            _ => "ETH", // fallback
+        }
+    }
+
     /// Creates a new [`AssetInfoService`].
     pub fn new(capacity: u32) -> Self {
         let (command_tx, command_rx) = unbounded_channel();
@@ -260,11 +270,12 @@ impl AssetInfoService {
                 .into_iter()
                 .map(|asset| {
                     let info = if asset.is_native() {
-                        // todo: only supports eth as native coin for now
+                        let symbol = Self::native_coin_symbol(chain_id);
+
                         Some(AssetWithInfo {
                             asset: Asset::Native,
                             metadata: AssetMetadata {
-                                symbol: Some("ETH".to_string()),
+                                symbol: Some(symbol.to_string()),
                                 decimals: Some(18u8),
                                 name: None,
                                 uri: None,

@@ -10,10 +10,14 @@
 //! - Funding intents on chains 1 & 2 use escrow mechanism
 //! - Attempts to transfer N+N USDT to address 0xbeef
 
-use crate::e2e::{cases::upgrade_account_eagerly, *};
+use crate::e2e::{
+    cases::{upgrade_account_eagerly, upgrade_account_lazily},
+    *,
+};
 use alloy::{
+    contract::StorageSlotFinder,
     eips::BlockId,
-    primitives::{Address, U256, address},
+    primitives::{Address, U256, address, uint},
 };
 use eyre::Result;
 use relay::{
@@ -94,6 +98,65 @@ async fn test_multichain_usdt_transfer_high_priority_fee() -> Result<()> {
     assert!(
         assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == setup.total_transfer_amount)
     );
+
+    Ok(())
+}
+
+/// Asserts that we are able to process a multichain transfer when the EOA has no balance on the
+/// destination chain.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multichain_usdt_transfer_empty_destination() -> Result<()> {
+    let config =
+        EnvironmentConfig { num_chains: 2, fee_recipient: Address::random(), ..Default::default() };
+    let env = Environment::setup_with_config(config.clone()).await?;
+
+    // Create a key for signing
+    let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    // Account upgrade deployed onchain.
+    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
+
+    let slot = StorageSlotFinder::balance_of(env.provider_for(0), env.erc20, env.eoa.address())
+        .find_slot()
+        .await?
+        .unwrap();
+    env.provider_for(0).anvil_set_storage_at(env.erc20, slot.into(), B256::ZERO).await?;
+
+    assert!(
+        IERC20::new(env.erc20, env.provider_for(0))
+            .balanceOf(env.eoa.address())
+            .call()
+            .await?
+            .is_zero()
+    );
+
+    let balance =
+        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
+            / uint!(2_U256);
+    let PrepareCallsResponse { context, digest, .. } = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            calls: vec![Call::transfer(env.erc20, Address::random(), uint!(1_U256))],
+            chain_id: env.chain_id_for(0),
+            from: Some(env.eoa.address()),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: Default::default(),
+                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: None },
+                pre_calls: Default::default(),
+                pre_call: Default::default(),
+                required_funds: vec![RequiredAsset::new(env.erc20, balance)],
+                revoke_keys: Default::default(),
+            },
+            balance_overrides: Default::default(),
+            state_overrides: Default::default(),
+            key: Some(key.to_call_key()),
+        })
+        .await?;
+
+    let signature = key.sign_payload_hash(digest).await?;
+    let bundle_id = send_prepared_calls(&env, &key, signature, context).await?;
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_confirmed());
 
     Ok(())
 }

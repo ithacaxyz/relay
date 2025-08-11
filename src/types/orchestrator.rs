@@ -14,10 +14,9 @@ use alloy::{
 };
 use tracing::{debug, trace};
 
-use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
+use super::{SimulationResult, Simulator::SimulatorInstance};
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::P256_GAS_BUFFER,
     error::{IntentError, RelayError},
     types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
@@ -189,15 +188,12 @@ impl<P: Provider> Orchestrator<P> {
     /// `simulator` contract address should have its balance set to `uint256.max`.
     pub async fn simulate_execute(
         &self,
+        mock_from: Address,
         simulator: Address,
         intent: &Intent,
-        key_type: KeyType,
         asset_info_handle: AssetInfoServiceHandle,
+        gas_validation_offset: U256,
     ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
-        // Allows to account for gas variation in P256 sig verification.
-        let gas_validation_offset =
-            if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
-
         let simulate_block = SimBlock::default()
             .call(
                 SimulatorInstance::new(simulator, self.orchestrator.provider())
@@ -210,7 +206,8 @@ impl<P: Provider> Orchestrator<P> {
                         gas_validation_offset,
                         intent.abi_encode().into(),
                     )
-                    .into_transaction_request(),
+                    .into_transaction_request()
+                    .from(mock_from),
             )
             .with_state_overrides(self.overrides.clone());
 
