@@ -12,7 +12,7 @@ use alloy::{
     primitives::{Address, ChainId, U256, map::HashMap},
     providers::{
         MULTICALL3_ADDRESS, Provider,
-        bindings::IMulticall3::{Call, aggregateCall},
+        bindings::IMulticall3::{Call3, aggregate3Call},
     },
     rpc::types::{
         Log, TransactionRequest,
@@ -334,23 +334,34 @@ async fn get_info<P: Provider>(
         .iter()
         .flat_map(|asset| {
             [
-                Call { target: *asset, callData: IERC20::decimalsCall::SELECTOR.into() },
-                Call { target: *asset, callData: IERC20::symbolCall::SELECTOR.into() },
-                Call { target: *asset, callData: IERC20::nameCall::SELECTOR.into() },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::decimalsCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::symbolCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::nameCall::SELECTOR.into(),
+                },
             ]
         })
         .collect();
 
-    let call_bundle = aggregateCall::abi_decode_returns(
+    let call_bundle = aggregate3Call::abi_decode_returns(
         &provider
             .call(
                 TransactionRequest::default()
                     .to(MULTICALL3_ADDRESS)
-                    .input(aggregateCall { calls }.abi_encode().into()),
+                    .input(aggregate3Call { calls }.abi_encode().into()),
             )
             .await?,
-    )?
-    .returnData;
+    )?;
 
     if call_bundle.len() != 3 * assets.len() {
         error!(
@@ -374,9 +385,18 @@ async fn get_info<P: Provider>(
         assets_with_info.push(AssetWithInfo {
             asset: Asset::Token(asset),
             metadata: AssetMetadata {
-                decimals: IERC20::decimalsCall::abi_decode_returns(&decimals).ok(),
-                symbol: IERC20::symbolCall::abi_decode_returns(&symbol).ok(),
-                name: IERC20::nameCall::abi_decode_returns(&name).ok(),
+                decimals: decimals
+                    .success
+                    .then(|| IERC20::decimalsCall::abi_decode_returns(&decimals.returnData).ok())
+                    .flatten(),
+                symbol: symbol
+                    .success
+                    .then(|| IERC20::symbolCall::abi_decode_returns(&symbol.returnData).ok())
+                    .flatten(),
+                name: name
+                    .success
+                    .then(|| IERC20::nameCall::abi_decode_returns(&name.returnData).ok())
+                    .flatten(),
                 uri: None,
             },
         })
