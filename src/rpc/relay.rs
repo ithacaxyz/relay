@@ -93,8 +93,10 @@ pub trait RelayApi {
     async fn health(&self) -> RpcResult<Health>;
 
     /// Get capabilities of the relay, which are different sets of configuration values.
+    ///
+    /// See also <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-5792.md#wallet_getcapabilities>
     #[method(name = "getCapabilities")]
-    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities>;
+    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities>;
 
     /// Get all keys for an account.
     #[method(name = "getKeys")]
@@ -184,6 +186,50 @@ impl Relay {
             escrow_refund_threshold,
         };
         Self { inner: Arc::new(inner) }
+    }
+
+    /// Returns the [`RelayCapabilities`] for the given chain ids.
+    pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
+        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
+            // Relay needs a chain endpoint to support a chain.
+            self.inner.chains.get(chain_id)?;
+
+            // Relay needs a list of accepted chain tokens to support a chain.
+            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
+
+            Some(async move {
+                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
+                    async move {
+                        // TODO: only handles eth as native fee token
+                        let rate = self
+                            .inner
+                            .price_oracle
+                            .eth_price(token.kind)
+                            .await
+                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
+                        Ok(token.with_rate(rate))
+                    }
+                }))
+                .await?;
+
+                Ok::<_, QuoteError>((
+                    chain_id,
+                    ChainCapabilities {
+                        contracts: self.inner.contracts.clone(),
+                        fees: ChainFees {
+                            recipient: self.inner.fee_recipient,
+                            quote_config: self.inner.quote_config.clone(),
+                            tokens: fee_tokens,
+                        },
+                    },
+                ))
+            })
+        }))
+        .await?
+        .into_iter()
+        .collect();
+
+        Ok(RelayCapabilities(capabilities))
     }
 
     /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
@@ -1711,47 +1757,10 @@ impl RelayApiServer for Relay {
         }
     }
 
-    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
-        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
-            // Relay needs a chain endpoint to support a chain.
-            self.inner.chains.get(chain_id)?;
-
-            // Relay needs a list of accepted chain tokens to support a chain.
-            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
-
-            Some(async move {
-                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
-                    async move {
-                        // TODO: only handles eth as native fee token
-                        let rate = self
-                            .inner
-                            .price_oracle
-                            .eth_price(token.kind)
-                            .await
-                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        Ok(token.with_rate(rate))
-                    }
-                }))
-                .await?;
-
-                Ok::<_, QuoteError>((
-                    chain_id,
-                    ChainCapabilities {
-                        contracts: self.inner.contracts.clone(),
-                        fees: ChainFees {
-                            recipient: self.inner.fee_recipient,
-                            quote_config: self.inner.quote_config.clone(),
-                            tokens: fee_tokens,
-                        },
-                    },
-                ))
-            })
-        }))
-        .await?
-        .into_iter()
-        .collect();
-
-        Ok(RelayCapabilities(capabilities))
+    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities> {
+        let chains =
+            chains.unwrap_or_else(|| self.inner.chains.chain_ids_iter().copied().collect());
+        self.get_capabilities(chains).await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
