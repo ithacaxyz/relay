@@ -5,10 +5,10 @@ use crate::{
     types::IERC20,
 };
 use alloy::{
-    primitives::{Address, B256, Log as PrimitivesLog, LogData, U256},
+    primitives::{Address, B256, Log, U256},
     providers::{Provider, ext::DebugApi},
     rpc::types::{
-        BlockId, Log, TransactionRequest,
+        BlockId, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
         state::StateOverride,
         trace::geth::{
@@ -163,7 +163,11 @@ impl<P: Provider> SimulatorContract<P> {
 
         let gas = decode_gas_results(&result.return_data)?;
 
-        Ok(SimulationExecutionResult { gas, logs: result.logs, tx_request })
+        Ok(SimulationExecutionResult {
+            gas,
+            logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
+            tx_request,
+        })
     }
 
     async fn with_debug_trace(
@@ -223,6 +227,8 @@ fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
 
 /// Collect logs from non-reverting calls, including ETH transfers as logs similarly to
 /// eth_simulateV1.
+///
+/// Only logs with topics are collected.
 fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
     let mut logs = Vec::with_capacity(32);
     let mut stack = vec![root_frame];
@@ -236,20 +242,15 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
         if let (Some(value), Some(to)) = (frame.value, frame.to)
             && !value.is_zero()
         {
-            logs.push(Log {
-                inner: PrimitivesLog {
-                    address: ETH_ADDRESS,
-                    data: LogData::new_unchecked(
-                        vec![
-                            IERC20::Transfer::SIGNATURE_HASH,
-                            B256::left_padding_from(frame.from.as_slice()),
-                            B256::left_padding_from(to.as_slice()),
-                        ],
-                        value.abi_encode().into(),
-                    ),
-                },
-                ..Default::default()
-            });
+            logs.push(Log::new_unchecked(
+                ETH_ADDRESS,
+                vec![
+                    IERC20::Transfer::SIGNATURE_HASH,
+                    B256::left_padding_from(frame.from.as_slice()),
+                    B256::left_padding_from(to.as_slice()),
+                ],
+                value.abi_encode().into(),
+            ));
         }
 
         // extract logs
@@ -257,13 +258,7 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
             if let (Some(address), Some(topics)) = (log.address, log.topics)
                 && !topics.is_empty()
             {
-                logs.push(Log {
-                    inner: PrimitivesLog {
-                        address,
-                        data: LogData::new_unchecked(topics, log.data.unwrap_or_default()),
-                    },
-                    ..Default::default()
-                });
+                logs.push(Log::new_unchecked(address, topics, log.data.unwrap_or_default()));
             };
         }
 
