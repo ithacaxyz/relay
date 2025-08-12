@@ -2372,22 +2372,3 @@ impl Relay {
         })
     }
 }
-
-/// Approximates the intrinsic cost of a transaction.
-///
-/// This function assumes Prague rules.
-fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
-    // for 7702 designations there is an additional gas charge
-    //
-    // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-    // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-    // need to charge for the account being presumed empty.
-    let auth_cost = if has_auth { PER_EMPTY_ACCOUNT_COST } else { 0 };
-
-    // We just assume gas cost to cost 16 gas per token to eliminate fluctuations in gas estimates
-    // due to calldata values changing. A more robust approach here is either only doing an
-    // upperbound for calldata ranges that will change and doing a more accurate estimate for
-    // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
-    // an empty address on the chain the intent is for to get an estimte of the calldata.
-    21000 + auth_cost + input.len() as u64 * 16
-}
