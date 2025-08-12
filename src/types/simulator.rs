@@ -221,6 +221,15 @@ fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
     })
 }
 
+/// Get the ETH value transferred by a call frame, if any.
+///
+/// Returns Some(value) for call types that actually transfer ETH, None otherwise.
+fn get_eth_transfer_value(frame: &CallFrame) -> Option<U256> {
+    let value = frame.value.filter(|v| !v.is_zero())?;
+    matches!(frame.typ.as_str(), "CALL" | "CALLCODE" | "CREATE" | "CREATE2" | "SELFDESTRUCT")
+        .then_some(value)
+}
+
 /// Collect logs from non-reverting calls, including ETH transfers as logs similarly to
 /// eth_simulateV1.
 ///
@@ -235,15 +244,13 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
         }
 
         // Add ETH transfer as log if value > 0 (maintains eth_simulateV1 compatibility)
-        if let (Some(value), Some(to)) = (frame.value, frame.to)
-            && !value.is_zero()
-        {
+        if let Some(value) = get_eth_transfer_value(&frame) {
             logs.push(Log::new_unchecked(
                 ETH_ADDRESS,
                 vec![
                     IERC20::Transfer::SIGNATURE_HASH,
                     B256::left_padding_from(frame.from.as_slice()),
-                    B256::left_padding_from(to.as_slice()),
+                    B256::left_padding_from(frame.to.unwrap_or_default().as_slice()),
                 ],
                 value.abi_encode().into(),
             ));
