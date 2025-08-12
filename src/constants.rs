@@ -1,6 +1,6 @@
 //! Relay constants.
 
-use alloy::{primitives::U256, uint};
+use alloy::primitives::{Address, U256, address, uint};
 use std::time::Duration;
 
 /// Extra buffer added to Intent gas estimates signed by P256 keys to cover execution overhead
@@ -43,3 +43,6 @@ pub const ESCROW_REFUND_DURATION_SECS: u64 = 3600; // 1 hour
 ///
 /// This is used to generate unique escrow IDs.
 pub const ESCROW_SALT_LENGTH: usize = 12;
+
+/// Address used by eth_simulateV1 to identify ETH transfers as ERC20 transfer events.
+pub const ETH_ADDRESS: Address = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
