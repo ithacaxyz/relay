@@ -8,14 +8,14 @@ use crate::{
     },
 };
 use alloy::{
-    network::TransactionBuilder,
     primitives::{Address, ChainId, U256, map::HashMap},
-    providers::Provider,
-    rpc::types::{
-        Log, TransactionRequest,
-        simulate::{SimBlock, SimulatePayload},
+    providers::{
+        MULTICALL3_ADDRESS, Provider,
+        bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
+    rpc::types::{Log, TransactionRequest, state::StateOverride},
     sol_types::{SolCall, SolEventInterface},
+    transports::TransportErrorKind,
 };
 use schnellru::{ByLength, LruMap};
 use std::{
@@ -110,8 +110,8 @@ impl AssetInfoServiceHandle {
 
     /// Gets all available `tokenURI` from a list of nfts.
     ///
-    /// Since tokenURI calls revert if the token is not owned, this requires a [`SimBlock`], so the
-    /// URI calls can be done before and after:
+    /// Since tokenURI calls revert if the token is not owned, this requires the simulated
+    /// transaction with state overrides, so the URI calls can be done before and after:
     ///  * Before, so we can query the URIs from burned tokens.
     ///  * After, so we can query the URIs from minted tokens.
     ///
@@ -120,62 +120,79 @@ impl AssetInfoServiceHandle {
     pub async fn get_erc721_uris<P: Provider>(
         &self,
         provider: &P,
-        simulate_block: SimBlock,
+        tx_request: &TransactionRequest,
+        state_overrides: StateOverride,
         nfts: Vec<(Address, U256)>,
     ) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
-        let token_uri_calls = nfts.iter().map(|(asset, id)| {
-            TransactionRequest::default()
-                .with_to(*asset)
-                .with_input(IERC721::tokenURICall { id: *id }.abi_encode())
-        });
-
-        let simulate_payload = SimulatePayload::default()
-            .extend(SimBlock::default().extend_calls(token_uri_calls.clone()))
-            .extend(simulate_block)
-            .extend(SimBlock::default().extend_calls(token_uri_calls));
-
-        let blocks = provider.simulate(&simulate_payload).await?;
-        if blocks.len() != 3 {
-            error!("Expected 3 blocks in the bundle response, but found {}.", blocks.len());
-            return Err(AssetError::InvalidAssetInfoResponse.into());
+        if nfts.is_empty() {
+            return Ok(HashMap::default());
         }
 
-        // fetch all available token uris before the simulated block (includes burned tokens but not
-        // minted ones).
-        let mut uris = nfts
+        let nft_calls = nfts
             .iter()
-            .zip(blocks.first().as_ref().expect("qed").calls.iter())
-            .map(|((asset, id), result)| {
-                let uri = result
-                    .status
-                    .then(|| IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok())
-                    .flatten();
-                ((*asset, *id), uri)
+            .map(|(asset, id)| Call3 {
+                target: *asset,
+                allowFailure: true,
+                callData: IERC721::tokenURICall { id: *id }.abi_encode().into(),
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<Vec<_>>();
 
-        // fetch the remaning token uris after the simulated block (includes missing minted).
-        for ((asset, id), result) in
-            nfts.into_iter().zip(blocks.last().as_ref().expect("qed").calls.iter())
-        {
-            let uri = || {
-                result
-                    .status
-                    .then(|| IERC721::tokenURICall::abi_decode_returns(&result.return_data).ok())
-                    .flatten()
-            };
+        // Extract transaction details
+        let target =
+            tx_request.to.as_ref().and_then(|to| to.to()).copied().unwrap_or(Address::ZERO);
+        let calldata = tx_request.input.input().cloned().unwrap_or_default();
 
-            uris.entry((asset, id))
-                .and_modify(|existing| {
-                    if existing.is_none() {
-                        *existing = uri();
-                    }
-                })
-                // it shouldn't, but if for some reason the key was missing entirely, insert it
-                .or_insert(uri());
+        // Simulation requires tx.origin balance to be u256::max, so we need to set it alongside the
+        // state override below.
+        let from = tx_request.from.unwrap_or(Address::ZERO);
+
+        // Build multicall with three sections:
+        // 1. Pre-transaction tokenURI calls (for burned tokens)
+        // 2. Main transaction (must succeed)
+        // 3. Post-transaction tokenURI calls (for minted tokens)
+        let multicall_tx = TransactionRequest::default().from(from).to(MULTICALL3_ADDRESS).input(
+            aggregate3Call {
+                calls: [
+                    nft_calls.clone(),
+                    vec![Call3 { target, allowFailure: false, callData: calldata }],
+                    nft_calls,
+                ]
+                .concat(),
+            }
+            .abi_encode()
+            .into(),
+        );
+
+        let results = aggregate3Call::abi_decode_returns(
+            &provider.call(multicall_tx).overrides(state_overrides).await?,
+        )?;
+
+        // Verify we got the expected number of results:
+        // - nfts.len() tokenURI calls before the transaction
+        // - Intent simulation call
+        // - nfts.len() tokenURI calls after the transaction
+        let expected_results = nfts.len() * 2 + 1;
+        if results.len() != expected_results {
+            return Err(TransportErrorKind::custom_str(&format!(
+                "Expected {} results in multicall but found {}",
+                expected_results,
+                results.len()
+            ))
+            .into());
         }
 
-        Ok(uris)
+        let before_simulation = &results[..nfts.len()];
+        let after_simulation = &results[nfts.len() + 1..];
+
+        Ok(nfts
+            .into_iter()
+            .enumerate()
+            .map(|(i, (asset, id))| {
+                let uri = decode_token_uri(&before_simulation[i])
+                    .or_else(|| decode_token_uri(&after_simulation[i]));
+                ((asset, id), uri)
+            })
+            .collect())
     }
 
     /// Calculates the net asset difference for each account and asset based on logs.
@@ -187,7 +204,8 @@ impl AssetInfoServiceHandle {
     /// value represents an outflow.
     pub async fn calculate_asset_diff<P: Provider>(
         &self,
-        simulate_block: SimBlock,
+        tx_request: &TransactionRequest,
+        state_overrides: StateOverride,
         logs: impl Iterator<Item = Log>,
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
@@ -214,7 +232,12 @@ impl AssetInfoServiceHandle {
         // fetch assets metadata
         let (metadata, tokens_uris) = try_join!(
             self.get_asset_info_list(provider, builder.seen_assets().copied().collect()),
-            self.get_erc721_uris(provider, simulate_block, builder.seen_nfts().collect())
+            self.get_erc721_uris(
+                provider,
+                tx_request,
+                state_overrides,
+                builder.seen_nfts().collect()
+            )
         )?;
 
         Ok(builder.build(metadata, tokens_uris))
@@ -322,43 +345,64 @@ impl Future for AssetInfoService {
     }
 }
 
+/// Helper function to decode tokenURI from multicall result
+fn decode_token_uri(result: &IMulticall3::Result) -> Option<String> {
+    if result.success && !result.returnData.is_empty() {
+        IERC721::tokenURICall::abi_decode_returns(&result.returnData).ok()
+    } else {
+        None
+    }
+}
+
 /// Gets metadata from many assets on chain.
 async fn get_info<P: Provider>(
     provider: &P,
     assets: Vec<Address>,
 ) -> Result<Vec<AssetWithInfo>, RelayError> {
-    let transactions = assets.iter().flat_map(|asset| {
-        let to_asset = TransactionRequest::default().with_to(*asset);
-        [
-            to_asset.clone().with_input(IERC20::decimalsCall::SELECTOR),
-            to_asset.clone().with_input(IERC20::symbolCall::SELECTOR),
-            to_asset.with_input(IERC20::nameCall::SELECTOR),
-        ]
-    });
+    let calls = assets
+        .iter()
+        .flat_map(|asset| {
+            [
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::decimalsCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::symbolCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::nameCall::SELECTOR.into(),
+                },
+            ]
+        })
+        .collect();
 
-    let Some(call_bundle) = provider
-        .simulate(
-            &SimulatePayload::default().extend(SimBlock::default().extend_calls(transactions)),
-        )
-        .await?
-        .pop()
-    else {
-        error!("Expected a bundle response, but found none.");
-        return Err(AssetError::InvalidAssetInfoResponse.into());
-    };
+    let call_bundle = aggregate3Call::abi_decode_returns(
+        &provider
+            .call(
+                TransactionRequest::default()
+                    .to(MULTICALL3_ADDRESS)
+                    .input(aggregate3Call { calls }.abi_encode().into()),
+            )
+            .await?,
+    )?;
 
-    // We should have 3 call responses per requested asset. (decimals, symbol, name)
-    if call_bundle.calls.len() != 3 * assets.len() {
+    if call_bundle.len() != 3 * assets.len() {
         error!(
-            "Expected {} responses in bundle but found {}.",
+            "Expected {} responses in multicall but found {}.",
             3 * assets.len(),
-            call_bundle.calls.len()
+            call_bundle.len()
         );
         return Err(AssetError::InvalidAssetInfoResponse.into());
     }
 
     let mut assets_with_info = Vec::with_capacity(assets.len());
-    let mut call_bundle_iter = call_bundle.calls.into_iter();
+    let mut call_bundle_iter = call_bundle.into_iter();
 
     for asset in assets {
         let decimals = call_bundle_iter.next().expect("qed");
@@ -370,9 +414,18 @@ async fn get_info<P: Provider>(
         assets_with_info.push(AssetWithInfo {
             asset: Asset::Token(asset),
             metadata: AssetMetadata {
-                decimals: IERC20::decimalsCall::abi_decode_returns(&decimals.return_data).ok(),
-                symbol: IERC20::symbolCall::abi_decode_returns(&symbol.return_data).ok(),
-                name: IERC20::nameCall::abi_decode_returns(&name.return_data).ok(),
+                decimals: decimals
+                    .success
+                    .then(|| IERC20::decimalsCall::abi_decode_returns(&decimals.returnData).ok())
+                    .flatten(),
+                symbol: symbol
+                    .success
+                    .then(|| IERC20::symbolCall::abi_decode_returns(&symbol.returnData).ok())
+                    .flatten(),
+                name: name
+                    .success
+                    .then(|| IERC20::nameCall::abi_decode_returns(&name.returnData).ok())
+                    .flatten(),
                 uri: None,
             },
         })

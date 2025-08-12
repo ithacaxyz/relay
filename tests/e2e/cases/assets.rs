@@ -373,7 +373,7 @@ async fn get_assets_no_filter() -> eyre::Result<()> {
     // Gets the number of fee tokens in the environment chain
     let chain_fee_tokens_num = env
         .relay_endpoint
-        .get_capabilities(vec![env.chain_id()])
+        .get_capabilities(Some(vec![env.chain_id()]))
         .await?
         .0
         .get(&env.chain_id())
