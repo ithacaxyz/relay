@@ -25,7 +25,7 @@ impl CoinPair {
 }
 
 /// Chain, address and contract agonistic coins.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, derive_more::FromStr, Serialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, derive_more::FromStr, Serialize, strum::EnumIter)]
 #[non_exhaustive]
 pub enum CoinKind {
     /// Ethereum

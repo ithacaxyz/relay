@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@clippy
+        with:
+          toolchain: nightly-2025-08-08
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -31,6 +33,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@clippy
+        with:
+          toolchain: nightly-2025-08-08
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

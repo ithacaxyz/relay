@@ -21,7 +21,7 @@ pub trait ProviderExt: Provider {
         }
     }
 
-    /// Estimates L1 DA fee for a given encoded transaction by using [`OpL1FeeOracle`].
+    /// Estimates L1 DA fee for a given encoded unsigned transaction by using [`OpL1FeeOracle`].
     fn estimate_l1_fee(
         &self,
         encoded_tx: Bytes,

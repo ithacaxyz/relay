@@ -34,7 +34,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    consensus::{TxEip1559, TxEip7702, transaction::RlpEcdsaEncodableTx},
+    consensus::{TxEip1559, TxEip7702},
     eips::{
         eip1559::Eip1559Estimation,
         eip7702::{
@@ -47,6 +47,7 @@ use alloy::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
+    rlp::Encodable,
     rpc::types::{
         Authorization,
         state::{AccountOverride, StateOverridesBuilder},
@@ -93,8 +94,10 @@ pub trait RelayApi {
     async fn health(&self) -> RpcResult<Health>;
 
     /// Get capabilities of the relay, which are different sets of configuration values.
+    ///
+    /// See also <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-5792.md#wallet_getcapabilities>
     #[method(name = "getCapabilities")]
-    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities>;
+    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities>;
 
     /// Get all keys for an account.
     #[method(name = "getKeys")]
@@ -188,7 +191,55 @@ impl Relay {
         Self { inner: Arc::new(inner) }
     }
 
-    /// Estimates additional fees to be paid for a intent (e.g L1 DA fees).
+    /// Returns the [`RelayCapabilities`] for the given chain ids.
+    pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
+        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
+            // Relay needs a chain endpoint to support a chain.
+            self.inner.chains.get(chain_id)?;
+
+            // Relay needs a list of accepted chain tokens to support a chain.
+            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
+
+            Some(async move {
+                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
+                    async move {
+                        // TODO: only handles eth as native fee token
+                        let rate = self
+                            .inner
+                            .price_oracle
+                            .eth_price(token.kind)
+                            .await
+                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
+                        Ok(token.with_rate(rate))
+                    }
+                }))
+                .await?;
+
+                Ok::<_, QuoteError>((
+                    chain_id,
+                    ChainCapabilities {
+                        contracts: self.inner.contracts.clone(),
+                        fees: ChainFees {
+                            recipient: self.inner.fee_recipient,
+                            quote_config: self.inner.quote_config.clone(),
+                            tokens: fee_tokens,
+                        },
+                    },
+                ))
+            })
+        }))
+        .await?
+        .into_iter()
+        .collect();
+
+        Ok(RelayCapabilities(capabilities))
+    }
+
+    /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
+    ///
+    /// ## Opstack
+    ///
+    /// The fee is impacted by the L1 Base fee and the blob base fee.
     ///
     /// Returns fees in ETH.
     #[instrument(skip_all)]
@@ -202,15 +253,14 @@ impl Relay {
     ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
         let fee = if chain.is_optimism {
+            // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
+            // signature overhead.
             let mut buf = Vec::new();
-
-            // Prepare a dummy transaction that will be used to estimate the L1 DA fees. We need to
-            // use random values for some of the fields to ensure that potential compression won't
-            // affect the outputs.
-            let signature = alloy::signers::Signature::new(U256::random(), U256::random(), true);
             if let Some(auth) = auth {
                 TxEip7702 {
                     chain_id: chain.chain_id,
+                    // we use random nonce as we don't yet know which signer will broadcast the
+                    // intent
                     nonce: rand::random(),
                     gas_limit: gas_estimate.tx,
                     max_fee_per_gas: fees.max_fee_per_gas,
@@ -220,7 +270,7 @@ impl Relay {
                     authorization_list: vec![auth],
                     ..Default::default()
                 }
-                .eip2718_encode(&signature, &mut buf);
+                .encode(&mut buf);
             } else {
                 TxEip1559 {
                     chain_id: chain.chain_id,
@@ -232,7 +282,7 @@ impl Relay {
                     input: intent.encode_execute(),
                     ..Default::default()
                 }
-                .eip2718_encode(&signature, &mut buf);
+                .encode(&mut buf);
             }
 
             chain.provider.estimate_l1_fee(buf.into()).await?
@@ -357,8 +407,7 @@ impl Relay {
                 if !self.is_supported_orchestrator(&orchestrator_addr) {
                     return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
                 }
-                Ok(Orchestrator::new(orchestrator_addr, &provider)
-                    .with_overrides(overrides.clone()))
+                Ok(Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides))
             },
             // Fetch delegation from the account and ensure it is supported
             self.has_supported_delegation(&account).map_err(RelayError::from)
@@ -1106,7 +1155,9 @@ impl Relay {
         // leave this as an exercise for later.
         // Check if funding is required
         // todo: this only supports one asset...
-        if let Some(required_funds) = request.capabilities.required_funds.first() {
+        if let Some(required_funds) = request.capabilities.required_funds.first()
+            && self.inner.chains.interop().is_some()
+        {
             self.determine_quote_strategy(
                 request,
                 required_funds.address,
@@ -1726,47 +1777,10 @@ impl RelayApiServer for Relay {
         }
     }
 
-    async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
-        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
-            // Relay needs a chain endpoint to support a chain.
-            self.inner.chains.get(chain_id)?;
-
-            // Relay needs a list of accepted chain tokens to support a chain.
-            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
-
-            Some(async move {
-                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
-                    async move {
-                        // TODO: only handles eth as native fee token
-                        let rate = self
-                            .inner
-                            .price_oracle
-                            .eth_price(token.kind)
-                            .await
-                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        Ok(token.with_rate(rate))
-                    }
-                }))
-                .await?;
-
-                Ok::<_, QuoteError>((
-                    chain_id,
-                    ChainCapabilities {
-                        contracts: self.inner.contracts.clone(),
-                        fees: ChainFees {
-                            recipient: self.inner.fee_recipient,
-                            quote_config: self.inner.quote_config.clone(),
-                            tokens: fee_tokens,
-                        },
-                    },
-                ))
-            })
-        }))
-        .await?
-        .into_iter()
-        .collect();
-
-        Ok(RelayCapabilities(capabilities))
+    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities> {
+        let chains =
+            chains.unwrap_or_else(|| self.inner.chains.chain_ids_iter().copied().collect());
+        self.get_capabilities(chains).await
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {

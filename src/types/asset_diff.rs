@@ -62,6 +62,11 @@ impl AssetDiffs {
             !diffs.is_empty()
         });
     }
+
+    /// Returns a mutable iterator over all asset diffs across all addresses.
+    fn asset_diffs_iter_mut(&mut self) -> impl Iterator<Item = &mut AssetDiff> {
+        self.0.iter_mut().flat_map(|(_, diffs)| diffs.iter_mut())
+    }
 }
 
 /// Asset with metadata and value diff.
@@ -385,12 +390,8 @@ impl ChainAssetDiffs {
 
         // Populate fiat values for asset diffs
         join_all(
-            asset_diffs
-                .0
-                .iter_mut()
-                .flat_map(|(_, diffs)| diffs.iter_mut())
-                .filter(|diff| diff.metadata.decimals.is_some())
-                .map(async |diff| {
+            asset_diffs.asset_diffs_iter_mut().filter(|diff| diff.metadata.decimals.is_some()).map(
+                async |diff| {
                     let Some(token) =
                         fee_tokens.find(chain_id, &diff.address.unwrap_or(Address::ZERO))
                     else {
@@ -408,7 +409,8 @@ impl ChainAssetDiffs {
                             diff.metadata.decimals.expect("qed"),
                         ),
                     });
-                }),
+                },
+            ),
         )
         .await;
         Ok(Self { fee_usd, asset_diffs })
