@@ -167,8 +167,11 @@ impl AssetInfoServiceHandle {
             &provider.call(multicall_tx).overrides(state_overrides).await?,
         )?;
 
-        // Verify we got the expected number of results
-        let expected_results = nfts.len() * 2 + 1; // before + tx + after
+        // Verify we got the expected number of results:
+        // - nfts.len() tokenURI calls before the transaction
+        // - Intent simulation call
+        // - nfts.len() tokenURI calls after the transaction
+        let expected_results = nfts.len() * 2 + 1;
         if results.len() != expected_results {
             return Err(TransportErrorKind::custom_str(&format!(
                 "Expected {} results in multicall but found {}",
