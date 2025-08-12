@@ -210,7 +210,8 @@ impl<P: Provider> SimulatorContract<P> {
 pub struct SimulationExecutionResult {
     /// Gas estimates from the simulation result
     pub gas: GasResults,
-    /// Logs with topics collected from the simulation (including ETH transfers as defined on eth_simulateV1)
+    /// Logs with topics collected from the simulation (including ETH transfers as defined on
+    /// eth_simulateV1)
     pub logs: Vec<Log>,
     /// The transaction request that was simulated
     pub tx_request: TransactionRequest,
