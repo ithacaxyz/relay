@@ -21,7 +21,7 @@ use alloy::eips::eip7702::constants::PER_EMPTY_ACCOUNT_COST;
 ///
 /// # Note
 /// This is an overestimate as it doesn't account for gas refunds in EIP-7702,
-/// and assumes all calldata bytes cost 16 gas (actual cost is 4 for zero bytes).
+/// and assumes all calldata bytes cost 16 gas (actual cost is 4 for zero bytes on Ethereum).
 pub fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
     // for 7702 designations there is an additional gas charge
     //
