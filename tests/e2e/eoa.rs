@@ -65,7 +65,7 @@ impl MockAccount {
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
                 calls: vec![Call {
-                    to: env.erc20,
+                    to: env.usdc,
                     value: U256::ZERO,
                     data: MockErc20::mintCall { a: eoa.address(), val: U256::from(100e18) }
                         .abi_encode()
@@ -111,7 +111,7 @@ impl MockAccount {
                 from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: env.usdc, nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],

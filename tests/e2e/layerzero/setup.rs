@@ -11,6 +11,7 @@ use super::{
 use crate::e2e::{
     constants::{LAYERZERO_DEPLOYER_ADDRESS, LAYERZERO_DEPLOYER_PRIVATE_KEY},
     environment::{Environment, deploy_contract},
+    get_contracts_path,
     layerzero::utils::EXECUTOR_ADDRESS,
 };
 use alloy::{
@@ -262,9 +263,7 @@ pub async fn deploy_layerzero_infrastructure(
     );
 
     let eids: Vec<u32> = (0..providers.len()).map(|i| 101 + i as u32).collect();
-    let test_contracts_path = PathBuf::from(
-        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-    );
+    let test_contracts_path = get_contracts_path();
 
     // Create providers with LayerZero wallet for deployment
     let lz_providers: Arc<Vec<DynProvider>> = Arc::new(

@@ -4,20 +4,22 @@ use crate::{
     check,
     e2e::{
         cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
-        common_calls as calls, *,
+        common_calls as calls, send_prepared_calls, *,
     },
 };
-use alloy::{primitives::U256, providers::Provider, sol_types::SolValue, uint};
+use alloy::{primitives::U256, sol_types::SolValue, uint};
 use eyre::Result;
 use relay::{
+    rpc::RelayApiClient,
     signers::DynSigner,
     types::{
         Call, IERC20,
         IthacaAccount::SpendPeriod,
         KeyType, KeyWith712Signer, Signature,
         rpc::{
-            Permission, PrepareUpgradeAccountParameters, SpendPermission,
-            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            Meta, Permission, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareUpgradeAccountParameters, SpendPermission, UpgradeAccountCapabilities,
+            UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -372,7 +374,7 @@ async fn no_fee_tx() -> Result<()> {
         vec![TxContext {
             authorization_keys: vec![&key],
             expected: ExpectedOutcome::FailSend, // no balance on fee token
-            fee_token: Some(env.erc20s[2]),      // has not been minted
+            fee_token: Some(env.no_balance_erc20), // this token has 0 balance
             calls: vec![Call::transfer(env.erc20, to, transfer_amount)],
             ..Default::default()
         }]
@@ -399,7 +401,7 @@ async fn fee_token_deficit() -> eyre::Result<()> {
                 revoke_keys: vec![],
                 meta: Meta {
                     fee_payer: None,
-                    fee_token: env.erc20s[2], // this token has 0 balance
+                    fee_token: env.no_balance_erc20, // this token has 0 balance
                     nonce: None,
                 },
                 pre_calls: vec![],

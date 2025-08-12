@@ -19,7 +19,11 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
-            calls: vec![Call::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
+            calls: vec![Call::transfer(
+                env.no_balance_erc20,
+                Address::ZERO,
+                U256::from(10000000u64),
+            )],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
@@ -35,7 +39,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         })
         .await;
 
-    assert!(response.is_err_and(|err| dbg!(err.to_string()).contains("InsufficientBalance")));
+    assert!(response.is_err_and(|err| err.to_string().contains("InsufficientBalance")));
 
     Ok(())
 }
