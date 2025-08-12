@@ -15,9 +15,6 @@ use alloy::eips::eip7702::constants::PER_EMPTY_ACCOUNT_COST;
 /// - Calldata cost (16 gas per byte, regardless of value)
 /// - Optional EIP-7702 authorization cost
 ///
-/// # Arguments
-/// * `input` - The transaction calldata
-/// * `has_auth` - Whether the transaction includes an EIP-7702 authorization
 ///
 /// # Returns
 /// The estimated intrinsic gas cost in gas units
