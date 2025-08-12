@@ -93,7 +93,12 @@ impl<P: Provider> SimulatorContract<P> {
         }
     }
 
-    /// Simulates the intent.
+    /// Simulates the execution of an intent to estimate its gas usage and collect execution logs.
+    /// 
+    /// Returns a `SimulationExecutionResult` containing:
+    /// - Gas estimates for the transaction
+    /// - All logs emitted during execution
+    /// - The transaction request used for simulatio
     pub async fn simulate(
         &self,
         orchestrator_address: Address,
@@ -121,14 +126,7 @@ impl<P: Provider> SimulatorContract<P> {
         // Check chain ID to determine which simulation method to use
         let chain = Chain::from(self.simulator.provider().get_chain_id().await?);
 
-        if chain.is_ethereum()
-            || chain.id() == Chain::bsc_mainnet()
-            || chain.id() == Chain::bsc_testnet()
-            || chain.id() == Chain::optimism_mainnet()
-            || chain.id() == Chain::optimism_sepolia()
-            || chain.id() == Chain::base_mainnet()
-            || chain.id() == Chain::base_sepolia()
-        {
+        if has_simulate_v1_support(&chain) {
             self.with_simulate_v1(tx_request).await
         } else {
             self.with_debug_trace(tx_request).await
@@ -173,6 +171,7 @@ impl<P: Provider> SimulatorContract<P> {
         let trace_options = GethDebugTracingCallOptions {
             block_overrides: None,
             state_overrides: Some(self.overrides.clone()),
+            // Enable log collection to capture all asset transfers emitted during simulation
             tracing_options: GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
         };
 
@@ -263,4 +262,16 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
     }
 
     logs
+}
+
+
+/// Check if a chain supports the eth_simulateV1 RPC method
+fn has_simulate_v1_support(chain: &Chain) -> bool {
+    chain.is_ethereum()
+        || chain.id() == Chain::bsc_mainnet()
+        || chain.id() == Chain::bsc_testnet()
+        || chain.id() == Chain::optimism_mainnet()
+        || chain.id() == Chain::optimism_sepolia()
+        || chain.id() == Chain::base_mainnet()
+        || chain.id() == Chain::base_sepolia()
 }

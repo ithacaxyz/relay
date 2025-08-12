@@ -15,11 +15,11 @@ To run the relay, you can either use Docker or run the binary directly.
 
 ### Prerequisites
 
-The relay depends on the followign things being available on the chains it connects to:
+The relay depends on the following things being available on the chains it connects to:
 
 - [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) is enabled.
 - [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) is enabled.
-- [`eth_simulateV1`](https://docs.chainstack.com/reference/arbitrum-simulatev1) is enabled.
+- [`eth_simulateV1`](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#eth-simulate-v1) is enabled, *or* [`debug_traceCall`](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracecall) with log collection support.
 - The [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile is available, *or* a [shim](https://vectorized.github.io/solady/#/utils/p256?id=p256) is deployed[^1].
 - [Multicall3](https://www.multicall3.com/)
 - `PUSH0`
