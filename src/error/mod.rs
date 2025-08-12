@@ -25,6 +25,9 @@ pub use merkle::MerkleError;
 mod quote;
 pub use quote::QuoteError;
 
+mod simulation;
+pub use simulation::SimulationError;
+
 mod storage;
 pub use storage::StorageError;
 
