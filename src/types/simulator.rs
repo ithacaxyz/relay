@@ -94,7 +94,7 @@ impl<P: Provider> SimulatorContract<P> {
     }
 
     /// Simulates the execution of an intent to estimate its gas usage and collect execution logs.
-    /// 
+    ///
     /// Returns a `SimulationExecutionResult` containing:
     /// - Gas estimates for the transaction
     /// - All logs emitted during execution
@@ -258,12 +258,11 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
             };
         }
 
-        stack.extend(frame.calls);
+        stack.extend(frame.calls.into_iter().rev());
     }
 
     logs
 }
-
 
 /// Check if a chain supports the eth_simulateV1 RPC method
 fn has_simulate_v1_support(chain: &Chain) -> bool {
