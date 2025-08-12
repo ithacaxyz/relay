@@ -350,49 +350,16 @@ impl Relay {
         let fee_token_balance =
             assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
-        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
-        // simulation
-        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
-
-        // mocking key storage for the eoa, and the balance for the mock signer
-        let mut overrides = StateOverridesBuilder::with_capacity(2)
-            // simulateV1Logs requires it, so the function can only be called under a testing
-            // environment
-            .append(mock_from, AccountOverride::default().with_balance(U256::MAX))
-            .append(
-                intent.eoa,
-                AccountOverride::default()
-                    // If the fee token is the native token, we override it
-                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                    .with_state_diff(if context.key_slot_override {
-                        context.account_key.storage_slots()
-                    } else {
-                        Default::default()
-                    })
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(context.stored_authorization.as_ref().map(|auth| {
-                        Bytes::from(
-                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
-                        )
-                    })),
-            )
-            .extend(context.state_overrides);
-
-        // If the fee token is an ERC20, we do a balance override, merging it with the client
-        // supplied balance override if necessary.
-        if !context.fee_token.is_zero() {
-            overrides = overrides.extend(
-                context
-                    .balance_overrides
-                    .modify_token(context.fee_token, |balance| {
-                        balance.add_balance(intent.eoa, new_fee_token_balance);
-                    })
-                    .into_state_overrides(&provider)
-                    .await?,
-            );
-        }
-
-        let overrides = overrides.build();
+        // Build state overrides for simulation
+        let overrides = build_simulation_overrides(
+            &intent,
+            &context,
+            mock_from,
+            fee_token_balance,
+            &provider,
+        )
+        .await?
+        .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
@@ -503,7 +470,8 @@ impl Relay {
             // Account for gas variation in P256 sig verification.
             if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
                 // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
-                + if fee_token_balance.is_zero() && !new_fee_token_balance.is_zero() && !context.fee_token.is_zero() {
+                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
+                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
                     COLD_SSTORE_GAS_BUFFER
                 } else {
                     U256::ZERO
@@ -813,18 +781,7 @@ impl Relay {
 
         let address = account.address();
         let account = account.clone().with_overrides(
-            StateOverridesBuilder::default()
-                .with_code(
-                    address,
-                    Bytes::from(
-                        [
-                            &EIP7702_DELEGATION_DESIGNATOR,
-                            stored.signed_authorization.address().as_slice(),
-                        ]
-                        .concat(),
-                    ),
-                )
-                .build(),
+            build_delegation_override(address, *stored.signed_authorization.address()).build(),
         );
 
         account.delegation_implementation().await?.ok_or_else(|| {
