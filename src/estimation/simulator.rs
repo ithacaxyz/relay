@@ -25,7 +25,6 @@ use alloy::{
 /// - EOA key storage slots
 /// - EIP-7702 delegation code
 /// - Fee token balance overrides
-///
 pub async fn build_simulation_overrides<P: Provider>(
     intent: &PartialIntent,
     context: &FeeEstimationContext,
@@ -59,7 +58,7 @@ pub async fn build_simulation_overrides<P: Provider>(
                     )
                 })),
         )
-        .extend(&context.state_overrides);
+        .extend(context.state_overrides.clone());
 
     // If the fee token is an ERC20, we do a balance override, merging it with the client
     // supplied balance override if necessary.
