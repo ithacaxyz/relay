@@ -37,7 +37,7 @@ pub fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
     // due to calldata values changing. A more robust approach here is either only doing an
     // upperbound for calldata ranges that will change and doing a more accurate estimate for
     // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
-    // an empty address on the chain the intent is for to get an estimte of the calldata.
+    // an empty address on the chain the intent is for to get an estimate of the calldata.
     21000 + auth_cost + input.len() as u64 * 16
 }
 
