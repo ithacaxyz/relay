@@ -171,6 +171,11 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 
 ## Code Style Preferences
 
+### Function Documentation
+
+- Avoid using `# Arguments` sections in docstrings unless the arguments are very complex
+- Keep function documentation concise and focused on the "what" and "why", not the "how"
+
 ### Serialization and Deserialization
 
 1. **Always use derive macros** for JSON serialization:

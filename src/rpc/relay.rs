@@ -13,6 +13,9 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
+    estimation::{
+        build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
+    },
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
@@ -36,10 +39,7 @@ use alloy::{
     consensus::{TxEip1559, TxEip7702},
     eips::{
         eip1559::Eip1559Estimation,
-        eip7702::{
-            SignedAuthorization,
-            constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-        },
+        eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
@@ -350,49 +350,11 @@ impl Relay {
         let fee_token_balance =
             assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
-        // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
-        // simulation
-        let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
-
-        // mocking key storage for the eoa, and the balance for the mock signer
-        let mut overrides = StateOverridesBuilder::with_capacity(2)
-            // simulateV1Logs requires it, so the function can only be called under a testing
-            // environment
-            .append(mock_from, AccountOverride::default().with_balance(U256::MAX))
-            .append(
-                intent.eoa,
-                AccountOverride::default()
-                    // If the fee token is the native token, we override it
-                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                    .with_state_diff(if context.key_slot_override {
-                        context.account_key.storage_slots()
-                    } else {
-                        Default::default()
-                    })
-                    // we manually etch the 7702 designator since we do not have a signed auth item
-                    .with_code_opt(context.stored_authorization.as_ref().map(|auth| {
-                        Bytes::from(
-                            [&EIP7702_DELEGATION_DESIGNATOR, auth.address.as_slice()].concat(),
-                        )
-                    })),
-            )
-            .extend(context.state_overrides);
-
-        // If the fee token is an ERC20, we do a balance override, merging it with the client
-        // supplied balance override if necessary.
-        if !context.fee_token.is_zero() {
-            overrides = overrides.extend(
-                context
-                    .balance_overrides
-                    .modify_token(context.fee_token, |balance| {
-                        balance.add_balance(intent.eoa, new_fee_token_balance);
-                    })
-                    .into_state_overrides(&provider)
-                    .await?,
-            );
-        }
-
-        let overrides = overrides.build();
+        // Build state overrides for simulation
+        let overrides =
+            build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
+                .await?
+                .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
@@ -503,7 +465,8 @@ impl Relay {
             // Account for gas variation in P256 sig verification.
             if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
                 // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
-                + if fee_token_balance.is_zero() && !new_fee_token_balance.is_zero() && !context.fee_token.is_zero() {
+                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
+                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
                     COLD_SSTORE_GAS_BUFFER
                 } else {
                     U256::ZERO
@@ -813,18 +776,7 @@ impl Relay {
 
         let address = account.address();
         let account = account.clone().with_overrides(
-            StateOverridesBuilder::default()
-                .with_code(
-                    address,
-                    Bytes::from(
-                        [
-                            &EIP7702_DELEGATION_DESIGNATOR,
-                            stored.signed_authorization.address().as_slice(),
-                        ]
-                        .concat(),
-                    ),
-                )
-                .build(),
+            build_delegation_override(address, *stored.signed_authorization.address()).build(),
         );
 
         account.delegation_implementation().await?.ok_or_else(|| {
@@ -2371,23 +2323,4 @@ impl Relay {
             key: Some(request_key),
         })
     }
-}
-
-/// Approximates the intrinsic cost of a transaction.
-///
-/// This function assumes Prague rules.
-fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
-    // for 7702 designations there is an additional gas charge
-    //
-    // note: this is not entirely accurate, as there is also a gas refund in 7702, but at this
-    // point it is not possible to compute the gas refund, so it is an overestimate, as we also
-    // need to charge for the account being presumed empty.
-    let auth_cost = if has_auth { PER_EMPTY_ACCOUNT_COST } else { 0 };
-
-    // We just assume gas cost to cost 16 gas per token to eliminate fluctuations in gas estimates
-    // due to calldata values changing. A more robust approach here is either only doing an
-    // upperbound for calldata ranges that will change and doing a more accurate estimate for
-    // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
-    // an empty address on the chain the intent is for to get an estimte of the calldata.
-    21000 + auth_cost + input.len() as u64 * 16
 }
