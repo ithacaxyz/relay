@@ -296,40 +296,35 @@ impl<P: Provider> Orchestrator<P> {
         let chain_id = ChainId::from(provider_chain_id);
 
         // Try cache first and return early if present
-        if let Some(domain) =
-            self.cache.as_ref().and_then(|cache| cache.get_eip712_domain(self.address(), chain_id))
+        if let Some(domain) = self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.get_eip712_domain(self.address(), chain_id, multichain))
         {
-            let result = if multichain {
-                Eip712Domain::new(
-                    domain.name,
-                    domain.version,
-                    None,
-                    domain.verifying_contract,
-                    domain.salt,
-                )
-            } else {
-                domain
-            };
-            return Ok(result);
+            return Ok(domain);
         }
 
-        // Otherwise, fetch from RPC, cache it, and return
+        // Otherwise, fetch from RPC and create appropriate domain variant
         let fetched = self.fetch_eip712_domain_from_rpc().await?;
-        if let Some(cache) = &self.cache {
-            cache.set_eip712_domain(*self.address(), chain_id, fetched.clone());
-        }
 
         let result = if multichain {
+            // Create multichain variant (no chain ID)
             Eip712Domain::new(
                 fetched.name,
                 fetched.version,
-                None,
+                None, // Omit chain ID for multichain
                 fetched.verifying_contract,
                 fetched.salt,
             )
         } else {
+            // Use single-chain variant (with chain ID)
             fetched
         };
+
+        // Cache the appropriate variant
+        if let Some(cache) = &self.cache {
+            cache.set_eip712_domain(*self.address(), chain_id, result.clone(), multichain);
+        }
 
         Ok(result)
     }
@@ -375,5 +370,161 @@ impl IntentExecuted {
     /// Whether the intent execution failed.
     pub fn has_error(&self) -> bool {
         self.err != ORCHESTRATOR_NO_ERROR
+    }
+}
+
+#[cfg(test)]
+mod orchestrator_cache_tests {
+    use crate::cache::RpcCache;
+    use alloy::{
+        dyn_abi::Eip712Domain,
+        primitives::{ChainId, U256, address},
+    };
+
+    #[test]
+    fn test_multichain_domain_caching_separation() {
+        let cache = RpcCache::new();
+        let orchestrator_addr = address!("1234567890123456789012345678901234567890");
+        let chain_id = ChainId::from(1u64);
+
+        // Create single-chain domain (with chain ID)
+        let single_chain_domain = Eip712Domain::new(
+            Some("TestOrchestrator".into()),
+            Some("1.0.0".into()),
+            Some(U256::from(chain_id)),
+            Some(orchestrator_addr),
+            None,
+        );
+
+        // Create multichain domain (without chain ID)
+        let multichain_domain = Eip712Domain::new(
+            Some("TestOrchestrator".into()),
+            Some("1.0.0".into()),
+            None, // No chain ID for multichain
+            Some(orchestrator_addr),
+            None,
+        );
+
+        // Cache single-chain domain
+        cache.set_eip712_domain(orchestrator_addr, chain_id, single_chain_domain.clone(), false);
+
+        // Cache multichain domain
+        cache.set_eip712_domain(orchestrator_addr, chain_id, multichain_domain.clone(), true);
+
+        // Verify single-chain domain retrieval
+        let retrieved_single = cache.get_eip712_domain(&orchestrator_addr, chain_id, false);
+        assert!(retrieved_single.is_some());
+        assert_eq!(retrieved_single.unwrap().chain_id, Some(U256::from(chain_id)));
+
+        // Verify multichain domain retrieval
+        let retrieved_multi = cache.get_eip712_domain(&orchestrator_addr, chain_id, true);
+        assert!(retrieved_multi.is_some());
+        assert_eq!(retrieved_multi.unwrap().chain_id, None);
+
+        // Verify they are different entries
+        assert_ne!(
+            cache.get_eip712_domain(&orchestrator_addr, chain_id, false),
+            cache.get_eip712_domain(&orchestrator_addr, chain_id, true)
+        );
+    }
+
+    #[test]
+    fn test_cache_miss_scenarios() {
+        let cache = RpcCache::new();
+        let orchestrator_addr = address!("1234567890123456789012345678901234567890");
+        let chain_id_1 = ChainId::from(1u64);
+        let chain_id_2 = ChainId::from(2u64);
+
+        // Create and cache a domain for chain 1, single-chain
+        let domain = Eip712Domain::new(
+            Some("TestOrchestrator".into()),
+            Some("1.0.0".into()),
+            Some(U256::from(chain_id_1)),
+            Some(orchestrator_addr),
+            None,
+        );
+        cache.set_eip712_domain(orchestrator_addr, chain_id_1, domain.clone(), false);
+
+        // Should get cache hit for correct parameters
+        assert!(cache.get_eip712_domain(&orchestrator_addr, chain_id_1, false).is_some());
+
+        // Should get cache miss for different chain
+        assert!(cache.get_eip712_domain(&orchestrator_addr, chain_id_2, false).is_none());
+
+        // Should get cache miss for same chain but multichain variant
+        assert!(cache.get_eip712_domain(&orchestrator_addr, chain_id_1, true).is_none());
+
+        // Should get cache miss for different orchestrator
+        let other_orchestrator = address!("abcdefabcdefabcdefabcdefabcdefabcdefabcd");
+        assert!(cache.get_eip712_domain(&other_orchestrator, chain_id_1, false).is_none());
+    }
+
+    #[test]
+    fn test_cache_key_uniqueness() {
+        let cache = RpcCache::new();
+        let orchestrator_1 = address!("1111111111111111111111111111111111111111");
+        let orchestrator_2 = address!("2222222222222222222222222222222222222222");
+        let chain_id_1 = ChainId::from(1u64);
+        let chain_id_2 = ChainId::from(2u64);
+
+        // Create domains with different combinations
+        let domain_1_1_false = Eip712Domain::new(
+            Some("Domain11F".into()),
+            Some("1.0.0".into()),
+            Some(U256::from(chain_id_1)),
+            Some(orchestrator_1),
+            None,
+        );
+        let domain_1_1_true = Eip712Domain::new(
+            Some("Domain11T".into()),
+            Some("1.0.0".into()),
+            None,
+            Some(orchestrator_1),
+            None,
+        );
+        let domain_1_2_false = Eip712Domain::new(
+            Some("Domain12F".into()),
+            Some("1.0.0".into()),
+            Some(U256::from(chain_id_2)),
+            Some(orchestrator_1),
+            None,
+        );
+        let domain_2_1_false = Eip712Domain::new(
+            Some("Domain21F".into()),
+            Some("1.0.0".into()),
+            Some(U256::from(chain_id_1)),
+            Some(orchestrator_2),
+            None,
+        );
+
+        // Cache all combinations
+        cache.set_eip712_domain(orchestrator_1, chain_id_1, domain_1_1_false.clone(), false);
+        cache.set_eip712_domain(orchestrator_1, chain_id_1, domain_1_1_true.clone(), true);
+        cache.set_eip712_domain(orchestrator_1, chain_id_2, domain_1_2_false.clone(), false);
+        cache.set_eip712_domain(orchestrator_2, chain_id_1, domain_2_1_false.clone(), false);
+
+        // Verify each combination retrieves the correct domain
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator_1, chain_id_1, false).unwrap().name,
+            Some("Domain11F".into())
+        );
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator_1, chain_id_1, true).unwrap().name,
+            Some("Domain11T".into())
+        );
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator_1, chain_id_2, false).unwrap().name,
+            Some("Domain12F".into())
+        );
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator_2, chain_id_1, false).unwrap().name,
+            Some("Domain21F".into())
+        );
+
+        // Verify cache misses for non-existent combinations
+        assert!(cache.get_eip712_domain(&orchestrator_1, chain_id_2, true).is_none());
+        assert!(cache.get_eip712_domain(&orchestrator_2, chain_id_1, true).is_none());
+        assert!(cache.get_eip712_domain(&orchestrator_2, chain_id_2, false).is_none());
+        assert!(cache.get_eip712_domain(&orchestrator_2, chain_id_2, true).is_none());
     }
 }

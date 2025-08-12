@@ -24,8 +24,9 @@ struct CacheInner {
     pub code_cache: DashMap<Address, Bytes>,
     /// Static cache for delegation implementations (rarely changes in production)
     delegation_cache: DashMap<Address, Address>,
-    /// Cache for EIP712Domains: key is (orchestrator_address, chain_id)
-    eip712_domain_cache: DashMap<(Address, ChainId), Eip712Domain>,
+    /// Cache for EIP712Domains: key is (orchestrator_address, chain_id, is_multichain)
+    /// The is_multichain bool differentiates between multichain and single-chain domains
+    eip712_domain_cache: DashMap<(Address, ChainId, bool), Eip712Domain>,
 }
 
 /// Thread-safe cache for RPC results with factory methods for creating cached contract instances.
@@ -84,25 +85,29 @@ impl RpcCache {
     }
 
     /// Get cached EIP712Domain for an orchestrator on a specific chain.
+    /// The multichain flag determines whether to retrieve multichain or single-chain variant.
     pub fn get_eip712_domain(
         &self,
         orchestrator: &Address,
         chain_id: ChainId,
+        multichain: bool,
     ) -> Option<Eip712Domain> {
-        let entry = self.0.eip712_domain_cache.get(&(*orchestrator, chain_id))?;
-        debug!(orchestrator = %orchestrator, chain_id, "EIP712Domain cache HIT");
+        let entry = self.0.eip712_domain_cache.get(&(*orchestrator, chain_id, multichain))?;
+        debug!(orchestrator = %orchestrator, chain_id, multichain, "EIP712Domain cache HIT");
         Some(entry.value().clone())
     }
 
     /// Cache EIP712Domain for an orchestrator on a specific chain.
+    /// The multichain flag determines whether this is a multichain or single-chain variant.
     pub fn set_eip712_domain(
         &self,
         orchestrator: Address,
         chain_id: ChainId,
         domain: Eip712Domain,
+        multichain: bool,
     ) {
-        debug!(orchestrator = %orchestrator, chain_id, "Caching EIP712Domain");
-        self.0.eip712_domain_cache.insert((orchestrator, chain_id), domain);
+        debug!(orchestrator = %orchestrator, chain_id, multichain, "Caching EIP712Domain");
+        self.0.eip712_domain_cache.insert((orchestrator, chain_id, multichain), domain);
     }
 }
 
@@ -171,24 +176,50 @@ mod tests {
             None,
         );
 
-        // Test caching for chain 1
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), None);
-        cache.set_eip712_domain(orchestrator, chain_id_1, domain_chain_1.clone());
+        // Test caching for chain 1 (single-chain)
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, false), None);
+        cache.set_eip712_domain(orchestrator, chain_id_1, domain_chain_1.clone(), false);
         assert_eq!(
-            cache.get_eip712_domain(&orchestrator, chain_id_1),
+            cache.get_eip712_domain(&orchestrator, chain_id_1, false),
             Some(domain_chain_1.clone())
         );
 
-        // Test caching for chain 2
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), None);
-        cache.set_eip712_domain(orchestrator, chain_id_2, domain_chain_2.clone());
+        // Test caching for chain 2 (single-chain)
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2, false), None);
+        cache.set_eip712_domain(orchestrator, chain_id_2, domain_chain_2.clone(), false);
         assert_eq!(
-            cache.get_eip712_domain(&orchestrator, chain_id_2),
+            cache.get_eip712_domain(&orchestrator, chain_id_2, false),
             Some(domain_chain_2.clone())
         );
 
         // Verify different chains have separate cache entries
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), Some(domain_chain_1));
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), Some(domain_chain_2));
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_1, false),
+            Some(domain_chain_1.clone())
+        );
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_2, false),
+            Some(domain_chain_2.clone())
+        );
+
+        // Test multichain variants are cached separately
+        let domain_multichain = Eip712Domain::new(
+            Some("TestDomain".into()),
+            Some("1.0.0".into()),
+            None, // No chain ID for multichain
+            Some(orchestrator),
+            None,
+        );
+
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, true), None);
+        cache.set_eip712_domain(orchestrator, chain_id_1, domain_multichain.clone(), true);
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_1, true),
+            Some(domain_multichain)
+        );
+
+        // Verify single-chain and multichain entries are separate
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, false), Some(domain_chain_1));
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2, false), Some(domain_chain_2));
     }
 }
