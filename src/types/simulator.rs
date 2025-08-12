@@ -148,23 +148,19 @@ impl<P: Provider> SimulatorContract<P> {
         let result = self
             .simulator
             .provider()
-            .simulate(
-                &SimulatePayload::default().extend(simulate_block.clone()).with_trace_transfers(),
-            )
+            .simulate(&SimulatePayload::default().extend(simulate_block).with_trace_transfers())
             .await?
             .pop()
             .and_then(|mut block| block.calls.pop())
             .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
 
         if !result.status {
-            debug!(?result, ?simulate_block, "Unable to simulate intent.");
+            debug!(?result, ?tx_request, "Unable to simulate intent with eth_simulateV1");
             return Err(IntentError::intent_revert(result.return_data).into());
         }
 
-        let gas = decode_gas_results(&result.return_data)?;
-
         Ok(SimulationExecutionResult {
-            gas,
+            gas: decode_gas_results(&result.return_data)?,
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
             tx_request,
         })
@@ -190,7 +186,7 @@ impl<P: Provider> SimulatorContract<P> {
             .map_err(|e| TransportErrorKind::custom_str(&format!("debug_traceCall failed: {e}")))?;
 
         if call_frame.error.is_some() || call_frame.revert_reason.is_some() {
-            debug!(error = ?call_frame.error, reason = ?call_frame.revert_reason, "Unable to simulate intent - call reverted");
+            debug!(reason = ?call_frame.revert_reason, "Unable to simulate intent - call reverted");
             return Err(IntentError::intent_revert(call_frame.output.unwrap_or_default()).into());
         }
 
