@@ -59,7 +59,7 @@ pub async fn build_simulation_overrides<P: Provider>(
                     )
                 })),
         )
-        .extend(context.state_overrides.clone());
+        .extend(&context.state_overrides);
 
     // If the fee token is an ERC20, we do a balance override, merging it with the client
     // supplied balance override if necessary.
