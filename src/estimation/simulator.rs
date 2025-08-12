@@ -39,9 +39,10 @@ pub async fn build_simulation_overrides<P: Provider>(
     fee_token_balance: U256,
     provider: &P,
 ) -> Result<StateOverridesBuilder, RelayError> {
-    // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call simulation
+    // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
+    // simulation
     let new_fee_token_balance = fee_token_balance.saturating_add(U256::from(1));
-    
+
     // mocking key storage for the eoa, and the balance for the mock signer
     let mut overrides = StateOverridesBuilder::with_capacity(2)
         // simulateV1Logs requires it, so the function can only be called under a testing

@@ -13,6 +13,9 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
+    estimation::{
+        build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
+    },
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
@@ -36,10 +39,7 @@ use alloy::{
     consensus::{TxEip1559, TxEip7702},
     eips::{
         eip1559::Eip1559Estimation,
-        eip7702::{
-            SignedAuthorization,
-            constants::{EIP7702_DELEGATION_DESIGNATOR, PER_EMPTY_ACCOUNT_COST},
-        },
+        eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
     providers::{
@@ -351,15 +351,10 @@ impl Relay {
             assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
         // Build state overrides for simulation
-        let overrides = build_simulation_overrides(
-            &intent,
-            &context,
-            mock_from,
-            fee_token_balance,
-            &provider,
-        )
-        .await?
-        .build();
+        let overrides =
+            build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
+                .await?
+                .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
