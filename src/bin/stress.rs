@@ -19,7 +19,7 @@
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U256, address, keccak256},
+    primitives::{Address, B256, ChainId, U64, U256, address, keccak256},
     providers::{
         Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -277,7 +277,9 @@ impl StressTester {
         info!("Output chain is {destination_chain_id}");
 
         // Get capabilities for all chains
-        let caps = relay_client.get_capabilities(Some(chain_ids.clone())).await?;
+        let caps = relay_client
+            .get_capabilities(Some(chain_ids.iter().map(|&id| U64::from(id)).collect()))
+            .await?;
 
         // Build fee token mapping across all chains
         let fee_token_map = build_fee_token_map(&caps, &chain_ids, args.fee_token).await?;

@@ -41,7 +41,7 @@ use alloy::{
         eip1559::Eip1559Estimation,
         eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
-    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, aliases::B192, bytes},
+    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
@@ -96,7 +96,7 @@ pub trait RelayApi {
     ///
     /// See also <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-5792.md#wallet_getcapabilities>
     #[method(name = "getCapabilities")]
-    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities>;
+    async fn get_capabilities(&self, chains: Option<Vec<U64>>) -> RpcResult<RelayCapabilities>;
 
     /// Get all keys for an account.
     #[method(name = "getKeys")]
@@ -1709,9 +1709,10 @@ impl RelayApiServer for Relay {
         }
     }
 
-    async fn get_capabilities(&self, chains: Option<Vec<ChainId>>) -> RpcResult<RelayCapabilities> {
-        let chains =
-            chains.unwrap_or_else(|| self.inner.chains.chain_ids_iter().copied().collect());
+    async fn get_capabilities(&self, chains: Option<Vec<U64>>) -> RpcResult<RelayCapabilities> {
+        let chains = chains
+            .map(|vec| vec.into_iter().map(|id| id.to::<u64>()).collect())
+            .unwrap_or_else(|| self.inner.chains.chain_ids_iter().copied().collect());
         self.get_capabilities(chains).await
     }
 
