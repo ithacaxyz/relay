@@ -8,4 +8,5 @@
 pub mod fees;
 pub mod simulator;
 
+pub use fees::{EstimationDependencies, approx_intrinsic_cost, estimate_extra_fee, estimate_fee};
 pub use simulator::{build_delegation_override, build_simulation_overrides};
