@@ -8,12 +8,12 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{Address, ChainId, U256, map::HashMap},
+    primitives::{Address, ChainId, Log, U256, map::HashMap},
     providers::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
-    rpc::types::{Log, TransactionRequest, state::StateOverride},
+    rpc::types::{TransactionRequest, state::StateOverride},
     sol_types::{SolCall, SolEventInterface},
     transports::TransportErrorKind,
 };
@@ -213,16 +213,16 @@ impl AssetInfoServiceHandle {
         for log in logs {
             // ERC-20
             if let Some((asset, transfer)) =
-                IERC20Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
-                    IERC20Events::Transfer(t) => (Asset::from(log.inner.address), t),
+                IERC20Events::decode_log(&log).ok().map(|ev| match ev.data {
+                    IERC20Events::Transfer(t) => (Asset::from(log.address), t),
                 })
             {
                 builder.record_erc20(asset, transfer);
             }
             // ERC-721
             else if let Some((asset, transfer)) =
-                IERC721Events::decode_log(&log.inner).ok().map(|ev| match ev.data {
-                    IERC721Events::Transfer(t) => (Asset::from(log.inner.address), t),
+                IERC721Events::decode_log(&log).ok().map(|ev| match ev.data {
+                    IERC721Events::Transfer(t) => (Asset::from(log.address), t),
                 })
             {
                 builder.record_erc721(asset, transfer);

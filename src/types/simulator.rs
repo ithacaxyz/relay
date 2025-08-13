@@ -1,6 +1,27 @@
-use crate::config::QuoteConfig;
-use alloy::sol;
+use crate::{
+    config::QuoteConfig,
+    constants::ETH_ADDRESS,
+    error::{IntentError, RelayError},
+    types::IERC20,
+};
+use alloy::{
+    primitives::{Address, B256, Log, U256},
+    providers::{Provider, ext::DebugApi},
+    rpc::types::{
+        BlockId, TransactionRequest,
+        simulate::{SimBlock, SimulatePayload},
+        state::StateOverride,
+        trace::geth::{
+            CallConfig, CallFrame, GethDebugTracingCallOptions, GethDebugTracingOptions,
+        },
+    },
+    sol,
+    sol_types::{SolEvent, SolValue},
+    transports::TransportErrorKind,
+};
+use alloy_chains::Chain;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, trace};
 
 sol! {
 
@@ -8,7 +29,8 @@ sol! {
     ///
     /// - `gCombined` is the recommendation for `gCombined` in the Intent.
     /// - `gUsed` is the amount of gas that has definitely been used by the Intent.
-    struct SimulationResult {
+    #[derive(Debug)]
+    struct GasResults {
         uint256 gUsed;
         uint256 gCombined;
     }
@@ -53,4 +75,200 @@ impl GasEstimate {
         let intent = combined_gas + quote_config.intent_buffer();
         Self { tx: (intent + 110_000 + quote_config.tx_buffer()) * 64 / 63 + intrinsic_gas, intent }
     }
+}
+
+/// A Simulator contract wrapper.
+#[derive(Debug, Clone)]
+pub struct SimulatorContract<P: Provider> {
+    simulator: Simulator::SimulatorInstance<P>,
+    overrides: StateOverride,
+}
+
+impl<P: Provider> SimulatorContract<P> {
+    /// Create a new simulator wrapper
+    pub fn new(simulator_address: Address, provider: P, overrides: StateOverride) -> Self {
+        Self {
+            simulator: Simulator::SimulatorInstance::new(simulator_address, provider),
+            overrides,
+        }
+    }
+
+    /// Simulates the execution of an intent to estimate its gas usage and collect execution logs.
+    ///
+    /// Returns a `SimulationExecutionResult` containing:
+    /// - Gas estimates for the transaction
+    /// - All logs emitted during execution
+    /// - The transaction request used for simulatio
+    pub async fn simulate(
+        &self,
+        orchestrator_address: Address,
+        mock_from: Address,
+        intent_encoded: Vec<u8>,
+        gas_validation_offset: U256,
+    ) -> Result<SimulationExecutionResult, RelayError> {
+        let tx_request =
+            TransactionRequest::default().from(mock_from).to(*self.simulator.address()).input(
+                self.simulator
+                    .simulateV1Logs(
+                        orchestrator_address,
+                        true,
+                        0,
+                        U256::ZERO,
+                        U256::from(11_000),
+                        gas_validation_offset,
+                        intent_encoded.into(),
+                    )
+                    .calldata()
+                    .clone()
+                    .into(),
+            );
+
+        // Check chain ID to determine which simulation method to use
+        let chain = Chain::from(self.simulator.provider().get_chain_id().await?);
+
+        if has_simulate_v1_support(&chain) {
+            self.with_simulate_v1(tx_request).await
+        } else {
+            self.with_debug_trace(tx_request).await
+        }
+    }
+
+    async fn with_simulate_v1(
+        &self,
+        tx_request: TransactionRequest,
+    ) -> Result<SimulationExecutionResult, RelayError> {
+        let simulate_block = SimBlock::default()
+            .call(tx_request.clone())
+            .with_state_overrides(self.overrides.clone());
+
+        trace!(?simulate_block, "simulating intent with eth_simulateV1");
+
+        let result = self
+            .simulator
+            .provider()
+            .simulate(&SimulatePayload::default().extend(simulate_block).with_trace_transfers())
+            .await?
+            .pop()
+            .and_then(|mut block| block.calls.pop())
+            .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
+
+        if !result.status {
+            debug!(?result, ?tx_request, "Unable to simulate intent with eth_simulateV1");
+            return Err(IntentError::intent_revert(result.return_data).into());
+        }
+
+        Ok(SimulationExecutionResult {
+            gas: decode_gas_results(&result.return_data)?,
+            logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
+            tx_request,
+        })
+    }
+
+    async fn with_debug_trace(
+        &self,
+        tx_request: TransactionRequest,
+    ) -> Result<SimulationExecutionResult, RelayError> {
+        let trace_options = GethDebugTracingCallOptions {
+            block_overrides: None,
+            state_overrides: Some(self.overrides.clone()),
+            // Enable log collection to capture all asset transfers emitted during simulation
+            tracing_options: GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
+        };
+
+        trace!(?tx_request, ?trace_options, "simulating intent with debug_traceCall");
+
+        let call_frame = self
+            .simulator
+            .provider()
+            .debug_trace_call_callframe(tx_request.clone(), BlockId::latest(), trace_options)
+            .await
+            .map_err(|e| TransportErrorKind::custom_str(&format!("debug_traceCall failed: {e}")))?;
+
+        if call_frame.error.is_some() || call_frame.revert_reason.is_some() {
+            debug!(reason = ?call_frame.revert_reason, "Unable to simulate intent - call reverted");
+            return Err(IntentError::intent_revert(call_frame.output.unwrap_or_default()).into());
+        }
+
+        let gas = decode_gas_results(
+            call_frame
+                .output
+                .as_ref()
+                .ok_or_else(|| TransportErrorKind::custom_str("no output from simulation"))?,
+        )?;
+
+        Ok(SimulationExecutionResult { gas, logs: collect_logs_from_frame(call_frame), tx_request })
+    }
+}
+
+/// Result from a simulation execution
+#[derive(Debug)]
+pub struct SimulationExecutionResult {
+    /// Gas estimates from the simulation result
+    pub gas: GasResults,
+    /// Logs with topics collected from the simulation (including ETH transfers as defined on
+    /// eth_simulateV1)
+    pub logs: Vec<Log>,
+    /// The transaction request that was simulated
+    pub tx_request: TransactionRequest,
+}
+
+fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
+    GasResults::abi_decode(output).map_err(|e| {
+        TransportErrorKind::custom_str(&format!(
+            "could not decode intent simulation return data: {e}"
+        ))
+        .into()
+    })
+}
+
+/// Collect logs from non-reverting calls, including ETH transfers as logs similarly to
+/// eth_simulateV1.
+///
+/// Only logs with topics are collected.
+fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
+    let mut logs = Vec::with_capacity(32);
+    let mut stack = vec![root_frame];
+
+    while let Some(frame) = stack.pop() {
+        if frame.error.is_some() || frame.revert_reason.is_some() {
+            continue;
+        }
+
+        // Add ETH transfer as log if value > 0 (maintains eth_simulateV1 compatibility)
+        if let Some(value) = frame.value.filter(|v| !v.is_zero() && frame.typ != "DELEGATECALL") {
+            logs.push(Log::new_unchecked(
+                ETH_ADDRESS,
+                vec![
+                    IERC20::Transfer::SIGNATURE_HASH,
+                    B256::left_padding_from(frame.from.as_slice()),
+                    B256::left_padding_from(frame.to.unwrap_or_default().as_slice()),
+                ],
+                value.abi_encode().into(),
+            ));
+        }
+
+        // extract logs
+        for log in frame.logs {
+            if let (Some(address), Some(topics)) = (log.address, log.topics)
+                && !topics.is_empty()
+            {
+                logs.push(Log::new_unchecked(address, topics, log.data.unwrap_or_default()));
+            };
+        }
+
+        stack.extend(frame.calls.into_iter().rev());
+    }
+
+    logs
+}
+
+/// Check if a chain supports the eth_simulateV1 RPC method
+fn has_simulate_v1_support(chain: &Chain) -> bool {
+    chain.is_ethereum()
+        || chain.id() == Chain::bsc_mainnet()
+        || chain.id() == Chain::bsc_testnet()
+        || chain.id() == Chain::optimism_mainnet()
+        || chain.id() == Chain::optimism_sepolia()
+        || chain.id() == Chain::base_mainnet()
+        || chain.id() == Chain::base_sepolia()
 }

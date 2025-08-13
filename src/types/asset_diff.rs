@@ -4,12 +4,13 @@ use super::{
     IERC721,
 };
 use crate::{
+    constants::ETH_ADDRESS,
     error::{AssetError, RelayError},
     price::PriceOracle,
     types::{AssetMetadata, CoinKind, FeeTokens, Quote, Token},
 };
 use alloy::primitives::{
-    Address, ChainId, U256, U512, address,
+    Address, ChainId, U256, U512,
     map::{HashMap, HashSet},
 };
 use futures_util::future::join_all;
@@ -142,8 +143,7 @@ impl From<Address> for Asset {
     fn from(asset: Address) -> Self {
         // 0xee..ee is how `eth_simulateV1` represents the native asset, and 0x00..00 is how we
         // represent the native asset.
-        if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") || asset == Address::ZERO
-        {
+        if asset == ETH_ADDRESS || asset == Address::ZERO {
             Asset::Native
         } else {
             Asset::Token(asset)
