@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "18.2.1"
+version = "19.0.0"
 edition = "2024"
 publish = false
 
