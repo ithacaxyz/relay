@@ -71,6 +71,7 @@ pub struct EstimationDependencies<'a> {
 
 impl<'a> EstimationDependencies<'a> {
     /// Create a new EstimationDependencies from individual components.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         contracts: &'a VersionedContracts,
         chains: &'a Chains,
