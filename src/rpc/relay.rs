@@ -41,7 +41,7 @@ use alloy::{
         eip1559::Eip1559Estimation,
         eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
-    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U256, U64, aliases::B192, bytes},
+    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256, aliases::B192, bytes},
     providers::{
         DynProvider, Provider,
         utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},

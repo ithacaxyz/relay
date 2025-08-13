@@ -5,7 +5,7 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, U256},
+    primitives::{Address, U64, U256},
     providers::Provider,
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -90,7 +90,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
 
     let kind = env
         .relay_endpoint
-        .get_capabilities(Some(vec![env.chain_id()]))
+        .get_capabilities(Some(vec![U64::from(env.chain_id())]))
         .await?
         .chain(env.chain_id())
         .fees
