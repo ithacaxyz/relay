@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
+    cache::RpcCache,
     error::{IntentError, RelayError},
     storage::BundleStatus,
     types::{
@@ -442,6 +443,7 @@ impl PrepareCallsContext {
         maybe_stored: Option<&CreatableAccount>,
         latest_orchestrator: Address,
         provider: &DynProvider,
+        cache: Option<RpcCache>,
     ) -> eyre::Result<(B256, TypedData)> {
         match self {
             PrepareCallsContext::Quote(context) => {
@@ -451,7 +453,7 @@ impl PrepareCallsContext {
                 } else {
                     output_quote
                         .intent
-                        .compute_eip712_data(output_quote.orchestrator, provider, None)
+                        .compute_eip712_data(output_quote.orchestrator, provider, cache.clone())
                         .await
                 }
             }
@@ -470,7 +472,7 @@ impl PrepareCallsContext {
                         .map_err(RelayError::from)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator_address, provider, None).await
+                pre_call.compute_eip712_data(orchestrator_address, provider, cache).await
             }
         }
     }

@@ -140,3 +140,45 @@ pub async fn setup_exporter(metrics_addr: impl Into<SocketAddr>) -> PrometheusHa
 
     handle
 }
+
+/// Record multicall usage metrics
+pub fn record_multicall_usage(batch_size: usize, calls_saved: usize, chain_id: u64) {
+    histogram!("relay_multicall_batch_size").record(batch_size as f64);
+    counter!("relay_multicall_rpc_calls_saved").increment(calls_saved as u64);
+    counter!("relay_multicall_usage_total", "chain_id" => chain_id.to_string()).increment(1);
+}
+
+/// Record multicall fallback usage
+pub fn record_multicall_fallback(chain_id: u64, reason: &str) {
+    counter!("relay_multicall_fallback_total",
+        "chain_id" => chain_id.to_string(),
+        "reason" => reason.to_string()
+    )
+    .increment(1);
+}
+
+/// Record multicall execution time
+pub fn record_multicall_duration(duration_ms: f64, chain_id: u64, batch_size: usize) {
+    histogram!("relay_multicall_duration_ms",
+        "chain_id" => chain_id.to_string(),
+        "batch_size" => batch_size.to_string()
+    )
+    .record(duration_ms);
+}
+
+/// Record cache hit during multicall preparation
+pub fn record_multicall_cache_hit(chain_id: u64) {
+    counter!("relay_multicall_cache_hits",
+        "chain_id" => chain_id.to_string()
+    )
+    .increment(1);
+}
+
+/// Record multicall success rate
+pub fn record_multicall_success(chain_id: u64, success: bool) {
+    counter!("relay_multicall_attempts",
+        "chain_id" => chain_id.to_string(),
+        "status" => if success { "success" } else { "failure" }.to_string()
+    )
+    .increment(1);
+}

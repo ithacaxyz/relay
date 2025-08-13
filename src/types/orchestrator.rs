@@ -297,40 +297,35 @@ impl<P: Provider> Orchestrator<P> {
         let chain_id = ChainId::from(provider_chain_id);
 
         // Try cache first and return early if present
-        if let Some(domain) =
-            self.cache.as_ref().and_then(|cache| cache.get_eip712_domain(self.address(), chain_id))
+        if let Some(domain) = self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.get_eip712_domain(self.address(), chain_id, multichain))
         {
-            let result = if multichain {
-                Eip712Domain::new(
-                    domain.name,
-                    domain.version,
-                    None,
-                    domain.verifying_contract,
-                    domain.salt,
-                )
-            } else {
-                domain
-            };
-            return Ok(result);
+            return Ok(domain);
         }
 
-        // Otherwise, fetch from RPC, cache it, and return
+        // Otherwise, fetch from RPC and create appropriate domain variant
         let fetched = self.fetch_eip712_domain_from_rpc().await?;
-        if let Some(cache) = &self.cache {
-            cache.set_eip712_domain(*self.address(), chain_id, fetched.clone());
-        }
 
         let result = if multichain {
+            // Create multichain variant (no chain ID)
             Eip712Domain::new(
                 fetched.name,
                 fetched.version,
-                None,
+                None, // Omit chain ID for multichain
                 fetched.verifying_contract,
                 fetched.salt,
             )
         } else {
+            // Use single-chain variant (with chain ID)
             fetched
         };
+
+        // Cache the appropriate variant
+        if let Some(cache) = &self.cache {
+            cache.set_eip712_domain(*self.address(), chain_id, result.clone(), multichain);
+        }
 
         Ok(result)
     }

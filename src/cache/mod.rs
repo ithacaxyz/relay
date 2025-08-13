@@ -24,8 +24,9 @@ struct CacheInner {
     pub code_cache: DashMap<Address, Bytes>,
     /// Static cache for delegation implementations (rarely changes in production)
     delegation_cache: DashMap<Address, Address>,
-    /// Cache for EIP712Domains: key is (orchestrator_address, chain_id)
-    eip712_domain_cache: DashMap<(Address, ChainId), Eip712Domain>,
+    /// Cache for EIP712Domains: key is (orchestrator_address, chain_id, is_multichain)
+    /// The is_multichain bool differentiates between multichain and single-chain domains
+    eip712_domain_cache: DashMap<(Address, ChainId, bool), Eip712Domain>,
 }
 
 /// Thread-safe cache for RPC results with factory methods for creating cached contract instances.
@@ -84,25 +85,80 @@ impl RpcCache {
     }
 
     /// Get cached EIP712Domain for an orchestrator on a specific chain.
+    /// The multichain flag determines whether to retrieve multichain or single-chain variant.
     pub fn get_eip712_domain(
         &self,
         orchestrator: &Address,
         chain_id: ChainId,
+        multichain: bool,
     ) -> Option<Eip712Domain> {
-        let entry = self.0.eip712_domain_cache.get(&(*orchestrator, chain_id))?;
-        debug!(orchestrator = %orchestrator, chain_id, "EIP712Domain cache HIT");
+        let entry = self.0.eip712_domain_cache.get(&(*orchestrator, chain_id, multichain))?;
+        debug!(orchestrator = %orchestrator, chain_id, multichain, "EIP712Domain cache HIT");
         Some(entry.value().clone())
     }
 
     /// Cache EIP712Domain for an orchestrator on a specific chain.
+    /// The multichain flag determines whether this is a multichain or single-chain variant.
     pub fn set_eip712_domain(
         &self,
         orchestrator: Address,
         chain_id: ChainId,
         domain: Eip712Domain,
+        multichain: bool,
     ) {
-        debug!(orchestrator = %orchestrator, chain_id, "Caching EIP712Domain");
-        self.0.eip712_domain_cache.insert((orchestrator, chain_id), domain);
+        debug!(orchestrator = %orchestrator, chain_id, multichain, "Caching EIP712Domain");
+        self.0.eip712_domain_cache.insert((orchestrator, chain_id, multichain), domain);
+    }
+
+    /// Check if we should skip an address in multicall because it's cached.
+    /// Returns true if the code is cached and non-empty (contract exists).
+    pub fn should_skip_in_multicall(&self, address: &Address) -> bool {
+        if let Some(code) = self.get_code(address) {
+            debug!(address = %address, "Skipping in multicall - cached");
+            !code.is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of cached code entries.
+    pub fn code_cache_size(&self) -> usize {
+        self.0.code_cache.len()
+    }
+
+    /// Get the number of cached delegation entries.
+    pub fn delegation_cache_size(&self) -> usize {
+        self.0.delegation_cache.len()
+    }
+
+    /// Prepare a list of addresses for multicall by filtering out cached entries.
+    /// Returns a vector of addresses that need to be fetched.
+    pub fn prepare_multicall_batch(&self, addresses: &[Address]) -> Vec<Address> {
+        addresses.iter().filter(|addr| !self.should_skip_in_multicall(addr)).copied().collect()
+    }
+
+    /// Merge multicall results with cached values.
+    /// Takes the original list of addresses and the filtered results from multicall.
+    /// Returns a vector with all values in the original order.
+    pub fn merge_results<T: Clone>(
+        &self,
+        addresses: &[Address],
+        multicall_results: Vec<T>,
+        get_cached: impl Fn(&Address) -> Option<T>,
+    ) -> Vec<Option<T>> {
+        let mut result_iter = multicall_results.into_iter();
+        addresses
+            .iter()
+            .map(|addr| {
+                if self.should_skip_in_multicall(addr) {
+                    // Use cached value
+                    get_cached(addr)
+                } else {
+                    // Use multicall result
+                    result_iter.next()
+                }
+            })
+            .collect()
     }
 }
 
@@ -171,24 +227,103 @@ mod tests {
             None,
         );
 
-        // Test caching for chain 1
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), None);
-        cache.set_eip712_domain(orchestrator, chain_id_1, domain_chain_1.clone());
+        // Test caching for chain 1 (single-chain)
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, false), None);
+        cache.set_eip712_domain(orchestrator, chain_id_1, domain_chain_1.clone(), false);
         assert_eq!(
-            cache.get_eip712_domain(&orchestrator, chain_id_1),
+            cache.get_eip712_domain(&orchestrator, chain_id_1, false),
             Some(domain_chain_1.clone())
         );
 
-        // Test caching for chain 2
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), None);
-        cache.set_eip712_domain(orchestrator, chain_id_2, domain_chain_2.clone());
+        // Test caching for chain 2 (single-chain)
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2, false), None);
+        cache.set_eip712_domain(orchestrator, chain_id_2, domain_chain_2.clone(), false);
         assert_eq!(
-            cache.get_eip712_domain(&orchestrator, chain_id_2),
+            cache.get_eip712_domain(&orchestrator, chain_id_2, false),
             Some(domain_chain_2.clone())
         );
 
         // Verify different chains have separate cache entries
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1), Some(domain_chain_1));
-        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2), Some(domain_chain_2));
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_1, false),
+            Some(domain_chain_1.clone())
+        );
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_2, false),
+            Some(domain_chain_2.clone())
+        );
+
+        // Test multichain variants are cached separately
+        let domain_multichain = Eip712Domain::new(
+            Some("TestDomain".into()),
+            Some("1.0.0".into()),
+            None, // No chain ID for multichain
+            Some(orchestrator),
+            None,
+        );
+
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, true), None);
+        cache.set_eip712_domain(orchestrator, chain_id_1, domain_multichain.clone(), true);
+        assert_eq!(
+            cache.get_eip712_domain(&orchestrator, chain_id_1, true),
+            Some(domain_multichain)
+        );
+
+        // Verify single-chain and multichain entries are separate
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_1, false), Some(domain_chain_1));
+        assert_eq!(cache.get_eip712_domain(&orchestrator, chain_id_2, false), Some(domain_chain_2));
+    }
+
+    #[test]
+    fn test_multicall_batch_preparation() {
+        let cache = RpcCache::new();
+
+        // Set up test addresses
+        let addr1 = address!("1111111111111111111111111111111111111111");
+        let addr2 = address!("2222222222222222222222222222222222222222");
+        let addr3 = address!("3333333333333333333333333333333333333333");
+
+        // Cache code for addr2 (should be skipped)
+        cache.set_code(addr2, bytes!("608060405234801561001057600080fd5b50"));
+
+        // Test batch preparation
+        let addresses = vec![addr1, addr2, addr3];
+        let batch = cache.prepare_multicall_batch(&addresses);
+
+        // Should only include addr1 and addr3 (addr2 is cached)
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0], addr1);
+        assert_eq!(batch[1], addr3);
+    }
+
+    #[test]
+    fn test_merge_results() {
+        let cache = RpcCache::new();
+
+        // Set up test addresses
+        let addr1 = address!("1111111111111111111111111111111111111111");
+        let addr2 = address!("2222222222222222222222222222222222222222");
+        let addr3 = address!("3333333333333333333333333333333333333333");
+
+        // Cache code for addr2
+        let cached_code = bytes!("608060405234801561001057600080fd5b50");
+        cache.set_code(addr2, cached_code.clone());
+
+        // Simulate multicall results (only for non-cached addresses)
+        let multicall_results = vec![
+            bytes!("1111"), // Result for addr1
+            bytes!("3333"), // Result for addr3
+        ];
+
+        // Merge results
+        let addresses = vec![addr1, addr2, addr3];
+        let merged =
+            cache.merge_results(&addresses, multicall_results, |addr| cache.get_code(addr));
+
+        // Verify merged results
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0], Some(bytes!("1111"))); // addr1 from multicall
+        assert_eq!(merged[1], Some(cached_code)); // addr2 from cache
+        assert_eq!(merged[2], Some(bytes!("3333"))); // addr3 from multicall
     }
 }

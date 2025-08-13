@@ -17,7 +17,8 @@ use crate::{
     estimation::{
         build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
     },
-    provider::ProviderExt,
+    metrics::{record_multicall_fallback, record_multicall_usage},
+    provider::{MulticallExt, ProviderExt},
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -362,6 +363,10 @@ impl Relay {
 
         // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
         // above)
+        // Note: We can't easily batch these with multicall because:
+        // 1. get_orchestrator() requires the account's delegation contract instance
+        // 2. has_supported_delegation() may need to check cache/storage
+        // These operations are already optimized with caching and parallel execution
         let (orchestrator, delegation) = try_join!(
             // Fetch orchestrator from the account and ensure it is supported
             async {
@@ -628,7 +633,7 @@ impl Relay {
 
         // Compute EIP-712 digest for the intent
         let (eip712_digest, _) = intent
-            .compute_eip712_data(quote.orchestrator, &provider, None)
+            .compute_eip712_data(quote.orchestrator, &provider, Some(self.inner.rpc_cache.clone()))
             .await
             .map_err(RelayError::from)?;
 
@@ -1069,7 +1074,12 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
+            .compute_signing_digest(
+                maybe_stored.as_ref(),
+                self.orchestrator(),
+                &provider,
+                Some(self.inner.rpc_cache.clone()),
+            )
             .await
             .map_err(RelayError::from)?;
 
@@ -1800,14 +1810,35 @@ impl RelayApiServer for Relay {
 
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
 
-                    let (balance, decimals, name, symbol) = chain_provider
+                    let multicall_result = chain_provider
                         .multicall()
                         .add(erc20.balanceOf(request.account))
                         .add(erc20.decimals())
                         .add(erc20.name())
                         .add(erc20.symbol())
                         .aggregate()
-                        .await?;
+                        .await;
+
+                    let (balance, decimals, name, symbol) = match multicall_result {
+                        Ok(result) => {
+                            // Record successful multicall usage
+                            record_multicall_usage(4, 3, *chain); // 4 calls in 1 multicall saves 3 RPC calls
+                            result
+                        }
+                        Err(e) => {
+                            // Record fallback and retry individual calls
+                            record_multicall_fallback(*chain, "multicall_aggregate_failed");
+                            debug!("Multicall failed for ERC20 queries, falling back to individual calls: {:?}", e);
+
+                            // Fallback to individual calls
+                            try_join!(
+                                erc20.balanceOf(request.account).call(),
+                                erc20.decimals().call(),
+                                erc20.name().call(),
+                                erc20.symbol().call()
+                            ).map_err(RelayError::internal)?
+                        }
+                    };
 
                     Ok(Asset7811 {
                         address: asset.address,
@@ -1882,7 +1913,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) = pre_call
-            .compute_eip712_data(self.orchestrator(), &provider, None)
+            .compute_eip712_data(self.orchestrator(), &provider, Some(self.inner.rpc_cache.clone()))
             .await
             .map_err(RelayError::from)?;
 
@@ -1971,7 +2002,11 @@ impl RelayApiServer for Relay {
             async {
                 storage_account
                     .pre_call
-                    .compute_eip712_data(self.orchestrator(), &provider, None)
+                    .compute_eip712_data(
+                        self.orchestrator(),
+                        &provider,
+                        Some(self.inner.rpc_cache.clone()),
+                    )
                     .await
                     .map_err(RelayError::from)
             },
