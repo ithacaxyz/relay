@@ -1848,14 +1848,48 @@ impl RelayApiServer for Relay {
 
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
 
-                    let (balance, decimals, name, symbol) = chain_provider
+                    // Try to batch all ERC20 queries using multicall for efficiency
+                    let multicall_result = chain_provider
                         .multicall()
                         .add(erc20.balanceOf(request.account))
                         .add(erc20.decimals())
                         .add(erc20.name())
                         .add(erc20.symbol())
                         .aggregate()
-                        .await?;
+                        .await;
+
+                    let (balance, decimals, name, symbol) = match multicall_result {
+                        Ok(result) => {
+                            debug!(
+                                chain_id = %chain,
+                                token = %asset.address.address(),
+                                "Successfully batched 4 ERC20 calls into 1 multicall"
+                            );
+                            result
+                        }
+                        Err(e) => {
+                            // Fallback to individual calls if multicall fails
+                            debug!(
+                                chain_id = %chain,
+                                token = %asset.address.address(),
+                                error = ?e,
+                                "Multicall failed for ERC20 queries, falling back to individual calls"
+                            );
+                            
+                            // Execute calls individually as fallback
+                            let balance_call = erc20.balanceOf(request.account);
+                            let decimals_call = erc20.decimals();
+                            let name_call = erc20.name();
+                            let symbol_call = erc20.symbol();
+                            
+                            try_join!(
+                                balance_call.call(),
+                                decimals_call.call(),
+                                name_call.call(),
+                                symbol_call.call()
+                            ).map_err(RelayError::internal)?
+                        }
+                    };
 
                     Ok(Asset7811 {
                         address: asset.address,
