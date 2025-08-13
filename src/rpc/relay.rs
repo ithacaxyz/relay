@@ -184,14 +184,13 @@ impl Relay {
         let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
             // Relay needs a chain endpoint to support a chain.
             let chain = self.inner.chains.get(chain_id)?;
-            let native_uid = chain.assets.native()?.0.clone();
-            let fee_tokens = chain.assets.fee_tokens();
+            let native_uid = chain.assets().native()?.0.clone();
+            let fee_tokens = chain.assets().fee_tokens();
 
             Some(async move {
                 let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
                     let native_uid = native_uid.clone();
                     async move {
-                        // TODO: only handles eth as native fee token
                         let rate = self
                             .inner
                             .price_oracle
@@ -294,7 +293,7 @@ impl Relay {
 
         let provider = chain.provider.clone();
         let (native_uid, _) =
-            chain.assets.native().ok_or(RelayError::UnsupportedChain(chain_id))?;
+            chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
         let (token_uid, token) = self
             .inner
             .chains
@@ -335,7 +334,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            // Fetch ETH price
+            // Fetch native asset price
             async {
                 Ok(self
                     .inner

@@ -47,7 +47,7 @@ pub struct Chain {
     /// The chain ID.
     chain_id: ChainId,
     /// The supported assets on the chain.
-    pub assets: Assets,
+    assets: Assets,
 }
 
 impl Chain {
@@ -59,6 +59,11 @@ impl Chain {
     /// Returns the chain id
     pub const fn id(&self) -> ChainId {
         self.chain_id
+    }
+
+    /// Returns the assets on the chain.
+    pub fn assets(&self) -> &Assets {
+        &self.assets
     }
 }
 
@@ -80,6 +85,18 @@ impl Chains {
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(config.chains.iter().map(async |(chain, desc)| {
+                // Enforce WebSocket endpoints since we need to subscribe to logs in the interop
+                // service
+                if config.interop.is_some()
+                    && !desc.endpoint.as_str().starts_with("ws://")
+                    && !desc.endpoint.as_str().starts_with("wss://")
+                {
+                    eyre::bail!(
+                        "All endpoints must use WebSocket (ws:// or wss://). Got: {}",
+                        desc.endpoint
+                    );
+                }
+
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(
@@ -297,19 +314,6 @@ async fn try_build_provider(
     endpoint: &Url,
     sequencer_endpoint: Option<&Url>,
 ) -> eyre::Result<DynProvider> {
-    // Enforce WebSocket endpoints since we need to subscribe to logs in the interop
-    // service
-    // todo(onbjerg): let's just remove this check and ONLY support websockets.
-    // always.
-    // if config.interop.is_some()
-    //     && !url.as_str().starts_with("ws://")
-    //     && !url.as_str().starts_with("wss://")
-    // {
-    //     eyre::bail!(
-    //         "All endpoints must use WebSocket (ws:// or wss://). Got: {}",
-    //         url
-    //     );
-    // }
     let (transport, is_local) = create_transport(endpoint).await?;
 
     let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());

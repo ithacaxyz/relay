@@ -243,7 +243,7 @@ impl<'a> ChainDiagnostics<'a> {
         let mut multicall_fee_tokens = self.chain.provider().multicall().dynamic::<balanceOfCall>();
         let tokens = self
             .chain
-            .assets
+            .assets()
             .iter()
             .filter(|(_, t)| !t.address.is_zero())
             .map(|(_, token)| (token.address, AddressRole::FunderContract))
@@ -285,7 +285,7 @@ impl<'a> ChainDiagnostics<'a> {
                 if balance.is_zero()
                     && self
                         .chain
-                        .assets
+                        .assets()
                         .find_by_address(token)
                         .map(|(_, desc)| desc.interop)
                         .unwrap_or_default()
