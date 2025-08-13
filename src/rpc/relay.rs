@@ -358,35 +358,19 @@ impl Relay {
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
-        // above) - This optimization reduces 2 separate RPC calls to parallel execution
-        let (orchestrator_result, delegation_result) = try_join!(
-            account.get_orchestrator().map_err(RelayError::from),
-            account.delegation_implementation().map_err(RelayError::from)
+        // above)
+        let (orchestrator, delegation) = try_join!(
+            // Fetch orchestrator from the account and ensure it is supported
+            async {
+                let orchestrator_addr = account.get_orchestrator().await?;
+                if !self.is_supported_orchestrator(&orchestrator_addr) {
+                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
+                }
+                Ok(Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides))
+            },
+            // Fetch delegation from the account and ensure it is supported
+            self.has_supported_delegation(&account).map_err(RelayError::from)
         )?;
-        
-        // Validate orchestrator support
-        if !self.is_supported_orchestrator(&orchestrator_result) {
-            return Err(RelayError::UnsupportedOrchestrator(orchestrator_result));
-        }
-        let orchestrator = Orchestrator::new(orchestrator_result, &provider).with_overrides(overrides);
-        
-        // Validate delegation support
-        let delegation = if let Some(delegation_impl) = delegation_result {
-            if self.delegation_implementation() == delegation_impl
-                || self.legacy_delegations().any(|c| c == delegation_impl)
-            {
-                delegation_impl
-            } else {
-                return Err(AuthError::InvalidDelegation(delegation_impl).into());
-            }
-        } else {
-            // Attempt to retrieve the delegation proxy from storage, since it might not be
-            // deployed yet.
-            let Some(stored) = self.inner.storage.read_account(&account.address()).await? else {
-                return Err(AuthError::EoaNotDelegated(account.address()).boxed().into());
-            };
-            stored.signed_authorization.address
-        };
 
         debug!(
             %chain_id,
