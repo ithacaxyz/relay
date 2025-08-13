@@ -1,50 +1,40 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
-use crate::metrics::periodic::{MetricCollector, MetricCollectorError};
+use crate::{
+    chains::Chains,
+    metrics::periodic::{MetricCollector, MetricCollectorError},
+};
 use alloy::providers::Provider;
 use metrics::histogram;
 use std::fmt::Debug;
-use url::Url;
 
 /// This collector measures the latency of each HTTP endpoint.
-pub struct LatencyCollector<P> {
-    /// Chains endpoints.
-    providers_with_url: Vec<(Url, P)>,
+#[derive(Debug)]
+pub struct LatencyCollector {
+    /// Chains.
+    chains: Arc<Chains>,
 }
 
-impl<P> LatencyCollector<P> {
-    pub fn new(providers_with_url: Vec<(Url, P)>) -> Self {
-        Self { providers_with_url }
+impl LatencyCollector {
+    pub fn new(chains: Arc<Chains>) -> Self {
+        Self { chains }
     }
 }
 
-impl<P> MetricCollector for LatencyCollector<P>
-where
-    P: Provider + Debug,
-{
+impl MetricCollector for LatencyCollector {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
-        for (url, provider) in &self.providers_with_url {
+        for chain in self.chains.chains_iter() {
             let start = Instant::now();
-            provider.get_client_version().await?;
+            chain.provider().get_client_version().await?;
             let elapsed = start.elapsed().as_millis() as f64;
 
             histogram!(
                 "node_latency",
-                "url" => format!("{url}"),
+                "chain_id" => format!("{}", chain.id()),
             )
             .record(elapsed);
         }
 
         Ok(())
-    }
-}
-
-impl<P> Debug for LatencyCollector<P>
-where
-    P: Provider,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let urls: Vec<&Url> = self.providers_with_url.iter().map(|(url, _)| url).collect();
-        f.debug_struct("BalanceCollector").field("providers", &urls).finish()
     }
 }

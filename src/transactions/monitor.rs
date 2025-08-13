@@ -7,11 +7,12 @@ use alloy::{
 use alloy_chains::Chain;
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use std::{pin::Pin, sync::Arc, time::Duration};
+use url::Url;
 
 use crate::{
+    chains::RETRY_LAYER,
     config::TransactionServiceConfig,
     constants::DEFAULT_POLL_INTERVAL,
-    spawn::RETRY_LAYER,
     transactions::flashblocks::{FlashblocksWatcher, FlashblocksWatcherHandle},
     transport::create_transport,
 };
@@ -35,6 +36,7 @@ impl TransactionMonitoringHandle {
     /// Creates a new [`TxMonitoringHandle`].
     pub async fn new(
         provider: DynProvider,
+        flashblocks_rpc_endpoint: Option<&Url>,
         config: TransactionServiceConfig,
         metrics: Arc<TransactionServiceMetrics>,
     ) -> TransportResult<Self> {
@@ -51,14 +53,13 @@ impl TransactionMonitoringHandle {
             None
         };
 
-        let flashblocks_handle =
-            if let Some(endpoint) = config.flashblocks_rpc_endpoints.get(&chain) {
-                let (flashblocks, handle) = FlashblocksWatcher::new(endpoint.clone()).await?;
-                tokio::spawn(flashblocks.into_future());
-                Some(handle)
-            } else {
-                None
-            };
+        let flashblocks_handle = if let Some(endpoint) = flashblocks_rpc_endpoint {
+            let (flashblocks, handle) = FlashblocksWatcher::new(endpoint.clone()).await?;
+            tokio::spawn(flashblocks.into_future());
+            Some(handle)
+        } else {
+            None
+        };
 
         Ok(Self { external_provider, provider, metrics, flashblocks_handle })
     }

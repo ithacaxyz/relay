@@ -1,5 +1,6 @@
+use crate::types::AssetUid;
+
 use super::internal_rpc;
-use crate::types::CoinKind;
 use alloy::primitives::Address;
 use thiserror::Error;
 
@@ -16,8 +17,8 @@ pub enum AssetError {
     #[error("unknown fee token: {0}")]
     UnknownFeeToken(Address),
     /// The price for the asset is unavailable.
-    #[error("price unavailable for coin: {0:?}")]
-    PriceUnavailable(CoinKind),
+    #[error("price unavailable for asset {0:?}")]
+    PriceUnavailable(AssetUid),
 }
 
 impl From<AssetError> for jsonrpsee::types::error::ErrorObject<'static> {

@@ -2,6 +2,7 @@
 
 use super::ChainDiagnosticsResult;
 use crate::{
+    chains::Chains,
     config::{LayerZeroConfig, RelayConfig},
     interop::settler::layerzero::{
         ULN_CONFIG_TYPE,
@@ -19,7 +20,7 @@ use alloy::{
 };
 use eyre::Result;
 use futures_util::future::try_join_all;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::try_join;
 use tracing::info;
 
@@ -36,33 +37,18 @@ use tracing::info;
 ///   - Confirms at least one DVN is configured (required or optional)
 /// - Message fees: Confirms quote generation works for cross-chain messages
 /// - Library configuration: Validates receive library is properly set for each endpoint
-pub async fn run_layerzero_diagnostics<P: Provider + Clone>(
+pub async fn run_layerzero_diagnostics(
     lz_config: &LayerZeroConfig,
     relay_config: &RelayConfig,
-    providers: &[P],
-    chain_ids: &[ChainId],
+    chains: Arc<Chains>,
 ) -> Result<ChainDiagnosticsResult> {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    let mut provider_map = HashMap::new();
-    for (provider, chain_id) in providers.iter().zip(chain_ids) {
-        provider_map.insert(*chain_id, provider.clone());
-    }
-
-    // check that we have providers for all configured chains
-    for chain_id in lz_config.endpoint_ids.keys() {
-        if !provider_map.contains_key(chain_id) {
-            errors
-                .push(format!("LayerZero: No provider available for configured chain {chain_id}"));
-        }
-    }
-
     // Run checks for each chain
-    let provider_map = Arc::new(provider_map);
     let results = try_join_all(lz_config.endpoint_ids.keys().map(|src_chain_id| {
-        let provider_map = provider_map.clone();
-        check_chain(lz_config, relay_config, provider_map, *src_chain_id)
+        let chains = chains.clone();
+        check_chain(lz_config, relay_config, chains, *src_chain_id)
     }))
     .await?;
 
@@ -75,10 +61,10 @@ pub async fn run_layerzero_diagnostics<P: Provider + Clone>(
 }
 
 /// Run all LayerZero diagnostics for a single source chain.
-async fn check_chain<P: Provider>(
+async fn check_chain(
     lz_config: &LayerZeroConfig,
     relay_config: &RelayConfig,
-    providers: Arc<HashMap<ChainId, P>>,
+    chains: Arc<Chains>,
     src_chain_id: ChainId,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let mut warnings = Vec::new();
@@ -96,19 +82,19 @@ async fn check_chain<P: Provider>(
         return Ok((warnings, errors));
     };
 
-    let Some(src_provider) = providers.get(&src_chain_id) else {
+    let Some(src_provider) = chains.get(src_chain_id).map(|chain| chain.provider().clone()) else {
         errors.push(format!("No provider available for source chain {src_chain_id}"));
         return Ok((warnings, errors));
     };
 
-    let endpoint = ILayerZeroEndpointV2::new(*src_endpoint_address, src_provider);
+    let endpoint = ILayerZeroEndpointV2::new(*src_endpoint_address, &src_provider);
 
     // Prepare multicalls
     let mut multicall_quotes = src_provider.multicall().dynamic::<quoteCall>();
     let mut multicall_get_lib = src_provider.multicall().dynamic::<getReceiveLibraryCall>();
     let mut multicall_peers = src_provider.multicall().dynamic::<peersCall>();
 
-    let settler_contract = ILayerZeroSettler::new(lz_config.settler_address, src_provider);
+    let settler_contract = ILayerZeroSettler::new(lz_config.settler_address, &src_provider);
     let mut quote_dst_chains = Vec::new();
     let mut config_remote_chains = Vec::new();
     let mut peer_eids = Vec::new();
@@ -150,7 +136,7 @@ async fn check_chain<P: Provider>(
     }
 
     // Validate we have the expected number of remote chains
-    let expected_remote_chains = relay_config.chain.endpoints.len() - 1;
+    let expected_remote_chains = relay_config.chains.len() - 1;
     if config_remote_chains.len() != expected_remote_chains {
         errors.push(format!(
             "LayerZeroSettler@{} on chain {} only has {} chains configured instead of {}.",

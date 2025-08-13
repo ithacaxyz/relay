@@ -9,8 +9,9 @@ pub use oracle::{PriceOracle, PriceOracleConfig};
 
 #[cfg(test)]
 mod tests {
+    use crate::types::AssetUid;
+
     use super::*;
-    use crate::types::CoinKind;
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -18,12 +19,24 @@ mod tests {
     #[tokio::test]
     async fn coingecko() {
         let oracle = PriceOracle::new(Default::default());
-        oracle.spawn_fetcher(PriceFetcher::CoinGecko);
+        oracle.spawn_fetcher(PriceFetcher::CoinGecko, &Default::default());
 
         // Allow coingecko to fetch prices
         sleep(Duration::from_millis(500)).await;
 
-        oracle.eth_price(CoinKind::USDT).await.unwrap();
-        oracle.eth_price(CoinKind::USDC).await.unwrap();
+        oracle
+            .native_conversion_rate(
+                AssetUid::new("usd-coin".into()),
+                AssetUid::new("ethereum".into()),
+            )
+            .await
+            .unwrap();
+        oracle
+            .native_conversion_rate(
+                AssetUid::new("tether".into()),
+                AssetUid::new("ethereum".into()),
+            )
+            .await
+            .unwrap();
     }
 }

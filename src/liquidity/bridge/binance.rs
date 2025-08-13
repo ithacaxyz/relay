@@ -6,7 +6,7 @@ use crate::{
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
-    types::{FeeTokens, Funder},
+    types::{AssetDescriptor, Funder},
 };
 use alloy::{
     primitives::{Address, B256, ChainId, U256, map::HashMap},
@@ -97,7 +97,7 @@ impl BinanceBridge {
         providers: HashMap<ChainId, DynProvider>,
         tx_services: HashMap<ChainId, TransactionServiceHandle>,
         config: BinanceBridgeConfig,
-        fee_tokens: &FeeTokens,
+        interop_tokens: HashMap<(ChainId, Address), AssetDescriptor>,
         storage: RelayStorage,
         funder_address: Address,
         funder_owner: DynSigner,
@@ -161,9 +161,7 @@ impl BinanceBridge {
                 };
 
                 // Find whether this coin is supported for interop on the given chain.
-                let Some(token) =
-                    fee_tokens.find(chain.id(), &contract_address).filter(|t| t.interop)
-                else {
+                let Some(token) = interop_tokens.get(&(chain.id(), contract_address)) else {
                     continue;
                 };
 

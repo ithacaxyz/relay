@@ -1,8 +1,9 @@
 //! Asset info service.
 use crate::{
+    config::RelayConfig,
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetWithInfo, CoinKind,
+        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
@@ -255,23 +256,25 @@ pub struct AssetInfoService {
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
     /// Incoming messages for the service.
     command_rx: UnboundedReceiver<AssetInfoServiceMessage>,
+    /// Symbols for native assets.
+    native_symbols: HashMap<ChainId, String>,
 }
 
 impl AssetInfoService {
-    /// Determines the native coin symbol for a given chain ID.
-    fn native_coin_symbol(chain_id: ChainId) -> &'static str {
-        match CoinKind::native_for_chain(chain_id) {
-            CoinKind::BNB => "BNB",
-            CoinKind::POL => "POL",
-            CoinKind::ETH => "ETH",
-            _ => "ETH", // fallback
-        }
-    }
-
     /// Creates a new [`AssetInfoService`].
-    pub fn new(capacity: u32) -> Self {
+    pub fn new(capacity: u32, config: &RelayConfig) -> Self {
         let (command_tx, command_rx) = unbounded_channel();
-        Self { cache: LruMap::new(ByLength::new(capacity)), command_tx, command_rx }
+
+        Self {
+            cache: LruMap::new(ByLength::new(capacity)),
+            command_tx,
+            command_rx,
+            native_symbols: config
+                .chains
+                .iter()
+                .flat_map(|(chain, conf)| Some((chain.id(), conf.native_symbol.clone()?)))
+                .collect(),
+        }
     }
 
     /// Returns a new handle connected to this service.
@@ -293,7 +296,11 @@ impl AssetInfoService {
                 .into_iter()
                 .map(|asset| {
                     let info = if asset.is_native() {
-                        let symbol = Self::native_coin_symbol(chain_id);
+                        let symbol = self
+                            .native_symbols
+                            .get(&chain_id)
+                            .map(|sym| sym.as_str())
+                            .unwrap_or("ETH");
 
                         Some(AssetWithInfo {
                             asset: Asset::Native,
