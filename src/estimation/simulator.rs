@@ -25,13 +25,6 @@ use alloy::{
 /// - EOA key storage slots
 /// - EIP-7702 delegation code
 /// - Fee token balance overrides
-///
-/// # Arguments
-/// * `intent` - The partial intent to simulate
-/// * `context` - Fee estimation context containing authorization and key info
-/// * `mock_from` - Mock address for simulation
-/// * `fee_token_balance` - Current fee token balance
-/// * `provider` - Provider for fetching additional state
 pub async fn build_simulation_overrides<P: Provider>(
     intent: &PartialIntent,
     context: &FeeEstimationContext,

@@ -103,16 +103,12 @@ impl<'a> EstimationDependencies<'a> {
 /// - Calldata cost (16 gas per byte, regardless of value)
 /// - Optional EIP-7702 authorization cost
 ///
-/// # Arguments
-/// * `input` - The transaction calldata
-/// * `has_auth` - Whether the transaction includes an EIP-7702 authorization
-///
 /// # Returns
 /// The estimated intrinsic gas cost in gas units
 ///
 /// # Note
 /// This is an overestimate as it doesn't account for gas refunds in EIP-7702,
-/// and assumes all calldata bytes cost 16 gas (actual cost is 4 for zero bytes).
+/// and assumes all calldata bytes cost 16 gas (actual cost is 4 for zero bytes on Ethereum).
 pub fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
     // for 7702 designations there is an additional gas charge
     //
@@ -125,7 +121,7 @@ pub fn approx_intrinsic_cost(input: &[u8], has_auth: bool) -> u64 {
     // due to calldata values changing. A more robust approach here is either only doing an
     // upperbound for calldata ranges that will change and doing a more accurate estimate for
     // calldata ranges we know to be fixed (e.g. the EOA address), or just sending the calldata to
-    // an empty address on the chain the intent is for to get an estimte of the calldata.
+    // an empty address on the chain the intent is for to get an estimate of the calldata.
     21000 + auth_cost + input.len() as u64 * 16
 }
 

@@ -6,7 +6,7 @@ use crate::e2e::{
 };
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, B256, Bytes, U64, U256},
     providers::{Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolValue},
@@ -26,7 +26,7 @@ use relay::{
 #[tokio::test(flavor = "multi_thread")]
 async fn catch_invalid_delegation() -> eyre::Result<()> {
     let env = Environment::setup().await?;
-    let caps = env.relay_endpoint.get_capabilities(Some(vec![env.chain_id()])).await?;
+    let caps = env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     // Set up account correctly.
@@ -263,7 +263,7 @@ async fn upgrade_delegation(env: &Environment, address: Address) {
 async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
-    let caps = env.relay_endpoint.get_capabilities(Some(vec![env.chain_id()])).await?;
+    let caps = env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
