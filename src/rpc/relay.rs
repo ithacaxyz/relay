@@ -1161,64 +1161,46 @@ impl Relay {
         // highest balances first
         sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
 
-        // Parallelize funding simulations for better performance
-        use futures_util::future::try_join_all;
-
-        // Limit concurrency to avoid overwhelming the system
-        const MAX_CONCURRENT_SIMULATIONS: usize = 5;
-
-        // Process sources in batches to control concurrency
+        // NOTE: Parallelization temporarily disabled due to self-reference issues in async closures
+        // TODO: Properly implement parallel simulations with correct ownership patterns
+        // TODO: Integrate caching to avoid repeated simulations
+        
+        // For now, keeping the original serial implementation to avoid introducing bugs
+        // The parallelization needs more careful design around the async closure capture of `self`
         let mut simulation_results = Vec::new();
-        for chunk in sources.chunks(MAX_CONCURRENT_SIMULATIONS) {
-            let futures: Vec<_> = chunk
-                .iter()
-                .map(|(chain, asset, balance)| {
-                    let chain = *chain;
-                    let asset = *asset;
-                    let balance = *balance;
-
-                    // we simulate escrowing the smallest unit of the asset to get a sense of the
-                    // fees
-                    let funding_context = FundingIntentContext {
-                        eoa,
-                        chain_id: chain,
-                        asset: asset.into(),
-                        amount: U256::from(1),
-                        fee_token: asset,
-                        // note(onbjerg): it doesn't matter what the output intent digest is for
-                        // simulation, as long as it's not zero. otherwise,
-                        // the gas costs will differ a lot.
-                        output_intent_digest: B256::with_last_byte(1),
-                        output_chain_id: destination_chain_id,
-                    };
-
-                    async move {
-                        let escrow_cost = Box::pin(self.prepare_calls_inner(
-                            self.build_funding_intent(funding_context, request_key.clone())?,
-                            // note(onbjerg): its ok the leaf isnt correct here for simulation
-                            Some(IntentKind::MultiInput {
-                                leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
-                                fee: None,
-                            }),
-                        ))
-                        .await
-                        .map_err(RelayError::internal)
-                        .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
-                        .context
-                        .quote()
-                        .expect("should always be a quote")
-                        .ty()
-                        .fees()
-                        .map(|(_, cost)| cost)
-                        .unwrap_or_default();
-
-                        Ok::<_, RelayError>((chain, asset, balance, escrow_cost))
-                    }
-                })
-                .collect();
-
-            let batch_results = try_join_all(futures).await?;
-            simulation_results.extend(batch_results);
+        for (chain, asset, balance) in sources {
+            // we simulate escrowing the smallest unit of the asset to get a sense of the fees
+            let funding_context = FundingIntentContext {
+                eoa,
+                chain_id: chain,
+                asset: asset.into(),
+                amount: U256::from(1),
+                fee_token: asset,
+                // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
+                // as long as it's not zero. otherwise, the gas costs will differ a lot.
+                output_intent_digest: B256::with_last_byte(1),
+                output_chain_id: destination_chain_id,
+            };
+            let escrow_cost = Box::pin(self.prepare_calls_inner(
+                self.build_funding_intent(funding_context, request_key.clone())?,
+                // note(onbjerg): its ok the leaf isnt correct here for simulation
+                Some(IntentKind::MultiInput {
+                    leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
+                    fee: None,
+                }),
+            ))
+            .await
+            .map_err(RelayError::internal)
+            .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
+            .context
+            .quote()
+            .expect("should always be a quote")
+            .ty()
+            .fees()
+            .map(|(_, cost)| cost)
+            .unwrap_or_default();
+            
+            simulation_results.push((chain, asset, balance, escrow_cost));
         }
 
         // Process results to build funding plan
