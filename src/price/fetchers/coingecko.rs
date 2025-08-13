@@ -24,7 +24,10 @@ pub struct CoinGecko {
     /// Price oracle sender used to update the price.
     update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
     /// A map of coin IDs to asset UIDs.
-    assets: HashMap<String, AssetUid>,
+    ///
+    /// Note that multiple asset UIDs might share the same underlying token. This is especially
+    /// true if the relay runs two environments (mainnet and testnet).
+    assets: HashMap<String, Vec<AssetUid>>,
 }
 
 impl CoinGecko {
@@ -32,7 +35,7 @@ impl CoinGecko {
     pub fn new(
         api_key: String,
         update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
-        assets: HashMap<String, AssetUid>,
+        assets: HashMap<String, Vec<AssetUid>>,
     ) -> Self {
         let ids = assets.keys().join(",");
 
@@ -50,21 +53,17 @@ impl CoinGecko {
             warn!("GECKO_API environment variable not set, CoinGecko price fetcher will not run");
             return;
         }
-        let assets = config
-            .chains
-            .iter()
-            .flat_map(|(_, chain)| chain.assets.iter())
-            .map(|(uid, _)| {
-                let remapped = config
-                    .pricefeed
-                    .coingecko
-                    .remapping
-                    .get(uid)
-                    .cloned()
-                    .unwrap_or(uid.as_str().into());
-                (remapped, uid.clone())
-            })
-            .collect();
+        let mut assets: HashMap<String, Vec<AssetUid>> = HashMap::new();
+        for (uid, _) in config.chains.iter().flat_map(|(_, chain)| chain.assets.iter()) {
+            let remapped = config
+                .pricefeed
+                .coingecko
+                .remapping
+                .get(uid)
+                .cloned()
+                .unwrap_or(uid.as_str().into());
+            assets.entry(remapped).or_default().push(uid.clone());
+        }
 
         let gecko = Self::new(Self::api_key(), update_tx, assets);
 
@@ -114,15 +113,16 @@ impl CoinGecko {
         let prices = self
             .assets
             .iter()
-            .filter_map(|(coin_id, uid)| {
+            .filter_map(|(coin_id, uids)| {
                 let price = *data.get(coin_id).and_then(|prices| prices.get("usd"))?;
                 trace!(
-                    token = ?uid,
+                    tokens = ?uids,
                     usd_price = price,
-                    "Fetched USD price for token"
+                    "Fetched USD price for tokens"
                 );
-                Some((uid.clone(), price))
+                Some(uids.clone().into_iter().map(move |uid| (uid, price)))
             })
+            .flatten()
             .collect();
 
         counter!("coingecko.last_update")
@@ -150,8 +150,8 @@ mod tests {
         info!("Using API key: {}", if api_key.is_empty() { "EMPTY" } else { "SET" });
 
         let assets = HashMap::from_iter([
-            ("ethereum".into(), AssetUid::new("eth".into())),
-            ("usd-coin".into(), AssetUid::new("usdc".into())),
+            ("ethereum".into(), vec![AssetUid::new("eth".into())]),
+            ("usd-coin".into(), vec![AssetUid::new("usdc".into())]),
         ]);
         let (update_tx, mut update_rx) = mpsc::unbounded_channel();
         let gecko = CoinGecko::new(api_key, update_tx, assets.clone());
@@ -175,7 +175,7 @@ mod tests {
         info!("\nFinal USD prices collected: {:?}", usd_prices);
 
         // Verify we got USD prices for all native coins and tokens
-        for uid in assets.values() {
+        for uid in assets.values().flat_map(|v| v.iter()) {
             let price = usd_prices.get(uid).copied().unwrap_or_else(|| {
                 panic!("Missing USD price for {uid:?}. Got USD prices: {usd_prices:?}")
             });
