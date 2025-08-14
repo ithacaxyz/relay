@@ -67,6 +67,7 @@ pub struct ChainFeeToken {
     ///    - 1 USDC = 0.000628 ETH ⇒   `native_rate = 0.000628 * 10^18 = 628_000_000_000_000 Wei`
     /// 2. **Stablecoin chain where USDC _is_ the native token**
     ///    - 1 USDC = 1 USDC ⇒   `native_rate = 1 * 10^6 = 1_000_000`
+    #[serde(alias = "native_rate")]
     pub native_rate: Option<U256>,
 }
 
