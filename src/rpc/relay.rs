@@ -44,7 +44,7 @@ use jsonrpsee::{
 use opentelemetry::trace::SpanKind;
 use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
-use tracing::{Instrument, Level, debug, error, instrument, span};
+use tracing::{Instrument, Level, debug, error, instrument, span, warn};
 
 use crate::{
     chains::{Chain, Chains},
