@@ -20,11 +20,12 @@ use crate::{
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
-    eips::{eip1559::Eip1559Estimation, BlockId, Encodable2718},
+    eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{uint, Address, Bytes, B256, U256},
+    primitives::{Address, B256, Bytes, U256, uint},
     providers::{
-        utils::{Eip1559Estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS}, DynProvider, PendingTransactionError, Provider
+        DynProvider, PendingTransactionError, Provider,
+        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
     },
     rpc::types::{TransactionReceipt, TransactionRequest},
     sol_types::SolCall,
@@ -591,9 +592,9 @@ impl Signer {
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
 
-        let mut tx_hash = B256::ZERO;
         let try_close = || async {
-            let fee_estimate = self.provider.estimate_eip1559_fees().await?;
+            let fee_estimate =
+                self.provider.estimate_eip1559_fees().await.map_err(|e| (e.into(), B256::ZERO))?;
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
                 // If we are provided with `min_fees`, this means, we are going to replace some
                 // existing transaction. Nodes usually require us to bump the fees by some margin to
@@ -619,22 +620,23 @@ impl Signer {
                 ..Default::default()
             });
 
-            let tx = self.sign_transaction(tx).await?;
-            tx_hash = *tx.tx_hash();
-            self.send_transaction(&tx).await?;
+            let tx = self.sign_transaction(tx).await.map_err(|e| (e, B256::ZERO))?;
+
+            let tx_hash = *tx.tx_hash();
+            debug!(%tx_hash, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Sending nonce gap closing transaction");
+            self.send_transaction(&tx).await.map_err(|e| (e, tx_hash))?;
             // Give transaction 10 blocks to be mined.
             if self.monitor.watch_transaction(tx_hash, self.block_time * 10).await.is_none() {
-                return Err(SignerError::TxTimeout);
+                return Err((SignerError::TxTimeout, tx_hash));
             }
 
-            Ok::<_, SignerError>(())
+            Ok::<_, (SignerError, B256)>(())
         };
 
         loop {
-            debug!(%tx_hash, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
+            debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
 
-            let Err(err) = try_close().await else { break };
-
+            let Err((err, tx_hash)) = try_close().await else { break };
             error!(%tx_hash, %err, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Failed to close nonce gap");
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
