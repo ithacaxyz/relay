@@ -1,4 +1,4 @@
-use crate::{constants::DEFAULT_POLL_INTERVAL, spawn::RETRY_LAYER, transport::create_transport};
+use crate::{chains::RETRY_LAYER, constants::DEFAULT_POLL_INTERVAL, transport::create_transport};
 use alloy::{
     eips::BlockId,
     primitives::{B256, map::HashMap},

@@ -53,10 +53,10 @@ use tracing_futures::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Lower bound of gas a signer should be able to afford before getting paused until being funded.
-pub const MIN_SIGNER_GAS: U256 = uint!(30_000_000_U256);
+pub const MIN_SIGNER_GAS: U256 = uint!(10_000_000_U256);
 
-/// Amount to top up when pulling gas (5 x MIN_SIGNER_GAS).
-pub const SIGNER_GAS_TOP_UP: U256 = uint!(150_000_000_U256);
+/// Amount to top up when pulling gas (3 x MIN_SIGNER_GAS).
+pub const SIGNER_GAS_TOP_UP: U256 = uint!(30_000_000_U256);
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]

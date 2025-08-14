@@ -111,6 +111,7 @@ pub struct GetAccountsParameters {
     /// Key identifier.
     pub id: KeyID,
     /// Chain ID.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
 }
 
@@ -136,6 +137,7 @@ pub struct VerifySignatureParameters {
     /// The signature bytes
     pub signature: Bytes,
     /// Chain ID of the account with the given key configured.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
 }
 
@@ -186,6 +188,7 @@ pub struct SetEmailParameters {
 #[serde(rename_all = "camelCase")]
 pub struct VerifyEmailParameters {
     /// Chain ID that the account is on.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// The email to associate with the wallet.
     pub email: String,

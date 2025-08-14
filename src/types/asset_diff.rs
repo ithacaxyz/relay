@@ -4,12 +4,14 @@ use super::{
     IERC721,
 };
 use crate::{
+    chains::Chains,
+    constants::ETH_ADDRESS,
     error::{AssetError, RelayError},
     price::PriceOracle,
-    types::{AssetMetadata, CoinKind, FeeTokens, Quote, Token},
+    types::{AssetMetadata, Quote},
 };
 use alloy::primitives::{
-    Address, ChainId, U256, U512, address,
+    Address, ChainId, U256, U512,
     map::{HashMap, HashSet},
 };
 use futures_util::future::join_all;
@@ -142,8 +144,7 @@ impl From<Address> for Asset {
     fn from(asset: Address) -> Self {
         // 0xee..ee is how `eth_simulateV1` represents the native asset, and 0x00..00 is how we
         // represent the native asset.
-        if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") || asset == Address::ZERO
-        {
+        if asset == ETH_ADDRESS || asset == Address::ZERO {
             Asset::Native
         } else {
             Asset::Token(asset)
@@ -359,16 +360,11 @@ pub struct ChainAssetDiffs {
 }
 
 impl ChainAssetDiffs {
-    /// Determines the correct coin kind for USD price lookup.
-    fn coin_for_usd(token: &Token, chain_id: ChainId) -> CoinKind {
-        if token.address.is_zero() { CoinKind::native_for_chain(chain_id) } else { token.kind }
-    }
-
     /// Creates a new ChainAssetDiffs with populated fiat values and calculated fee USD.
     pub async fn new(
         mut asset_diffs: AssetDiffs,
         quote: &Quote,
-        fee_tokens: &FeeTokens,
+        chains: &Chains,
         price_oracle: &PriceOracle,
     ) -> Result<Self, RelayError> {
         let chain_id = quote.chain_id;
@@ -376,15 +372,13 @@ impl ChainAssetDiffs {
         let fee_amount = quote.intent.totalPaymentAmount;
 
         // Calculate fee USD value
-        let token = fee_tokens
-            .find(chain_id, &fee_token)
+        let (token_uid, token) = chains
+            .fee_token(chain_id, fee_token)
             .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken(fee_token)))?;
-
-        let native_coin = Self::coin_for_usd(token, chain_id);
         let usd_price = price_oracle
-            .usd_price(native_coin)
+            .usd_price(token_uid.clone())
             .await
-            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(native_coin)))?;
+            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token_uid.clone())))?;
 
         let fee_usd = calculate_usd_value(fee_amount, usd_price, token.decimals);
 
@@ -392,14 +386,14 @@ impl ChainAssetDiffs {
         join_all(
             asset_diffs.asset_diffs_iter_mut().filter(|diff| diff.metadata.decimals.is_some()).map(
                 async |diff| {
-                    let Some(token) =
-                        fee_tokens.find(chain_id, &diff.address.unwrap_or(Address::ZERO))
+                    let Some((token_uid, _)) =
+                        chains.fee_token(chain_id, diff.address.unwrap_or(Address::ZERO))
                     else {
                         return;
                     };
-
-                    let native_coin = Self::coin_for_usd(token, chain_id);
-                    let Some(usd_price) = price_oracle.usd_price(native_coin).await else { return };
+                    let Some(usd_price) = price_oracle.usd_price(token_uid.clone()).await else {
+                        return;
+                    };
 
                     diff.fiat = Some(FiatValue {
                         currency: "usd".to_string(),

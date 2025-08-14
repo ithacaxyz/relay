@@ -67,7 +67,6 @@ The relay uses YAML configuration files with CLI override support.
 
 **Key configuration files**:
 - **`relay.yaml`** - Main configuration (**Implementation**: `src/config.rs`)
-- **`registry.yaml`** - Chain and token registry (**Implementation**: `src/types/coin_registry.rs`)
 
 ### Configuration Structure
 
@@ -273,41 +272,6 @@ secrets:
 2. **Environment variables** 
 3. **Configuration file**
 4. **Default values** (lowest priority)
-
-### Registry Configuration
-
-The `registry.yaml` file maps chain IDs and token addresses to human-readable names:
-
-```yaml
-# registry.yaml
-chains:
-  1:
-    name: "Ethereum"
-    native_currency: "ETH"
-    rpc_urls:
-      - "https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}"
-    block_explorer: "https://etherscan.io"
-    
-  137:
-    name: "Polygon"
-    native_currency: "MATIC"
-    rpc_urls:
-      - "https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}"
-    block_explorer: "https://polygonscan.com"
-
-tokens:
-  "0xA0b86a33E6411B10FdF6FFf01d7F37e6E8C29D21":
-    symbol: "USDC"
-    name: "USD Coin"
-    decimals: 6
-    chains: [1, 137, 42161]
-    
-  "0xdAC17F958D2ee523a2206206994597C13D831ec7":
-    symbol: "USDT"
-    name: "Tether USD"
-    decimals: 6
-    chains: [1, 137, 56]
-```
 
 ## Development Workflow
 

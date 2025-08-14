@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "18.1.14"
+version = "20.0.1"
 edition = "2024"
 publish = false
 
@@ -24,10 +24,12 @@ alloy = { version = "1.0.23", features = [
     "json-rpc",
     "k256",
     "providers",
+    "provider-debug-api",
     "rlp",
     "rpc",
     "rpc-client",
     "rpc-types",
+    "rpc-types-trace",
     "serde",
     "signers",
     "signer-local",

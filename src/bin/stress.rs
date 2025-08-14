@@ -19,7 +19,7 @@
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U256, address, keccak256},
+    primitives::{Address, B256, ChainId, U64, U256, address, keccak256},
     providers::{
         Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -277,7 +277,9 @@ impl StressTester {
         info!("Output chain is {destination_chain_id}");
 
         // Get capabilities for all chains
-        let caps = relay_client.get_capabilities(Some(chain_ids.clone())).await?;
+        let caps = relay_client
+            .get_capabilities(Some(chain_ids.iter().map(|&id| U64::from(id)).collect()))
+            .await?;
 
         // Build fee token mapping across all chains
         let fee_token_map = build_fee_token_map(&caps, &chain_ids, args.fee_token).await?;
@@ -626,33 +628,33 @@ async fn build_fee_token_map(
     fee_token: Address,
 ) -> eyre::Result<Arc<HashMap<ChainId, Address>>> {
     // Find the fee token kind from the first chain that has it
-    let fee_token_kind = caps
+    let fee_token_uid = caps
         .0
         .values()
         .flat_map(|chain_caps| &chain_caps.fees.tokens)
-        .find(|token| token.address == fee_token)
+        .find(|token| token.asset.address == fee_token)
         .ok_or_else(|| eyre::eyre!("fee token {} not found in any chain", fee_token))?
-        .kind;
+        .uid
+        .clone();
 
-    info!("Fee token {} has kind {:?}", fee_token, fee_token_kind);
+    info!("Fee token {} has kind {:?}", fee_token, fee_token_uid);
 
     // Build a mapping of chain_id -> fee token address for this kind
     let mut fee_token_map = HashMap::new();
     for (chain_id, chain_caps) in &caps.0 {
-        if let Some(token) = chain_caps.fees.tokens.iter().find(|t| t.kind == fee_token_kind) {
-            fee_token_map.insert(*chain_id, token.address);
-            info!("Chain {} has {} token at address {}", chain_id, fee_token_kind, token.address);
+        if let Some(token) = chain_caps.fees.tokens.iter().find(|t| t.uid == fee_token_uid) {
+            fee_token_map.insert(*chain_id, token.asset.address);
+            info!(
+                "Chain {} has {} token at address {}",
+                chain_id, fee_token_uid, token.asset.address
+            );
         }
     }
 
     // Verify all chains support the fee token kind
     for chain_id in chain_ids {
         if !fee_token_map.contains_key(chain_id) {
-            eyre::bail!(
-                "fee token kind {:?} is not supported on chain {}",
-                fee_token_kind,
-                chain_id,
-            );
+            eyre::bail!("fee token uid {:?} is not supported on chain {}", fee_token_uid, chain_id,);
         }
     }
 

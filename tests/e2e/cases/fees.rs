@@ -5,7 +5,7 @@ use crate::e2e::{
     send_prepared_calls,
 };
 use alloy::{
-    primitives::{Address, U256},
+    primitives::{Address, U64, U256},
     providers::Provider,
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -14,7 +14,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, IERC20, KeyType, KeyWith712Signer,
+        AssetUid, Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -88,18 +88,23 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     let eth_paid = signer_balance_before - signer_balance_after;
     let fee_received = fee_recipient_balance_after - fee_recipient_balance_before;
 
-    let kind = env
+    let uid = env
         .relay_endpoint
-        .get_capabilities(Some(vec![env.chain_id()]))
+        .get_capabilities(Some(vec![U64::from(env.chain_id())]))
         .await?
         .chain(env.chain_id())
         .fees
         .tokens
         .iter()
-        .find_map(|t| (t.address == env.fee_token).then_some(t.kind))
+        .find_map(|t| (t.asset.address == env.fee_token).then_some(t.uid.clone()))
         .unwrap();
 
-    let fee_token_price = env.relay_handle.price_oracle.eth_price(kind).await.unwrap();
+    let fee_token_price = env
+        .relay_handle
+        .price_oracle
+        .native_conversion_rate(uid, AssetUid::new("eth".into()))
+        .await
+        .unwrap();
 
     let expected_fee =
         eth_paid * U256::from(10u128.pow(fee_token_decimals as u32)) / fee_token_price;
