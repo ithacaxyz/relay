@@ -262,15 +262,11 @@ impl<'a> ConnectionContext<'a> {
             self.lz_config.endpoint_addresses[&self.src_chain_id],
             self.src_provider,
         );
-        let uln_config_call = endpoint.getConfig(
-            self.lz_config.settler_address,
-            lib_address,
-            self.dst_eid,
-            ULN_CONFIG_TYPE,
-        );
 
-        let Ok(config_bytes) =
-            self.src_provider.call(uln_config_call.into_transaction_request()).await
+        let Ok(config_bytes) = endpoint
+            .getConfig(self.lz_config.settler_address, lib_address, self.dst_eid, ULN_CONFIG_TYPE)
+            .call()
+            .await
         else {
             errors.push(format!(
                 "Failed to fetch ULN config for {} -> {}",
