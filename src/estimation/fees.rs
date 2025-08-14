@@ -198,8 +198,7 @@ pub async fn estimate_fee(
     let chain = deps.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
     let provider = chain.provider.clone();
-    let (native_uid, _) =
-        chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
+    let (native_uid, _) = chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
     let Some((token_uid, token)) = deps.chains.fee_token(chain_id, context.fee_token) else {
         return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
     };
