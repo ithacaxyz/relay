@@ -1093,6 +1093,7 @@ impl Relay {
         // todo: this only supports one asset...
         if let Some(required_funds) = request.capabilities.required_funds.first()
             && self.inner.chains.interop().is_some()
+            && self.inner.chains.interop_asset(request.chain_id, required_funds.address).is_some()
         {
             self.determine_quote_strategy(
                 request,
