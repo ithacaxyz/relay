@@ -42,11 +42,13 @@ pub struct RelayConfig {
     #[serde(with = "crate::serde::hash_map")]
     pub chains: HashMap<Chain, ChainConfig>,
     /// Quote configuration.
+    #[serde(default)]
     pub quote: QuoteConfig,
     /// Email configuration.
     #[serde(default)]
     pub email: EmailConfig,
     /// Transaction service configuration.
+    #[serde(default)]
     pub transactions: TransactionServiceConfig,
     /// Interop configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,8 +56,10 @@ pub struct RelayConfig {
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
+    #[serde(default)]
     pub legacy_orchestrators: BTreeSet<Address>,
     /// Previously deployed delegation proxies.
+    #[serde(default)]
     pub legacy_delegation_proxies: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
