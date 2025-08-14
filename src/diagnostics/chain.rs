@@ -4,6 +4,7 @@ use crate::{
     diagnostics::chain::IEIP712::eip712DomainCall,
     signers::DynSigner,
     types::{
+        AssetUid,
         DelegationProxy::{DelegationProxyInstance, implementationCall},
         IERC20::{self, balanceOfCall},
         IFunder::{self, gasWalletsCall},
@@ -15,6 +16,8 @@ use alloy::{
     sol_types::SolCall,
 };
 use eyre::Result;
+use itertools::Itertools;
+use std::collections::HashSet;
 use tokio::try_join;
 use tracing::info;
 
@@ -314,5 +317,134 @@ alloy::sol! {
                 bytes32 salt,
                 uint256[] memory extensions
             );
+    }
+}
+
+/// Represents connected chains based on shared interop assets.
+///
+/// Each connection is bidirectional (if A connects to B, then B connects to A).
+#[derive(Debug)]
+pub struct ConnectedChains {
+    /// The tuple pairs are ordered with the smaller chain ID first for consistency.
+    connections: HashSet<(ChainId, ChainId)>,
+}
+
+impl ConnectedChains {
+    /// Create a new instance by finding chain connectivity from the relay configuration.
+    pub fn new(config: &RelayConfig) -> Self {
+        let mut connections = HashSet::new();
+
+        for (&chain_a, &chain_b) in config.chains.keys().tuple_combinations() {
+            let chain_a_id = chain_a.id();
+            let chain_b_id = chain_b.id();
+
+            // Collect interop assets from chain A
+            let assets_a: HashSet<AssetUid> =
+                config.chains[&chain_a].assets.interop_iter().map(|(uid, _)| uid.clone()).collect();
+
+            // Check if chain B has any matching interop assets
+            let has_shared_asset = config.chains[&chain_b]
+                .assets
+                .interop_iter()
+                .any(|(uid, _)| assets_a.contains(uid));
+
+            if has_shared_asset {
+                // Store the pair (always with smaller chain ID first for consistency)
+                let pair = if chain_a_id < chain_b_id {
+                    (chain_a_id, chain_b_id)
+                } else {
+                    (chain_b_id, chain_a_id)
+                };
+                connections.insert(pair);
+            }
+        }
+
+        let mut connected_chains = connections.iter().map(|&(chain_a_id, chain_b_id)| {
+            let chain_a = alloy_chains::Chain::from(chain_a_id);
+            let chain_b = alloy_chains::Chain::from(chain_b_id);
+
+            let a_name =
+                chain_a.named().map(|n| n.to_string()).unwrap_or_else(|| chain_a_id.to_string());
+            let b_name =
+                chain_b.named().map(|n| n.to_string()).unwrap_or_else(|| chain_b_id.to_string());
+
+            format!("{a_name} <-> {b_name}")
+        });
+
+        info!(
+            "Chain connectivity: {} connections found: [{}]",
+            connections.len(),
+            connected_chains.join(", ")
+        );
+
+        Self { connections }
+    }
+
+    /// Iterate over the connections.
+    pub fn iter(&self) -> impl Iterator<Item = &(ChainId, ChainId)> {
+        self.connections.iter()
+    }
+
+    /// Ensures that no mainnet chain is connected to a testnet chain.
+    pub fn ensure_no_mainnet_testnet_connections(
+        &self,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        for &(chain_a_id, chain_b_id) in &self.connections {
+            let chain_a = alloy_chains::Chain::from(chain_a_id);
+            let chain_b = alloy_chains::Chain::from(chain_b_id);
+
+            let named_a = chain_a.named();
+            let named_b = chain_b.named();
+
+            // If either chain is not a named chain, warn but don't validate
+            match (named_a, named_b) {
+                (None, _) | (_, None) => {
+                    if named_a.is_none() {
+                        warnings.push(format!(
+                            "Chain {chain_a_id} is not a recognized named chain, skipping mainnet/testnet validation"
+                        ));
+                    }
+                    if named_b.is_none() {
+                        warnings.push(format!(
+                            "Chain {chain_b_id} is not a recognized named chain, skipping mainnet/testnet validation"
+                        ));
+                    }
+                }
+                (Some(named_a), Some(named_b)) => {
+                    let a_is_testnet = named_a.is_testnet();
+                    let b_is_testnet = named_b.is_testnet();
+
+                    if a_is_testnet != b_is_testnet {
+                        errors.push(format!(
+                            "Invalid connection between {} chain {} and {} chain {}",
+                            if a_is_testnet { "testnet" } else { "mainnet" },
+                            named_a,
+                            if b_is_testnet { "testnet" } else { "mainnet" },
+                            named_b
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_chains::Chain;
+
+    #[test]
+    fn test_mainnet_testnet_validation() {
+        let mut connections = HashSet::new();
+        connections.insert((Chain::mainnet().id(), Chain::arbitrum_sepolia().id()));
+
+        let mut errors = vec![];
+        ConnectedChains { connections }
+            .ensure_no_mainnet_testnet_connections(&mut errors, &mut vec![]);
+
+        assert_eq!(errors.len(), 1);
     }
 }
