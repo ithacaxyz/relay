@@ -5,8 +5,12 @@ use crate::{
     types::IERC20,
 };
 use alloy::{
-    primitives::{Address, B256, Log, U256},
-    providers::{Provider, ext::DebugApi},
+    primitives::{Address, B256, BlockNumber, Log, U256},
+    providers::{
+        MULTICALL3_ADDRESS, Provider,
+        bindings::IMulticall3::{Call, aggregateCall},
+        ext::DebugApi,
+    },
     rpc::types::{
         BlockId, TransactionRequest,
         simulate::{SimBlock, SimulatePayload},
@@ -16,7 +20,7 @@ use alloy::{
         },
     },
     sol,
-    sol_types::{SolEvent, SolValue},
+    sol_types::{SolCall, SolEvent, SolValue},
     transports::TransportErrorKind,
 };
 use alloy_chains::Chain;
@@ -98,7 +102,8 @@ impl<P: Provider> SimulatorContract<P> {
     /// Returns a `SimulationExecutionResult` containing:
     /// - Gas estimates for the transaction
     /// - All logs emitted during execution
-    /// - The transaction request used for simulatio
+    /// - The transaction request used for simulation
+    /// - The block number from aggregate
     pub async fn simulate(
         &self,
         orchestrator_address: Address,
@@ -106,21 +111,31 @@ impl<P: Provider> SimulatorContract<P> {
         intent_encoded: Vec<u8>,
         gas_validation_offset: U256,
     ) -> Result<SimulationExecutionResult, RelayError> {
+        let simulate_calldata = self
+            .simulator
+            .simulateV1Logs(
+                orchestrator_address,
+                true,
+                0,
+                U256::ZERO,
+                U256::from(11_000),
+                gas_validation_offset,
+                intent_encoded.into(),
+            )
+            .calldata()
+            .clone();
+
+        // Wrap the simulator call in multicall3's aggregate to get the block number
         let tx_request =
-            TransactionRequest::default().from(mock_from).to(*self.simulator.address()).input(
-                self.simulator
-                    .simulateV1Logs(
-                        orchestrator_address,
-                        true,
-                        0,
-                        U256::ZERO,
-                        U256::from(11_000),
-                        gas_validation_offset,
-                        intent_encoded.into(),
-                    )
-                    .calldata()
-                    .clone()
-                    .into(),
+            TransactionRequest::default().from(mock_from).to(MULTICALL3_ADDRESS).input(
+                aggregateCall {
+                    calls: vec![Call {
+                        target: *self.simulator.address(),
+                        callData: simulate_calldata,
+                    }],
+                }
+                .abi_encode()
+                .into(),
             );
 
         // Check chain ID to determine which simulation method to use
@@ -157,10 +172,13 @@ impl<P: Provider> SimulatorContract<P> {
             return Err(IntentError::intent_revert(result.return_data).into());
         }
 
+        let (gas, block_number) = decode_aggregate_result(&result.return_data)?;
+
         Ok(SimulationExecutionResult {
-            gas: decode_gas_results(&result.return_data)?,
+            gas,
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
             tx_request,
+            block_number,
         })
     }
 
@@ -189,14 +207,19 @@ impl<P: Provider> SimulatorContract<P> {
             return Err(IntentError::intent_revert(call_frame.output.unwrap_or_default()).into());
         }
 
-        let gas = decode_gas_results(
+        let (gas, block_number) = decode_aggregate_result(
             call_frame
                 .output
                 .as_ref()
                 .ok_or_else(|| TransportErrorKind::custom_str("no output from simulation"))?,
         )?;
 
-        Ok(SimulationExecutionResult { gas, logs: collect_logs_from_frame(call_frame), tx_request })
+        Ok(SimulationExecutionResult {
+            gas,
+            logs: collect_logs_from_frame(call_frame),
+            tx_request,
+            block_number,
+        })
     }
 }
 
@@ -210,6 +233,26 @@ pub struct SimulationExecutionResult {
     pub logs: Vec<Log>,
     /// The transaction request that was simulated
     pub tx_request: TransactionRequest,
+    /// Block number the simulation was executed against
+    pub block_number: u64,
+}
+
+/// Decodes the aggregate response to extract gas results and block number.
+fn decode_aggregate_result(output: &[u8]) -> Result<(GasResults, BlockNumber), RelayError> {
+    let decoded = aggregateCall::abi_decode_returns(output).map_err(|e| {
+        TransportErrorKind::custom_str(&format!("Failed to decode aggregate result: {e}"))
+    })?;
+
+    let block_number = decoded.blockNumber.to::<u64>();
+    let return_data = decoded.returnData;
+
+    if return_data.is_empty() {
+        return Err(TransportErrorKind::custom_str("no return data from simulation").into());
+    }
+
+    let gas = decode_gas_results(&return_data[0])?;
+
+    Ok((gas, block_number))
 }
 
 fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {

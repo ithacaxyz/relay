@@ -8,6 +8,7 @@ use alloy::{
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
+use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
 use crate::{
@@ -199,6 +200,9 @@ impl<P: Provider> Orchestrator<P> {
             return Err(IntentError::PausedOrchestrator.into());
         }
         let result = result?;
+        let chain_id = self.orchestrator.provider().get_chain_id().await?;
+
+        debug!(chain_id, block_number = %result.block_number, account = %intent.eoa, nonce = %intent.nonce, "simulation executed");
 
         // calculate asset diffs using the transaction request from simulation
         let mut asset_diffs = asset_info_handle
