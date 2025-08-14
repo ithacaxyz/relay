@@ -45,7 +45,7 @@ pub struct ChainFees {
 }
 
 /// A wrapper around [`AssetUid`] and [`AssetDescriptor`] for [`ChainFees`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainFeeToken {
     /// The asset unique ID.

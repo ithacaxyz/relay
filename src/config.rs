@@ -111,7 +111,7 @@ impl Default for ServerConfig {
 }
 
 /// Chain configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainConfig {
     /// The symbol of the native asset.
     #[serde(default)]
@@ -135,7 +135,7 @@ pub struct ChainConfig {
 ///
 /// Defaults to [`SimMode::SimulateV1`] which will simulate intents using `eth_simulateV1`. For
 /// chains that do not have a working `eth_simulateV1` implementation, use [`SimMode::Trace`].
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SimMode {
     /// Use `eth_simulateV1`
@@ -146,7 +146,7 @@ pub enum SimMode {
 }
 
 /// Quote configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuoteConfig {
     /// Sets a constant rate for the price oracle. Used for testing.
@@ -173,7 +173,7 @@ impl Default for QuoteConfig {
 }
 
 /// Gas estimate configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GasConfig {
     /// Extra buffer added to Intent gas estimates.
@@ -195,7 +195,7 @@ impl QuoteConfig {
 }
 
 /// Email configuration.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailConfig {
     /// Resend API key.
@@ -232,7 +232,7 @@ impl Default for SecretsConfig {
 }
 
 /// Interop configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteropConfig {
     /// Interval for checking pending refunds.
     #[serde(with = "crate::serde::duration")]
@@ -261,7 +261,7 @@ pub struct RebalanceServiceConfig {
 }
 
 /// Configuration for price feeds.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PriceFeedConfig {
     /// Configuration for CoinGecko.
     #[serde(default)]
@@ -269,7 +269,7 @@ pub struct PriceFeedConfig {
 }
 
 /// Configuration for CoinGecko.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CoinGeckoConfig {
     /// A map of asset UIDs to CoinGecko coin IDs.
     #[serde(default)]
@@ -277,7 +277,7 @@ pub struct CoinGeckoConfig {
 }
 
 /// Configuration for the settler service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettlerConfig {
     /// Settler implementation configuration.
     #[serde(flatten)]
@@ -308,7 +308,7 @@ impl SettlerConfig {
 }
 
 /// Settler implementation configuration (mutually exclusive).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettlerImplementation {
     /// LayerZero configuration for cross-chain settlement.
@@ -328,7 +328,7 @@ impl SettlerImplementation {
 }
 
 /// Simple settler configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimpleSettlerConfig {
     /// The address of the simple settler contract.
     pub settler_address: Address,
@@ -355,7 +355,7 @@ impl SimpleSettlerConfig {
 }
 
 /// LayerZero configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayerZeroConfig {
     /// Mapping of chain ID to LayerZero endpoint ID.
     /// Format: { chain_id: endpoint_id }
@@ -700,5 +700,16 @@ mod tests {
     fn test_config_v15_yaml() {
         let s = include_str!("../tests/assets/config/v15.yaml");
         let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+    }
+
+    #[test]
+    fn test_config_v21_yaml() {
+        let s = include_str!("../tests/assets/config/v15.yaml");
+        let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();
+        assert_eq!(from_yaml.chains, config.chains);
+        assert_eq!(from_yaml.pricefeed, config.pricefeed);
+        assert_eq!(from_yaml.interop, config.interop);
     }
 }
