@@ -52,6 +52,9 @@ pub struct ChainFeeToken {
     /// The asset.
     #[serde(flatten)]
     pub asset: AssetDescriptor,
+    /// The symbol of the asset if we could resolve it, otherwise `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
     /// Rate of 1 whole token against the native chain token, expressed in the native token's
     /// smallest indivisible unit.
     ///
@@ -68,7 +71,12 @@ pub struct ChainFeeToken {
 
 impl ChainFeeToken {
     /// Create a new `ChainFeeToken`.
-    pub fn new(uid: AssetUid, asset: AssetDescriptor, native_rate: Option<U256>) -> Self {
-        Self { uid, asset, native_rate }
+    pub fn new(
+        uid: AssetUid,
+        asset: AssetDescriptor,
+        symbol: Option<String>,
+        native_rate: Option<U256>,
+    ) -> Self {
+        Self { uid, asset, symbol, native_rate }
     }
 }
