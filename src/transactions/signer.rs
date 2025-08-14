@@ -588,7 +588,7 @@ impl Signer {
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
     ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id, %nonce))]
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
 
@@ -623,7 +623,7 @@ impl Signer {
             let tx = self.sign_transaction(tx).await.map_err(|e| (e, B256::ZERO))?;
 
             let tx_hash = *tx.tx_hash();
-            debug!(%tx_hash, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Sending nonce gap closing transaction");
+            debug!(%tx_hash, "Sending nonce gap closing transaction");
             self.send_transaction(&tx).await.map_err(|e| (e, tx_hash))?;
             // Give transaction 10 blocks to be mined.
             if self.monitor.watch_transaction(tx_hash, self.block_time * 10).await.is_none() {
@@ -634,22 +634,22 @@ impl Signer {
         };
 
         loop {
-            debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
+            debug!("Attempting to close nonce gap");
 
             let Err((err, tx_hash)) = try_close().await else { break };
-            error!(%tx_hash, %err, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Failed to close nonce gap");
+            error!(%tx_hash, %err, "Failed to close nonce gap");
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
                 && latest_nonce > nonce
             {
-                warn!(signer = %self.address(), chain_id = %self.chain_id, "nonce gap was closed by a different transaction");
+                warn!("nonce gap was closed by a different transaction");
                 break;
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Closed nonce gap");
+        debug!("Closed nonce gap");
         self.metrics.closed_nonce_gaps.increment(1);
     }
 
