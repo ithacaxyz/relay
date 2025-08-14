@@ -345,26 +345,61 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-        self.provider
-            .call(request.clone())
-            .await
-            .map_err(SignerError::from)
-            .and_then(|res| {
-                if tx.is_intent() {
-                    let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
 
-                    if result != ORCHESTRATOR_NO_ERROR {
-                        return Err(SignerError::IntentRevert { revert_reason: result.into() });
+        // TEMP: to debug polygon issue
+        const MAX_RETRIES: u32 = 5;
+        let mut attempt = 0;
+
+        loop {
+            attempt += 1;
+
+            let result = self
+                .provider
+                .call(request.clone())
+                .await
+                .map_err(SignerError::from)
+                .and_then(|res| {
+                    if tx.is_intent() {
+                        let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
+
+                        if result != ORCHESTRATOR_NO_ERROR {
+                            return Err(SignerError::IntentRevert { revert_reason: result.into() });
+                        }
+
+                        Ok(())
+                    } else {
+                        Ok(())
                     }
+                })
+                .inspect_err(|err| {
+                    trace!(?err, ?request, "transaction simulation failed");
+                });
 
-                    Ok(())
-                } else {
-                    Ok(())
+            match result {
+                Ok(_) => {
+                    if attempt > 1 {
+                        info!(
+                            "[0x756688fe] Transaction simulation succeeded at attempt {}",
+                            attempt
+                        );
+                    }
+                    break;
                 }
-            })
-            .inspect_err(|err| {
-                trace!(?err, ?request, "transaction simulation failed");
-            })?;
+                Err(err) => {
+                    // Check if error contains 0x756688fe
+                    let err_str = format!("{err:?}");
+                    if err_str.contains("0x756688fe") && attempt < MAX_RETRIES {
+                        warn!(
+                            "Transaction simulation failed with 0x756688fe, retrying (attempt {}/{})",
+                            attempt, MAX_RETRIES
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
 
         Ok(())
     }
