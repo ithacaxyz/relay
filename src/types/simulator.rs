@@ -8,7 +8,7 @@ use alloy::{
     primitives::{Address, B256, BlockNumber, Log, U256},
     providers::{
         MULTICALL3_ADDRESS, Provider,
-        bindings::IMulticall3::{Call, aggregateCall},
+        bindings::IMulticall3::{Call, tryBlockAndAggregateCall},
         ext::DebugApi,
     },
     rpc::types::{
@@ -125,10 +125,11 @@ impl<P: Provider> SimulatorContract<P> {
             .calldata()
             .clone();
 
-        // Wrap the simulator call in multicall3's aggregate to get the block number
+        // Wrap the simulator call in multicall3's tryBlockAndAggregate to get the block number
         let tx_request =
             TransactionRequest::default().from(mock_from).to(MULTICALL3_ADDRESS).input(
-                aggregateCall {
+                tryBlockAndAggregateCall {
+                    requireSuccess: false,
                     calls: vec![Call {
                         target: *self.simulator.address(),
                         callData: simulate_calldata,
@@ -237,20 +238,24 @@ pub struct SimulationExecutionResult {
     pub block_number: u64,
 }
 
-/// Decodes the aggregate response to extract gas results and block number.
+/// Decodes the tryBlockAndAggregate response to extract gas results and block number.
 fn decode_aggregate_result(output: &[u8]) -> Result<(GasResults, BlockNumber), RelayError> {
-    let decoded = aggregateCall::abi_decode_returns(output).map_err(|e| {
-        TransportErrorKind::custom_str(&format!("Failed to decode aggregate result: {e}"))
+    let decoded = tryBlockAndAggregateCall::abi_decode_returns(output).map_err(|e| {
+        TransportErrorKind::custom_str(&format!("Failed to decode tryBlockAndAggregate result: {e}"))
     })?;
 
     let block_number = decoded.blockNumber.to::<u64>();
-    let return_data = decoded.returnData;
-
-    if return_data.is_empty() {
+    
+    if decoded.returnData.is_empty() {
         return Err(TransportErrorKind::custom_str("no return data from simulation").into());
     }
 
-    let gas = decode_gas_results(&return_data[0])?;
+    // Check if the call was successful
+    if !decoded.returnData[0].success {
+        return Err(IntentError::intent_revert(decoded.returnData[0].returnData.clone()).into());
+    }
+
+    let gas = decode_gas_results(&decoded.returnData[0].returnData)?;
 
     Ok((gas, block_number))
 }
