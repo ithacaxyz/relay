@@ -392,6 +392,7 @@ impl Signer {
             })
             .inspect_err(|err| {
                 error!(
+                    ?tx,
                     tx_hash = %tx.hash(),
                     nonce = %tx.nonce(),
                     err = %err,
