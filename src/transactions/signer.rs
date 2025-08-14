@@ -363,7 +363,7 @@ impl Signer {
                 }
             })
             .inspect_err(|err| {
-                trace!(?err, ?request, "transaction simulation failed");
+                trace!(?err, ?request, signer = %self.address(), chain_id = %self.chain_id, "transaction simulation failed");
             })?;
 
         Ok(())
@@ -387,6 +387,8 @@ impl Signer {
                 trace!(
                     tx_hash = %tx.hash(),
                     nonce = %tx.nonce(),
+                    signer = %self.address(),
+                    chain_id = %self.chain_id,
                     "Sent transaction"
                 );
             })
@@ -395,6 +397,8 @@ impl Signer {
                     tx_hash = %tx.hash(),
                     nonce = %tx.nonce(),
                     err = %err,
+                    signer = %self.address(),
+                    chain_id = %self.chain_id,
                     "Failed to send transaction"
                 );
             })?;
@@ -414,7 +418,7 @@ impl Signer {
 
         loop {
             if last_sent_at.elapsed() >= self.config.transaction_timeout {
-                error!(?tx, "Transaction timed out");
+                error!(?tx, tx_hash = ?tx.best_tx().tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "Transaction timed out");
                 return Err(SignerError::TxTimeout);
             }
 
@@ -445,11 +449,11 @@ impl Signer {
                 tx.sent.push(replacement);
                 last_sent_at = Instant::now();
             } else {
-                trace!(tx_hash=%best_tx.tx_hash(), "was not able to wait for tx confirmation, attempting to resend");
+                trace!(tx_hash=%best_tx.tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
                     && !err.is_already_known()
                 {
-                    debug!(%err, tx_hash=%best_tx.tx_hash(), "failed to resubmit transaction");
+                    debug!(%err, tx_hash=%best_tx.tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "failed to resubmit transaction");
                 }
             }
         }
@@ -467,7 +471,7 @@ impl Signer {
                 self.on_confirmed_transaction(tx, receipt).await?;
             }
             Err(err) => {
-                error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
+                error!(%err, tx_hash = ?tx.best_tx().tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "failed to wait for transaction confirmation, closing nonce gap");
 
                 // If we've failed to send the transaction, start closing the nonce gap to make sure
                 // we occupy the chosen nonce.
@@ -556,7 +560,7 @@ impl Signer {
         match try_send.await {
             Ok(tx) => self.watch_transaction(tx).await,
             Err(err) => {
-                error!(%err, "failed to send a transaction");
+                error!(%err, tx_id = %tx_id, signer = %self.address(), chain_id = %self.chain_id, "failed to send a transaction");
 
                 self.on_failed_transaction(tx_id, err).await?;
 
@@ -616,9 +620,10 @@ impl Signer {
             });
 
             let tx = self.sign_transaction(tx).await?;
+            let tx_hash = *tx.tx_hash();
             self.send_transaction(&tx).await?;
             // Give transaction 10 blocks to be mined.
-            if self.monitor.watch_transaction(*tx.tx_hash(), self.block_time * 10).await.is_none() {
+            if self.monitor.watch_transaction(tx_hash, self.block_time * 10).await.is_none() {
                 return Err(SignerError::TxTimeout);
             }
 
@@ -626,23 +631,23 @@ impl Signer {
         };
 
         loop {
-            debug!(%nonce, "Attempting to close nonce gap");
+            debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
 
             let Err(err) = try_close().await else { break };
 
-            error!(%err, %nonce, "Failed to close nonce gap");
+            error!(%err, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Failed to close nonce gap");
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
                 && latest_nonce > nonce
             {
-                warn!("nonce gap was closed by a different transaction");
+                warn!(signer = %self.address(), chain_id = %self.chain_id, "nonce gap was closed by a different transaction");
                 break;
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        debug!(%nonce, "Closed nonce gap");
+        debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Closed nonce gap");
         self.metrics.closed_nonce_gaps.increment(1);
     }
 
@@ -681,7 +686,7 @@ impl Signer {
                 self.paused.store(false, Ordering::Relaxed);
             }
         } else if balance >= min_balance {
-            debug!("signer balance is sufficient, re-activating");
+            debug!(signer = %self.address(), chain_id = %self.chain_id, "signer balance is sufficient, re-activating");
             self.emit_event(SignerEvent::ReActive(self.id()));
             self.paused.store(false, Ordering::Relaxed);
         }
@@ -703,19 +708,19 @@ impl Signer {
         ));
 
         if !receipt.status() {
-            warn!(%tx_hash, "transaction reverted");
+            warn!(%tx_hash, signer = %self.address(), chain_id = %self.chain_id, "transaction reverted");
             self.metrics.failed_intents.increment(1);
             return;
         }
 
         let Some(event) = IntentExecuted::try_from_receipt(&receipt) else {
-            warn!(%tx_hash, "failed to find IntentExecuted event in receipt");
+            warn!(%tx_hash, signer = %self.address(), chain_id = %self.chain_id, "failed to find IntentExecuted event in receipt");
             self.metrics.failed_intents.increment(1);
             return;
         };
 
         if event.err != ORCHESTRATOR_NO_ERROR {
-            warn!(%tx_hash, err = %event.err, "intent failed on-chain");
+            warn!(%tx_hash, err = %event.err, signer = %self.address(), chain_id = %self.chain_id, "intent failed on-chain");
             self.metrics.failed_intents.increment(1);
             return;
         }
@@ -816,7 +821,7 @@ impl Signer {
         let gapped_nonces = (latest_nonce..*self.nonce.lock().await)
             .filter(|nonce| {
                 if !loaded_transactions.iter().any(|tx| tx.nonce() == *nonce) {
-                    warn!(%nonce, "nonce gap on startup");
+                    warn!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "nonce gap on startup");
                     true
                 } else {
                     false
@@ -827,7 +832,7 @@ impl Signer {
         self.record_and_check_balance().await?;
 
         if self.is_paused() && (!gapped_nonces.is_empty() || !loaded_transactions.is_empty()) {
-            warn!("signer is paused, but there are pending transactions loaded on startup");
+            warn!(signer = %self.address(), chain_id = %self.chain_id, "signer is paused, but there are pending transactions loaded on startup");
         }
 
         let mut pending = JoinSet::new();
@@ -863,7 +868,7 @@ impl Signer {
                     this.metrics.nonce.absolute(nonce);
                     let mut lock = this.nonce.lock().await;
                     if nonce > *lock {
-                        warn!(%nonce, "on-chain nonce is ahead of local");
+                        warn!(%nonce, signer = %this.address(), chain_id = %this.chain_id, "on-chain nonce is ahead of local");
                         *lock = nonce;
                     }
                 }
@@ -877,7 +882,7 @@ impl Signer {
                 tokio::time::sleep(this.config.balance_check_interval).await;
 
                 if let Err(err) = this.record_and_check_balance().await {
-                    warn!(%err, "failed to check signer balance");
+                    warn!(%err, signer = %this.address(), chain_id = %this.chain_id, "failed to check signer balance");
                 }
             }
         });
@@ -967,10 +972,10 @@ impl Signer {
             Some(receipt) => Some(receipt),
             None => {
                 if self.provider.get_transaction_by_hash(tx_hash).await?.is_some() {
-                    info!(?tx_hash, chain_id = %self.chain_id, "pull gas transaction found in pool, waiting for confirmation");
+                    info!(?tx_hash, signer = %self.address(), chain_id = %self.chain_id, "pull gas transaction found in pool, waiting for confirmation");
                     self.monitor.watch_transaction(tx_hash, self.block_time * 2).await
                 } else {
-                    info!(?tx_hash, chain_id = %self.chain_id, "pull gas transaction not found, attempting to send");
+                    info!(?tx_hash, signer = %self.address(), chain_id = %self.chain_id, "pull gas transaction not found, attempting to send");
                     self.broadcast_and_monitor_pull_gas(&tx).await.ok()
                 }
             }

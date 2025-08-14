@@ -19,7 +19,7 @@
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U64, U256, address, keccak256},
+    primitives::{Address, B256, ChainId, U64, U256, address, keccak256, utils::format_ether},
     providers::{
         Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -163,6 +163,7 @@ impl StressAccount {
                 context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
                 && !quote.fee_token_deficit.is_zero()
             {
+                warn!(deficit = %format_ether(quote.fee_token_deficit), "Fee token deficit.");
                 return Ok(());
             }
 
