@@ -241,11 +241,13 @@ pub struct SimulationExecutionResult {
 /// Decodes the tryBlockAndAggregate response to extract gas results and block number.
 fn decode_aggregate_result(output: &[u8]) -> Result<(GasResults, BlockNumber), RelayError> {
     let decoded = tryBlockAndAggregateCall::abi_decode_returns(output).map_err(|e| {
-        TransportErrorKind::custom_str(&format!("Failed to decode tryBlockAndAggregate result: {e}"))
+        TransportErrorKind::custom_str(&format!(
+            "Failed to decode tryBlockAndAggregate result: {e}"
+        ))
     })?;
 
     let block_number = decoded.blockNumber.to::<u64>();
-    
+
     if decoded.returnData.is_empty() {
         return Err(TransportErrorKind::custom_str("no return data from simulation").into());
     }
