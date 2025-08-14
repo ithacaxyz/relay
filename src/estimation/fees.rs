@@ -198,6 +198,8 @@ pub async fn estimate_fee(
     let chain = deps.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
     let provider = chain.provider.clone();
+    let (native_uid, _) =
+        chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
     let Some((token_uid, token)) = deps.chains.fee_token(chain_id, context.fee_token) else {
         return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
     };
@@ -210,7 +212,7 @@ pub async fn estimate_fee(
     let mock_from = Address::random();
 
     // Parallelize fetching of assets, fee history, and eth price as they are independent
-    let (assets_response, fee_history, usd_price) = try_join!(
+    let (assets_response, fee_history, eth_price) = try_join!(
         // Fetch the user's balance for the fee token
         async {
             deps.relay
@@ -237,10 +239,12 @@ pub async fn estimate_fee(
                 .await
                 .map_err(RelayError::from)
         },
-        // Fetch USD price
+        // Fetch native asset price
         async {
-            // TODO: only handles usd price for fee token
-            Ok(deps.price_oracle.usd_price(token_uid.clone()).await)
+            Ok(deps
+                .price_oracle
+                .native_conversion_rate(token_uid.clone(), native_uid.clone())
+                .await)
         }
     )?;
 
@@ -271,7 +275,7 @@ pub async fn estimate_fee(
         %chain_id,
         fee_token = ?token,
         ?fee_history,
-        ?usd_price,
+        ?eth_price,
         "Got fee parameters"
     );
 
@@ -280,12 +284,12 @@ pub async fn estimate_fee(
         &fee_history.reward.unwrap_or_default(),
     );
 
-    let Some(usd_price) = usd_price else {
+    let Some(eth_price) = eth_price else {
         return Err(QuoteError::UnavailablePrice(token.address).into());
     };
     let payment_per_gas = (native_fee_estimate.max_fee_per_gas as f64
         * 10u128.pow(token.decimals as u32) as f64)
-        / usd_price;
+        / f64::from(eth_price);
 
     // fill intent
     let mut intent_to_sign = Intent {
@@ -409,7 +413,7 @@ pub async fn estimate_fee(
     )
     .await?
         * U256::from(10u128.pow(token.decimals as u32))
-        / U256::from(usd_price);
+        / eth_price;
 
     // Fill empty dummy signature
     intent_to_sign.signature = bytes!("");
@@ -431,7 +435,7 @@ pub async fn estimate_fee(
         payment_token_decimals: token.decimals,
         intent: intent_to_sign,
         extra_payment,
-        eth_price: U256::from(usd_price),
+        eth_price,
         tx_gas: gas_estimate.tx,
         native_fee_estimate,
         authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
