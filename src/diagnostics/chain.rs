@@ -432,3 +432,21 @@ impl ConnectedChains {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_chains::Chain;
+
+    #[test]
+    fn test_mainnet_testnet_validation() {
+        let mut connections = HashSet::new();
+        connections.insert((Chain::mainnet().id(), Chain::arbitrum_sepolia().id()));
+
+        let mut errors = vec![];
+        ConnectedChains { connections }
+            .ensure_no_mainnet_testnet_connections(&mut errors, &mut vec![]);
+
+        assert_eq!(errors.len(), 1);
+    }
+}
