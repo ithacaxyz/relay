@@ -55,7 +55,7 @@ use jsonrpsee::{
 use opentelemetry::trace::SpanKind;
 use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
-use tracing::{Instrument, Level, debug, error, instrument, span};
+use tracing::{Instrument, Level, debug, error, instrument, span, warn};
 
 use crate::{
     chains::{Chain, Chains},
@@ -294,11 +294,20 @@ impl Relay {
         let provider = chain.provider.clone();
         let (native_uid, _) =
             chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
-        let (token_uid, token) = self
-            .inner
-            .chains
-            .fee_token(chain_id, context.fee_token)
-            .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
+        let (token_uid, token) = chain
+            .assets()
+            .find_by_address(context.fee_token)
+            .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))
+            .inspect_err(|_| {
+                let supported_fee_tokens: Vec<_> =
+                    chain.assets().fee_tokens().into_iter().map(|(_, desc)| desc.address).collect();
+                warn!(
+                    %chain_id,
+                    fee_token = %context.fee_token,
+                    supported = ?supported_fee_tokens,
+                    "unsupported fee token supplied"
+                );
+            })?;
 
         // create key
         let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
