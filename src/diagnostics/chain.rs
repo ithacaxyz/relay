@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{ChainId, U256},
+    primitives::{Address, ChainId, U256},
     providers::{CallItem, MULTICALL3_ADDRESS, Provider, bindings::IMulticall3::getEthBalanceCall},
     sol_types::SolCall,
 };
@@ -53,8 +53,11 @@ impl<'a> ChainDiagnostics<'a> {
 
     /// Run all diagnostics.
     pub async fn run(self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
-        let (contract_diagnostics, balance_diagnostics) =
-            try_join!(self.verify_contracts(signers), self.check_balances(signers))?;
+        let (contract_diagnostics, balance_diagnostics, asset_diagnostics) = tokio::try_join!(
+            self.verify_contracts(signers),
+            self.check_balances(signers),
+            self.verify_assets()
+        )?;
 
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain.id(),
@@ -62,11 +65,13 @@ impl<'a> ChainDiagnostics<'a> {
                 .warnings
                 .into_iter()
                 .chain(balance_diagnostics.warnings)
+                .chain(asset_diagnostics.warnings)
                 .collect(),
             errors: contract_diagnostics
                 .errors
                 .into_iter()
                 .chain(balance_diagnostics.errors)
+                .chain(asset_diagnostics.errors)
                 .collect(),
         })
     }
@@ -292,6 +297,64 @@ impl<'a> ChainDiagnostics<'a> {
                 {
                     errors.push(format!("{role:?} has no balance on {token}."));
                 }
+            }
+        );
+
+        Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
+    }
+
+    /// Verify non-interop assets are accessible and have valid contracts.
+    ///
+    /// Interop assets are checked in the interop/settlement diagnostics when querying for the
+    /// funder contract balance.
+    async fn verify_assets(&self) -> Result<ChainDiagnosticsResult> {
+        let mut errors = Vec::new();
+
+        // Get all non-interop assets
+        let non_interop_assets: Vec<_> = self
+            .chain
+            .assets()
+            .iter()
+            .filter(|(_, asset)| !asset.interop && !asset.address.is_zero())
+            .map(|(uid, asset)| (uid.clone(), asset.address))
+            .collect();
+
+        if non_interop_assets.is_empty() {
+            return Ok(ChainDiagnosticsResult {
+                chain_id: self.chain.id(),
+                warnings: vec![],
+                errors,
+            });
+        }
+
+        // Create a multicall to check balanceOf for each non-interop asset
+        let mut multicall = self.chain.provider().multicall().dynamic::<balanceOfCall>();
+        for (_, token_address) in &non_interop_assets {
+            multicall = multicall.add_call_dynamic(
+                CallItem::from(
+                    IERC20::new(*token_address, &self.chain.provider()).balanceOf(Address::ZERO),
+                )
+                .allow_failure(true),
+            );
+        }
+
+        info!(
+            chain_id = %self.chain.id(),
+            assets = non_interop_assets.len(),
+            "Verifying non-interop assets"
+        );
+
+        crate::process_multicall_results!(
+            errors,
+            multicall.aggregate3().await?,
+            non_interop_assets,
+            |_: U256, (uid, address)| {
+                info!(
+                    chain_id = %self.chain.id(),
+                    asset = %uid,
+                    address = %address,
+                    "Non-interop asset verified"
+                );
             }
         );
 
