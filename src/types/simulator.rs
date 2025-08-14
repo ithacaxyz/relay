@@ -1,6 +1,6 @@
 use crate::{
     config::QuoteConfig,
-    constants::ETH_ADDRESS,
+    constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{IntentError, RelayError},
     types::IERC20,
 };
@@ -237,7 +237,7 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
         // Add ETH transfer as log if value > 0 (maintains eth_simulateV1 compatibility)
         if let Some(value) = frame.value.filter(|v| !v.is_zero() && frame.typ != "DELEGATECALL") {
             logs.push(Log::new_unchecked(
-                ETH_ADDRESS,
+                SIMULATEV1_NATIVE_ADDRESS,
                 vec![
                     IERC20::Transfer::SIGNATURE_HASH,
                     B256::left_padding_from(frame.from.as_slice()),

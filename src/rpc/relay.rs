@@ -13,9 +13,9 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FundSource,
-        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
+        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
+        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -184,11 +184,13 @@ impl Relay {
         let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
             // Relay needs a chain endpoint to support a chain.
             let chain = self.inner.chains.get(chain_id)?;
+            let provider = chain.provider().clone();
             let native_uid = chain.assets().native()?.0.clone();
             let fee_tokens = chain.assets().fee_tokens();
 
             Some(async move {
                 let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                    let provider = provider.clone();
                     let native_uid = native_uid.clone();
                     async move {
                         let rate = self
@@ -197,7 +199,21 @@ impl Relay {
                             .native_conversion_rate(token_uid.clone(), native_uid)
                             .await
                             .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        Ok(ChainFeeToken::new(token_uid, token, Some(rate)))
+                        let symbol = self
+                            .inner
+                            .asset_info
+                            .get_asset_info_list(
+                                &provider,
+                                vec![Asset::infer_from_address(token.address)],
+                            )
+                            .await
+                            .ok()
+                            .and_then(|map| {
+                                map.iter()
+                                    .next()
+                                    .and_then(|(_, asset)| asset.metadata.symbol.clone())
+                            });
+                        Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
                     }
                 }))
                 .await?;
