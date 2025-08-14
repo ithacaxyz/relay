@@ -20,12 +20,11 @@ use crate::{
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEnvelope, TypedTransaction},
-    eips::{BlockId, Encodable2718, eip1559::Eip1559Estimation},
+    eips::{eip1559::Eip1559Estimation, BlockId, Encodable2718},
     network::{Ethereum, EthereumWallet, NetworkWallet},
-    primitives::{Address, Bytes, U256, uint},
+    primitives::{uint, Address, Bytes, B256, U256},
     providers::{
-        DynProvider, PendingTransactionError, Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
+        utils::{Eip1559Estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS}, DynProvider, PendingTransactionError, Provider
     },
     rpc::types::{TransactionReceipt, TransactionRequest},
     sol_types::SolCall,
@@ -592,6 +591,7 @@ impl Signer {
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
 
+        let mut tx_hash = B256::ZERO;
         let try_close = || async {
             let fee_estimate = self.provider.estimate_eip1559_fees().await?;
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
@@ -620,7 +620,7 @@ impl Signer {
             });
 
             let tx = self.sign_transaction(tx).await?;
-            let tx_hash = *tx.tx_hash();
+            tx_hash = *tx.tx_hash();
             self.send_transaction(&tx).await?;
             // Give transaction 10 blocks to be mined.
             if self.monitor.watch_transaction(tx_hash, self.block_time * 10).await.is_none() {
@@ -631,11 +631,11 @@ impl Signer {
         };
 
         loop {
-            debug!(%nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
+            debug!(%tx_hash, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Attempting to close nonce gap");
 
             let Err(err) = try_close().await else { break };
 
-            error!(%err, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Failed to close nonce gap");
+            error!(%tx_hash, %err, %nonce, signer = %self.address(), chain_id = %self.chain_id, "Failed to close nonce gap");
 
             if let Ok(latest_nonce) = self.provider.get_transaction_count(self.address()).await
                 && latest_nonce > nonce
