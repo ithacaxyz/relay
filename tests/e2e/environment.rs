@@ -580,7 +580,8 @@ impl Environment {
             .with_interop_config(interop_config)
             .with_rebalance_service_config(config.rebalance_service_config)
             .with_database_url(database_url);
-        let relay_handle = try_spawn_with_cache(config.clone(), skip_diagnostics, Some(rpc_cache)).await?;
+        let relay_handle =
+            try_spawn_with_cache(config.clone(), skip_diagnostics, Some(rpc_cache)).await?;
 
         let relay_endpoint = HttpClientBuilder::default()
             .build(relay_handle.http_url())
