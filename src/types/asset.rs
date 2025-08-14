@@ -83,7 +83,7 @@ pub struct AssetDescriptor {
     #[serde(default = "default_decimals")]
     pub decimals: u8,
     /// Whether users can pay fees in this asset.
-    #[serde(default)]
+    #[serde(default, alias = "fee_token")]
     pub fee_token: bool,
     /// Whether this asset can be relayed across chains.
     #[serde(default)]
