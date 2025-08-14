@@ -166,7 +166,7 @@ mod tests {
         let descriptor: AssetDescriptor = serde_json::from_str(json).unwrap();
         assert_eq!(descriptor.address, Address::from([1; 20]));
         assert_eq!(descriptor.decimals, 6);
-        assert_eq!(descriptor.fee_token, true);
+        assert!(descriptor.fee_token);
         assert!(!descriptor.interop);
 
         // Roundtrip
