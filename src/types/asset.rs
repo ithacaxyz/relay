@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(descriptor.address, Address::from([1; 20]));
         assert_eq!(descriptor.decimals, 6);
         assert_eq!(descriptor.fee_token, true);
-        assert_eq!(descriptor.interop, false);
+        assert!(!descriptor.interop);
 
         // Roundtrip
         let serialized = serde_json::to_string(&descriptor).unwrap();

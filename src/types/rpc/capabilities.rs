@@ -101,7 +101,7 @@ mod tests {
         assert_eq!(token.uid.as_str(), "usdc");
         assert_eq!(token.asset.address, Address::from([1; 20]));
         assert_eq!(token.asset.decimals, 6);
-        assert_eq!(token.asset.fee_token, true);
+        assert!(token.asset.fee_token);
         assert_eq!(token.symbol, Some("USDC".to_string()));
         assert_eq!(token.native_rate, Some(U256::from(628140484382720u64)));
 
