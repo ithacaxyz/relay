@@ -10,8 +10,8 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
+        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
+        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
         KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, VersionedContracts,
@@ -1972,7 +1972,6 @@ impl Relay {
         EstimationDependencies::new(
             &self.inner.contracts,
             &self.inner.chains,
-            &self.inner.fee_tokens,
             self.inner.fee_recipient,
             &self.inner.quote_config,
             &self.inner.price_oracle,

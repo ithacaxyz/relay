@@ -16,7 +16,7 @@ use crate::{
     provider::ProviderExt,
     rpc::{Relay, RelayApiServer},
     types::{
-        Account, ChainAssetDiffs, FeeEstimationContext, FeeTokens, GasEstimate, Intent, IntentKind,
+        Account, ChainAssetDiffs, FeeEstimationContext, GasEstimate, Intent, IntentKind,
         KeyWith712Signer, Orchestrator, PartialIntent, Quote, Signature, SignedCalls, Transfer,
         VersionedContracts,
         rpc::{AssetFilterItem, GetAssetsParameters},
@@ -37,7 +37,6 @@ use alloy::{
     sol_types::SolValue,
 };
 use futures_util::TryFutureExt;
-use std::sync::Arc;
 use tokio::try_join;
 use tracing::{debug, instrument};
 
@@ -53,8 +52,6 @@ pub struct EstimationDependencies<'a> {
     pub contracts: &'a VersionedContracts,
     /// Supported chains
     pub chains: &'a Chains,
-    /// Fee tokens configuration
-    pub fee_tokens: &'a Arc<FeeTokens>,
     /// Fee recipient address
     pub fee_recipient: Address,
     /// Quote configuration
@@ -75,7 +72,6 @@ impl<'a> EstimationDependencies<'a> {
     pub fn new(
         contracts: &'a VersionedContracts,
         chains: &'a Chains,
-        fee_tokens: &'a Arc<FeeTokens>,
         fee_recipient: Address,
         quote_config: &'a QuoteConfig,
         price_oracle: &'a PriceOracle,
@@ -86,7 +82,6 @@ impl<'a> EstimationDependencies<'a> {
         Self {
             contracts,
             chains,
-            fee_tokens,
             fee_recipient,
             quote_config,
             price_oracle,
@@ -149,7 +144,7 @@ pub async fn estimate_extra_fee(
         let mut buf = Vec::new();
         if let Some(auth) = auth {
             TxEip7702 {
-                chain_id: chain.chain_id,
+                chain_id: chain.id(),
                 // we use random nonce as we don't yet know which signer will broadcast the
                 // intent
                 nonce: rand::random(),
@@ -164,7 +159,7 @@ pub async fn estimate_extra_fee(
             .encode(&mut buf);
         } else {
             TxEip1559 {
-                chain_id: chain.chain_id,
+                chain_id: chain.id(),
                 nonce: rand::random(),
                 gas_limit: gas_estimate.tx,
                 max_fee_per_gas: fees.max_fee_per_gas,
@@ -203,7 +198,7 @@ pub async fn estimate_fee(
     let chain = deps.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
 
     let provider = chain.provider.clone();
-    let Some(token) = deps.fee_tokens.find(chain_id, &context.fee_token) else {
+    let Some((token_uid, token)) = deps.chains.fee_token(chain_id, context.fee_token) else {
         return Err(QuoteError::UnsupportedFeeToken(context.fee_token).into());
     };
 
@@ -215,7 +210,7 @@ pub async fn estimate_fee(
     let mock_from = Address::random();
 
     // Parallelize fetching of assets, fee history, and eth price as they are independent
-    let (assets_response, fee_history, eth_price) = try_join!(
+    let (assets_response, fee_history, usd_price) = try_join!(
         // Fetch the user's balance for the fee token
         async {
             deps.relay
@@ -242,10 +237,10 @@ pub async fn estimate_fee(
                 .await
                 .map_err(RelayError::from)
         },
-        // Fetch ETH price
+        // Fetch USD price
         async {
-            // TODO: only handles eth as native fee token
-            Ok(deps.price_oracle.eth_price(token.kind).await)
+            // TODO: only handles usd price for fee token
+            Ok(deps.price_oracle.usd_price(token_uid.clone()).await)
         }
     )?;
 
@@ -276,7 +271,7 @@ pub async fn estimate_fee(
         %chain_id,
         fee_token = ?token,
         ?fee_history,
-        ?eth_price,
+        ?usd_price,
         "Got fee parameters"
     );
 
@@ -285,12 +280,12 @@ pub async fn estimate_fee(
         &fee_history.reward.unwrap_or_default(),
     );
 
-    let Some(eth_price) = eth_price else {
+    let Some(usd_price) = usd_price else {
         return Err(QuoteError::UnavailablePrice(token.address).into());
     };
     let payment_per_gas = (native_fee_estimate.max_fee_per_gas as f64
         * 10u128.pow(token.decimals as u32) as f64)
-        / f64::from(eth_price);
+        / usd_price;
 
     // fill intent
     let mut intent_to_sign = Intent {
@@ -414,7 +409,7 @@ pub async fn estimate_fee(
     )
     .await?
         * U256::from(10u128.pow(token.decimals as u32))
-        / eth_price;
+        / U256::from(usd_price);
 
     // Fill empty dummy signature
     intent_to_sign.signature = bytes!("");
@@ -436,7 +431,7 @@ pub async fn estimate_fee(
         payment_token_decimals: token.decimals,
         intent: intent_to_sign,
         extra_payment,
-        eth_price,
+        eth_price: U256::from(usd_price),
         tx_gas: gas_estimate.tx,
         native_fee_estimate,
         authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
@@ -446,7 +441,7 @@ pub async fn estimate_fee(
 
     // Create ChainAssetDiffs with populated fiat values including fee
     let chain_asset_diffs =
-        ChainAssetDiffs::new(asset_diffs, &quote, deps.fee_tokens, deps.price_oracle).await?;
+        ChainAssetDiffs::new(asset_diffs, &quote, deps.chains, deps.price_oracle).await?;
 
     Ok((chain_asset_diffs, quote))
 }
