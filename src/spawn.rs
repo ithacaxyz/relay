@@ -188,49 +188,58 @@ pub async fn try_spawn_with_cache(
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
+        config
+            .interop
+            .as_ref()
+            .map(|i| i.escrow_refund_threshold)
+            .unwrap_or(ESCROW_REFUND_DURATION_SECS),
+        rpc_cache.clone(),
     );
 
-    // configure rpc server
+    let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
+        AccountRpc::new(
+            relay.clone(),
+            resend_client(resend_api_key),
+            storage.clone(),
+            config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
+            config.secrets.service_api_key.clone(),
+        )
+        .into_rpc()
+    });
+    let mut rpc = relay.into_rpc();
+
+    // http layers
+    let cors = CorsLayer::new()
+        .allow_methods(AllowMethods::any())
+        .allow_origin(AllowOrigin::any())
+        .allow_headers([header::CONTENT_TYPE]);
+
+    // start server
     let server = Server::builder()
-        .set_http_config(ServerConfig::builder().set_config(config.server.into()).build())
+        .set_config(
+            ServerConfig::builder()
+                .http_only()
+                .max_connections(config.server.max_connections)
+                .build(),
+        )
         .set_http_middleware(
             ServiceBuilder::new()
-                .layer(ProxyGetRequestLayer::new("/health", "relay_health")?)
-                .layer(ProxyGetRequestLayer::new("/metrics", "relay_metrics")?)
-                .layer(ProxyGetRequestLayer::new("/diagnostics", "relay_diagnostics")?)
-                .layer(
-                    CorsLayer::new()
-                        .allow_methods(AllowMethods::any())
-                        .allow_origin(AllowOrigin::any())
-                        .allow_headers([header::CONTENT_TYPE]),
-                ),
+                .layer(cors)
+                .layer(ProxyGetRequestLayer::new([("/health", "health")])?),
         )
-        .set_rpc_middleware(
-            RpcServiceBuilder::new()
-                .layer(RpcMetricsService::new(
-                    signer_addresses.iter().copied().collect_vec(),
-                ))
-                .layer_fn(|s| s),
-        )
+        .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
         .await?;
-
     let local_addr = server.local_addr()?;
-    let account_rpc = AccountRpc::new(chains.clone(), funder_signer);
+    info!(%local_addr, "Started relay service");
+    info!("Transaction signers: {}", signer_addresses.iter().join(", "));
+    info!("Quote signer key: {}", quote_signer_addr);
+    info!("Funder signer key: {}", funder_signer.address());
 
-    let server = server
-        .start(
-            relay
-                .clone()
-                .into_rpc()
-                .merge(account_rpc.into_rpc())
-                .max_connections(config.server.max_connections),
-        )?
-        .stopped()
-        .await;
-
-    info!(
-        ?quote_signer_addr,
+    // version and other information as a metric
+    counter!(
+        "relay.info",
+        "version" => RELAY_LONG_VERSION,
         "orchestrator" => config.orchestrator.to_string(),
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
@@ -239,15 +248,15 @@ pub async fn try_spawn_with_cache(
     )
     .absolute(1);
 
-    counter!("relay_started", "address" => local_addr.to_string())
-        .increment(1)
-        .absolute(1);
-
-    info!("{}", RELAY_LONG_VERSION).absolute(1);
+    if let Some(account_rpc) = account_rpc {
+        rpc.merge(account_rpc).expect("could not merge rpc modules");
+    } else {
+        warn!("No e-mail provider configured.");
+    }
 
     Ok(RelayHandle {
         local_addr,
-        server,
+        server: server.start(rpc),
         chains,
         storage,
         metrics,
