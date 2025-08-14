@@ -15,11 +15,11 @@ To run the relay, you can either use Docker or run the binary directly.
 
 ### Prerequisites
 
-The relay depends on the followign things being available on the chains it connects to:
+The relay depends on the following things being available on the chains it connects to:
 
 - [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) is enabled.
 - [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) is enabled.
-- [`eth_simulateV1`](https://docs.chainstack.com/reference/arbitrum-simulatev1) is enabled.
+- [`eth_simulateV1`](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#eth-simulate-v1) is enabled, *or* [`debug_traceCall`](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracecall) with log collection support.
 - The [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile is available, *or* a [shim](https://vectorized.github.io/solady/#/utils/p256?id=p256) is deployed[^1].
 - [Multicall3](https://www.multicall3.com/)
 - `PUSH0`
@@ -46,33 +46,155 @@ cargo run --bin relay -- \
     --endpoint $RPC_URL \ # You can pass this multiple times
     --fee-token $FEE_TOKEN_ADDR \ # You can pass this multiple times
     --signers-mnemonic $SIGNING_KEY_MNEMONIC \
-    # --registry $REGISTRY_PATH  # Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
-    # --config $CONFIG_PATH
+    --config $CONFIG_PATH
 ```
 
-If no `--config` flag is given, a default `relay.yaml` is created in the working directory. In both cases, if the file doesn’t exist, it will be created from the CLI arguments; if it does, its values are loaded and overridden by any CLI flags, *without* updating the file.
+The relay reads its configuration from the file located at `--config` (default `relay.yaml`). If it does not exist, it will be created from CLI arguments.
 
-Similarly, if no `--registry` flag is given, a default registry configuration file `registry.yaml` is created in the working directory.
+The precedence for config is: CLI > environment variables > configuration file.
 
-Examples:
+#### Configuration examples
+
+Below are some example configs with explanations on how they work. For a complete config for running the relay locally, see [`relay.example.yaml`](./relay.example.yaml).
+
+##### Minimal
+
+A minimal configuration for a single chain.
 
 ```yaml
-# relay.yaml
+fee_recipient: "0x0000000000000000000000000000000000000000"
 
-server:
-    address: "127.0.0.1"
-    port: 8323
+orchestrator: "0x"
+delegation_proxy: "0x"
+simulator: "0x"
+escrow: "0x"
+funder: "0x"
 
-chain:
-    endpoints:
-        - "http://localhost:8545/"
-    fee_tokens:
-        - "0x706aa5c8e5cc2c67da21ee220718f6f6b154e75c"
-quote:
-    ttl: 5
-    gas:
-        intent_buffer: 25000
-        tx_buffer: 1000000
+chains:
+  # The key is either a chain ID, or a chain name.
+  ethereum:
+    endpoint: "wss://eth.rpc.com/"
+    assets:
+      ethereum:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        fee_token: true
+```
+
+##### Interop
+
+A minimal configuration for interop between two chains, i.e. liquidity can move between them.
+
+```yaml
+fee_recipient: "0x0000000000000000000000000000000000000000"
+
+orchestrator: "0x"
+delegation_proxy: "0x"
+simulator: "0x"
+escrow: "0x"
+funder: "0x"
+
+chains:
+  ethereum:
+    endpoint: "wss://eth.rpc.com/"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        # Assets with this flag can be relayed across chains.
+        interop: true
+      usd-coin:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        fee_token: true
+        interop: true
+  optimism:
+    endpoint: "wss://op.rpc.com/"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        interop: true
+      usd-coin:
+        address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+        fee_token: true
+        interop: true
+
+# For interop to work, a settler must be configured. This example uses the simple settler.
+interop:
+  settler:
+    wait_verification_timeout: 100000
+    simple:
+      settler_address: "0x"
+```
+
+##### Cross environment
+
+A minimal configuration where the relay supports two chains, but they are not interopable, i.e. liquidity cannot move between them. This is useful if you want to support the same accounts on two different environments (testnet and mainnet).
+
+```yaml
+fee_recipient: "0x0000000000000000000000000000000000000000"
+
+orchestrator: "0x"
+delegation_proxy: "0x"
+simulator: "0x"
+escrow: "0x"
+funder: "0x"
+
+pricefeed:
+  coingecko:
+    # Remaps asset UIDs to CoinGecko coin IDs.
+    #
+    # If not specified, the UID is used as the coin ID.
+    #
+    # See <https://docs.coingecko.com/reference/coins-list>
+    remapping:
+      teth: "ethereum"
+      tusdc: "usd-coin"
+
+chains:
+  ethereum:
+    endpoint: "wss://eth.rpc.com/"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        fee_token: true
+  # Sepolia and Base Sepolia can still interop.
+  # Notice how Ether and USDC have different identifiers. This prevents them from being
+  # relayed across chains on different environments.
+  sepolia:
+    endpoint: "wss://sepolia.rpc.com/"
+    assets:
+      teth:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        interop: true
+      tusdc:
+        address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+        fee_token: true
+        interop: true
+  base-sepolia:
+    endpoint: "wss://base-sepolia.rpc.com/"
+    assets:
+      teth:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        interop: true
+      tusdc:
+        address: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7"
+        fee_token: true
+        interop: true
+
+interop:
+  settler:
+    wait_verification_timeout: 100000
+    simple:
+      settler_address: "0x"
 ```
 
 ## Testing

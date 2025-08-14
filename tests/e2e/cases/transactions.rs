@@ -621,6 +621,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
     config.transaction_service_config.max_transactions_per_signer = 10;
     let (service, _handle) = TransactionService::new(
         provider,
+        None,
         signers,
         storage.clone(),
         config.transaction_service_config.clone(),

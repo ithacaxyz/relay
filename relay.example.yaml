@@ -1,0 +1,46 @@
+# This is a minimal example config for running the relay locally for a single chain.
+#
+# Note that this still requires you to run Anvil with the contracts deployed and configured,
+# as well as deployment of EXP1 and EXP2.
+server:
+  address: "127.0.0.1"
+  port: 9119
+  metrics_port: 9000
+
+fee_recipient: "0x0000000000000000000000000000000000000000"
+
+orchestrator: "0x"
+delegation_proxy: "0x"
+simulator: "0x"
+escrow: "0x"
+funder: "0x"
+
+pricefeed:
+  coingecko:
+    # Remaps asset UIDs to CoinGecko coin IDs.
+    #
+    # If not specified, the UID is used as the coin ID.
+    #
+    # See <https://docs.coingecko.com/reference/coins-list>
+    remapping:
+      exp1: "usd-coin"
+      exp2: "tether"
+
+chains:
+  # The key is either a chain ID, or a chain name.
+  anvil:
+    endpoint: "http://localhost:8545/"
+    assets:
+      ethereum:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      exp1:
+        address: "0x"
+        fee_token: true
+      exp2:
+        address: "0x"
+        fee_token: true
+
+transactions:
+  num_signers: 10

@@ -38,8 +38,8 @@ crates/testing/resources/**/cache/*
 
 # Relay configuration
 relay.yaml
-registry.yaml
 
 # Scratchpad
 _
 plans/
+CLAUDE.local.md

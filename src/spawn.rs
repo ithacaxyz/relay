@@ -4,27 +4,18 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    constants::{DEFAULT_POLL_INTERVAL, ESCROW_REFUND_DURATION_SECS},
+    constants::ESCROW_REFUND_DURATION_SECS,
     diagnostics::run_diagnostics,
-    metrics::{self, RpcMetricsService, TraceLayer},
+    metrics::{self, RpcMetricsService},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
-    transport::{SequencerLayer, create_transport},
-    types::{CoinRegistry, FeeTokens, VersionedContracts},
+    types::VersionedContracts,
     version::RELAY_LONG_VERSION,
 };
 use ::metrics::counter;
-use alloy::{
-    network::Ethereum,
-    primitives::B256,
-    providers::{DynProvider, Provider, ProviderBuilder, RootProvider},
-    rpc::client::{BuiltInConnectionString, ClientBuilder},
-    signers::local::LocalSigner,
-    transports::layers::RetryBackoffLayer,
-};
-use alloy_chains::Chain;
+use alloy::{primitives::B256, signers::local::LocalSigner};
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
@@ -34,16 +25,10 @@ use jsonrpsee::server::{
 use metrics_exporter_prometheus::PrometheusHandle;
 use resend_rs::Resend;
 use sqlx::PgPool;
-use std::{net::SocketAddr, path::Path, str::FromStr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
-
-/// [`RetryBackoffLayer`] used for chain providers.
-///
-/// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
-/// any throttling.
-pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// Context returned once relay is launched.
 #[derive(Debug, Clone)]
@@ -53,15 +38,13 @@ pub struct RelayHandle {
     /// Handle to RPC server.
     pub server: ServerHandle,
     /// Configured providers.
-    pub chains: Chains,
+    pub chains: Arc<Chains>,
     /// Storage of the relay.
     pub storage: RelayStorage,
     /// Metrics collector handle.
     pub metrics: PrometheusHandle,
     /// Price oracle.
     pub price_oracle: PriceOracle,
-    /// Coin registry.
-    pub fee_tokens: Arc<FeeTokens>,
 }
 
 impl RelayHandle {
@@ -72,11 +55,7 @@ impl RelayHandle {
 }
 
 /// Attempts to spawn the relay service using CLI arguments and a configuration file.
-pub async fn try_spawn_with_args(
-    args: Args,
-    config_path: &Path,
-    registry_path: &Path,
-) -> eyre::Result<RelayHandle> {
+pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result<RelayHandle> {
     let skip_diagnostics = args.skip_diagnostics;
     let config = if !config_path.exists() {
         let config = args.merge_relay_config(RelayConfig::default());
@@ -100,25 +79,11 @@ pub async fn try_spawn_with_args(
             )
     };
 
-    let registry = if !registry_path.exists() {
-        let registry = CoinRegistry::default();
-        registry.save_to_file(registry_path)?;
-        registry
-    } else {
-        CoinRegistry::load_from_file(registry_path)?
-    };
-
-    try_spawn(config, registry, skip_diagnostics).await
+    try_spawn(config, skip_diagnostics).await
 }
 
-/// Spawns the relay service using the provided [`RelayConfig`] and [`CoinRegistry`].
-pub async fn try_spawn(
-    config: RelayConfig,
-    registry: CoinRegistry,
-    skip_diagnostics: bool,
-) -> eyre::Result<RelayHandle> {
-    let registry = Arc::new(registry);
-
+/// Spawns the relay service using the provided [`RelayConfig`].
+pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Result<RelayHandle> {
     // construct db
     let storage = if let Some(ref db_url) = config.database_url {
         info!("Using PostgreSQL as storage.");
@@ -131,6 +96,10 @@ pub async fn try_spawn(
         RelayStorage::in_memory()
     };
 
+    // setup metrics exporter and periodic metric collectors
+    let metrics =
+        metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
+
     // setup signers
     let signers = DynSigner::derive_from_mnemonic(
         config.secrets.signers_mnemonic.clone(),
@@ -141,63 +110,15 @@ pub async fn try_spawn(
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
-    // setup providers
-    let providers: Vec<DynProvider> = futures_util::future::try_join_all(
-        config.chain.endpoints.iter().cloned().map(async |url| {
-            // Enforce WebSocket endpoints since we need to subscribe to logs in the interop service
-            if config.interop.is_some()
-                && !url.as_str().starts_with("ws://")
-                && !url.as_str().starts_with("wss://")
-            {
-                eyre::bail!("All endpoints must use WebSocket (ws:// or wss://). Got: {}", url);
-            }
-
-            let chain_id =
-                RootProvider::<Ethereum>::connect(url.as_str()).await?.get_chain_id().await?;
-
-            let (transport, is_local) = create_transport(&url).await?;
-
-            let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
-
-            let client = if let Some(sequencer_url) =
-                config.chain.sequencer_endpoints.get(&Chain::from_id(chain_id))
-            {
-                let sequencer = BuiltInConnectionString::from_str(sequencer_url.as_str())?
-                    .connect_boxed()
-                    .await?;
-
-                info!("Configured sequencer forwarding for chain {chain_id}");
-
-                builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
-            } else {
-                builder.transport(transport, is_local)
-            };
-
-            eyre::Ok(
-                ProviderBuilder::new()
-                    .connect_client(client.with_poll_interval(DEFAULT_POLL_INTERVAL))
-                    .erased(),
-            )
-        }),
-    )
-    .await?;
-
-    let fee_tokens = Arc::new(
-        FeeTokens::new(
-            &registry,
-            &config.chain.fee_tokens,
-            &config.chain.interop_tokens,
-            providers.clone(),
-        )
-        .await?,
-    );
+    // build chains
+    let chains = Arc::new(Chains::new(signers.clone(), storage.clone(), &config).await?);
 
     // Run pre-flight diagnostics
     if skip_diagnostics {
         warn!("Skipping pre-flight diagnostics.");
     } else {
         info!("Running pre-flight diagnostics.");
-        let report = run_diagnostics(&config, &providers, &signers, &fee_tokens).await?;
+        let report = run_diagnostics(&config, chains.clone(), &signers).await?;
         report.log();
 
         if report.has_errors() {
@@ -207,15 +128,7 @@ pub async fn try_spawn(
         }
     }
 
-    // setup metrics exporter and periodic metric collectors
-    let metrics =
-        metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
-    metrics::spawn_periodic_collectors(
-        signer_addresses.clone(),
-        providers.clone(),
-        config.chain.endpoints.clone(),
-    )
-    .await?;
+    metrics::spawn_periodic_collectors(signer_addresses.clone(), chains.clone()).await?;
 
     // construct quote signer
     let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
@@ -227,21 +140,24 @@ pub async fn try_spawn(
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
     } else {
-        price_oracle.spawn_fetcher(PriceFetcher::CoinGecko);
+        price_oracle.spawn_fetcher(PriceFetcher::CoinGecko, &config);
     }
 
-    let chains =
-        Chains::new(providers.clone(), signers, storage.clone(), &fee_tokens, &config).await?;
-
     // construct asset info service
-    let asset_info = AssetInfoService::new(512);
+    let asset_info = AssetInfoService::new(512, &config);
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 
     // get contract versions from chain.
-    let contracts =
-        VersionedContracts::new(&config, providers.first().expect("should have at least one"))
-            .await?;
+    let contracts = VersionedContracts::new(
+        &config,
+        chains
+            .chains_iter()
+            .next()
+            .map(|chain| chain.provider())
+            .expect("should have at least one"),
+    )
+    .await?;
 
     // todo: avoid all this darn cloning
     let relay = Relay::new(
@@ -251,8 +167,7 @@ pub async fn try_spawn(
         funder_signer.clone(),
         config.quote,
         price_oracle.clone(),
-        fee_tokens.clone(),
-        config.chain.fee_recipient,
+        config.fee_recipient,
         storage.clone(),
         asset_info_handle,
         config.transactions.priority_fee_percentile,
@@ -310,7 +225,7 @@ pub async fn try_spawn(
         "delegation_proxy" => config.delegation_proxy.to_string(),
         "simulator" => config.simulator.to_string(),
         "funder" => config.funder.to_string(),
-        "fee_recipient" => config.chain.fee_recipient.to_string()
+        "fee_recipient" => config.fee_recipient.to_string()
     )
     .absolute(1);
 
@@ -327,6 +242,5 @@ pub async fn try_spawn(
         storage,
         metrics,
         price_oracle,
-        fee_tokens,
     })
 }

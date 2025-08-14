@@ -34,7 +34,7 @@ async fn asset_info() -> eyre::Result<()> {
     let provider = env.provider().clone();
 
     // Spawn AssetInfoService
-    let service = AssetInfoService::new(10);
+    let service = AssetInfoService::new(10, &env.config);
     let handle = service.handle();
     tokio::spawn(service);
 

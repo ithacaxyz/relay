@@ -27,6 +27,7 @@ use tokio::{
     task::JoinSet,
 };
 use tracing::{debug, error};
+use url::Url;
 
 /// Messages accepted by the [`TransactionService`].
 #[derive(Debug)]
@@ -157,6 +158,7 @@ impl TransactionService {
     /// This also spawns dedicated [`Signer`] task for each configured signer.
     pub async fn new(
         provider: DynProvider,
+        flashblocks_rpc_endpoint: Option<&Url>,
         signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: TransactionServiceConfig,
@@ -170,9 +172,13 @@ impl TransactionService {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (to_service, from_signers) = mpsc::unbounded_channel();
 
-        let monitor =
-            TransactionMonitoringHandle::new(provider.clone(), config.clone(), metrics.clone())
-                .await?;
+        let monitor = TransactionMonitoringHandle::new(
+            provider.clone(),
+            flashblocks_rpc_endpoint,
+            config.clone(),
+            metrics.clone(),
+        )
+        .await?;
 
         let mut this = Self {
             signers: Default::default(),

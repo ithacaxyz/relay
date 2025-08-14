@@ -1,25 +1,39 @@
 //! A collection of providers for different chains.
 
+use std::str::FromStr;
+
 use alloy::{
-    primitives::{ChainId, map::HashMap},
-    providers::{DynProvider, Provider},
+    primitives::{Address, ChainId, map::HashMap},
+    providers::{DynProvider, Provider, ProviderBuilder},
+    rpc::client::{BuiltInConnectionString, ClientBuilder},
+    transports::layers::RetryBackoffLayer,
 };
-use tracing::warn;
+use tracing::{info, warn};
+use url::Url;
 
 use crate::{
     config::RelayConfig,
+    constants::DEFAULT_POLL_INTERVAL,
     liquidity::{
         LiquidityTracker, RebalanceService,
         bridge::{BinanceBridge, Bridge, SimpleBridge},
     },
+    metrics::TraceLayer,
     provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
-    types::FeeTokens,
+    transport::{SequencerLayer, create_transport},
+    types::{AssetDescriptor, AssetUid, Assets},
 };
+
+/// [`RetryBackoffLayer`] used for chain providers.
+///
+/// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
+/// any throttling.
+pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// A single supported chain.
 #[derive(Debug, Clone)]
@@ -31,7 +45,9 @@ pub struct Chain {
     /// Whether this is an OP network.
     pub is_optimism: bool,
     /// The chain ID.
-    pub chain_id: ChainId,
+    chain_id: ChainId,
+    /// The supported assets on the chain.
+    assets: Assets,
 }
 
 impl Chain {
@@ -43,6 +59,11 @@ impl Chain {
     /// Returns the chain id
     pub const fn id(&self) -> ChainId {
         self.chain_id
+    }
+
+    /// Returns the assets on the chain.
+    pub fn assets(&self) -> &Assets {
+        &self.assets
     }
 }
 
@@ -58,16 +79,29 @@ pub struct Chains {
 impl Chains {
     /// Creates a new instance of [`Chains`].
     pub async fn new(
-        providers: Vec<DynProvider>,
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
-        fee_tokens: &FeeTokens,
         config: &RelayConfig,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
-            futures_util::future::try_join_all(providers.into_iter().map(|provider| async {
+            futures_util::future::try_join_all(config.chains.iter().map(async |(chain, desc)| {
+                // Enforce WebSocket endpoints since we need to subscribe to logs in the interop
+                // service
+                if config.interop.is_some()
+                    && !desc.endpoint.as_str().starts_with("ws://")
+                    && !desc.endpoint.as_str().starts_with("wss://")
+                {
+                    eyre::bail!(
+                        "All endpoints must use WebSocket (ws:// or wss://). Got: {}",
+                        desc.endpoint
+                    );
+                }
+
+                let provider =
+                    try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
+                    desc.flashblocks.as_ref(),
                     tx_signers.clone(),
                     storage.clone(),
                     config.transactions.clone(),
@@ -76,11 +110,16 @@ impl Chains {
                 .await?;
                 tokio::spawn(service);
 
-                let chain_id = provider.get_chain_id().await?;
                 let is_optimism = provider.is_optimism().await?;
                 eyre::Ok((
-                    chain_id,
-                    Chain { provider, transactions: handle, is_optimism, chain_id },
+                    chain.id(),
+                    Chain {
+                        provider,
+                        transactions: handle,
+                        is_optimism,
+                        chain_id: chain.id(),
+                        assets: desc.assets.clone(),
+                    },
                 ))
             }))
             .await?,
@@ -96,7 +135,7 @@ impl Chains {
         let liquidity_tracker =
             LiquidityTracker::new(providers_with_chain.clone(), config.funder, storage.clone());
 
-        if let Some(rebalance_config) = &config.chain.rebalance_service {
+        if let Some(rebalance_config) = &config.rebalance_service {
             let funder_owner = DynSigner::from_raw(&rebalance_config.funder_owner_key).await?;
 
             let mut bridges: Vec<Box<dyn Bridge>> = Vec::new();
@@ -107,7 +146,15 @@ impl Chains {
                         providers_with_chain.clone(),
                         tx_handles.clone(),
                         binance.clone(),
-                        fee_tokens,
+                        chains
+                            .iter()
+                            .flat_map(|(chain_id, chain)| {
+                                chain
+                                    .assets
+                                    .interop_iter()
+                                    .map(|(_, desc)| ((*chain_id, desc.address), desc.clone()))
+                            })
+                            .collect(),
                         storage.clone(),
                         config.funder,
                         funder_owner.clone(),
@@ -133,7 +180,15 @@ impl Chains {
             }
 
             let service = RebalanceService::new(
-                fee_tokens,
+                chains
+                    .iter()
+                    .flat_map(|(chain_id, chain)| {
+                        chain
+                            .assets
+                            .interop_iter()
+                            .map(|(asset_uid, desc)| (*chain_id, (asset_uid.clone(), desc.clone())))
+                    })
+                    .collect(),
                 liquidity_tracker.clone(),
                 bridges,
                 rebalance_config.thresholds.clone(),
@@ -156,19 +211,87 @@ impl Chains {
         Ok(Self { chains, interop })
     }
 
+    /// Get the number of chains.
+    pub fn len(&self) -> usize {
+        self.chains.len()
+    }
+
+    /// Check whether there are any chains or not.
+    pub fn is_empty(&self) -> bool {
+        self.chains.is_empty()
+    }
+
     /// Get a provider for a given chain ID.
     pub fn get(&self, chain_id: ChainId) -> Option<Chain> {
         self.chains.get(&chain_id).cloned()
     }
 
     /// Returns an iterator over all installed [`Chain`]s.
-    pub fn chains(&self) -> impl Iterator<Item = &Chain> {
+    pub fn chains_iter(&self) -> impl Iterator<Item = &Chain> {
         self.chains.values()
     }
 
     /// Get an iterator over the supported chain IDs.
     pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
         self.chains.keys()
+    }
+
+    /// Get the [`AssetDescriptor`] for an asset on a chain, if it exists.
+    pub fn asset(
+        &self,
+        chain_id: ChainId,
+        address: Address,
+    ) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.chains.get(&chain_id).and_then(|chain| chain.assets.find_by_address(address))
+    }
+
+    /// Get the [`AssetDescriptor`] for a fee token on a chain, if it exists.
+    pub fn fee_token(
+        &self,
+        chain_id: ChainId,
+        fee_token: Address,
+    ) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.asset(chain_id, fee_token).filter(|(_, desc)| desc.fee_token)
+    }
+
+    /// Get the fee tokens for a chain.
+    pub fn fee_tokens(&self, chain_id: ChainId) -> Option<Vec<(AssetUid, AssetDescriptor)>> {
+        self.get(chain_id).map(|chain| chain.assets.fee_tokens())
+    }
+
+    /// Get the [`AssetDescriptor`] for a relayable token on a chain, if it exists.
+    pub fn interop_asset(
+        &self,
+        chain_id: ChainId,
+        asset: Address,
+    ) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.asset(chain_id, asset).filter(|(_, desc)| desc.interop)
+    }
+
+    /// Get the tokens relayable across chains.
+    pub fn interop_tokens(&self, chain_id: ChainId) -> Option<Vec<(AssetUid, AssetDescriptor)>> {
+        self.get(chain_id).map(|chain| chain.assets.interop_tokens())
+    }
+
+    /// Get the native token for a chain, if defined.
+    pub fn native_token(&self, chain_id: ChainId) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.chains.get(&chain_id).and_then(|chain| chain.assets.native())
+    }
+
+    /// Maps an asset on `src_chain_id` to an equivalent asset on `dst_chain_id`.
+    ///
+    /// Returns `None` if there is no equivalent asset, or if the equivalent asset is not enabled
+    /// for interop.
+    pub fn map_interop_asset(
+        &self,
+        src_chain_id: ChainId,
+        dst_chain_id: ChainId,
+        asset: Address,
+    ) -> Option<&AssetDescriptor> {
+        let (asset_uid, _) = self.interop_asset(src_chain_id, asset)?;
+        self.chains
+            .get(&dst_chain_id)
+            .and_then(|dst_chain| dst_chain.assets.get(asset_uid).filter(|desc| desc.interop))
     }
 
     /// Get the interop service handle.
@@ -184,4 +307,31 @@ impl std::fmt::Debug for Chains {
             .field("interop", &self.interop)
             .finish()
     }
+}
+
+async fn try_build_provider(
+    chain_id: ChainId,
+    endpoint: &Url,
+    sequencer_endpoint: Option<&Url>,
+) -> eyre::Result<DynProvider> {
+    let (transport, is_local) = create_transport(endpoint).await?;
+
+    let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
+
+    let client = if let Some(sequencer_url) = sequencer_endpoint {
+        let sequencer =
+            BuiltInConnectionString::from_str(sequencer_url.as_str())?.connect_boxed().await?;
+
+        info!("Configured sequencer forwarding for chain {chain_id}");
+
+        builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
+    } else {
+        builder.transport(transport, is_local)
+    };
+
+    eyre::Ok(
+        ProviderBuilder::new()
+            .connect_client(client.with_poll_interval(DEFAULT_POLL_INTERVAL))
+            .erased(),
+    )
 }

@@ -7,7 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
-    types::{CoinKind, TransactionServiceHandles},
+    types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{Address, ChainId, U256, map::HashMap},
@@ -30,13 +30,17 @@ use std::{
 };
 use tracing::warn;
 
+// todo(onbjerg): We should consider merging the contract addresses into a `ContractConfig` struct,
+// which would 1) make the config more readable and 2) simplify things like fetching
+// [`VersionedContracts`].
 /// Relay configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RelayConfig {
     /// Server configuration.
     pub server: ServerConfig,
-    /// Chain configuration.
-    pub chain: ChainConfig,
+    /// Chain configurations.
+    #[serde(with = "crate::serde::hash_map")]
+    pub chains: HashMap<Chain, ChainConfig>,
     /// Quote configuration.
     pub quote: QuoteConfig,
     /// Email configuration.
@@ -61,6 +65,16 @@ pub struct RelayConfig {
     pub funder: Address,
     /// Escrow address.
     pub escrow: Address,
+    /// Fee recipient.
+    pub fee_recipient: Address,
+    /// Optional rebalance service configuration.
+    ///
+    /// If provided, this relay instance will handle rebalancing of liquidity across chains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebalance_service: Option<RebalanceServiceConfig>,
+    /// Price feed config.
+    #[serde(default)]
+    pub pricefeed: PriceFeedConfig,
     /// Secrets.
     #[serde(skip_serializing, default)]
     pub secrets: SecretsConfig,
@@ -69,7 +83,7 @@ pub struct RelayConfig {
 }
 
 /// Server configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// The address to serve the RPC on.
     pub address: IpAddr,
@@ -81,28 +95,50 @@ pub struct ServerConfig {
     pub max_connections: u32,
 }
 
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 9119,
+            metrics_port: 9000,
+            max_connections: 1000,
+        }
+    }
+}
+
 /// Chain configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainConfig {
+    /// The symbol of the native asset.
+    #[serde(default)]
+    pub native_symbol: Option<String>,
     /// The RPC endpoint of a chain to send transactions to.
-    pub endpoints: Vec<Url>,
-    /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
-    #[serde(with = "crate::serde::hash_map")]
-    pub sequencer_endpoints: HashMap<Chain, Url>,
-    /// A fee token the relay accepts.
-    pub fee_tokens: Vec<Address>,
-    /// A token that is supported for interop.
-    pub interop_tokens: Vec<Address>,
-    /// The fee recipient address.
-    ///
-    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
-    /// contract.
-    pub fee_recipient: Address,
-    /// Optional rebalance service configuration.
-    ///
-    /// If provided, this relay instance will handle rebalancing of liquidity across chains.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rebalance_service: Option<RebalanceServiceConfig>,
+    pub endpoint: Url,
+    /// The sequencer URL, if any.
+    #[serde(default)]
+    pub sequencer: Option<Url>,
+    /// Flashblocks streaming endpoint, if any.
+    #[serde(default)]
+    pub flashblocks: Option<Url>,
+    /// The simulation mode to use for the chain.
+    #[serde(default)]
+    pub sim_mode: SimMode,
+    /// Assets known for this chain.
+    pub assets: Assets,
+}
+
+/// The simulation mode to use for intent simulation on a specific chain.
+///
+/// Defaults to [`SimMode::SimulateV1`] which will simulate intents using `eth_simulateV1`. For
+/// chains that do not have a working `eth_simulateV1` implementation, use [`SimMode::Trace`].
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SimMode {
+    /// Use `eth_simulateV1`
+    #[default]
+    SimulateV1,
+    /// Use `debug_trace`.
+    Trace,
 }
 
 /// Quote configuration.
@@ -119,6 +155,17 @@ pub struct QuoteConfig {
     /// The lifetime of a price rate.
     #[serde(with = "crate::serde::duration")]
     pub rate_ttl: Duration,
+}
+
+impl Default for QuoteConfig {
+    fn default() -> Self {
+        Self {
+            constant_rate: None,
+            gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
+            ttl: Duration::from_secs(5),
+            rate_ttl: Duration::from_secs(300),
+        }
+    }
 }
 
 /// Gas estimate configuration.
@@ -154,7 +201,7 @@ pub struct EmailConfig {
 }
 
 /// Secrets (kept out of serialized output).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SecretsConfig {
     /// The secret key to sign transactions with.
     #[serde(with = "alloy::serde::displayfromstr")]
@@ -204,9 +251,25 @@ pub struct RebalanceServiceConfig {
     /// The private key of the funder account owner. Required for pulling funds from the funders.
     #[serde(default)]
     pub funder_owner_key: String,
-    /// Mapping of [`CoinKind`] to rebalance threshold.
+    /// Mapping of asset identifiers to rebalance threshold.
     #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
-    pub thresholds: HashMap<CoinKind, U256>,
+    pub thresholds: HashMap<AssetUid, U256>,
+}
+
+/// Configuration for price feeds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PriceFeedConfig {
+    /// Configuration for CoinGecko.
+    #[serde(default)]
+    pub coingecko: CoinGeckoConfig,
+}
+
+/// Configuration for CoinGecko.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CoinGeckoConfig {
+    /// A map of asset UIDs to CoinGecko coin IDs.
+    #[serde(default)]
+    pub remapping: HashMap<AssetUid, String>,
 }
 
 /// Configuration for the settler service.
@@ -346,9 +409,6 @@ pub struct TransactionServiceConfig {
     /// for querying transactions.
     #[serde(with = "crate::serde::hash_map")]
     pub public_node_endpoints: HashMap<Chain, Url>,
-    /// Mapping of a chain to RPC endpoint streaming flashblocks.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
-    pub flashblocks_rpc_endpoints: HashMap<Chain, Url>,
     /// Percentile of the priority fees to use for the transactions.
     pub priority_fee_percentile: f64,
 }
@@ -365,46 +425,6 @@ impl Default for TransactionServiceConfig {
             max_queued_per_eoa: 1,
             public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-            flashblocks_rpc_endpoints: HashMap::default(),
-        }
-    }
-}
-
-impl Default for RelayConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig {
-                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: 9119,
-                metrics_port: 9000,
-                max_connections: 1000,
-            },
-            chain: ChainConfig {
-                endpoints: vec![],
-                sequencer_endpoints: HashMap::default(),
-                fee_tokens: vec![],
-                interop_tokens: vec![],
-                fee_recipient: Address::ZERO,
-                rebalance_service: None,
-            },
-            quote: QuoteConfig {
-                constant_rate: None,
-                gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
-                ttl: Duration::from_secs(5),
-                rate_ttl: Duration::from_secs(300),
-            },
-            email: EmailConfig::default(),
-            transactions: TransactionServiceConfig::default(),
-            interop: None,
-            legacy_orchestrators: BTreeSet::new(),
-            legacy_delegation_proxies: BTreeSet::new(),
-            orchestrator: Address::ZERO,
-            delegation_proxy: Address::ZERO,
-            simulator: Address::ZERO,
-            funder: Address::ZERO,
-            escrow: Address::ZERO,
-            secrets: SecretsConfig::default(),
-            database_url: None,
         }
     }
 }
@@ -464,31 +484,9 @@ impl RelayConfig {
         self
     }
 
-    /// Extends the list of fee tokens that the relay accepts.
-    pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
-        self.chain.fee_tokens.extend_from_slice(fee_tokens);
-        self
-    }
-
-    /// Extends the list of interop tokens that the relay accepts.
-    pub fn with_interop_tokens(mut self, interop_tokens: &[Address]) -> Self {
-        self.chain.interop_tokens.extend_from_slice(interop_tokens);
-        self
-    }
-
-    /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
-    pub fn with_endpoints(mut self, endpoints: &[Url]) -> Self {
-        self.chain.endpoints.extend_from_slice(endpoints);
-        self
-    }
-
-    /// Extends the list of sequencer RPC endpoints.
-    pub fn with_sequencer_endpoints(
-        mut self,
-        endpoints: impl IntoIterator<Item = (Chain, Url)>,
-    ) -> Self {
-        self.chain.sequencer_endpoints.extend(endpoints);
-        self
+    /// Set the chains.
+    pub fn with_chains(self, chains: HashMap<Chain, ChainConfig>) -> Self {
+        Self { chains, ..self }
     }
 
     /// Extends the list of public node RPC endpoints.
@@ -502,7 +500,7 @@ impl RelayConfig {
 
     /// Sets the fee recipient address.
     pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
-        self.chain.fee_recipient = fee_recipient;
+        self.fee_recipient = fee_recipient;
         self
     }
 
@@ -602,7 +600,7 @@ impl RelayConfig {
 
     /// Sets the rebalance service configuration.
     pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
-        self.chain.rebalance_service = config;
+        self.rebalance_service = config;
         self
     }
 
@@ -629,7 +627,7 @@ impl RelayConfig {
     /// Sets the funder owner key, and enables the rebalance service.
     pub fn with_funder_owner_key(mut self, funder_owner_key: Option<String>) -> Self {
         let Some(key) = funder_owner_key else { return self };
-        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
         rebalance_service.funder_owner_key = key;
         self
     }
@@ -645,7 +643,7 @@ impl RelayConfig {
             (None, None) => return self,
             _ => panic!("expected both Binance API key and secret"),
         };
-        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
 
         if rebalance_service.binance.is_none() {
             rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });

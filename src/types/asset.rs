@@ -1,4 +1,98 @@
+use std::collections::HashMap;
+
+use alloy::primitives::Address;
+use derive_more::{Display, FromStr};
 use serde::{Deserialize, Serialize};
+
+/// A unique ID for an asset.
+#[derive(Debug, Display, Clone, Eq, PartialEq, FromStr, Hash, Serialize, Deserialize)]
+pub struct AssetUid(String);
+
+impl AssetUid {
+    /// Create a new unique ID from a string.
+    pub fn new(uid: String) -> Self {
+        Self(uid)
+    }
+
+    /// Borrow the internal identifier.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A collection of assets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assets(HashMap<AssetUid, AssetDescriptor>);
+
+impl Assets {
+    /// Create a new container.
+    pub fn new(assets: HashMap<AssetUid, AssetDescriptor>) -> Self {
+        Self(assets)
+    }
+
+    /// Get the native asset if it is defined.
+    pub fn native(&self) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.find_by_address(Address::ZERO)
+    }
+
+    /// Get an asset by its unique ID, if any.
+    pub fn get(&self, uid: &AssetUid) -> Option<&AssetDescriptor> {
+        self.0.get(uid)
+    }
+
+    /// Find an asset by address, if any.
+    pub fn find_by_address(&self, address: Address) -> Option<(&AssetUid, &AssetDescriptor)> {
+        self.0.iter().find(|(_, desc)| desc.address == address)
+    }
+
+    /// Iterate over all assets.
+    pub fn iter(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
+        self.0.iter()
+    }
+
+    /// Get assets relayable across chains.
+    pub fn interop_tokens(&self) -> Vec<(AssetUid, AssetDescriptor)> {
+        self.interop_iter().map(|(a, b)| (a.clone(), b.clone())).collect()
+    }
+
+    /// Iterate over all assets that are relayable across chains.
+    pub fn interop_iter(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
+        self.iter().filter(|(_, desc)| desc.interop)
+    }
+
+    /// Get assets accepted as fee tokens.
+    pub fn fee_tokens(&self) -> Vec<(AssetUid, AssetDescriptor)> {
+        self.fee_token_iter().map(|(a, b)| (a.clone(), b.clone())).collect()
+    }
+
+    /// Iterate over all assets that are accepted as fee tokens.
+    pub fn fee_token_iter(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
+        self.iter().filter(|(_, desc)| desc.fee_token)
+    }
+}
+
+/// The description of a configured asset for a chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetDescriptor {
+    /// The address of the asset.
+    pub address: Address,
+    /// The number of decimals in the asset.
+    ///
+    /// Defaults to 18.
+    #[serde(default = "default_decimals")]
+    pub decimals: u8,
+    /// Whether users can pay fees in this asset.
+    #[serde(default)]
+    pub fee_token: bool,
+    /// Whether this asset can be relayed across chains.
+    #[serde(default)]
+    pub interop: bool,
+}
+
+/// The default decimals for an asset.
+fn default_decimals() -> u8 {
+    18
+}
 
 /// Asset metadata
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

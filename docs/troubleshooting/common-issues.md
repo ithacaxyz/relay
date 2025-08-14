@@ -490,7 +490,7 @@ const SETTLEMENT_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
 
 3. **Verify Endpoint Configuration**:
 ```yaml
-# registry.yaml
+# relay.yaml
 chains:
   - chain_id: 1
     layerzero_endpoint: "0x66A71Dcef29A0fFBDBE3c6a460a3B5BC225Cd675"

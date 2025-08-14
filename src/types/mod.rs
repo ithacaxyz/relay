@@ -10,12 +10,6 @@ pub use asset::*;
 mod asset_diff;
 pub use asset_diff::*;
 
-mod coin;
-pub use coin::*;
-
-mod coin_registry;
-pub use coin_registry::*;
-
 mod contracts;
 pub use contracts::*;
 
@@ -51,9 +45,6 @@ mod transaction;
 pub use transaction::*;
 
 pub mod rpc;
-
-mod token;
-pub use token::*;
 
 mod call;
 pub use call::*;

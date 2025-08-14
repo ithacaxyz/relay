@@ -1,13 +1,6 @@
-//! The `relay_` namespace.
 //! # Ithaca Relay RPC
 //!
 //! Implementations of a custom `relay_` namespace.
-//!
-//! - `relay_estimateFee` for estimating [`Intent`] fees.
-//! - `relay_sendAction` that can perform service-sponsored [EIP-7702][eip-7702] delegations and
-//!   send other service-sponsored Intent's on behalf of EOAs with delegated code.
-//!
-//! [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use crate::{
     asset::AssetInfoServiceHandle,
@@ -18,14 +11,14 @@ use crate::{
     transactions::interop::InteropBundle,
     types::{
         AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FeeTokens,
-        FundSource, FundingIntentContext, Health, IERC20, IEscrow, IntentKind, Intents, Key,
+        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
         KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, VersionedContracts,
         rpc::{
             AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
-            ChainCapabilities, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
-            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
+            ChainCapabilities, ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
+            Meta, PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
             RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
@@ -148,12 +141,11 @@ impl Relay {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         contracts: VersionedContracts,
-        chains: Chains,
+        chains: Arc<Chains>,
         quote_signer: DynSigner,
         funder_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
-        fee_tokens: Arc<FeeTokens>,
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
@@ -163,7 +155,6 @@ impl Relay {
         let inner = RelayInner {
             contracts,
             chains,
-            fee_tokens,
             fee_recipient,
             quote_signer,
             funder_signer,
@@ -181,22 +172,21 @@ impl Relay {
     pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
         let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
             // Relay needs a chain endpoint to support a chain.
-            self.inner.chains.get(chain_id)?;
-
-            // Relay needs a list of accepted chain tokens to support a chain.
-            let fee_tokens = self.inner.fee_tokens.chain_tokens(chain_id)?.clone();
+            let chain = self.inner.chains.get(chain_id)?;
+            let native_uid = chain.assets().native()?.0.clone();
+            let fee_tokens = chain.assets().fee_tokens();
 
             Some(async move {
-                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|token| {
+                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                    let native_uid = native_uid.clone();
                     async move {
-                        // TODO: only handles eth as native fee token
                         let rate = self
                             .inner
                             .price_oracle
-                            .eth_price(token.kind)
+                            .native_conversion_rate(token_uid.clone(), native_uid)
                             .await
                             .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        Ok(token.with_rate(rate))
+                        Ok(ChainFeeToken::new(token_uid, token, Some(rate)))
                     }
                 }))
                 .await?;
@@ -451,7 +441,7 @@ impl Relay {
 
     /// Returns an iterator over all installed [`Chain`]s.
     pub fn chains(&self) -> impl Iterator<Item = &Chain> {
-        self.inner.chains.chains()
+        self.inner.chains.chains_iter()
     }
 
     /// Returns the chain [`DynProvider`].
@@ -808,8 +798,8 @@ impl Relay {
 
                 let mapped = self
                     .inner
-                    .fee_tokens
-                    .map_interop_asset(destination_chain_id, requested_asset.address(), chain)?
+                    .chains
+                    .map_interop_asset(destination_chain_id, chain, requested_asset.address())?
                     .address;
 
                 let balance = assets
@@ -978,18 +968,9 @@ impl Relay {
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
         // ensure the requested asset is supported for interop
-        if !self
-            .inner
-            .fee_tokens
-            .find(request.chain_id, &requested_asset)
-            .is_some_and(|t| t.interop)
-        {
-            return Err(RelayError::UnsupportedAsset {
-                chain: request.chain_id,
-                asset: requested_asset,
-            }
-            .into());
-        }
+        self.inner.chains.interop_asset(request.chain_id, requested_asset).ok_or(
+            RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
+        )?;
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
@@ -1411,9 +1392,9 @@ impl RelayApiServer for Relay {
 
                 if (request.asset_type_filter.is_empty()
                     || request.asset_type_filter.contains(&AssetType::ERC20))
-                    && let Some(tokens) = self.inner.fee_tokens.chain_tokens(chain)
+                    && let Some(tokens) = self.inner.chains.fee_tokens(chain)
                 {
-                    for token in tokens {
+                    for (_, token) in tokens {
                         if token.address == Address::ZERO {
                             continue;
                         }
@@ -1829,9 +1810,7 @@ pub(super) struct RelayInner {
     /// The contract addresses.
     contracts: VersionedContracts,
     /// The chains supported by the relay.
-    chains: Chains,
-    /// Supported fee tokens.
-    fee_tokens: Arc<FeeTokens>,
+    chains: Arc<Chains>,
     /// The fee recipient address.
     fee_recipient: Address,
     /// The signer used to sign quotes.

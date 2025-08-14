@@ -1,7 +1,8 @@
 use crate::{
+    config::RelayConfig,
     error::{QuoteError, RelayError},
     price::{PriceFetcher, oracle::PriceOracleMessage},
-    types::CoinKind,
+    types::AssetUid,
 };
 use itertools::Itertools;
 use metrics::counter;
@@ -9,7 +10,6 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use strum::IntoEnumIterator;
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
 
@@ -23,29 +23,49 @@ pub struct CoinGecko {
     url: String,
     /// Price oracle sender used to update the price.
     update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+    /// A map of coin IDs to asset UIDs.
+    ///
+    /// Note that multiple asset UIDs might share the same underlying token. This is especially
+    /// true if the relay runs two environments (mainnet and testnet).
+    assets: HashMap<String, Vec<AssetUid>>,
 }
 
 impl CoinGecko {
     /// Creates a new [`CoinGecko`] instance.
-    pub fn new(api_key: String, update_tx: mpsc::UnboundedSender<PriceOracleMessage>) -> Self {
-        let ids = CoinKind::iter().map(Self::coin_kind_to_id).join(",");
+    pub fn new(
+        api_key: String,
+        update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+        assets: HashMap<String, Vec<AssetUid>>,
+    ) -> Self {
+        let ids = assets.keys().join(",");
 
         let url = format!(
             "https://pro-api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&x_cg_pro_api_key={api_key}",
         );
 
-        Self { url, update_tx }
+        Self { url, update_tx, assets }
     }
 
     /// Creates an instance of [`CoinGecko`] that sends a price feed to [`PriceOracle`] for all
     /// tokens from a spawned task every 10 seconds.
-    pub fn launch(update_tx: mpsc::UnboundedSender<PriceOracleMessage>) {
+    pub fn launch(update_tx: mpsc::UnboundedSender<PriceOracleMessage>, config: &RelayConfig) {
         if Self::api_key().is_empty() {
             warn!("GECKO_API environment variable not set, CoinGecko price fetcher will not run");
             return;
         }
+        let mut assets: HashMap<String, Vec<AssetUid>> = HashMap::new();
+        for (uid, _) in config.chains.iter().flat_map(|(_, chain)| chain.assets.iter()) {
+            let remapped = config
+                .pricefeed
+                .coingecko
+                .remapping
+                .get(uid)
+                .cloned()
+                .unwrap_or(uid.as_str().into());
+            assets.entry(remapped).or_default().push(uid.clone());
+        }
 
-        let gecko = Self::new(Self::api_key(), update_tx);
+        let gecko = Self::new(Self::api_key(), update_tx, assets);
 
         // Launch task to fetch prices on a fixed interval
         tokio::spawn(async move {
@@ -59,19 +79,6 @@ impl CoinGecko {
                 clock.reset();
             }
         });
-    }
-
-    /// Maps [`CoinKind`] to CoinGecko API ID.
-    fn coin_kind_to_id(kind: CoinKind) -> &'static str {
-        match kind {
-            CoinKind::USDC => "usd-coin",
-            CoinKind::USDT => "tether",
-            CoinKind::ETH => "ethereum",
-            CoinKind::BNB => "binancecoin",
-            CoinKind::POL => "matic-network",
-            CoinKind::EXP1 => "usd-coin",
-            CoinKind::EXP2 => "usd-coin",
-        }
     }
 
     /// Returns the API key for CoinGecko.
@@ -103,17 +110,19 @@ impl CoinGecko {
             return Ok(());
         };
 
-        let prices = CoinKind::iter()
-            .filter_map(|kind| {
-                let id = Self::coin_kind_to_id(kind);
-                let price = *data.get(id).and_then(|prices| prices.get("usd"))?;
+        let prices = self
+            .assets
+            .iter()
+            .filter_map(|(coin_id, uids)| {
+                let price = *data.get(coin_id).and_then(|prices| prices.get("usd"))?;
                 trace!(
-                    token = ?kind,
+                    tokens = ?uids,
                     usd_price = price,
-                    "Fetched USD price for token"
+                    "Fetched USD price for tokens"
                 );
-                Some((kind, price))
+                Some(uids.clone().into_iter().map(move |uid| (uid, price)))
             })
+            .flatten()
             .collect();
 
         counter!("coingecko.last_update")
@@ -140,8 +149,12 @@ mod tests {
         let api_key = std::env::var("GECKO_API").unwrap();
         info!("Using API key: {}", if api_key.is_empty() { "EMPTY" } else { "SET" });
 
+        let assets = HashMap::from_iter([
+            ("ethereum".into(), vec![AssetUid::new("eth".into())]),
+            ("usd-coin".into(), vec![AssetUid::new("usdc".into())]),
+        ]);
         let (update_tx, mut update_rx) = mpsc::unbounded_channel();
-        let gecko = CoinGecko::new(api_key, update_tx);
+        let gecko = CoinGecko::new(api_key, update_tx, assets.clone());
 
         info!("Fetching prices...");
         gecko.update_prices().await.expect("Failed to fetch prices");
@@ -161,13 +174,13 @@ mod tests {
 
         info!("\nFinal USD prices collected: {:?}", usd_prices);
 
-        // Verify we got USD prices for all native coins (ETH, BNB, POL) and tokens
-        for coin in CoinKind::iter() {
-            let price = usd_prices.get(&coin).copied().unwrap_or_else(|| {
-                panic!("Missing USD price for {coin:?}. Got USD prices: {usd_prices:?}")
+        // Verify we got USD prices for all native coins and tokens
+        for uid in assets.values().flat_map(|v| v.iter()) {
+            let price = usd_prices.get(uid).copied().unwrap_or_else(|| {
+                panic!("Missing USD price for {uid:?}. Got USD prices: {usd_prices:?}")
             });
-            info!("Verified {} USD price: ${}", coin, price);
-            assert!(price > 0.0, "Invalid USD price for {coin:?}: {price}");
+            info!("Verified {} USD price: ${}", uid, price);
+            assert!(price > 0.0, "Invalid USD price for {uid:?}: {price}");
         }
 
         println!("\nTest passed! All prices fetched successfully.");
