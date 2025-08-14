@@ -239,12 +239,12 @@ impl<'a> ChainDiagnostics<'a> {
                 ));
         }
 
-        // Build multicall to fetch the Funder balance of every token valid for this chain.
+        // Build multicall to fetch the Funder balance of every interop token for this chain.
         let mut multicall_fee_tokens = self.chain.provider().multicall().dynamic::<balanceOfCall>();
         let tokens = self
             .chain
             .assets()
-            .iter()
+            .interop_iter()
             .filter(|(_, t)| !t.address.is_zero())
             .map(|(_, token)| (token.address, AddressRole::FunderContract))
             .collect::<Vec<_>>();
@@ -273,7 +273,7 @@ impl<'a> ChainDiagnostics<'a> {
             role,
         )| {
             if balance.is_zero() {
-                errors.push(format!("[{role:?}] {account}  has no balance"));
+                errors.push(format!("[{role:?}] {account} has no native balance"));
             }
         });
 
@@ -283,14 +283,12 @@ impl<'a> ChainDiagnostics<'a> {
             tokens,
             |balance: U256, (token, role)| {
                 if balance.is_zero()
-                    && self
-                        .chain
-                        .assets()
-                        .find_by_address(token)
-                        .map(|(_, desc)| desc.interop)
-                        .unwrap_or_default()
+                    && let Some((uid, desc)) = self.chain.assets().find_by_address(token)
                 {
-                    errors.push(format!("{role:?} has no balance on {token}."));
+                    errors.push(format!(
+                        "{role:?} has no balance of token {uid} ({}).",
+                        desc.address
+                    ));
                 }
             }
         );
