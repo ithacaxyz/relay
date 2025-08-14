@@ -325,7 +325,7 @@ impl Signer {
         })
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id))]
     async fn validate_transaction(
         &self,
         tx: &mut RelayTransaction,
@@ -363,7 +363,7 @@ impl Signer {
                 }
             })
             .inspect_err(|err| {
-                trace!(?err, ?request, signer = %self.address(), chain_id = %self.chain_id, "transaction simulation failed");
+                trace!(?err, ?request, "transaction simulation failed");
             })?;
 
         Ok(())
@@ -377,7 +377,7 @@ impl Signer {
     }
 
     /// Broadcasts a given transaction.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id))]
     async fn send_transaction(&self, tx: &TxEnvelope) -> Result<(), SignerError> {
         let _ = self
             .provider
@@ -387,8 +387,6 @@ impl Signer {
                 trace!(
                     tx_hash = %tx.hash(),
                     nonce = %tx.nonce(),
-                    signer = %self.address(),
-                    chain_id = %self.chain_id,
                     "Sent transaction"
                 );
             })
@@ -397,8 +395,6 @@ impl Signer {
                     tx_hash = %tx.hash(),
                     nonce = %tx.nonce(),
                     err = %err,
-                    signer = %self.address(),
-                    chain_id = %self.chain_id,
                     "Failed to send transaction"
                 );
             })?;
@@ -410,6 +406,7 @@ impl Signer {
     ///
     /// Receives a mutable reference to [`SentTransaction`] and might potentially modify it when
     /// bumping the fees.
+    #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id, tx_hash = %tx.best_tx().tx_hash()))]
     async fn watch_transaction_inner(
         &self,
         tx: &mut PendingTransaction,
@@ -418,7 +415,7 @@ impl Signer {
 
         loop {
             if last_sent_at.elapsed() >= self.config.transaction_timeout {
-                error!(?tx, tx_hash = ?tx.best_tx().tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "Transaction timed out");
+                error!(?tx, "Transaction timed out");
                 return Err(SignerError::TxTimeout);
             }
 
@@ -449,11 +446,11 @@ impl Signer {
                 tx.sent.push(replacement);
                 last_sent_at = Instant::now();
             } else {
-                trace!(tx_hash=%best_tx.tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "was not able to wait for tx confirmation, attempting to resend");
+                trace!("was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
                     && !err.is_already_known()
                 {
-                    debug!(%err, tx_hash=%best_tx.tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "failed to resubmit transaction");
+                    debug!(%err, "failed to resubmit transaction");
                 }
             }
         }
@@ -471,7 +468,7 @@ impl Signer {
                 self.on_confirmed_transaction(tx, receipt).await?;
             }
             Err(err) => {
-                error!(%err, tx_hash = ?tx.best_tx().tx_hash(), signer = %self.address(), chain_id = %self.chain_id, "failed to wait for transaction confirmation, closing nonce gap");
+                error!(%err, "failed to wait for transaction confirmation, closing nonce gap");
 
                 // If we've failed to send the transaction, start closing the nonce gap to make sure
                 // we occupy the chosen nonce.
