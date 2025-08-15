@@ -86,6 +86,265 @@ pub struct RelayConfig {
     pub database_url: Option<String>,
 }
 
+impl RelayConfig {
+    /// Sets the IP address to serve the RPC on.
+    pub fn with_address(mut self, address: IpAddr) -> Self {
+        self.server.address = address;
+        self
+    }
+
+    /// Sets the port to serve the RPC on.
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.server.port = port;
+        self
+    }
+
+    /// Sets the port to serve the metrics on.
+    pub fn with_metrics_port(mut self, port: u16) -> Self {
+        self.server.metrics_port = port;
+        self
+    }
+
+    /// Sets the maximum number of concurrent connections the relay can handle.
+    pub fn with_max_connections(mut self, max_connections: u32) -> Self {
+        self.server.max_connections = max_connections;
+        self
+    }
+
+    /// Sets the lifetime duration for fee quotes.
+    pub fn with_quote_ttl(mut self, quote_ttl: Duration) -> Self {
+        self.quote.ttl = quote_ttl;
+        self
+    }
+
+    /// Sets the lifetime duration for token price rates.
+    pub fn with_rate_ttl(mut self, rate_ttl: Duration) -> Self {
+        self.quote.rate_ttl = rate_ttl;
+        self
+    }
+
+    /// Sets a constant rate for the price oracle. Used for testing.
+    pub fn with_quote_constant_rate(mut self, constant_rate: Option<f64>) -> Self {
+        self.quote.constant_rate = constant_rate.or(self.quote.constant_rate);
+        self
+    }
+
+    /// Sets the buffer added to Intent gas estimates.
+    pub fn with_intent_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.intent_buffer = buffer;
+        self
+    }
+
+    /// Sets the buffer added to tx gas estimates.
+    pub fn with_tx_gas_buffer(mut self, buffer: u64) -> Self {
+        self.quote.gas.tx_buffer = buffer;
+        self
+    }
+
+    /// Set the chains.
+    pub fn with_chains(self, chains: HashMap<Chain, ChainConfig>) -> Self {
+        Self { chains, ..self }
+    }
+
+    /// Extends the list of public node RPC endpoints.
+    pub fn with_public_node_endpoints(
+        mut self,
+        endpoints: impl IntoIterator<Item = (Chain, Url)>,
+    ) -> Self {
+        self.transactions.public_node_endpoints.extend(endpoints);
+        self
+    }
+
+    /// Sets the fee recipient address.
+    pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
+        self.fee_recipient = fee_recipient;
+        self
+    }
+
+    /// Sets the secret key used to sign transactions.
+    pub fn with_signers_mnemonic(mut self, mnemonic: Mnemonic<English>) -> Self {
+        self.secrets.signers_mnemonic = mnemonic;
+        self
+    }
+
+    /// Sets the orchestrator address.
+    pub fn with_orchestrator(mut self, orchestrator: Option<Address>) -> Self {
+        if let Some(orchestrator) = orchestrator {
+            self.orchestrator = orchestrator;
+        }
+        self
+    }
+
+    /// Sets the delegation address.
+    pub fn with_delegation_proxy(mut self, delegation_proxy: Option<Address>) -> Self {
+        if let Some(delegation_proxy) = delegation_proxy {
+            self.delegation_proxy = delegation_proxy;
+        }
+        self
+    }
+
+    /// Sets the legacy delegation proxy addresses.
+    pub fn with_legacy_delegation_proxies(mut self, legacy_delegation_proxies: &[Address]) -> Self {
+        self.legacy_delegation_proxies.extend(legacy_delegation_proxies);
+        self
+    }
+
+    /// Sets the simulator address.
+    pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
+        if let Some(simulator) = simulator {
+            self.simulator = simulator;
+        }
+        self
+    }
+
+    /// Sets the funder address.
+    pub fn with_funder(mut self, funder: Option<Address>) -> Self {
+        if let Some(funder) = funder {
+            self.funder = funder;
+        }
+        self
+    }
+
+    /// Sets the escrow address.
+    pub fn with_escrow(mut self, escrow: Option<Address>) -> Self {
+        if let Some(escrow) = escrow {
+            self.escrow = escrow;
+        }
+        self
+    }
+
+    /// Sets the database URL.
+    pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
+        self.database_url = database_url;
+        self
+    }
+
+    /// Sets the maximum number of pending transactions.
+    pub fn with_max_pending_transactions(mut self, max_pending_transactions: usize) -> Self {
+        self.transactions.max_pending_transactions = max_pending_transactions;
+        self
+    }
+
+    /// Sets the number of signers to derive from mnemonic and use for sending transactions.
+    pub fn with_num_signers(mut self, num_signers: usize) -> Self {
+        self.transactions.num_signers = num_signers;
+        self
+    }
+
+    /// Sets the percentile of the priority fees to use for the transactions.
+    pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
+        self.transactions.priority_fee_percentile = percentile;
+        self
+    }
+
+    /// Sets the Resend API key.
+    pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
+        self.email.resend_api_key = api_key.or(self.email.resend_api_key);
+        self
+    }
+
+    /// Sets the Porto base URL.
+    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
+        self.email.porto_base_url = value.or(self.email.porto_base_url);
+        self
+    }
+
+    /// Sets the configuration for the transaction service.
+    pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
+        self.transactions = config;
+        self
+    }
+
+    /// Sets the rebalance service configuration.
+    pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
+        self.rebalance_service = config;
+        self
+    }
+
+    /// Sets the funder signing key used to sign fund operations.
+    pub fn with_funder_key(mut self, funder_key: Option<String>) -> Self {
+        if let Some(funder_key) = funder_key {
+            self.secrets.funder_key = funder_key;
+        }
+        self
+    }
+
+    /// Sets the service API key for protected RPC endpoints.
+    pub fn with_service_api_key(mut self, service_api_key: Option<String>) -> Self {
+        self.secrets.service_api_key = service_api_key.or(self.secrets.service_api_key);
+        self
+    }
+
+    /// Sets the interop configuration.
+    pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
+        self.interop = Some(interop_config);
+        self
+    }
+
+    /// Sets the funder owner key, and enables the rebalance service.
+    pub fn with_funder_owner_key(mut self, funder_owner_key: Option<String>) -> Self {
+        let Some(key) = funder_owner_key else { return self };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
+        rebalance_service.funder_owner_key = key;
+        self
+    }
+
+    /// Sets the Binance API key and secret.
+    pub fn with_binance_keys(
+        mut self,
+        api_key: Option<String>,
+        api_secret: Option<String>,
+    ) -> Self {
+        let (api_key, api_secret) = match (api_key, api_secret) {
+            (Some(api_key), Some(api_secret)) => (api_key, api_secret),
+            (None, None) => return self,
+            _ => panic!("expected both Binance API key and secret"),
+        };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
+
+        if rebalance_service.binance.is_none() {
+            rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });
+        } else {
+            rebalance_service.binance.as_mut().unwrap().api_key = api_key;
+            rebalance_service.binance.as_mut().unwrap().api_secret = api_secret;
+        }
+
+        self
+    }
+
+    /// Set the simple settler owner key if interop is already configured for simple settler.
+    pub fn with_simple_settler_owner_key(mut self, settler_owner_key: Option<String>) -> Self {
+        let Some(pk) = settler_owner_key else {
+            warn!("no simple settler owner private key provided");
+            return self;
+        };
+
+        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler)
+            && let SettlerImplementation::Simple(conf) = &mut conf.implementation
+        {
+            conf.private_key = Some(pk);
+        }
+        self
+    }
+
+    /// Load from a YAML file.
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
+        let path = path.as_ref();
+        let file = std::fs::File::open(path)
+            .wrap_err_with(|| format!("failed to read config file: {}", path.display()))?;
+        let config = serde_yaml::from_reader(&file)
+            .wrap_err_with(|| format!("failed to parse config file: {}", path.display()))?;
+        Ok(config)
+    }
+
+    /// Save to a YAML file.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> eyre::Result<()> {
+        let content = serde_yaml::to_string(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+}
+
 /// Server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -430,265 +689,6 @@ impl Default for TransactionServiceConfig {
             public_node_endpoints: HashMap::default(),
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
         }
-    }
-}
-
-impl RelayConfig {
-    /// Sets the IP address to serve the RPC on.
-    pub fn with_address(mut self, address: IpAddr) -> Self {
-        self.server.address = address;
-        self
-    }
-
-    /// Sets the port to serve the RPC on.
-    pub fn with_port(mut self, port: u16) -> Self {
-        self.server.port = port;
-        self
-    }
-
-    /// Sets the port to serve the metrics on.
-    pub fn with_metrics_port(mut self, port: u16) -> Self {
-        self.server.metrics_port = port;
-        self
-    }
-
-    /// Sets the maximum number of concurrent connections the relay can handle.
-    pub fn with_max_connections(mut self, max_connections: u32) -> Self {
-        self.server.max_connections = max_connections;
-        self
-    }
-
-    /// Sets the lifetime duration for fee quotes.
-    pub fn with_quote_ttl(mut self, quote_ttl: Duration) -> Self {
-        self.quote.ttl = quote_ttl;
-        self
-    }
-
-    /// Sets the lifetime duration for token price rates.
-    pub fn with_rate_ttl(mut self, rate_ttl: Duration) -> Self {
-        self.quote.rate_ttl = rate_ttl;
-        self
-    }
-
-    /// Sets a constant rate for the price oracle. Used for testing.
-    pub fn with_quote_constant_rate(mut self, constant_rate: Option<f64>) -> Self {
-        self.quote.constant_rate = constant_rate.or(self.quote.constant_rate);
-        self
-    }
-
-    /// Sets the buffer added to Intent gas estimates.
-    pub fn with_intent_gas_buffer(mut self, buffer: u64) -> Self {
-        self.quote.gas.intent_buffer = buffer;
-        self
-    }
-
-    /// Sets the buffer added to tx gas estimates.
-    pub fn with_tx_gas_buffer(mut self, buffer: u64) -> Self {
-        self.quote.gas.tx_buffer = buffer;
-        self
-    }
-
-    /// Set the chains.
-    pub fn with_chains(self, chains: HashMap<Chain, ChainConfig>) -> Self {
-        Self { chains, ..self }
-    }
-
-    /// Extends the list of public node RPC endpoints.
-    pub fn with_public_node_endpoints(
-        mut self,
-        endpoints: impl IntoIterator<Item = (Chain, Url)>,
-    ) -> Self {
-        self.transactions.public_node_endpoints.extend(endpoints);
-        self
-    }
-
-    /// Sets the fee recipient address.
-    pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
-        self.fee_recipient = fee_recipient;
-        self
-    }
-
-    /// Sets the secret key used to sign transactions.
-    pub fn with_signers_mnemonic(mut self, mnemonic: Mnemonic<English>) -> Self {
-        self.secrets.signers_mnemonic = mnemonic;
-        self
-    }
-
-    /// Sets the orchestrator address.
-    pub fn with_orchestrator(mut self, orchestrator: Option<Address>) -> Self {
-        if let Some(orchestrator) = orchestrator {
-            self.orchestrator = orchestrator;
-        }
-        self
-    }
-
-    /// Sets the delegation address.
-    pub fn with_delegation_proxy(mut self, delegation_proxy: Option<Address>) -> Self {
-        if let Some(delegation_proxy) = delegation_proxy {
-            self.delegation_proxy = delegation_proxy;
-        }
-        self
-    }
-
-    /// Sets the legacy delegation proxy addresses.
-    pub fn with_legacy_delegation_proxies(mut self, legacy_delegation_proxies: &[Address]) -> Self {
-        self.legacy_delegation_proxies.extend(legacy_delegation_proxies);
-        self
-    }
-
-    /// Sets the simulator address.
-    pub fn with_simulator(mut self, simulator: Option<Address>) -> Self {
-        if let Some(simulator) = simulator {
-            self.simulator = simulator;
-        }
-        self
-    }
-
-    /// Sets the funder address.
-    pub fn with_funder(mut self, funder: Option<Address>) -> Self {
-        if let Some(funder) = funder {
-            self.funder = funder;
-        }
-        self
-    }
-
-    /// Sets the escrow address.
-    pub fn with_escrow(mut self, escrow: Option<Address>) -> Self {
-        if let Some(escrow) = escrow {
-            self.escrow = escrow;
-        }
-        self
-    }
-
-    /// Sets the database URL.
-    pub fn with_database_url(mut self, database_url: Option<String>) -> Self {
-        self.database_url = database_url;
-        self
-    }
-
-    /// Sets the maximum number of pending transactions.
-    pub fn with_max_pending_transactions(mut self, max_pending_transactions: usize) -> Self {
-        self.transactions.max_pending_transactions = max_pending_transactions;
-        self
-    }
-
-    /// Sets the number of signers to derive from mnemonic and use for sending transactions.
-    pub fn with_num_signers(mut self, num_signers: usize) -> Self {
-        self.transactions.num_signers = num_signers;
-        self
-    }
-
-    /// Sets the percentile of the priority fees to use for the transactions.
-    pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
-        self.transactions.priority_fee_percentile = percentile;
-        self
-    }
-
-    /// Sets the Resend API key.
-    pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
-        self.email.resend_api_key = api_key.or(self.email.resend_api_key);
-        self
-    }
-
-    /// Sets the Porto base URL.
-    pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
-        self.email.porto_base_url = value.or(self.email.porto_base_url);
-        self
-    }
-
-    /// Sets the configuration for the transaction service.
-    pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
-        self.transactions = config;
-        self
-    }
-
-    /// Sets the rebalance service configuration.
-    pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
-        self.rebalance_service = config;
-        self
-    }
-
-    /// Sets the funder signing key used to sign fund operations.
-    pub fn with_funder_key(mut self, funder_key: Option<String>) -> Self {
-        if let Some(funder_key) = funder_key {
-            self.secrets.funder_key = funder_key;
-        }
-        self
-    }
-
-    /// Sets the service API key for protected RPC endpoints.
-    pub fn with_service_api_key(mut self, service_api_key: Option<String>) -> Self {
-        self.secrets.service_api_key = service_api_key.or(self.secrets.service_api_key);
-        self
-    }
-
-    /// Sets the interop configuration.
-    pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
-        self.interop = Some(interop_config);
-        self
-    }
-
-    /// Sets the funder owner key, and enables the rebalance service.
-    pub fn with_funder_owner_key(mut self, funder_owner_key: Option<String>) -> Self {
-        let Some(key) = funder_owner_key else { return self };
-        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
-        rebalance_service.funder_owner_key = key;
-        self
-    }
-
-    /// Sets the Binance API key and secret.
-    pub fn with_binance_keys(
-        mut self,
-        api_key: Option<String>,
-        api_secret: Option<String>,
-    ) -> Self {
-        let (api_key, api_secret) = match (api_key, api_secret) {
-            (Some(api_key), Some(api_secret)) => (api_key, api_secret),
-            (None, None) => return self,
-            _ => panic!("expected both Binance API key and secret"),
-        };
-        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
-
-        if rebalance_service.binance.is_none() {
-            rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });
-        } else {
-            rebalance_service.binance.as_mut().unwrap().api_key = api_key;
-            rebalance_service.binance.as_mut().unwrap().api_secret = api_secret;
-        }
-
-        self
-    }
-
-    /// Set the simple settler owner key if interop is already configured for simple settler.
-    pub fn with_simple_settler_owner_key(mut self, settler_owner_key: Option<String>) -> Self {
-        let Some(pk) = settler_owner_key else {
-            warn!("no simple settler owner private key provided");
-            return self;
-        };
-
-        if let Some(conf) = self.interop.as_mut().map(|conf| &mut conf.settler)
-            && let SettlerImplementation::Simple(conf) = &mut conf.implementation
-        {
-            conf.private_key = Some(pk);
-        }
-        self
-    }
-
-    /// Load from a YAML file.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> eyre::Result<Self> {
-        let path = path.as_ref();
-        let file = std::fs::File::open(path)
-            .wrap_err_with(|| format!("failed to read config file: {}", path.display()))?;
-        let config = serde_yaml::from_reader(&file)
-            .wrap_err_with(|| format!("failed to parse config file: {}", path.display()))?;
-        Ok(config)
-    }
-
-    /// Save to a YAML file.
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> eyre::Result<()> {
-        let content = serde_yaml::to_string(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
     }
 }
 
