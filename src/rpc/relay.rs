@@ -1385,12 +1385,17 @@ impl Relay {
             {
                 (new_chains.iter().map(|source| source.amount).sum(), new_chains)
             } else {
-                return Err(RelayError::InsufficientFunds {
-                    required: requested_funds,
-                    chain_id: request.chain_id,
-                    asset: requested_asset,
-                }
-                .into());
+                // We don't have enough funds across all chains, so we revert back to single chain
+                // to produce a quote with a `feeTokenDeficit`.
+                //
+                // A more robust solution here is returning a `Result<Vec<FundSource>, Deficit>`
+                // where the error specifies how much we have across all chains, and
+                // we use that to produce the deficit, as the single chain
+                // `feeTokenDeficit` is a bit misleading.
+                return self
+                    .build_single_chain_quote(request, maybe_stored, nonce, None)
+                    .await
+                    .map_err(Into::into);
             };
             num_funding_chains = funding_chains.len();
             let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
