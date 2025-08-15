@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_config_v21_yaml() {
-        let s = include_str!("../tests/assets/config/v15.yaml");
+        let s = include_str!("../tests/assets/config/v21.yaml");
         let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
         let yaml = serde_yaml::to_string(&config).unwrap();
         let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();

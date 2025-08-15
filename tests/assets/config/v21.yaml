@@ -1,178 +1,177 @@
-config:
-  server:
-    address: 0.0.0.0
-    port: 9119
-    metrics_port: 9000
-    max_connections: 5000
-  fee_recipient: "0x6a658769C4117012A9B6614A0C42e319A5f88e95"
-  quote:
-    constantRate: null
-    gas:
-      intentBuffer: 20000
-      txBuffer: 10000
-    ttl: 30
-    rateTtl: 300
-  transactions:
-    num_signers: 10
-    max_pending_transactions: 100
-    max_transactions_per_signer: 16
-    max_queued_per_eoa: 1
-    balance_check_interval: 5
-    nonce_check_interval: 60
-    transaction_timeout: 60
-    priority_fee_percentile: 20
-    public_node_endpoints:
-      base: https://mainnet.base.org/
-  pricefeed:
-    coingecko:
-      # Remaps asset UIDs to CoinGecko coin IDs.
-      # If not specified, the UID is used as the coin ID.
-      # See <https://docs.coingecko.com/reference/coins-list>
-      remapping:
-        teth: "ethereum"
-        exp1: "usd-coin"
-        exp2: "usd-coin"
-  # Contract addresses
-  orchestrator: "0xd0cF485E3EE9F0E71DA03699430Abe240AA429e6"
-  legacy_orchestrators: []
-  legacy_delegation_proxies: []
-  # delegation_proxy = AccountProxy
-  delegation_proxy: "0x71c9fb8Ef72B18C48f127E2Ef5EE267D8BEfCd1D"
-  simulator: "0xcb80788813C39d90C48C2733B43b3E47e23A2D3F"
-  escrow: "0x55626138525a47AF075322aAfE1df8F68993b11D"
-  # funder =  SimpleFunder
-  funder: "0x1918181eBF34291757D416055341f37074f791F2"
-  #interop:
-  #  # Refund monitoring settings
-  #  refund_check_interval: 60
-  #  escrow_refund_threshold: 604800
-  #  # Simple settler for devnet
-  #  settler:
-  #    wait_verification_timeout: 604800
-  #    layer_zero:
-  #      settler_address: "0xF387a549986cC804e19Ef23c2D55b9a5eF053944"
-  #      endpoint_ids:
-  #        "84532": 40245 # Base Sepolia EID
-  #        "11155420": 40232 # Optimism Sepolia EID
-  #      endpoint_addresses:
-  #        "84532": "0x6EDCE65403992e310A62460808c4b910D972f10f" # Base Sepolia
-  #        "11155420": "0x6EDCE65403992e310A62460808c4b910D972f10f" # Optimism Sepolia
-  email:
-    portoBaseUrl: "id.porto.sh"
-  chains:
-    # Base Mainnet
-    8453:
-      endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
-      sequencer: https://mainnet-sequencer-dedicated.base.org/3cR8i2xHWeXktYpTwMkXmCMwZ2dj3TVy
-      flashblocks: https://mainnet-preconf.base.org/
-      assets:
-        ethereum:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        usd-coin:
-          address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-          decimals: 6
-          fee_token: false
-          interop: false
-    # Optimism Mainnet
-    10:
-      endpoint: ws://execution-service.op-mainnet-stable.svc.cluster.local:8546/
-      sequencer: https://mainnet-sequencer.optimism.io
-      assets:
-        ethereum:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        usd-coin:
-          address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
-          decimals: 6
-          fee_token: false
-          interop: false
-    # Arbitrum Mainnet
-    42161:
-      endpoint: wss://warmhearted-falling-shape.arbitrum-mainnet.quiknode.pro/b1beacf9cbff295f07eba00f88985c08ed136559
-      sequencer: https://arb1-sequencer.arbitrum.io/rpc
-      assets:
-        ethereum:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        usd-coin:
-          address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
-          decimals: 6
-          fee_token: false
-          interop: false
-    # BSC Mainnet
-    56:
-      native_symbol: "BNB"
-      endpoint: wss://warmhearted-falling-shape.bsc.quiknode.pro/b1beacf9cbff295f07eba00f88985c08ed136559
-      assets:
-        binancecoin:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        # NOTE: No offical USDC on BSC
-        #tether:
-        #  address: "TODO"
-        #  fee_token: true
-        #  interop: false
-    # Polygon Mainnet
-    137:
-      native_symbol: "POL"
-      endpoint: wss://warmhearted-falling-shape.matic.quiknode.pro/
-      assets:
-        matic-network:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        usd-coin:
-          address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
-          decimals: 6
-          fee_token: false
-          interop: false
-    # Testnets
-    # OP-Sepolia
-    11155420:
-      endpoint: ws://reth-lean-hamster.op-sepolia.svc.cluster.local:8546
-      assets:
-        # TODO: naming TBC?
-        teth:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        exp1:
-          address: "0x3A9b126BF65C518F1E02602BD77bD1288147F94C"
-          fee_token: true
-          interop: true
-        exp2:
-          address: "0x6795f10304557A454b94a5c04e9217677Cc9b598"
-          fee_token: true
-          interop: true
-    # Base Sepolia
-    84532:
-      endpoint: ws://execution-service.base-sepolia-stable.svc.cluster.local:8546/
-      sequencer: https://sepolia-sequencer.base.org/
-      flashblocks: https://sepolia-preconf.base.org/
-      assets:
-        teth:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        exp1:
-          address: "0x3A9b126BF65C518F1E02602BD77bD1288147F94C"
-          fee_token: true
-          interop: true
-        exp2:
-          address: "0x6795f10304557A454b94a5c04e9217677Cc9b598"
-          fee_token: true
-          interop: true
-    # Arbitrum Sepolia
-    421614:
-      endpoint: wss://warmhearted-falling-shape.arbitrum-sepolia.quiknode.pro/
-      assets:
-        teth:
-          # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
-          address: "0x0000000000000000000000000000000000000000"
-          fee_token: true
-        #TODO: EXP?
+server:
+  address: 0.0.0.0
+  port: 9119
+  metrics_port: 9000
+  max_connections: 5000
+fee_recipient: "0x6a658769C4117012A9B6614A0C42e319A5f88e95"
+quote:
+  constantRate: null
+  gas:
+    intentBuffer: 20000
+    txBuffer: 10000
+  ttl: 30
+  rateTtl: 300
+transactions:
+  num_signers: 10
+  max_pending_transactions: 100
+  max_transactions_per_signer: 16
+  max_queued_per_eoa: 1
+  balance_check_interval: 5
+  nonce_check_interval: 60
+  transaction_timeout: 60
+  priority_fee_percentile: 20
+  public_node_endpoints:
+    base: https://mainnet.base.org/
+pricefeed:
+  coingecko:
+    # Remaps asset UIDs to CoinGecko coin IDs.
+    # If not specified, the UID is used as the coin ID.
+    # See <https://docs.coingecko.com/reference/coins-list>
+    remapping:
+      teth: "ethereum"
+      exp1: "usd-coin"
+      exp2: "usd-coin"
+# Contract addresses
+orchestrator: "0xd0cF485E3EE9F0E71DA03699430Abe240AA429e6"
+legacy_orchestrators: [ ]
+legacy_delegation_proxies: [ ]
+# delegation_proxy = AccountProxy
+delegation_proxy: "0x71c9fb8Ef72B18C48f127E2Ef5EE267D8BEfCd1D"
+simulator: "0xcb80788813C39d90C48C2733B43b3E47e23A2D3F"
+escrow: "0x55626138525a47AF075322aAfE1df8F68993b11D"
+# funder =  SimpleFunder
+funder: "0x1918181eBF34291757D416055341f37074f791F2"
+#interop:
+#  # Refund monitoring settings
+#  refund_check_interval: 60
+#  escrow_refund_threshold: 604800
+#  # Simple settler for devnet
+#  settler:
+#    wait_verification_timeout: 604800
+#    layer_zero:
+#      settler_address: "0xF387a549986cC804e19Ef23c2D55b9a5eF053944"
+#      endpoint_ids:
+#        "84532": 40245 # Base Sepolia EID
+#        "11155420": 40232 # Optimism Sepolia EID
+#      endpoint_addresses:
+#        "84532": "0x6EDCE65403992e310A62460808c4b910D972f10f" # Base Sepolia
+#        "11155420": "0x6EDCE65403992e310A62460808c4b910D972f10f" # Optimism Sepolia
+email:
+  portoBaseUrl: "id.porto.sh"
+chains:
+  # Base Mainnet
+  8453:
+    endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+    sequencer: https://mainnet-sequencer-dedicated.base.org/3cR8i2xHWeXktYpTwMkXmCMwZ2dj3TVy
+    flashblocks: https://mainnet-preconf.base.org/
+    assets:
+      ethereum:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        decimals: 6
+        fee_token: false
+        interop: false
+  # Optimism Mainnet
+  10:
+    endpoint: ws://execution-service.op-mainnet-stable.svc.cluster.local:8546/
+    sequencer: https://mainnet-sequencer.optimism.io
+    assets:
+      ethereum:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+        decimals: 6
+        fee_token: false
+        interop: false
+  # Arbitrum Mainnet
+  42161:
+    endpoint: wss://warmhearted-falling-shape.arbitrum-mainnet.quiknode.pro/b1beacf9cbff295f07eba00f88985c08ed136559
+    sequencer: https://arb1-sequencer.arbitrum.io/rpc
+    assets:
+      ethereum:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        decimals: 6
+        fee_token: false
+        interop: false
+  # BSC Mainnet
+  56:
+    native_symbol: "BNB"
+    endpoint: wss://warmhearted-falling-shape.bsc.quiknode.pro/b1beacf9cbff295f07eba00f88985c08ed136559
+    assets:
+      binancecoin:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      # NOTE: No offical USDC on BSC
+      #tether:
+      #  address: "TODO"
+      #  fee_token: true
+      #  interop: false
+  # Polygon Mainnet
+  137:
+    native_symbol: "POL"
+    endpoint: wss://warmhearted-falling-shape.matic.quiknode.pro/
+    assets:
+      matic-network:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+        decimals: 6
+        fee_token: false
+        interop: false
+  # Testnets
+  # OP-Sepolia
+  11155420:
+    endpoint: ws://reth-lean-hamster.op-sepolia.svc.cluster.local:8546
+    assets:
+      # TODO: naming TBC?
+      teth:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      exp1:
+        address: "0x3A9b126BF65C518F1E02602BD77bD1288147F94C"
+        fee_token: true
+        interop: true
+      exp2:
+        address: "0x6795f10304557A454b94a5c04e9217677Cc9b598"
+        fee_token: true
+        interop: true
+  # Base Sepolia
+  84532:
+    endpoint: ws://execution-service.base-sepolia-stable.svc.cluster.local:8546/
+    sequencer: https://sepolia-sequencer.base.org/
+    flashblocks: https://sepolia-preconf.base.org/
+    assets:
+      teth:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      exp1:
+        address: "0x3A9b126BF65C518F1E02602BD77bD1288147F94C"
+        fee_token: true
+        interop: true
+      exp2:
+        address: "0x6795f10304557A454b94a5c04e9217677Cc9b598"
+        fee_token: true
+        interop: true
+  # Arbitrum Sepolia
+  421614:
+    endpoint: wss://warmhearted-falling-shape.arbitrum-sepolia.quiknode.pro/
+    assets:
+      teth:
+        # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      #TODO: EXP?
