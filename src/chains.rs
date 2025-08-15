@@ -14,6 +14,7 @@ use url::Url;
 use crate::{
     config::RelayConfig,
     constants::DEFAULT_POLL_INTERVAL,
+    error::RelayError,
     liquidity::{
         LiquidityTracker, RebalanceService,
         bridge::{BinanceBridge, Bridge, SimpleBridge},
@@ -39,11 +40,11 @@ pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::
 #[derive(Debug, Clone)]
 pub struct Chain {
     /// Provider for the chain.
-    pub provider: DynProvider,
+    provider: DynProvider,
     /// Handle to the transaction service.
-    pub transactions: TransactionServiceHandle,
+    transactions: TransactionServiceHandle,
     /// Whether this is an OP network.
-    pub is_optimism: bool,
+    is_optimism: bool,
     /// The chain ID.
     chain_id: ChainId,
     /// The supported assets on the chain.
@@ -62,8 +63,18 @@ impl Chain {
     }
 
     /// Returns the assets on the chain.
-    pub fn assets(&self) -> &Assets {
+    pub const fn assets(&self) -> &Assets {
         &self.assets
+    }
+
+    /// Whether this is an opstack chain.
+    pub const fn is_optimism(&self) -> bool {
+        self.is_optimism
+    }
+
+    /// Returns access to the [`TransactionService`] via its handle.
+    pub const fn transactions(&self) -> &TransactionServiceHandle {
+        &self.transactions
     }
 }
 
@@ -221,9 +232,16 @@ impl Chains {
         self.chains.is_empty()
     }
 
-    /// Get a provider for a given chain ID.
+    /// Get the [`Chain`] object for a given chain ID.
     pub fn get(&self, chain_id: ChainId) -> Option<Chain> {
         self.chains.get(&chain_id).cloned()
+    }
+
+    /// Get the [`Chain`] object for a given chain ID.
+    ///
+    /// Returns a [`RelayError::UnsupportedChain`] if no chain with the id is found.
+    pub fn ensure_chain(&self, chain_id: ChainId) -> Result<Chain, RelayError> {
+        self.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))
     }
 
     /// Returns an iterator over all installed [`Chain`]s.
