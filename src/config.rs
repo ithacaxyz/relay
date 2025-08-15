@@ -390,7 +390,7 @@ impl LayerZeroConfig {
 }
 
 /// Configuration for transaction service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
     /// Number of signers to derive from mnemonic and use for sending transactions.
     pub num_signers: usize,
@@ -711,5 +711,6 @@ mod tests {
         assert_eq!(from_yaml.chains, config.chains);
         assert_eq!(from_yaml.pricefeed, config.pricefeed);
         assert_eq!(from_yaml.interop, config.interop);
+        assert_eq!(from_yaml.transactions, config.transactions);
     }
 }
