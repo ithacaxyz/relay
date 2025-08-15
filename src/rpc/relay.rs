@@ -255,7 +255,7 @@ impl Relay {
         gas_estimate: &GasEstimate,
     ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
-        let fee = if chain.is_optimism {
+        let fee = if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
             let mut buf = Vec::new();
@@ -288,7 +288,7 @@ impl Relay {
                 .encode(&mut buf);
             }
 
-            chain.provider.estimate_l1_fee(buf.into()).await?
+            chain.provider().estimate_l1_fee(buf.into()).await?
         } else {
             U256::ZERO
         };
@@ -304,10 +304,9 @@ impl Relay {
         prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let chain =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let chain = self.inner.chains.ensure_chain(chain_id)?;
 
-        let provider = chain.provider.clone();
+        let provider = chain.provider().clone();
         let (native_uid, _) =
             chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
         let (token_uid, token) = chain
@@ -811,7 +810,7 @@ impl Relay {
 
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
-        Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
+        Ok(self.inner.chains.ensure_chain(chain_id)?.provider().clone())
     }
 
     /// Converts authorized keys into a list of [`Call`].
@@ -1610,9 +1609,8 @@ impl Relay {
         );
         self.inner
             .chains
-            .get(tx.chain_id())
-            .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
-            .transactions
+            .ensure_chain(tx.chain_id())?
+            .transactions()
             .send_transaction(tx)
             .instrument(span)
             .await?;
