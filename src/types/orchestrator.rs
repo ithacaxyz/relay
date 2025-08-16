@@ -13,6 +13,7 @@ use tracing::debug;
 use super::{GasResults, simulator::SimulatorContract};
 use crate::{
     asset::AssetInfoServiceHandle,
+    config::SimMode,
     error::{IntentError, RelayError},
     types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
@@ -182,6 +183,8 @@ impl<P: Provider> Orchestrator<P> {
     /// Call `Simulator.simulateV1Logs` with the provided [`Intent`].
     ///
     /// `simulator` contract address should have its balance set to `uint256.max`.
+    ///
+    /// This respects the given [`SimMode`] when performing the simulation.
     pub async fn simulate_execute(
         &self,
         mock_from: Address,
@@ -189,11 +192,16 @@ impl<P: Provider> Orchestrator<P> {
         intent: &Intent,
         asset_info_handle: AssetInfoServiceHandle,
         gas_validation_offset: U256,
+        sim_mode: SimMode,
     ) -> Result<(AssetDiffs, GasResults), RelayError> {
-        let result =
-            SimulatorContract::new(simulator, self.orchestrator.provider(), self.overrides.clone())
-                .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
-                .await;
+        let result = SimulatorContract::new(
+            simulator,
+            self.orchestrator.provider(),
+            self.overrides.clone(),
+            sim_mode,
+        )
+        .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
+        .await;
 
         // If simulation failed, check if orchestrator is paused
         if result.is_err() && self.is_paused().await? {

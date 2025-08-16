@@ -404,6 +404,13 @@ pub enum SimMode {
     Trace,
 }
 
+impl SimMode {
+    /// Returns true if this is [`SimMode::SimulateV1`]
+    pub const fn is_simulate_v1(&self) -> bool {
+        matches!(self, Self::SimulateV1)
+    }
+}
+
 /// Quote configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

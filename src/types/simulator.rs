@@ -1,5 +1,5 @@
 use crate::{
-    config::QuoteConfig,
+    config::{QuoteConfig, SimMode},
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{IntentError, RelayError},
     types::IERC20,
@@ -86,14 +86,21 @@ impl GasEstimate {
 pub struct SimulatorContract<P: Provider> {
     simulator: Simulator::SimulatorInstance<P>,
     overrides: StateOverride,
+    sim_mode: SimMode,
 }
 
 impl<P: Provider> SimulatorContract<P> {
     /// Create a new simulator wrapper
-    pub fn new(simulator_address: Address, provider: P, overrides: StateOverride) -> Self {
+    pub fn new(
+        simulator_address: Address,
+        provider: P,
+        overrides: StateOverride,
+        sim_mode: SimMode,
+    ) -> Self {
         Self {
             simulator: Simulator::SimulatorInstance::new(simulator_address, provider),
             overrides,
+            sim_mode,
         }
     }
 
@@ -139,10 +146,14 @@ impl<P: Provider> SimulatorContract<P> {
                 .into(),
             );
 
-        // Check chain ID to determine which simulation method to use
-        let chain = Chain::from(self.simulator.provider().get_chain_id().await?);
-
-        if has_simulate_v1_support(&chain) {
+        // check how to simulate
+        // TODO(mattsse): remove additional `has_simulate_v1_support` check after checking infra
+        // settings
+        if self.sim_mode.is_simulate_v1()
+            || has_simulate_v1_support(&Chain::from(
+                self.simulator.provider().get_chain_id().await?,
+            ))
+        {
             self.with_simulate_v1(tx_request).await
         } else {
             self.with_debug_trace(tx_request).await
