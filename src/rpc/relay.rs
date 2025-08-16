@@ -14,9 +14,9 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow, FundSource,
-        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
+        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
+        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -56,7 +56,7 @@ use jsonrpsee::{
 use opentelemetry::trace::SpanKind;
 use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
-use tracing::{Instrument, Level, debug, error, instrument, span};
+use tracing::{Instrument, Level, debug, error, instrument, span, warn};
 
 use crate::{
     chains::{Chain, Chains},
@@ -187,11 +187,13 @@ impl Relay {
         let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
             // Relay needs a chain endpoint to support a chain.
             let chain = self.inner.chains.get(chain_id)?;
+            let provider = chain.provider().clone();
             let native_uid = chain.assets().native()?.0.clone();
             let fee_tokens = chain.assets().fee_tokens();
 
             Some(async move {
                 let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                    let provider = provider.clone();
                     let native_uid = native_uid.clone();
                     async move {
                         let rate = self
@@ -200,7 +202,21 @@ impl Relay {
                             .native_conversion_rate(token_uid.clone(), native_uid)
                             .await
                             .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        Ok(ChainFeeToken::new(token_uid, token, Some(rate)))
+                        let symbol = self
+                            .inner
+                            .asset_info
+                            .get_asset_info_list(
+                                &provider,
+                                vec![Asset::infer_from_address(token.address)],
+                            )
+                            .await
+                            .ok()
+                            .and_then(|map| {
+                                map.iter()
+                                    .next()
+                                    .and_then(|(_, asset)| asset.metadata.symbol.clone())
+                            });
+                        Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
                     }
                 }))
                 .await?;
@@ -242,7 +258,7 @@ impl Relay {
         gas_estimate: &GasEstimate,
     ) -> Result<U256, RelayError> {
         // Include the L1 DA fees if we're on an OP rollup.
-        let fee = if chain.is_optimism {
+        let fee = if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
             let mut buf = Vec::new();
@@ -275,7 +291,7 @@ impl Relay {
                 .encode(&mut buf);
             }
 
-            chain.provider.estimate_l1_fee(buf.into()).await?
+            chain.provider().estimate_l1_fee(buf.into()).await?
         } else {
             U256::ZERO
         };
@@ -291,17 +307,25 @@ impl Relay {
         prehash: bool,
         context: FeeEstimationContext,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let chain =
-            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+        let chain = self.inner.chains.ensure_chain(chain_id)?;
 
-        let provider = chain.provider.clone();
+        let provider = chain.provider().clone();
         let (native_uid, _) =
             chain.assets().native().ok_or(RelayError::UnsupportedChain(chain_id))?;
-        let (token_uid, token) = self
-            .inner
-            .chains
-            .fee_token(chain_id, context.fee_token)
-            .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))?;
+        let (token_uid, token) = chain
+            .assets()
+            .find_by_address(context.fee_token)
+            .ok_or(QuoteError::UnsupportedFeeToken(context.fee_token))
+            .inspect_err(|_| {
+                let supported_fee_tokens: Vec<_> =
+                    chain.assets().fee_tokens().into_iter().map(|(_, desc)| desc.address).collect();
+                warn!(
+                    %chain_id,
+                    fee_token = %context.fee_token,
+                    supported = ?supported_fee_tokens,
+                    "unsupported fee token supplied"
+                );
+            })?;
 
         // create key
         let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
@@ -793,7 +817,7 @@ impl Relay {
 
     /// Returns the chain [`DynProvider`].
     pub fn provider(&self, chain_id: ChainId) -> Result<DynProvider, RelayError> {
-        Ok(self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?.provider)
+        Ok(self.inner.chains.ensure_chain(chain_id)?.provider().clone())
     }
 
     /// Converts authorized keys into a list of [`Call`].
@@ -1091,6 +1115,7 @@ impl Relay {
         // todo: this only supports one asset...
         if let Some(required_funds) = request.capabilities.required_funds.first()
             && self.inner.chains.interop().is_some()
+            && self.inner.chains.interop_asset(request.chain_id, required_funds.address).is_some()
         {
             self.determine_quote_strategy(
                 request,
@@ -1366,12 +1391,17 @@ impl Relay {
             {
                 (new_chains.iter().map(|source| source.amount).sum(), new_chains)
             } else {
-                return Err(RelayError::InsufficientFunds {
-                    required: requested_funds,
-                    chain_id: request.chain_id,
-                    asset: requested_asset,
-                }
-                .into());
+                // We don't have enough funds across all chains, so we revert back to single chain
+                // to produce a quote with a `feeTokenDeficit`.
+                //
+                // A more robust solution here is returning a `Result<Vec<FundSource>, Deficit>`
+                // where the error specifies how much we have across all chains, and
+                // we use that to produce the deficit, as the single chain
+                // `feeTokenDeficit` is a bit misleading.
+                return self
+                    .build_single_chain_quote(request, maybe_stored, nonce, None)
+                    .await
+                    .map_err(Into::into);
             };
             num_funding_chains = funding_chains.len();
             let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
@@ -1588,9 +1618,8 @@ impl Relay {
         );
         self.inner
             .chains
-            .get(tx.chain_id())
-            .ok_or_else(|| RelayError::UnsupportedChain(tx.chain_id()))?
-            .transactions
+            .ensure_chain(tx.chain_id())?
+            .transactions()
             .send_transaction(tx)
             .instrument(span)
             .await?;

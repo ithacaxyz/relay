@@ -4,17 +4,20 @@ use crate::{
     diagnostics::chain::IEIP712::eip712DomainCall,
     signers::DynSigner,
     types::{
+        AssetUid,
         DelegationProxy::{DelegationProxyInstance, implementationCall},
         IERC20::{self, balanceOfCall},
         IFunder::{self, gasWalletsCall},
     },
 };
 use alloy::{
-    primitives::{ChainId, U256},
+    primitives::{Address, ChainId, U256},
     providers::{CallItem, MULTICALL3_ADDRESS, Provider, bindings::IMulticall3::getEthBalanceCall},
     sol_types::SolCall,
 };
 use eyre::Result;
+use itertools::Itertools;
+use std::collections::HashSet;
 use tokio::try_join;
 use tracing::info;
 
@@ -53,8 +56,11 @@ impl<'a> ChainDiagnostics<'a> {
 
     /// Run all diagnostics.
     pub async fn run(self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
-        let (contract_diagnostics, balance_diagnostics) =
-            try_join!(self.verify_contracts(signers), self.check_balances(signers))?;
+        let (contract_diagnostics, balance_diagnostics, asset_diagnostics) = tokio::try_join!(
+            self.verify_contracts(signers),
+            self.check_balances(signers),
+            self.verify_assets()
+        )?;
 
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain.id(),
@@ -62,11 +68,13 @@ impl<'a> ChainDiagnostics<'a> {
                 .warnings
                 .into_iter()
                 .chain(balance_diagnostics.warnings)
+                .chain(asset_diagnostics.warnings)
                 .collect(),
             errors: contract_diagnostics
                 .errors
                 .into_iter()
                 .chain(balance_diagnostics.errors)
+                .chain(asset_diagnostics.errors)
                 .collect(),
         })
     }
@@ -239,12 +247,12 @@ impl<'a> ChainDiagnostics<'a> {
                 ));
         }
 
-        // Build multicall to fetch the Funder balance of every token valid for this chain.
+        // Build multicall to fetch the Funder balance of every interop token for this chain.
         let mut multicall_fee_tokens = self.chain.provider().multicall().dynamic::<balanceOfCall>();
         let tokens = self
             .chain
             .assets()
-            .iter()
+            .interop_iter()
             .filter(|(_, t)| !t.address.is_zero())
             .map(|(_, token)| (token.address, AddressRole::FunderContract))
             .collect::<Vec<_>>();
@@ -273,7 +281,7 @@ impl<'a> ChainDiagnostics<'a> {
             role,
         )| {
             if balance.is_zero() {
-                errors.push(format!("[{role:?}] {account}  has no balance"));
+                errors.push(format!("[{role:?}] {account} has no native balance"));
             }
         });
 
@@ -283,15 +291,71 @@ impl<'a> ChainDiagnostics<'a> {
             tokens,
             |balance: U256, (token, role)| {
                 if balance.is_zero()
-                    && self
-                        .chain
-                        .assets()
-                        .find_by_address(token)
-                        .map(|(_, desc)| desc.interop)
-                        .unwrap_or_default()
+                    && let Some((uid, desc)) = self.chain.assets().find_by_address(token)
                 {
-                    errors.push(format!("{role:?} has no balance on {token}."));
+                    errors.push(format!(
+                        "{role:?} has no balance of token {uid} ({}).",
+                        desc.address
+                    ));
                 }
+            }
+        );
+
+        Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
+    }
+
+    /// Verify non-interop assets are accessible and have valid contracts.
+    ///
+    /// Interop assets are checked in the interop/settlement diagnostics when querying for the
+    /// funder contract balance.
+    async fn verify_assets(&self) -> Result<ChainDiagnosticsResult> {
+        let mut errors = Vec::new();
+
+        // Get all non-interop assets
+        let non_interop_assets: Vec<_> = self
+            .chain
+            .assets()
+            .iter()
+            .filter(|(_, asset)| !asset.interop && !asset.address.is_zero())
+            .map(|(uid, asset)| (uid.clone(), asset.address))
+            .collect();
+
+        if non_interop_assets.is_empty() {
+            return Ok(ChainDiagnosticsResult {
+                chain_id: self.chain.id(),
+                warnings: vec![],
+                errors,
+            });
+        }
+
+        // Create a multicall to check balanceOf for each non-interop asset
+        let mut multicall = self.chain.provider().multicall().dynamic::<balanceOfCall>();
+        for (_, token_address) in &non_interop_assets {
+            multicall = multicall.add_call_dynamic(
+                CallItem::from(
+                    IERC20::new(*token_address, &self.chain.provider()).balanceOf(Address::ZERO),
+                )
+                .allow_failure(true),
+            );
+        }
+
+        info!(
+            chain_id = %self.chain.id(),
+            assets = non_interop_assets.len(),
+            "Verifying non-interop assets"
+        );
+
+        crate::process_multicall_results!(
+            errors,
+            multicall.aggregate3().await?,
+            non_interop_assets,
+            |_: U256, (uid, address)| {
+                info!(
+                    chain_id = %self.chain.id(),
+                    asset = %uid,
+                    address = %address,
+                    "Non-interop asset verified"
+                );
             }
         );
 
@@ -316,5 +380,134 @@ alloy::sol! {
                 bytes32 salt,
                 uint256[] memory extensions
             );
+    }
+}
+
+/// Represents connected chains based on shared interop assets.
+///
+/// Each connection is bidirectional (if A connects to B, then B connects to A).
+#[derive(Debug)]
+pub struct ConnectedChains {
+    /// The tuple pairs are ordered with the smaller chain ID first for consistency.
+    connections: HashSet<(ChainId, ChainId)>,
+}
+
+impl ConnectedChains {
+    /// Create a new instance by finding chain connectivity from the relay configuration.
+    pub fn new(config: &RelayConfig) -> Self {
+        let mut connections = HashSet::new();
+
+        for (&chain_a, &chain_b) in config.chains.keys().tuple_combinations() {
+            let chain_a_id = chain_a.id();
+            let chain_b_id = chain_b.id();
+
+            // Collect interop assets from chain A
+            let assets_a: HashSet<AssetUid> =
+                config.chains[&chain_a].assets.interop_iter().map(|(uid, _)| uid.clone()).collect();
+
+            // Check if chain B has any matching interop assets
+            let has_shared_asset = config.chains[&chain_b]
+                .assets
+                .interop_iter()
+                .any(|(uid, _)| assets_a.contains(uid));
+
+            if has_shared_asset {
+                // Store the pair (always with smaller chain ID first for consistency)
+                let pair = if chain_a_id < chain_b_id {
+                    (chain_a_id, chain_b_id)
+                } else {
+                    (chain_b_id, chain_a_id)
+                };
+                connections.insert(pair);
+            }
+        }
+
+        let mut connected_chains = connections.iter().map(|&(chain_a_id, chain_b_id)| {
+            let chain_a = alloy_chains::Chain::from(chain_a_id);
+            let chain_b = alloy_chains::Chain::from(chain_b_id);
+
+            let a_name =
+                chain_a.named().map(|n| n.to_string()).unwrap_or_else(|| chain_a_id.to_string());
+            let b_name =
+                chain_b.named().map(|n| n.to_string()).unwrap_or_else(|| chain_b_id.to_string());
+
+            format!("{a_name} <-> {b_name}")
+        });
+
+        info!(
+            "Chain connectivity: {} connections found: [{}]",
+            connections.len(),
+            connected_chains.join(", ")
+        );
+
+        Self { connections }
+    }
+
+    /// Iterate over the connections.
+    pub fn iter(&self) -> impl Iterator<Item = &(ChainId, ChainId)> {
+        self.connections.iter()
+    }
+
+    /// Ensures that no mainnet chain is connected to a testnet chain.
+    pub fn ensure_no_mainnet_testnet_connections(
+        &self,
+        errors: &mut Vec<String>,
+        warnings: &mut Vec<String>,
+    ) {
+        for &(chain_a_id, chain_b_id) in &self.connections {
+            let chain_a = alloy_chains::Chain::from(chain_a_id);
+            let chain_b = alloy_chains::Chain::from(chain_b_id);
+
+            let named_a = chain_a.named();
+            let named_b = chain_b.named();
+
+            // If either chain is not a named chain, warn but don't validate
+            match (named_a, named_b) {
+                (None, _) | (_, None) => {
+                    if named_a.is_none() {
+                        warnings.push(format!(
+                            "Chain {chain_a_id} is not a recognized named chain, skipping mainnet/testnet validation"
+                        ));
+                    }
+                    if named_b.is_none() {
+                        warnings.push(format!(
+                            "Chain {chain_b_id} is not a recognized named chain, skipping mainnet/testnet validation"
+                        ));
+                    }
+                }
+                (Some(named_a), Some(named_b)) => {
+                    let a_is_testnet = named_a.is_testnet();
+                    let b_is_testnet = named_b.is_testnet();
+
+                    if a_is_testnet != b_is_testnet {
+                        errors.push(format!(
+                            "Invalid connection between {} chain {} and {} chain {}",
+                            if a_is_testnet { "testnet" } else { "mainnet" },
+                            named_a,
+                            if b_is_testnet { "testnet" } else { "mainnet" },
+                            named_b
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_chains::Chain;
+
+    #[test]
+    fn test_mainnet_testnet_validation() {
+        let mut connections = HashSet::new();
+        connections.insert((Chain::mainnet().id(), Chain::arbitrum_sepolia().id()));
+
+        let mut errors = vec![];
+        ConnectedChains { connections }
+            .ensure_no_mainnet_testnet_connections(&mut errors, &mut vec![]);
+
+        assert_eq!(errors.len(), 1);
     }
 }

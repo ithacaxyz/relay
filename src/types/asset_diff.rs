@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     chains::Chains,
-    constants::ETH_ADDRESS,
+    constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::PriceOracle,
     types::{AssetMetadata, Quote},
@@ -115,6 +115,27 @@ pub enum Asset {
 }
 
 impl Asset {
+    /// Infers the asset type from the given address.
+    ///
+    /// If the address is address 0 or `0xEeE..eEe` it is native, otherwise it is a token.
+    pub fn infer_from_address(address: Address) -> Self {
+        if address.is_zero() || address == SIMULATEV1_NATIVE_ADDRESS {
+            Self::native()
+        } else {
+            Self::token(address)
+        }
+    }
+
+    /// Create a native asset.
+    pub fn native() -> Self {
+        Self::Native
+    }
+
+    /// Create a token asset.
+    pub fn token(address: Address) -> Self {
+        Self::Token(address)
+    }
+
     /// Whether it is the native asset from a chain.
     pub fn is_native(&self) -> bool {
         matches!(self, Self::Native)
@@ -144,7 +165,7 @@ impl From<Address> for Asset {
     fn from(asset: Address) -> Self {
         // 0xee..ee is how `eth_simulateV1` represents the native asset, and 0x00..00 is how we
         // represent the native asset.
-        if asset == ETH_ADDRESS || asset == Address::ZERO {
+        if asset == SIMULATEV1_NATIVE_ADDRESS || asset == Address::ZERO {
             Asset::Native
         } else {
             Asset::Token(asset)

@@ -199,7 +199,6 @@ pub enum RelayError {
     Storage(StorageError),             // Database/storage errors
     UnsupportedChain(ChainId),         // Chain not supported
     UnsupportedOrchestrator(Address),  // Contract not supported
-    InsufficientFunds { required: U256, chain_id: ChainId, asset: Address },
     Settlement(SettlementError),       // Cross-chain settlement errors
     // ... additional error variants
 }
@@ -264,12 +263,6 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
         match err {
             RelayError::UnsupportedChain(chain_id) => {
                 invalid_params(format!("Chain {} not supported", chain_id))
-            }
-            RelayError::InsufficientFunds { required, asset, chain_id } => {
-                invalid_params(format!(
-                    "Insufficient {} on chain {}: need {}", 
-                    asset, chain_id, required
-                ))
             }
             RelayError::Intent(intent_err) => (*intent_err).into(),
             _ => internal_rpc(err.to_string()),

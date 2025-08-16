@@ -21,7 +21,7 @@ impl AssetUid {
 }
 
 /// A collection of assets.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Assets(HashMap<AssetUid, AssetDescriptor>);
 
 impl Assets {
@@ -72,7 +72,11 @@ impl Assets {
 }
 
 /// The description of a configured asset for a chain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// This is part of the response of `wallet_getCapabilities` and used in the
+/// [`RelayConfig`](crate::config::RelayConfig).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetDescriptor {
     /// The address of the asset.
     pub address: Address,
@@ -82,7 +86,7 @@ pub struct AssetDescriptor {
     #[serde(default = "default_decimals")]
     pub decimals: u8,
     /// Whether users can pay fees in this asset.
-    #[serde(default)]
+    #[serde(default, alias = "fee_token")]
     pub fee_token: bool,
     /// Whether this asset can be relayed across chains.
     #[serde(default)]
@@ -151,5 +155,39 @@ mod tests {
         assert_eq!("\"erc20\"", value);
         let kind = serde_json::from_str::<AssetType>(&value).unwrap();
         assert_eq!(kind, AssetType::ERC20);
+    }
+
+    #[test]
+    fn asset_descriptor_serde_roundtrip() {
+        let json = r#"{
+            "address": "0x0101010101010101010101010101010101010101",
+            "decimals": 6,
+            "feeToken": true,
+            "interop": false
+        }"#;
+
+        let descriptor: AssetDescriptor = serde_json::from_str(json).unwrap();
+        assert_eq!(descriptor.address, Address::from([1; 20]));
+        assert_eq!(descriptor.decimals, 6);
+        assert!(descriptor.fee_token);
+        assert!(!descriptor.interop);
+
+        // Roundtrip
+        let serialized = serde_json::to_string(&descriptor).unwrap();
+        let deserialized: AssetDescriptor = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(descriptor.address, deserialized.address);
+        assert_eq!(descriptor.decimals, deserialized.decimals);
+        assert_eq!(descriptor.fee_token, deserialized.fee_token);
+        assert_eq!(descriptor.interop, deserialized.interop);
+
+        let json = r#"{
+            "address": "0x0101010101010101010101010101010101010101",
+            "decimals": 6,
+            "fee_token": true,
+            "interop": false
+        }"#;
+
+        let descriptor_snake_case: AssetDescriptor = serde_json::from_str(json).unwrap();
+        assert_eq!(descriptor, descriptor_snake_case);
     }
 }

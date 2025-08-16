@@ -8,6 +8,7 @@ mod layerzero;
 
 use std::sync::Arc;
 
+use chain::ConnectedChains;
 pub use chain::{ChainDiagnostics, ChainDiagnosticsResult};
 
 use crate::{
@@ -105,12 +106,19 @@ pub async fn run_diagnostics(
         )
     }
 
+    // Find out connected chains through their interop assets.
+    let connected_chains = ConnectedChains::new(config);
+    connected_chains.ensure_no_mainnet_testnet_connections(
+        &mut report.global_errors,
+        &mut report.global_warnings,
+    );
+
     // Run LayerZero diagnostics if configured
     if let Some(interop) = &config.interop
         && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
     {
         info!("Running LayerZero diagnostics");
-        match layerzero::run_layerzero_diagnostics(lz_config, config, chains).await {
+        match layerzero::run_layerzero_diagnostics(lz_config, chains, &connected_chains).await {
             Ok(lz_result) => {
                 report.global_warnings.extend(lz_result.warnings);
                 report.global_errors.extend(lz_result.errors);

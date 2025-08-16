@@ -117,7 +117,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     let mut rng = StdRng::seed_from_u64(KEY_SEED);
 
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // setup accounts
     let num_accounts = 100;
@@ -192,7 +192,7 @@ async fn dropped_transaction() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // setup account
     let account = MockAccount::new(&env).await.unwrap();
@@ -220,7 +220,7 @@ async fn fee_bump() -> eyre::Result<()> {
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup_with_config(config).await.unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // setup account
     let account = MockAccount::new(&env).await.unwrap();
@@ -292,7 +292,7 @@ async fn fee_growth_nonce_gap() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // set priority fee to be ~basefee for deterministic gas estimation
     let base_fee = env
@@ -369,7 +369,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     .unwrap();
     let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // use a consistent seed
     let rng = StdRng::seed_from_u64(KEY_SEED);
@@ -452,7 +452,7 @@ async fn resume_paused() -> eyre::Result<()> {
     .await
     .unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     let signers = DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, num_signers)?;
 
@@ -534,7 +534,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
     let signer = PrivateKeySigner::from_bytes(&FIRST_RELAY_SIGNER)?;
     let env = Environment::setup_with_config(config.clone()).await.unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
 
     // alter signer nonce to invalidate the nonce cached by service
     let nonce = env.provider().get_transaction_count(signer.address()).await.unwrap();
@@ -582,7 +582,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
     .unwrap();
     let env = Environment::setup_with_config(config.clone()).await.unwrap();
     let tx_service_handle =
-        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions.clone();
+        env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
     let storage = env.relay_handle.storage.clone();
     let provider = env.provider().clone();
 
