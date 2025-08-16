@@ -695,6 +695,8 @@ impl Default for TransactionServiceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{AssetDescriptor, AssetUid};
+    use std::collections::HashMap;
 
     #[test]
     fn test_config_v15_yaml() {
@@ -712,5 +714,61 @@ mod tests {
         assert_eq!(from_yaml.pricefeed, config.pricefeed);
         assert_eq!(from_yaml.interop, config.interop);
         assert_eq!(from_yaml.transactions, config.transactions);
+    }
+
+    #[test]
+    fn test_chain_config_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+        "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+
+        // Create expected ChainConfig manually
+        let mut assets = HashMap::new();
+        assets.insert(
+            AssetUid::new("ethereum".to_string()),
+            AssetDescriptor {
+                address: Address::ZERO,
+                decimals: 18,
+                fee_token: true,
+                interop: false,
+            },
+        );
+        assets.insert(
+            AssetUid::new("usd-coin".to_string()),
+            AssetDescriptor {
+                address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".parse().unwrap(),
+                decimals: 6,
+                fee_token: false,
+                interop: false,
+            },
+        );
+
+        let expected = ChainConfig {
+            native_symbol: None,
+            endpoint: "ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/"
+                .parse()
+                .unwrap(),
+            sequencer: Some("https://mainnet-sequencer-dedicated.base.org/".parse().unwrap()),
+            flashblocks: Some("https://mainnet-preconf.base.org/".parse().unwrap()),
+            sim_mode: SimMode::Trace,
+            assets: Assets::new(assets),
+        };
+
+        assert_eq!(config, expected);
     }
 }
