@@ -761,17 +761,8 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
-        let account_address = account.address();
-
-        // Check cache first
-        if let Some(cached_delegation) = self.inner.rpc_cache.get_delegation(&account_address) {
-            return Ok(cached_delegation);
-        }
-
-        // Cache miss - fetch from chain
+        // Always fetch from chain for account delegation (no caching per review feedback)
         if let Some(delegation) = account.delegation_implementation().await? {
-            // Cache the result for future use
-            self.inner.rpc_cache.set_delegation(account_address, delegation);
             return Ok(delegation);
         }
 
@@ -792,8 +783,6 @@ impl Relay {
             )
         })?;
 
-        // Cache the delegation implementation from storage
-        self.inner.rpc_cache.set_delegation(account_address, delegation);
         Ok(delegation)
     }
 

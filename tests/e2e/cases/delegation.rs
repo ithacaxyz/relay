@@ -145,8 +145,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         // Reset proxy address on EOA
         env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code.clone()).await?;
 
-        // Clear delegation cache after resetting EOA code
-        env.relay_handle.rpc_cache.clear_delegation_cache();
+        // Note: Delegation caching removed per review feedback - always fetches from chain
     }
 
     // Change the delegation proxy bytecodecode and prepare_calls & send_prepared_calls should fail.
@@ -190,8 +189,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
             )
             .await?;
 
-        // Clear delegation cache after resetting proxy code
-        env.relay_handle.rpc_cache.clear_delegation_cache();
+        // Note: Delegation caching removed per review feedback - always fetches from chain
     }
 
     // Upgrade implementation to another one and expect it to fail.
@@ -199,8 +197,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code).await?;
         upgrade_delegation(&env, another_impl).await;
 
-        // Clear delegation cache after changing implementation
-        env.relay_handle.rpc_cache.clear_delegation_cache();
+        // Note: Delegation caching removed per review feedback - always fetches from chain
 
         assert!(
             env.relay_endpoint
@@ -234,8 +231,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
         )
         .await;
 
-        // Clear delegation cache after changing implementation back
-        env.relay_handle.rpc_cache.clear_delegation_cache();
+        // Note: Delegation caching removed per review feedback - always fetches from chain
 
         let fresh_quote = env.relay_endpoint.prepare_calls(params.clone()).await?;
         let fresh_signed_payload = admin_key.sign_payload_hash(fresh_quote.digest).await?;

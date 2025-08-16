@@ -22,8 +22,6 @@ use crate::types::Orchestrator;
 struct CacheInner {
     /// Static cache for contract code (never expires - code is immutable)
     pub code_cache: DashMap<Address, Bytes>,
-    /// Static cache for delegation implementations (rarely changes in production)
-    delegation_cache: DashMap<Address, Address>,
     /// Cache for EIP712Domains: key is (orchestrator_address, chain_id, is_multichain)
     /// The is_multichain bool differentiates between multichain and single-chain domains
     eip712_domain_cache: DashMap<(Address, ChainId, bool), Eip712Domain>,
@@ -40,7 +38,6 @@ impl RpcCache {
     pub fn new() -> Self {
         Self(Arc::new(CacheInner {
             code_cache: DashMap::new(),
-            delegation_cache: DashMap::new(),
             eip712_domain_cache: DashMap::new(),
         }))
     }
@@ -64,24 +61,6 @@ impl RpcCache {
     pub fn set_code(&self, address: Address, code: Bytes) {
         debug!(address = %address, code_len = code.len(), "Caching contract code (static)");
         self.0.code_cache.insert(address, code);
-    }
-
-    /// Get cached delegation implementation, or None if not cached.
-    pub fn get_delegation(&self, account: &Address) -> Option<Address> {
-        let entry = self.0.delegation_cache.get(account)?;
-        debug!(account = %account, delegation = %entry.value(), "Delegation cache HIT");
-        Some(*entry.value())
-    }
-
-    /// Cache delegation implementation for the instance.
-    pub fn set_delegation(&self, account: Address, implementation: Address) {
-        debug!(account = %account, implementation = %implementation, "Caching delegation implementation");
-        self.0.delegation_cache.insert(account, implementation);
-    }
-
-    /// Clear all delegation cache entries (useful for tests).
-    pub fn clear_delegation_cache(&self) {
-        self.0.delegation_cache.clear();
     }
 
     /// Get cached EIP712Domain for an orchestrator on a specific chain.
@@ -133,23 +112,6 @@ mod tests {
         assert_eq!(cache.get_code(&addr), None);
         cache.set_code(addr, code.clone());
         assert_eq!(cache.get_code(&addr), Some(code));
-    }
-
-    #[test]
-    fn test_delegation_caching() {
-        let cache = RpcCache::new();
-
-        // Test delegation caching
-        let account = address!("1234567890123456789012345678901234567890");
-        let implementation = address!("abcdefabcdefabcdefabcdefabcdefabcdefabcd");
-
-        assert_eq!(cache.get_delegation(&account), None);
-        cache.set_delegation(account, implementation);
-        assert_eq!(cache.get_delegation(&account), Some(implementation));
-
-        // Test cache clearing
-        cache.clear_delegation_cache();
-        assert_eq!(cache.get_delegation(&account), None);
     }
 
     #[test]
