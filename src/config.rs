@@ -369,8 +369,8 @@ impl Default for ServerConfig {
     }
 }
 
-/// Chain configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Chain configuration for individual chains.
+#[derive(Debug, Clone, PartialEq,  Serialize, Deserialize)]
 pub struct ChainConfig {
     /// The symbol of the native asset.
     #[serde(default)]
@@ -388,7 +388,34 @@ pub struct ChainConfig {
     pub sim_mode: SimMode,
     /// Assets known for this chain.
     pub assets: Assets,
+    /// Fee settings for this chain
+    #[serde(default)]
+    pub fees: FeeConfig,
 }
+
+/// Settings that affect fee estimation.
+///
+/// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special handling, this type contains all fee related settings
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeeConfig {
+    /// Percentile of the priority fees to use for the transactions.
+    ///
+    /// This is used to estimate the EIP-1559 fees via `eth_getFeeHistory`.
+    pub priority_fee_percentile: f64,
+    /// The minimum fee to set if any in wei.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_fee: Option<u64>,
+}
+
+impl Default for FeeConfig {
+    fn default() -> Self {
+        Self {
+            priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+            minimum_fee: None,
+        }
+    }
+}
+
 
 /// The simulation mode to use for intent simulation on a specific chain.
 ///
