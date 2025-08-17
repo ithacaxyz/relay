@@ -1,14 +1,17 @@
 //! Faucet service for distributing test tokens.
 
-use alloy::providers::Provider;
 use eyre::Result;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{error, info, instrument};
 
 use crate::{
     chains::Chains,
     signers::DynSigner,
-    types::rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
+    types::{
+        IERC20::IERC20Instance,
+        rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
+    },
 };
 
 /// Faucet service for distributing test tokens.
@@ -18,15 +21,14 @@ pub struct FaucetService {
     faucet_signer: DynSigner,
     /// The chains supported by the relay.
     chains: Arc<Chains>,
+    /// Mutex to synchronize faucet transactions.
+    lock: Arc<Mutex<()>>,
 }
 
 impl FaucetService {
     /// Create a new faucet service.
     pub fn new(faucet_signer: DynSigner, chains: Arc<Chains>) -> Self {
-        Self {
-            faucet_signer,
-            chains,
-        }
+        Self { faucet_signer, chains, lock: Arc::new(Mutex::new(())) }
     }
 
     /// Add faucet funds to an address on a specific chain.
@@ -35,59 +37,47 @@ impl FaucetService {
         &self,
         params: AddFaucetFundsParameters,
     ) -> Result<AddFaucetFundsResponse> {
-        let AddFaucetFundsParameters {
-            address,
-            chain_id,
-            value,
-        } = params;
+        let AddFaucetFundsParameters { address, chain_id, value } = params;
 
         info!(
             "Processing faucet request for {} on chain {} with amount {}",
             address, chain_id, value
         );
 
-        // Get the chain
         let chain = self
             .chains
             .get(chain_id)
             .ok_or_else(|| eyre::eyre!("Chain {} not supported", chain_id))?;
 
-        // Get the provider for this chain
         let provider = chain.provider();
-
-        // Get faucet address
         let faucet_address = self.faucet_signer.address();
 
-        // Check faucet balance
-        let balance = provider.get_balance(faucet_address).await?;
-        if balance < value {
-            error!(
-                "Insufficient faucet balance. Required: {}, Available: {}",
-                value, balance
-            );
+        let fee_token_address =
+            chain
+                .assets()
+                .fee_tokens()
+                .first()
+                .map(|(_, desc)| desc.address)
+                .ok_or_else(|| eyre::eyre!("No fee token found for chain {}", chain_id))?;
+
+        // Acquire lock to prevent concurrent transactions from the same faucet
+        let _guard = self.lock.lock().await;
+
+        let fee_token = IERC20Instance::new(fee_token_address, provider.clone());
+        let tx_receipt =
+            fee_token.mint(address, value).from(faucet_address).send().await?.get_receipt().await?;
+
+        if !tx_receipt.status() {
+            error!("Faucet funding failed");
             return Ok(AddFaucetFundsResponse {
                 transaction_hash: None,
-                success: false,
-                message: Some(format!(
-                    "Insufficient faucet balance. Required: {}, Available: {}",
-                    value, balance
-                )),
+                message: Some("Faucet funding failed".to_string()),
             });
         }
 
-        // TODO: Implement the actual transaction sending logic
-        // This would involve:
-        // 1. Building a transaction to send funds from faucet to the target address
-        // 2. Signing the transaction with the faucet_signer
-        // 3. Sending the transaction to the chain
-        // 4. Waiting for confirmation
-        // 5. Returning the transaction hash
-
-        // For now, return a placeholder response
         Ok(AddFaucetFundsResponse {
-            transaction_hash: None,
-            success: false,
-            message: Some("Faucet funding implementation pending".to_string()),
+            transaction_hash: Some(tx_receipt.transaction_hash),
+            message: Some("Faucet funding successful".to_string()),
         })
     }
 }

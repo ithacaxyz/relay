@@ -21,8 +21,6 @@ pub struct AddFaucetFundsParameters {
 pub struct AddFaucetFundsResponse {
     /// The transaction hash of the funding transaction.
     pub transaction_hash: Option<alloy::primitives::TxHash>,
-    /// Success status of the operation.
-    pub success: bool,
     /// Optional message providing details about the operation.
     pub message: Option<String>,
 }
