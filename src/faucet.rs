@@ -1,18 +1,17 @@
 //! Faucet service for distributing test tokens.
 
-use eyre::Result;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info, instrument};
-
 use crate::{
     chains::Chains,
     signers::DynSigner,
     types::{
-        IERC20::IERC20Instance,
+        IERC20,
         rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
     },
 };
+use eyre::Result;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{error, info, instrument};
 
 /// Faucet service for distributing test tokens.
 #[derive(Debug, Clone)]
@@ -63,9 +62,19 @@ impl FaucetService {
         // Acquire lock to prevent concurrent transactions from the same faucet
         let _guard = self.lock.lock().await;
 
-        let fee_token = IERC20Instance::new(fee_token_address, provider.clone());
-        let tx_receipt =
-            fee_token.mint(address, value).from(faucet_address).send().await?.get_receipt().await?;
+        let fee_token = IERC20::IERC20Instance::new(fee_token_address, provider.clone());
+
+        let faucet_address_balance = fee_token.balanceOf(faucet_address).call().await?;
+        if faucet_address_balance <= value {
+            error!("Insufficient faucet balance");
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Insufficient faucet balance".to_string()),
+            });
+        }
+
+        let pending_tx = fee_token.mint(address, value).from(faucet_address).send().await?;
+        let tx_receipt = pending_tx.get_receipt().await?;
 
         if !tx_receipt.status() {
             error!("Faucet funding failed");
