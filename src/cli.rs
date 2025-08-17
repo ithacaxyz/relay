@@ -114,6 +114,9 @@ pub struct Args {
     /// The service API key for protected RPC endpoints.
     #[arg(long = "service-api-key", value_name = "KEY", env = "RELAY_SERVICE_API_KEY")]
     pub service_api_key: Option<String>,
+    /// The private key for the faucet (faucet) account.
+    #[arg(long = "faucet-private-key", value_name = "KEY", env = "FAUCET_PRIVATE_KEY")]
+    pub faucet_private_key: Option<String>,
     /// The RPC endpoints of the public nodes for OP rollups.
     #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub public_node_endpoints: Vec<(Chain, Url)>,
@@ -174,6 +177,7 @@ impl Args {
             .with_escrow(self.escrow)
             .with_funder_key(self.funder_key)
             .with_service_api_key(self.service_api_key)
+            .with_faucet_private_key(self.faucet_private_key)
             .with_intent_gas_buffer(self.intent_gas_buffer)
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)

@@ -10,6 +10,7 @@ pub mod constants;
 pub mod diagnostics;
 pub mod error;
 pub mod estimation;
+pub mod faucet;
 pub mod interop;
 pub mod liquidity;
 pub mod metrics;

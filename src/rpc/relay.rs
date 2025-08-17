@@ -9,6 +9,7 @@ use crate::{
     estimation::{
         build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
     },
+    faucet::FaucetService,
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
@@ -19,9 +20,10 @@ use crate::{
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
-            AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
-            ChainCapabilities, ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
-            Meta, PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
+            AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
+            AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
+            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
+            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
             RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
@@ -136,6 +138,13 @@ pub trait RelayApi {
         &self,
         parameters: VerifySignatureParameters,
     ) -> RpcResult<VerifySignatureResponse>;
+
+    /// Add faucet funds to an address on a specific chain.
+    #[method(name = "addFaucetFunds")]
+    async fn add_faucet_funds(
+        &self,
+        parameters: AddFaucetFundsParameters,
+    ) -> RpcResult<AddFaucetFundsResponse>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -152,6 +161,7 @@ impl Relay {
         chains: Arc<Chains>,
         quote_signer: DynSigner,
         funder_signer: DynSigner,
+        faucet_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_recipient: Address,
@@ -159,12 +169,14 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
         escrow_refund_threshold: u64,
     ) -> Self {
+        let faucet_service = FaucetService::new(faucet_signer, chains.clone());
         let inner = RelayInner {
             contracts,
             chains,
             fee_recipient,
             quote_signer,
             funder_signer,
+            faucet_service,
             quote_config,
             price_oracle,
             storage,
@@ -2163,6 +2175,17 @@ impl RelayApiServer for Relay {
 
         return Ok(VerifySignatureResponse { valid: proof.is_some(), proof });
     }
+
+    async fn add_faucet_funds(
+        &self,
+        parameters: AddFaucetFundsParameters,
+    ) -> RpcResult<AddFaucetFundsResponse> {
+        self.inner
+            .faucet_service
+            .add_faucet_funds(parameters)
+            .await
+            .map_err(|e| RelayError::InternalError(e).into())
+    }
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -2178,6 +2201,8 @@ pub(super) struct RelayInner {
     quote_signer: DynSigner,
     /// The signer used to sign fund transfers.
     funder_signer: DynSigner,
+    /// The faucet service for distributing test tokens.
+    faucet_service: FaucetService,
     /// Quote related configuration.
     quote_config: QuoteConfig,
     /// Price oracle.
