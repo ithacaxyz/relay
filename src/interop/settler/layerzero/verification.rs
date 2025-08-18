@@ -108,7 +108,13 @@ impl ChainSubscription {
 struct ChainSubscriptionHandle {
     /// Channel to request cleanup
     cleanup_tx: mpsc::UnboundedSender<()>,
-    /// Shared counter tracking total subscribers
+    /// Number of active consumers to this subscription.
+    ///
+    /// We track this manually because broadcast channels don't notify when receivers drop.
+    /// Without this, the ChainSubscription would hang forever waiting for events even when
+    /// no one is listening. When the last PacketSubscription drops (counter goes 1→0),
+    /// it sends a cleanup notification via cleanup_tx to try and terminate the subscription if no
+    /// new PacketSubscription has been created.
     subscribers_count: Arc<AtomicUsize>,
 }
 
