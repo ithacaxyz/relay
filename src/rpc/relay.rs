@@ -510,6 +510,7 @@ impl Relay {
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
+                chain.sim_mode(),
             )
             .await?;
 

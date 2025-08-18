@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    config::RelayConfig,
+    config::{RelayConfig, SimMode},
     constants::DEFAULT_POLL_INTERVAL,
     error::RelayError,
     liquidity::{
@@ -49,6 +49,8 @@ pub struct Chain {
     chain_id: ChainId,
     /// The supported assets on the chain.
     assets: Assets,
+    /// The simulation mode this chain supports
+    sim_mode: SimMode,
 }
 
 impl Chain {
@@ -75,6 +77,11 @@ impl Chain {
     /// Returns access to the [`TransactionService`] via its handle.
     pub const fn transactions(&self) -> &TransactionServiceHandle {
         &self.transactions
+    }
+
+    /// Returns the simulation mode [`SimMode`] that should be used when simulating calls.
+    pub const fn sim_mode(&self) -> SimMode {
+        self.sim_mode
     }
 }
 
@@ -130,6 +137,7 @@ impl Chains {
                         is_optimism,
                         chain_id: chain.id(),
                         assets: desc.assets.clone(),
+                        sim_mode: desc.sim_mode,
                     },
                 ))
             }))
