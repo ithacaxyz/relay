@@ -10,14 +10,13 @@ use crate::{
     },
 };
 use alloy::{
-    primitives::{Bytes, TxKind, U256},
+    primitives::{Bytes, TxKind},
     providers::Provider,
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
 use eyre::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 
 /// Faucet service for distributing test tokens.
@@ -27,14 +26,12 @@ pub struct FaucetService {
     faucet_signer: DynSigner,
     /// The chains supported by the relay.
     chains: Arc<Chains>,
-    /// Mutex to synchronize faucet transactions.
-    lock: Arc<Mutex<()>>,
 }
 
 impl FaucetService {
     /// Create a new faucet service.
     pub fn new(faucet_signer: DynSigner, chains: Arc<Chains>) -> Self {
-        Self { faucet_signer, chains, lock: Arc::new(Mutex::new(())) }
+        Self { faucet_signer, chains }
     }
 
     /// Add faucet funds to an address on a specific chain.
@@ -65,8 +62,6 @@ impl FaucetService {
         }
 
         let provider = chain.provider();
-        let faucet_address = self.faucet_signer.address();
-
         let fee_tokens = chain.assets().fee_tokens();
 
         // check if the token is supported
@@ -78,8 +73,7 @@ impl FaucetService {
             });
         }
 
-        // Acquire lock to prevent concurrent transactions from the same faucet
-        let _guard = self.lock.lock().await;
+        let faucet_address = self.faucet_signer.address();
 
         let calldata: Bytes = IERC20::mintCall { recipient: address, value }.abi_encode().into();
         let gas_limit = match provider
@@ -91,10 +85,10 @@ impl FaucetService {
             )
             .await
         {
-            Ok(g) => g,
-            Err(e) => {
+            Ok(gas_limit) => gas_limit,
+            Err(err) => {
                 error!(
-                    "Faucet mint not supported for token {token_address} on chain {chain_id}: {e}"
+                    "Faucet mint not supported for token {token_address} on chain {chain_id}: {err}"
                 );
                 return Ok(AddFaucetFundsResponse {
                     transaction_hash: None,
@@ -103,15 +97,13 @@ impl FaucetService {
             }
         };
 
-        // Build an internal transaction and route via TransactionService, targeting faucet signer
+        // Build an internal transaction and route via TransactionService using relay signers
         let chain_id = provider.get_chain_id().await?;
-        let relay_tx = RelayTransaction::new_internal_from(
+        let relay_tx = RelayTransaction::new_internal(
             TxKind::Call(token_address),
             calldata,
             chain_id,
             gas_limit,
-            U256::ZERO,
-            Some(faucet_address),
         );
 
         let handle = self
