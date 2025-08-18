@@ -3,15 +3,14 @@
 use crate::{
     chains::Chains,
     signers::DynSigner,
+    transactions::RelayTransaction,
     types::{
         IERC20,
         rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
     },
 };
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559},
-    eips::Encodable2718,
-    primitives::{Bytes, U256},
+    primitives::{Bytes, TxKind, U256},
     providers::Provider,
     rpc::types::TransactionRequest,
     sol_types::SolCall,
@@ -73,37 +72,14 @@ impl FaucetService {
         // Ensure deterministic token selection order by sorting by AssetUid
         fee_tokens.sort_by(|(a_uid, _), (b_uid, _)| a_uid.as_str().cmp(b_uid.as_str()));
 
-        // if token_address is provided, use it if supported otherwise return an error
-        // if not provided, use the first fee token
-        let fee_token_address = match token_address {
-            Some(token_address) => {
-                if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
-                    error!("Token address {} not supported for chain {}", token_address, chain_id);
-                    return Ok(AddFaucetFundsResponse {
-                        transaction_hash: None,
-                        message: Some("Token address not supported".to_string()),
-                    });
-                }
-                token_address
-            }
-            None => {
-                // Prefer a non-native, non-interop ERC20 as default (TODO: is this a good default?)
-                if let Some((_, desc)) = fee_tokens
-                    .iter()
-                    .find(|(_, d)| d.address != alloy::primitives::Address::ZERO && !d.interop)
-                {
-                    desc.address
-                } else if let Some((_, desc)) =
-                    fee_tokens.iter().find(|(_, d)| d.address != alloy::primitives::Address::ZERO)
-                {
-                    desc.address
-                } else {
-                    fee_tokens.first().map(|(_, d)| d.address).ok_or_else(|| {
-                        eyre::eyre!("No fee tokens configured for chain {}", chain_id)
-                    })?
-                }
-            }
-        };
+        // check if the token is supported
+        if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
+            error!("Token address {} not supported for chain {}", token_address, chain_id);
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Token address not supported".to_string()),
+            });
+        }
 
         // Acquire lock to prevent concurrent transactions from the same faucet
         let _guard = self.lock.lock().await;
@@ -112,42 +88,44 @@ impl FaucetService {
         let gas_limit = provider
             .estimate_gas(
                 TransactionRequest::default()
-                    .to(fee_token_address)
+                    .to(token_address)
                     .from(faucet_address)
                     .input(calldata.clone().into()),
             )
             .await?;
 
-        let fees = provider.estimate_eip1559_fees().await?;
+        // Build an internal transaction and route via TransactionService, targeting faucet signer
         let chain_id = provider.get_chain_id().await?;
-        let nonce = provider.get_transaction_count(faucet_address).pending().await?;
-
-        let mut tx = TxEip1559 {
+        let relay_tx = RelayTransaction::new_internal_from(
+            TxKind::Call(token_address),
+            calldata,
             chain_id,
-            nonce,
-            to: fee_token_address.into(),
             gas_limit,
-            max_fee_per_gas: fees.max_fee_per_gas,
-            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-            input: calldata,
-            ..Default::default()
-        };
-        let signature = self.faucet_signer.sign_transaction(&mut tx).await?;
-        let signed = tx.into_signed(signature);
+            U256::ZERO,
+            Some(faucet_address),
+        );
 
-        let tx_receipt =
-            provider.send_raw_transaction(&signed.encoded_2718()).await?.get_receipt().await?;
+        let handle = self
+            .chains
+            .get(chain_id)
+            .ok_or_else(|| eyre::eyre!("Chain {} not supported", chain_id))?
+            .transactions()
+            .clone();
 
-        if !tx_receipt.status() {
+        // Enqueue and wait for confirmation
+        let _ = handle.send_transaction(relay_tx.clone()).await?;
+        let status = handle.wait_for_tx(relay_tx.id).await?;
+
+        if !status.is_confirmed() {
             error!("Faucet funding failed");
             return Ok(AddFaucetFundsResponse {
-                transaction_hash: None,
+                transaction_hash: status.tx_hash(),
                 message: Some("Faucet funding failed".to_string()),
             });
         }
 
         Ok(AddFaucetFundsResponse {
-            transaction_hash: Some(tx_receipt.transaction_hash),
+            transaction_hash: status.tx_hash(),
             message: Some("Faucet funding successful".to_string()),
         })
     }

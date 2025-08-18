@@ -49,6 +49,9 @@ pub enum RelayTransactionKind {
         gas_limit: u64,
         /// Value to send with the transaction.
         value: U256,
+        /// If set, the transaction must be sent by this signer address.
+        #[serde(default)]
+        from: Option<Address>,
     },
 }
 
@@ -122,6 +125,31 @@ impl RelayTransaction {
                 chain_id,
                 gas_limit,
                 value,
+                from: None,
+            },
+            trace_context: Context::current(),
+            received_at: Utc::now(),
+        }
+    }
+
+    /// Create a new [`RelayTransaction`] for an internal transaction targeting a specific signer.
+    pub fn new_internal_from(
+        kind: impl Into<TxKind>,
+        input: impl Into<Bytes>,
+        chain_id: ChainId,
+        gas_limit: u64,
+        value: U256,
+        from: Option<Address>,
+    ) -> Self {
+        Self {
+            id: TxId(B256::random()),
+            kind: RelayTransactionKind::Internal {
+                kind: kind.into(),
+                input: input.into(),
+                chain_id,
+                gas_limit,
+                value,
+                from,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),
@@ -179,7 +207,7 @@ impl RelayTransaction {
                     .into()
                 }
             }
-            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit, value } => {
+            RelayTransactionKind::Internal { kind, input, chain_id, gas_limit, value, .. } => {
                 TxEip1559 {
                     chain_id: *chain_id,
                     nonce,
@@ -230,6 +258,14 @@ impl RelayTransaction {
             Some(*eip712_digest)
         } else {
             None
+        }
+    }
+
+    /// If set, the transaction must be sent by a specific signer address.
+    pub fn required_signer(&self) -> Option<Address> {
+        match &self.kind {
+            RelayTransactionKind::Internal { from, .. } => *from,
+            _ => None,
         }
     }
 

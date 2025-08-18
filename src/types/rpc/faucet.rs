@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AddFaucetFundsParameters {
     /// The token address to use for the faucet.
-    pub token_address: Option<Address>,
+    pub token_address: Address,
     /// The address to send funds to.
     pub address: Address,
     /// The chain ID where the funds should be added.

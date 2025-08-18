@@ -15,7 +15,7 @@ async fn add_faucet_funds_success() -> eyre::Result<()> {
     let amount = U256::from(1_000_000_000_000_000_000u64); // 1 token
 
     let params = AddFaucetFundsParameters {
-        token_address: Some(env.fee_token),
+        token_address: env.fee_token,
         address: recipient,
         chain_id: env.chain_id(),
         value: amount,
@@ -73,7 +73,7 @@ async fn add_faucet_funds_unsupported_chain() -> eyre::Result<()> {
     let amount = U256::from(1_000_000_000_000_000_000u64);
 
     let params = AddFaucetFundsParameters {
-        token_address: Some(env.fee_token),
+        token_address: env.fee_token,
         address: recipient,
         chain_id: 99999,
         value: amount,
@@ -101,7 +101,7 @@ async fn add_faucet_funds_zero_amount() -> eyre::Result<()> {
     let recipient = Address::random();
 
     let params = AddFaucetFundsParameters {
-        token_address: Some(env.fee_token),
+        token_address: env.fee_token,
         address: recipient,
         chain_id: env.chain_id(),
         value: U256::ZERO,
@@ -122,41 +122,6 @@ async fn add_faucet_funds_zero_amount() -> eyre::Result<()> {
     Ok(())
 }
 
-/// No `token_address` parameter
-#[tokio::test(flavor = "multi_thread")]
-async fn add_faucet_funds_no_token_address() -> eyre::Result<()> {
-    let env = Environment::setup().await?;
-
-    let recipient = Address::random();
-    let amount = U256::from(1_000_000_000_000_000_000u64);
-
-    let params = AddFaucetFundsParameters {
-        token_address: None,
-        address: recipient,
-        chain_id: env.chain_id(),
-        value: amount,
-    };
-
-    let response: AddFaucetFundsResponse =
-        env.relay_endpoint.request("wallet_addFaucetFunds", vec![params]).await?;
-
-    assert!(response.transaction_hash.is_some(), "Transaction should succeed");
-    assert_eq!(
-        response.message,
-        Some("Faucet funding successful".to_string()),
-        "Should return success message"
-    );
-
-    let balance = IERC20::IERC20Instance::new(env.fee_token, env.provider())
-        .balanceOf(recipient)
-        .call()
-        .await?;
-
-    assert_eq!(balance, amount, "Recipient should have received the tokens");
-
-    Ok(())
-}
-
 /// Invalid `token_address` parameter should return error message
 #[tokio::test(flavor = "multi_thread")]
 async fn add_faucet_funds_invalid_token_address() -> eyre::Result<()> {
@@ -166,7 +131,7 @@ async fn add_faucet_funds_invalid_token_address() -> eyre::Result<()> {
     let amount = U256::from(1_000_000_000_000_000_000u64);
 
     let params = AddFaucetFundsParameters {
-        token_address: Some(Address::random()),
+        token_address: Address::random(),
         address: recipient,
         chain_id: env.chain_id(),
         value: amount,
@@ -201,7 +166,7 @@ async fn add_faucet_funds_concurrent_requests() -> eyre::Result<()> {
         .iter()
         .map(|recipient| {
             let params = AddFaucetFundsParameters {
-                token_address: Some(env.fee_token),
+                token_address: env.fee_token,
                 address: *recipient,
                 chain_id: env.chain_id(),
                 value: amount,
