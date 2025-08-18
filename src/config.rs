@@ -444,7 +444,7 @@ impl FeeConfig {
     /// special/fake concept of EIP-1559 where a fixed prio fee minimum is required, and this
     /// function acts as a sanity check that bumps the fees in case the estimation is too low. A
     /// low estimation via `eth_getFeeHistory` that does not satisfy the minimum fee is possible for
-    /// example, if the block contains various system transactions with gasPrice == 0 at the end of
+    /// example, if the block contains various system transactions with `gasPrice == 0` at the end of
     /// the block (e.g. BSC does this).
     ///
     /// See Polygon: <https://docs.polygon.technology/tools/gas/polygon-gas-station/>
