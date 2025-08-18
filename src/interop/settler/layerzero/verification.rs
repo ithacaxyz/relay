@@ -46,7 +46,7 @@ struct ChainSubscription {
 impl ChainSubscription {
     /// Spawns a new chain log subscription.
     ///
-    /// Only one per chain should be spawned.
+    /// Only one subscription per chain should be spawned.
     fn spawn(
         chain_id: ChainId,
         mut stream: Subscription<Log>,
