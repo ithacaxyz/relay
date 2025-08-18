@@ -8,7 +8,14 @@ use crate::{
         rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
     },
 };
-use alloy::{primitives::U256, providers::Provider};
+use alloy::{
+    consensus::{SignableTransaction, TxEip1559},
+    eips::Encodable2718,
+    primitives::{Bytes, U256},
+    providers::Provider,
+    rpc::types::TransactionRequest,
+    sol_types::SolCall,
+};
 use eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -87,10 +94,37 @@ impl FaucetService {
         // Acquire lock to prevent concurrent transactions from the same faucet
         let _guard = self.lock.lock().await;
 
-        let token = IERC20::IERC20Instance::new(fee_token_address, provider.clone());
+        let calldata: Bytes = IERC20::mintCall { recipient: address, value }.abi_encode().into();
+        let gas_limit = provider
+            .estimate_gas(
+                TransactionRequest::default()
+                    .to(fee_token_address)
+                    .from(faucet_address)
+                    .input(calldata.clone().into()),
+            )
+            .await?;
 
-        let pending_tx = token.mint(address, value).from(faucet_address).send().await?;
-        let tx_receipt = pending_tx.get_receipt().await?;
+        // Fetch fees and nonce
+        let fees = provider.estimate_eip1559_fees().await?;
+        let chain_id = provider.get_chain_id().await?;
+        let nonce = provider.get_transaction_count(faucet_address).pending().await?;
+
+        // Construct and sign the transaction with the faucet signer
+        let mut tx = TxEip1559 {
+            chain_id,
+            nonce,
+            to: fee_token_address.into(),
+            gas_limit,
+            max_fee_per_gas: fees.max_fee_per_gas,
+            max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
+            input: calldata,
+            ..Default::default()
+        };
+        let signature = self.faucet_signer.sign_transaction(&mut tx).await?;
+        let signed = tx.into_signed(signature);
+
+        let tx_receipt =
+            provider.send_raw_transaction(&signed.encoded_2718()).await?.get_receipt().await?;
 
         if !tx_receipt.status() {
             error!("Faucet funding failed");
