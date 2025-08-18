@@ -8,6 +8,7 @@ use crate::{
         rpc::{AddFaucetFundsParameters, AddFaucetFundsResponse},
     },
 };
+use alloy::{primitives::U256, providers::Provider};
 use eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -51,6 +52,16 @@ impl FaucetService {
         let provider = chain.provider();
         let faucet_address = self.faucet_signer.address();
 
+        // check ETH balance of the faucet (ETH is used to mint tokens)
+        let faucet_address_balance = provider.get_balance(faucet_address).await?;
+        if faucet_address_balance <= U256::from(1e18) {
+            error!("Insufficient faucet balance");
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Insufficient faucet balance".to_string()),
+            });
+        }
+
         let fee_token_address =
             chain
                 .assets()
@@ -63,15 +74,6 @@ impl FaucetService {
         let _guard = self.lock.lock().await;
 
         let fee_token = IERC20::IERC20Instance::new(fee_token_address, provider.clone());
-
-        let faucet_address_balance = fee_token.balanceOf(faucet_address).call().await?;
-        if faucet_address_balance <= value {
-            error!("Insufficient faucet balance");
-            return Ok(AddFaucetFundsResponse {
-                transaction_hash: None,
-                message: Some("Insufficient faucet balance".to_string()),
-            });
-        }
 
         let pending_tx = fee_token.mint(address, value).from(faucet_address).send().await?;
         let tx_receipt = pending_tx.get_receipt().await?;
