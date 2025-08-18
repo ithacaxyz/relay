@@ -170,7 +170,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         config.fee_recipient,
         storage.clone(),
         asset_info_handle,
-        config.transactions.priority_fee_percentile,
         config
             .interop
             .as_ref()

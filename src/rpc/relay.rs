@@ -160,7 +160,6 @@ impl Relay {
         fee_recipient: Address,
         storage: RelayStorage,
         asset_info: AssetInfoServiceHandle,
-        priority_fee_percentile: f64,
         escrow_refund_threshold: u64,
     ) -> Self {
         let inner = RelayInner {
@@ -173,7 +172,6 @@ impl Relay {
             price_oracle,
             storage,
             asset_info,
-            priority_fee_percentile,
             escrow_refund_threshold,
         };
         Self { inner: Arc::new(inner) }
@@ -353,7 +351,7 @@ impl Relay {
                     .get_fee_history(
                         EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
                         Default::default(),
-                        &[self.inner.priority_fee_percentile],
+                        &[chain.fee_config().priority_fee_percentile],
                     )
                     .await
                     .map_err(RelayError::from)
@@ -2194,8 +2192,6 @@ pub(super) struct RelayInner {
     storage: RelayStorage,
     /// AssetInfo
     asset_info: AssetInfoServiceHandle,
-    /// Percentile of the priority fees to use for the transactions.
-    priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
 }

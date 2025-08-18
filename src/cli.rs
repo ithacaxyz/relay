@@ -123,7 +123,7 @@ pub struct Args {
     /// Default value is `20.0` which means that priority fee for transactions will be chosen as
     /// 20th percentile of the priority fees of transactions in latest blocks.
     #[arg(long = "priority-fee-percentile", value_name = "PERCENTILE", default_value_t = EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE)]
-    pub priority_fee_percentile: f64,
+    pub priority_fee_percentile: f64, // TODO(mattsse): remove
     /// Reads all values from the config file.
     ///
     /// This makes required CLI args not required, but it is important that any required CLI args
@@ -186,7 +186,6 @@ impl Args {
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)
             .with_num_signers(self.num_signers)
-            .with_priority_fee_percentile(self.priority_fee_percentile)
             .with_resend_api_key(self.resend_api_key)
             .with_porto_base_url(self.porto_base_url)
             .with_binance_keys(self.binance_api_key, self.binance_api_secret)

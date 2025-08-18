@@ -4,7 +4,7 @@ use super::{
     transaction::{RelayTransaction, TransactionStatus},
 };
 use crate::{
-    config::TransactionServiceConfig,
+    config::{FeeConfig, TransactionServiceConfig},
     error::StorageError,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
@@ -163,6 +163,7 @@ impl TransactionService {
         storage: RelayStorage,
         config: TransactionServiceConfig,
         funder: Address,
+        fees: FeeConfig,
     ) -> eyre::Result<(Self, TransactionServiceHandle)> {
         let chain_id = provider.get_chain_id().await?;
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
@@ -198,7 +199,8 @@ impl TransactionService {
 
         // create all the signers
         for signer in signers {
-            this.create_signer(signer, provider.clone(), monitor.clone(), funder).await?;
+            this.create_signer(signer, provider.clone(), monitor.clone(), funder, fees.clone())
+                .await?;
         }
 
         // insert loaded queue, we need to do it after signers are created so that loaded pending
@@ -219,6 +221,7 @@ impl TransactionService {
         provider: DynProvider,
         monitor: TransactionMonitoringHandle,
         funder: Address,
+        fees: FeeConfig,
     ) -> eyre::Result<()> {
         let signer_id = self.next_signer_id();
         debug!(%signer_id, "creating new signer");
@@ -234,6 +237,7 @@ impl TransactionService {
             self.config.clone(),
             monitor,
             funder,
+            fees,
         )
         .await?;
         let (task, loaded_transactions) = signer.into_future().await?;
