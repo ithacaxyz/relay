@@ -37,21 +37,26 @@ impl FaucetService {
         &self,
         params: AddFaucetFundsParameters,
     ) -> Result<AddFaucetFundsResponse> {
-        let AddFaucetFundsParameters { token_address, address, chain_id, value } = params;
+        let AddFaucetFundsParameters {
+            token_address,
+            address,
+            chain_id: requested_chain_id,
+            value,
+        } = params;
 
         info!(
             "Processing faucet request for {} on chain {} with amount {}",
-            address, chain_id, value
+            address, requested_chain_id, value
         );
 
         let chain = self
             .chains
-            .get(chain_id)
-            .ok_or_else(|| eyre::eyre!("Chain {} not supported", chain_id))?;
+            .get(requested_chain_id)
+            .ok_or_else(|| eyre::eyre!("Chain {} not supported", requested_chain_id))?;
 
         // Disallow faucet usage on mainnet chains
-        if alloy_chains::Chain::from(chain_id).named().is_some_and(|c| !c.is_testnet()) {
-            warn!("Faucet request blocked on mainnet (chain {chain_id})");
+        if alloy_chains::Chain::from(requested_chain_id).named().is_some_and(|c| !c.is_testnet()) {
+            warn!("Faucet request blocked on mainnet (chain {requested_chain_id})");
             return Ok(AddFaucetFundsResponse {
                 transaction_hash: None,
                 message: Some("Faucet disabled on mainnet".to_string()),
@@ -63,7 +68,10 @@ impl FaucetService {
 
         // check if the token is supported
         if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
-            error!("Token address {} not supported for chain {}", token_address, chain_id);
+            error!(
+                "Token address {} not supported for chain {}",
+                token_address, requested_chain_id
+            );
             return Ok(AddFaucetFundsResponse {
                 transaction_hash: None,
                 message: Some("Token address not supported".to_string()),
@@ -80,7 +88,7 @@ impl FaucetService {
             Ok(gas_limit) => gas_limit,
             Err(err) => {
                 error!(
-                    "Faucet mint not supported for token {token_address} on chain {chain_id}: {err}"
+                    "Faucet mint not supported for token {token_address} on chain {requested_chain_id}: {err}"
                 );
                 return Ok(AddFaucetFundsResponse {
                     transaction_hash: None,
@@ -90,18 +98,17 @@ impl FaucetService {
         };
 
         // Build an internal transaction and route via TransactionService using relay signers
-        let chain_id = provider.get_chain_id().await?;
         let relay_tx = RelayTransaction::new_internal(
             TxKind::Call(token_address),
             calldata,
-            chain_id,
+            chain.id(),
             gas_limit,
         );
 
         let handle = self
             .chains
-            .get(chain_id)
-            .ok_or_else(|| eyre::eyre!("Chain {} not supported", chain_id))?
+            .get(requested_chain_id)
+            .ok_or_else(|| eyre::eyre!("Chain {} not supported", requested_chain_id))?
             .transactions()
             .clone();
 
