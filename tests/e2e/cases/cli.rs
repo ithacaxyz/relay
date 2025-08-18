@@ -41,7 +41,6 @@ async fn respawn_cli() -> eyre::Result<()> {
                 num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
                 funder_key: Some(B256::random().to_string()),
-                faucet_private_key: Some(B256::random().to_string()),
                 service_api_key: Default::default(),
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),

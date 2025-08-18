@@ -274,14 +274,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the faucet private key for the faucet account.
-    pub fn with_faucet_private_key(mut self, faucet_private_key: Option<String>) -> Self {
-        if let Some(faucet_private_key) = faucet_private_key {
-            self.secrets.faucet_private_key = faucet_private_key;
-        }
-        self
-    }
-
     /// Sets the interop configuration.
     pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
         self.interop = Some(interop_config);
@@ -568,8 +560,6 @@ pub struct SecretsConfig {
     /// API key for protected RPC endpoints
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_api_key: Option<String>,
-    /// Private key for the faucet account
-    pub faucet_private_key: String,
 }
 
 impl Default for SecretsConfig {
@@ -582,8 +572,6 @@ impl Default for SecretsConfig {
             funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
                 .to_string(),
             service_api_key: None,
-            faucet_private_key:
-                "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
         }
     }
 }

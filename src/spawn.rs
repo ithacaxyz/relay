@@ -68,7 +68,6 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
         let mut config = RelayConfig::load_from_file(config_path)?;
         config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
         config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")?;
-        config.secrets.faucet_private_key = std::env::var("FAUCET_PRIVATE_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
@@ -111,8 +110,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
-    // setup faucet signer for faucet
-    let faucet_signer = DynSigner::from_raw(&config.secrets.faucet_private_key).await?;
+    // Use the last signer from the derived signers for faucet operations
+    let faucet_signer = signers.last().expect("should have at least one signer").clone();
 
     // build chains
     let chains = Arc::new(Chains::new(signers.clone(), storage.clone(), &config).await?);
@@ -169,7 +168,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         chains.clone(),
         quote_signer,
         funder_signer.clone(),
-        faucet_signer.clone(),
+        faucet_signer,
         config.quote,
         price_oracle.clone(),
         config.fee_recipient,
