@@ -947,6 +947,7 @@ impl Signer {
             amount = %funding_amount,
             signer = %self.address(),
             chain_id = %self.chain_id,
+            funder = %self.funder,
             "pulling gas from SimpleFunder"
         );
 
