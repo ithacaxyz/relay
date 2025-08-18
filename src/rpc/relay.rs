@@ -4,6 +4,7 @@
 
 use crate::{
     asset::AssetInfoServiceHandle,
+    cache::RpcCache,
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
     estimation::{
@@ -162,6 +163,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
         priority_fee_percentile: f64,
         escrow_refund_threshold: u64,
+        rpc_cache: RpcCache,
     ) -> Self {
         let inner = RelayInner {
             contracts,
@@ -175,6 +177,7 @@ impl Relay {
             asset_info,
             priority_fee_percentile,
             escrow_refund_threshold,
+            rpc_cache,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -453,6 +456,7 @@ impl Relay {
                     &mock_key,
                     context.account_key.key_hash(),
                     prehash,
+                    Some(self.inner.rpc_cache.clone()),
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -641,7 +645,7 @@ impl Relay {
 
         // Compute EIP-712 digest for the intent
         let (eip712_digest, _) = intent
-            .compute_eip712_data(quote.orchestrator, &provider)
+            .compute_eip712_data(quote.orchestrator, &provider, None)
             .await
             .map_err(RelayError::from)?;
 
@@ -781,6 +785,7 @@ impl Relay {
         &self,
         account: &Account<P>,
     ) -> Result<Address, RelayError> {
+        // Always fetch from chain for account delegation (no caching per review feedback)
         if let Some(delegation) = account.delegation_implementation().await? {
             return Ok(delegation);
         }
@@ -796,11 +801,13 @@ impl Relay {
             build_delegation_override(address, *stored.signed_authorization.address()).build(),
         );
 
-        account.delegation_implementation().await?.ok_or_else(|| {
+        let delegation = account.delegation_implementation().await?.ok_or_else(|| {
             RelayError::Auth(
                 AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
             )
-        })
+        })?;
+
+        Ok(delegation)
     }
 
     /// Returns an iterator over all installed [`Chain`]s.
@@ -1456,6 +1463,7 @@ impl Relay {
                     .compute_eip712_data(
                         output_quote.orchestrator,
                         &self.provider(request.chain_id)?,
+                        Some(self.inner.rpc_cache.clone()),
                     )
                     .await
                     .map_err(RelayError::from)?;
@@ -1511,6 +1519,7 @@ impl Relay {
                             .chain(iter::once(request.chain_id))
                             .map(|chain| self.provider(chain))
                             .collect::<Result<Vec<_>, _>>()?,
+                        Some(self.inner.rpc_cache.clone()),
                     )
                     .await?,
                 ));
@@ -1876,7 +1885,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) = pre_call
-            .compute_eip712_data(self.orchestrator(), &provider)
+            .compute_eip712_data(self.orchestrator(), &provider, None)
             .await
             .map_err(RelayError::from)?;
 
@@ -1965,7 +1974,7 @@ impl RelayApiServer for Relay {
             async {
                 storage_account
                     .pre_call
-                    .compute_eip712_data(self.orchestrator(), &provider)
+                    .compute_eip712_data(self.orchestrator(), &provider, None)
                     .await
                     .map_err(RelayError::from)
             },
@@ -2197,6 +2206,8 @@ pub(super) struct RelayInner {
     priority_fee_percentile: f64,
     /// Escrow refund threshold in seconds
     escrow_refund_threshold: u64,
+    /// RPC caching layer (used for chain_id, code, and delegation caching)
+    rpc_cache: RpcCache,
 }
 
 impl Relay {

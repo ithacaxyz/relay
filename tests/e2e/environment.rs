@@ -27,7 +27,7 @@ use relay::{
         SettlerImplementation, SimpleSettlerConfig, TransactionServiceConfig,
     },
     signers::DynSigner,
-    spawn::{RelayHandle, try_spawn},
+    spawn::{RelayHandle, try_spawn_with_cache},
     types::{
         AssetDescriptor, AssetUid, Assets, IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
@@ -542,6 +542,9 @@ impl Environment {
 
         // Start relay service with all endpoints
         let skip_diagnostics = false;
+        // Create a fresh RPC cache for this test to ensure isolation
+        let rpc_cache = relay::cache::RpcCache::new();
+
         let config = RelayConfig::default()
             .with_port(0)
             .with_metrics_port(0)
@@ -577,7 +580,8 @@ impl Environment {
             .with_interop_config(interop_config)
             .with_rebalance_service_config(config.rebalance_service_config)
             .with_database_url(database_url);
-        let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
+        let relay_handle =
+            try_spawn_with_cache(config.clone(), skip_diagnostics, Some(rpc_cache)).await?;
 
         let relay_endpoint = HttpClientBuilder::default()
             .build(relay_handle.http_url())

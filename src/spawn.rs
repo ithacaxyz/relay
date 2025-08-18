@@ -1,6 +1,7 @@
 //! Relay spawn utilities.
 use crate::{
     asset::AssetInfoService,
+    cache::RpcCache,
     chains::Chains,
     cli::Args,
     config::RelayConfig,
@@ -45,6 +46,8 @@ pub struct RelayHandle {
     pub metrics: PrometheusHandle,
     /// Price oracle.
     pub price_oracle: PriceOracle,
+    /// RPC cache (for test access).
+    pub rpc_cache: RpcCache,
 }
 
 impl RelayHandle {
@@ -84,6 +87,17 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
 
 /// Spawns the relay service using the provided [`RelayConfig`].
 pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Result<RelayHandle> {
+    try_spawn_with_cache(config, skip_diagnostics, None).await
+}
+
+/// Spawns the relay service with an optional RPC cache instance.
+/// If no cache is provided, a new global cache is created (for production use).
+/// If a cache is provided, it will be used instead (for test isolation).
+pub async fn try_spawn_with_cache(
+    config: RelayConfig,
+    skip_diagnostics: bool,
+    rpc_cache: Option<RpcCache>,
+) -> eyre::Result<RelayHandle> {
     // construct db
     let storage = if let Some(ref db_url) = config.database_url {
         info!("Using PostgreSQL as storage.");
@@ -109,6 +123,9 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
 
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
+
+    // Create RPC cache for optimizing chain interactions
+    let rpc_cache = rpc_cache.unwrap_or_default();
 
     // build chains
     let chains = Arc::new(Chains::new(signers.clone(), storage.clone(), &config).await?);
@@ -176,13 +193,15 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
             .as_ref()
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
+        rpc_cache.clone(),
     );
+
     let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
         AccountRpc::new(
             relay.clone(),
-            Resend::new(resend_api_key),
+            resend_client(resend_api_key),
             storage.clone(),
-            config.email.porto_base_url.unwrap_or("id.porto.sh".to_string()),
+            config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
             config.secrets.service_api_key.clone(),
         )
         .into_rpc()
@@ -211,8 +230,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))
         .await?;
-    let addr = server.local_addr()?;
-    info!(%addr, "Started relay service");
+    let local_addr = server.local_addr()?;
+    info!(%local_addr, "Started relay service");
     info!("Transaction signers: {}", signer_addresses.iter().join(", "));
     info!("Quote signer key: {}", quote_signer_addr);
     info!("Funder signer key: {}", funder_signer.address());
@@ -236,11 +255,17 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     }
 
     Ok(RelayHandle {
-        local_addr: addr,
+        local_addr,
         server: server.start(rpc),
         chains,
         storage,
         metrics,
         price_oracle,
+        rpc_cache,
     })
+}
+
+/// Creates a resend client.
+pub fn resend_client(api_key: &str) -> Resend {
+    Resend::new(api_key)
 }

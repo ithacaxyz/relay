@@ -1,4 +1,4 @@
-//! Alloy provider extensions.
+//! Alloy provider extensions and caching wrappers.
 
 use crate::op::{OP_FEE_ORACLE_CONTRACT, OpL1FeeOracle};
 use alloy::{
@@ -12,7 +12,7 @@ pub trait ProviderExt: Provider {
     /// Heuristically determines whether this chain is an OP rollup.
     fn is_optimism(&self) -> impl Future<Output = TransportResult<bool>> + Send {
         async move {
-            let chain_id = self.get_chain_id().await.unwrap();
+            let chain_id = self.get_chain_id().await?;
             if alloy_chains::Chain::from(chain_id).is_optimism() {
                 Ok(true)
             } else {
