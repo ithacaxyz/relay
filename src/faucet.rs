@@ -67,16 +67,6 @@ impl FaucetService {
         let provider = chain.provider();
         let faucet_address = self.faucet_signer.address();
 
-        // check ETH balance of the faucet (ETH is used to mint tokens)
-        let faucet_address_balance = provider.get_balance(faucet_address).await?;
-        if faucet_address_balance <= U256::from(1e18) {
-            error!("Insufficient faucet balance");
-            return Ok(AddFaucetFundsResponse {
-                transaction_hash: None,
-                message: Some("Insufficient faucet balance".to_string()),
-            });
-        }
-
         let fee_tokens = chain.assets().fee_tokens();
 
         // check if the token is supported
@@ -92,14 +82,26 @@ impl FaucetService {
         let _guard = self.lock.lock().await;
 
         let calldata: Bytes = IERC20::mintCall { recipient: address, value }.abi_encode().into();
-        let gas_limit = provider
+        let gas_limit = match provider
             .estimate_gas(
                 TransactionRequest::default()
                     .to(token_address)
                     .from(faucet_address)
                     .input(calldata.clone().into()),
             )
-            .await?;
+            .await
+        {
+            Ok(g) => g,
+            Err(e) => {
+                error!(
+                    "Faucet mint not supported for token {token_address} on chain {chain_id}: {e}"
+                );
+                return Ok(AddFaucetFundsResponse {
+                    transaction_hash: None,
+                    message: Some("Token address not supported".to_string()),
+                });
+            }
+        };
 
         // Build an internal transaction and route via TransactionService, targeting faucet signer
         let chain_id = provider.get_chain_id().await?;
