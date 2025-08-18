@@ -10,8 +10,13 @@ use crate::{
     types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
+    eips::eip1559::Eip1559Estimation,
     primitives::{Address, ChainId, U256, map::HashMap},
-    providers::{DynProvider, utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE},
+    providers::{
+        DynProvider,
+        utils::{EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE, Eip1559Estimator},
+    },
+    rpc::types::FeeHistory,
     signers::local::{
         PrivateKeySigner,
         coins_bip39::{English, Mnemonic},
@@ -401,6 +406,58 @@ pub struct FeeConfig {
     /// The minimum fee to set if any in wei.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_fee: Option<u64>,
+}
+
+impl FeeConfig {
+    /// Estimates EIP-1559 fees from fee history and adjusts them based on configured settings.
+    ///
+    /// This method:
+    /// 1. Uses the `Eip1559Estimator` to calculate base fee estimates from the fee history
+    /// 2. Adjusts the estimates to enforce minimum fees if configured
+    ///
+    /// Returns the adjusted [`Eip1559Estimation`].
+    pub fn estimate_eip1559_fees(&self, fee_history: &FeeHistory) -> Eip1559Estimation {
+        let fees = Eip1559Estimator::default().estimate(
+            fee_history.latest_block_base_fee().unwrap_or_default(),
+            fee_history.reward.as_deref().unwrap_or_default(),
+        );
+        self.adjusted_eip1559_estimation(fees)
+    }
+
+    /// Adjusts the estimated [`Eip1559Estimation`] based on the configured settings.
+    ///
+    /// - Enforces minimum fees, if any.
+    ///
+    /// See also [`Self::adjust_eip1559_estimation`].
+    ///
+    /// Returns the adjusted [`Eip1559Estimation`].
+    pub fn adjusted_eip1559_estimation(&self, mut fees: Eip1559Estimation) -> Eip1559Estimation {
+        self.adjust_eip1559_estimation(&mut fees);
+        fees
+    }
+
+    /// Adjusts the estimated [`Eip1559Estimation`] based on the configured settings.
+    /// - Enforces minimum fees, if any.
+    ///
+    /// This ensures that, in case the given estimation is lower than the required minimum, the fees
+    /// are adjusted to satisfy the minimum. This is mainly relevant for chains that have a
+    /// special/fake concept of EIP-1559 where a fixed prio fee minimum is required, and this
+    /// function acts as a sanity check that bumps the fees in case the estimation is too low. A
+    /// low estimation via `eth_getFeeHistory` that does not satisfy the minimum fee is possible for
+    /// example, if the block contains various system transactions with `gasPrice == 0` at the end
+    /// of the block (e.g. BSC does this).
+    ///
+    /// See Polygon: <https://docs.polygon.technology/tools/gas/polygon-gas-station/>
+    pub fn adjust_eip1559_estimation(&self, fees: &mut Eip1559Estimation) {
+        if let Some(minimum) = self.minimum_fee.map(u128::from)
+            && fees.max_priority_fee_per_gas < minimum
+        {
+            // Ensure that the prio fee is the configured minimum and adjust the max fee
+            // accordingly, because prio fee <= max fee
+            fees.max_priority_fee_per_gas = minimum;
+            fees.max_fee_per_gas = minimum;
+        }
+    }
 }
 
 impl Default for FeeConfig {
