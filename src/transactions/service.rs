@@ -563,6 +563,7 @@ impl TxQueue {
     }
 
     /// Returns the next transaction from the ready queue. Assumes that it will be sent immediately
+    /// and accounts for it.
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
             if let Some(eoa) = tx.eoa()

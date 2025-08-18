@@ -85,10 +85,7 @@ async fn add_faucet_funds_unsupported_chain() -> eyre::Result<()> {
     assert!(result.is_err(), "Should fail for unsupported chain");
 
     let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("not supported") || err.contains("Chain 99999"),
-        "Error should mention unsupported chain"
-    );
+    assert!(err.contains("unsupported chain 99999"), "Error should mention unsupported chain id");
 
     Ok(())
 }
