@@ -22,7 +22,7 @@ use alloy::{
     rpc::types::{Filter, Log},
     sol_types::SolEvent,
 };
-use futures_util::future::try_join_all;
+use futures_util::future::join_all;
 use itertools::{Either, Itertools};
 use std::sync::{
     Arc,
@@ -30,7 +30,7 @@ use std::sync::{
 };
 use tokio::{
     sync::{RwLock, broadcast, mpsc},
-    time::{Duration, Instant, sleep_until},
+    time::{Duration, Instant},
 };
 use tracing::{debug, info, trace, warn};
 
@@ -69,13 +69,14 @@ impl ChainSubscription {
                     // Process stream events
                     result = stream.recv() => {
                         let Ok(log) = result else {
-                            warn!(chain_id, "Stream error - subscription ended");
+                            warn!(chain_id, "Stream error - force removing subscription");
+                            monitor.force_cleanup(chain_id).await;
                             break;
                         };
-
-                        if let Ok(decoded) = PayloadVerified::decode_log(&log.inner) {
-                            let _ = tx.send(keccak256(&decoded.data.header));
-                        }
+                        let Ok(decoded) = PayloadVerified::decode_log(&log.inner) else {
+                            continue;
+                        };
+                        let _ = tx.send(keccak256(&decoded.data.header));
                     }
                     // Handle cleanup requests
                     Some(()) = cleanup_rx.recv() => {
@@ -93,10 +94,9 @@ impl ChainSubscription {
     }
 
     /// Generates a new [`PacketSubscription`].
-    fn subscribe(&self, packet: LayerZeroPacketInfo) -> PacketSubscription {
+    fn subscribe(&self) -> PacketSubscription {
         self.handle.subscribers_count.fetch_add(1, Ordering::Relaxed);
         PacketSubscription {
-            packet,
             inner: self.event_sender.subscribe(),
             chain_handle: self.handle.clone(),
         }
@@ -171,86 +171,94 @@ impl LayerZeroVerificationMonitor {
             "Starting LayerZero verification monitoring"
         );
 
-        // create subscriptions for all destination chains
-        let packet_subscriptions = try_join_all(
-            packets.iter().map(async |packet| self.subscribe_to_payload_events(packet).await),
-        )
-        .await?;
+        let verified_guids = self.monitor_packets(packets.clone(), timeout_deadline).await?;
 
-        // check initial verification status which will come only with the pending packet
-        // subscriptions
-        let status = self.check_initial_verification_status(packet_subscriptions).await?;
-
-        // if everything is already verified, return immediately
-        if status.pending.is_empty() {
-            info!(
-                num_verified = status.already_verified_guids.len(),
-                "All messages already verified on-chain"
-            );
-            return Ok(VerificationResult { verified_packets: packets, failed_packets: vec![] });
-        }
-
-        // monitor pending packets with their subscriptions
-        debug!(
-            num_pending = status.pending.len(),
-            "Monitoring pending packets for verification events"
-        );
-        let verified_via_events = self.monitor_packets(status.pending, timeout_deadline).await?;
-
-        Ok(VerificationResult::new(
-            status.already_verified_guids.into_iter().chain(verified_via_events),
-            &packets,
-        ))
+        Ok(VerificationResult::new(verified_guids, &packets))
     }
 
-    /// Checks which packets are already verified on-chain.
-    ///
-    /// Returns pending packet subscriptions and GUIDs of already verified packets.
-    async fn check_initial_verification_status(
-        &self,
-        packet_subscriptions: Vec<PacketSubscription>,
-    ) -> Result<InitialVerificationStatus, SettlementError> {
-        let total_packets = packet_subscriptions.len();
-
-        // Check availability for all packets in parallel and partition results
-        let (already_verified_guids, pending): (Vec<_>, Vec<_>) =
-            try_join_all(packet_subscriptions.into_iter().map(async |rx| {
-                if self.inner.chain_configs.is_message_available(&rx.packet).await? {
-                    Ok::<_, SettlementError>(Either::Left(rx.packet.guid))
-                } else {
-                    // Packet still pending - keep subscription
-                    Ok(Either::Right(rx))
-                }
-            }))
-            .await?
-            .into_iter()
-            .partition_map(|result| result);
-
-        info!(
-            total_packets,
-            pending_packets = pending.len(),
-            already_verified = already_verified_guids.len(),
-            "Initial verification status"
-        );
-
-        Ok(InitialVerificationStatus { pending, already_verified_guids })
-    }
-
-    /// Monitors pending packets for verification events on their destination chains.
+    /// Monitors packets for verification events on their destination chains.
     ///
     /// Returns GUIDs of packets that were verified before the timeout.
     async fn monitor_packets(
         &self,
-        pending_subscriptions: Vec<PacketSubscription>,
+        packets: Vec<LayerZeroPacketInfo>,
         timeout_deadline: Instant,
     ) -> Result<Vec<B256>, SettlementError> {
-        Ok(try_join_all(pending_subscriptions.into_iter().map(async |mut pending| {
-            pending.wait(timeout_deadline, &self.inner.chain_configs).await
-        }))
-        .await?
-        .into_iter()
-        .flatten()
-        .collect())
+        let results = join_all(
+            packets.into_iter().map(|packet| self.monitor_packet(packet, timeout_deadline)),
+        )
+        .await;
+
+        // Collect successful verifications
+        Ok(results.into_iter().filter_map(|r| r.ok()).collect())
+    }
+
+    /// Monitor a single packet with retry logic for subscription failures.
+    ///
+    /// This function handles the complete lifecycle of monitoring a LayerZero packet:
+    /// 1. Creates a subscription to the destination chain's PayloadVerified events
+    /// 2. Checks if the packet is already verified on-chain (to avoid race conditions)
+    /// 3. Waits for verification events, matching against the packet's header hash
+    /// 4. Automatically recreates the subscription if the WebSocket connection drops
+    ///
+    /// The function ensures no events are missed by subscribing before checking chain state,
+    /// and handles transient network failures by retrying.
+    async fn monitor_packet(
+        &self,
+        packet: LayerZeroPacketInfo,
+        timeout_deadline: Instant,
+    ) -> Result<B256, SettlementError> {
+        loop {
+            let mut subscription = self.subscribe_to_payload_events(&packet).await?;
+
+            // Check if already verified (after subscribing to avoid missing events)
+            if self.inner.chain_configs.is_message_available(&packet).await? {
+                debug!(guid = ?packet.guid, "Packet already verified on-chain");
+                return Ok(packet.guid);
+            }
+
+            // Wait for event
+            loop {
+                tokio::select! {
+                    result = subscription.inner.recv() => {
+                        match result {
+                            Ok(header_hash) => {
+                                if header_hash == packet.header_hash {
+                                    // The DVN configuration might require multiple entities to verify the packet. Being aware of the exact configuration is unnecessary, since we can just query the chain to see if it's ready.
+                                    if self.inner.chain_configs.is_message_available(&packet).await? {
+                                        trace!(
+                                            guid = ?packet.guid,
+                                            src_chain = packet.src_chain_id,
+                                            dst_chain = packet.dst_chain_id,
+                                            "Packet verified on chain"
+                                        );
+                                        return Ok(packet.guid);
+                                    }
+                                    trace!(guid = ?packet.guid, "Event received but not yet available");
+                                }
+                            }
+                            Err(_) => {
+                                // Channel closed - subscription died, break to recreate
+                                warn!(guid = ?packet.guid, "Subscription closed, will recreate");
+                                break;
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep_until(timeout_deadline) => {
+                        warn!(
+                            guid = ?packet.guid,
+                            src_chain = packet.src_chain_id,
+                            dst_chain = packet.dst_chain_id,
+                            "Packet verification timed out"
+                        );
+                        return Err(SettlementError::InternalError(format!(
+                            "Verification timeout for packet {}",
+                            packet.guid
+                        )));
+                    }
+                }
+            }
+        }
     }
 
     /// Subscribes to `PayloadVerified` events for the specified packet.
@@ -276,7 +284,7 @@ impl LayerZeroVerificationMonitor {
         {
             let subs = self.inner.log_subscriptions.read().await;
             if let Some(sub) = subs.get(&packet.dst_chain_id) {
-                return Ok(sub.subscribe(packet.clone()));
+                return Ok(sub.subscribe());
             }
         } // Drop read lock here
 
@@ -285,11 +293,10 @@ impl LayerZeroVerificationMonitor {
 
         // double-check - another task may have created it while we waited for write lock
         if let Some(sub) = subs.get(&packet.dst_chain_id) {
-            return Ok(sub.subscribe(packet.clone()));
+            return Ok(sub.subscribe());
         }
 
         let Some(config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
-            // should have been caught by the preflight diagnostics
             return Err(SettlementError::UnsupportedChain(packet.dst_chain_id));
         };
 
@@ -310,7 +317,7 @@ impl LayerZeroVerificationMonitor {
 
         // spawn the chain subscription
         let subscription = ChainSubscription::spawn(packet.dst_chain_id, stream, self.clone());
-        let rx = subscription.subscribe(packet.clone());
+        let rx = subscription.subscribe();
         subs.insert(packet.dst_chain_id, subscription);
 
         info!(
@@ -336,6 +343,16 @@ impl LayerZeroVerificationMonitor {
             }
         }
         false
+    }
+
+    /// Force remove a chain subscription regardless of subscriber count.
+    ///
+    /// Used when the stream encounters an error and needs to be recreated.
+    async fn force_cleanup(&self, chain_id: ChainId) {
+        let mut subs = self.inner.log_subscriptions.write().await;
+        if subs.remove(&chain_id).is_some() {
+            warn!(chain_id, "Force removed chain subscription due to stream error");
+        }
     }
 }
 
@@ -385,75 +402,15 @@ impl VerificationResult {
     }
 }
 
-/// Result of initial verification status check.
-struct InitialVerificationStatus {
-    /// Subscriptions for packets that still need verification
-    pending: Vec<PacketSubscription>,
-    /// GUIDs of packets that are already verified
-    already_verified_guids: Vec<B256>,
-}
-
 /// Handle to a chain's event stream for a specific packet.
 ///
 /// When dropped, decrements the subscriber count for its chain subscription.
 #[derive(Debug)]
 pub struct PacketSubscription {
-    /// The packet being monitored
-    packet: LayerZeroPacketInfo,
     /// The underlying broadcast receiver for header hashes of `PayloadVerified` events
     inner: broadcast::Receiver<B256>,
     /// Handle for cleanup when dropped
     chain_handle: ChainSubscriptionHandle,
-}
-
-impl PacketSubscription {
-    /// Wait for this packet to be verified or timeout.
-    ///
-    /// Returns the packet GUID if verified, `None` if timeout.
-    async fn wait(
-        &mut self,
-        timeout_deadline: Instant,
-        chain_configs: &LZChainConfigs,
-    ) -> Result<Option<B256>, SettlementError> {
-        loop {
-            tokio::select! {
-                Ok(header_hash) = self.inner.recv() => {
-                    // Check if this event is for our packet
-                    if header_hash == self.packet.header_hash {
-                        trace!(
-                            guid = ?self.packet.guid,
-                            "Received matching PayloadVerified event, checking on-chain"
-                        );
-                        // Double-check the message is actually available on-chain
-                        if chain_configs.is_message_available(&self.packet).await? {
-                            trace!(
-                                guid = ?self.packet.guid,
-                                src_chain = self.packet.src_chain_id,
-                                dst_chain = self.packet.dst_chain_id,
-                                "Packet verified on chain"
-                            );
-                            return Ok(Some(self.packet.guid));
-                        } else {
-                            trace!(
-                                guid = ?self.packet.guid,
-                                "Event received but message not yet available on-chain"
-                            );
-                        }
-                    }
-                    // Not our packet, continue listening
-                }
-                _ = sleep_until(timeout_deadline) => {
-                    warn!(
-                        guid = ?self.packet.guid,
-                        src_chain = self.packet.src_chain_id,
-                        dst_chain = self.packet.dst_chain_id,
-                        "Packet verification timed out"
-                    );
-                    return Ok(None);
-                }
-            }
-        }
-    }
 }
 
 impl Drop for PacketSubscription {
