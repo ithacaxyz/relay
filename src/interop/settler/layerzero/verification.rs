@@ -34,11 +34,11 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
-/// Represents an active subscription for a specific chain.
+/// Represents an active log subscription for a specific chain.
 #[derive(Debug)]
 struct ChainSubscription {
-    /// Broadcasts decoded `PayloadVerified` events to all consumers
-    event_sender: broadcast::Sender<PayloadVerified>,
+    /// Broadcasts header hashes of `PayloadVerified` events to all consumers
+    event_sender: broadcast::Sender<B256>,
     /// Handle for cleanup requests and subscriber tracking
     handle: ChainSubscriptionHandle,
 }
@@ -74,7 +74,7 @@ impl ChainSubscription {
                         };
 
                         if let Ok(decoded) = PayloadVerified::decode_log(&log.inner) {
-                            let _ = tx.send(decoded.data);
+                            let _ = tx.send(keccak256(&decoded.data.header));
                         }
                     }
                     // Handle cleanup requests
@@ -400,8 +400,8 @@ struct InitialVerificationStatus {
 pub struct PacketSubscription {
     /// The packet being monitored
     packet: LayerZeroPacketInfo,
-    /// The underlying broadcast receiver for `PayloadVerified` events
-    inner: broadcast::Receiver<PayloadVerified>,
+    /// The underlying broadcast receiver for header hashes of `PayloadVerified` events
+    inner: broadcast::Receiver<B256>,
     /// Handle for cleanup when dropped
     chain_handle: ChainSubscriptionHandle,
 }
@@ -417,9 +417,9 @@ impl PacketSubscription {
     ) -> Result<Option<B256>, SettlementError> {
         loop {
             tokio::select! {
-                Ok(event) = self.inner.recv() => {
+                Ok(header_hash) = self.inner.recv() => {
                     // Check if this event is for our packet
-                    if keccak256(&event.header) == self.packet.header_hash {
+                    if header_hash == self.packet.header_hash {
                         trace!(
                             guid = ?self.packet.guid,
                             "Received matching PayloadVerified event, checking on-chain"
