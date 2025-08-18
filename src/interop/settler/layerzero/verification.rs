@@ -311,17 +311,17 @@ impl LayerZeroVerificationMonitor {
             return Ok(sub.subscribe());
         }
 
-        let Some(config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
+        let Some(dst_config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
             return Err(SettlementError::UnsupportedChain(packet.dst_chain_id));
         };
 
-        // get the receive library address
-        let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
+        // get the receive library address using the packet's receiver
+        let endpoint = ILayerZeroEndpointV2::new(dst_config.endpoint_address, &dst_config.provider);
         let receive_lib_result =
-            endpoint.getReceiveLibrary(config.settler_address, src_endpoint_id).call().await?;
+            endpoint.getReceiveLibrary(packet.receiver, src_endpoint_id).call().await?;
 
         // subscribe to events emitted by the library
-        let stream = config
+        let stream = dst_config
             .provider
             .subscribe_logs(
                 &Filter::new()
