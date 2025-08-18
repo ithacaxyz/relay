@@ -18,7 +18,7 @@ use alloy::{
 use eyre::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 /// Faucet service for distributing test tokens.
 #[derive(Debug, Clone)]
@@ -55,6 +55,15 @@ impl FaucetService {
             .get(chain_id)
             .ok_or_else(|| eyre::eyre!("Chain {} not supported", chain_id))?;
 
+        // Disallow faucet usage on mainnet chains
+        if alloy_chains::Chain::from(chain_id).named().is_some_and(|c| !c.is_testnet()) {
+            warn!("Faucet request blocked on mainnet (chain {chain_id})");
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Faucet disabled on mainnet".to_string()),
+            });
+        }
+
         let provider = chain.provider();
         let faucet_address = self.faucet_signer.address();
 
@@ -68,9 +77,7 @@ impl FaucetService {
             });
         }
 
-        let mut fee_tokens = chain.assets().fee_tokens();
-        // Ensure deterministic token selection order by sorting by AssetUid
-        fee_tokens.sort_by(|(a_uid, _), (b_uid, _)| a_uid.as_str().cmp(b_uid.as_str()));
+        let fee_tokens = chain.assets().fee_tokens();
 
         // check if the token is supported
         if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
