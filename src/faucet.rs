@@ -37,7 +37,7 @@ impl FaucetService {
         &self,
         params: AddFaucetFundsParameters,
     ) -> Result<AddFaucetFundsResponse> {
-        let AddFaucetFundsParameters { address, chain_id, value } = params;
+        let AddFaucetFundsParameters { token_address, address, chain_id, value } = params;
 
         info!(
             "Processing faucet request for {} on chain {} with amount {}",
@@ -62,20 +62,20 @@ impl FaucetService {
             });
         }
 
-        let fee_token_address =
-            chain
-                .assets()
-                .fee_tokens()
-                .first()
-                .map(|(_, desc)| desc.address)
-                .ok_or_else(|| eyre::eyre!("No fee token found for chain {}", chain_id))?;
+        if !chain.assets().fee_token_iter().any(|(_, desc)| desc.address == token_address) {
+            error!("Token address {} not supported for chain {}", token_address, chain_id);
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Token address not supported".to_string()),
+            });
+        }
 
         // Acquire lock to prevent concurrent transactions from the same faucet
         let _guard = self.lock.lock().await;
 
-        let fee_token = IERC20::IERC20Instance::new(fee_token_address, provider.clone());
+        let token = IERC20::IERC20Instance::new(token_address, provider.clone());
 
-        let pending_tx = fee_token.mint(address, value).from(faucet_address).send().await?;
+        let pending_tx = token.mint(address, value).from(faucet_address).send().await?;
         let tx_receipt = pending_tx.get_receipt().await?;
 
         if !tx_receipt.status() {
