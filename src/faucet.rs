@@ -87,7 +87,7 @@ impl FaucetService {
                 token_address
             }
             None => {
-                // Prefer a non-native, non-interop ERC20 as default (matches test env expectations)
+                // Prefer a non-native, non-interop ERC20 as default (TODO: is this a good default?)
                 if let Some((_, desc)) = fee_tokens
                     .iter()
                     .find(|(_, d)| d.address != alloy::primitives::Address::ZERO && !d.interop)
@@ -118,12 +118,10 @@ impl FaucetService {
             )
             .await?;
 
-        // Fetch fees and nonce
         let fees = provider.estimate_eip1559_fees().await?;
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(faucet_address).pending().await?;
 
-        // Construct and sign the transaction with the faucet signer
         let mut tx = TxEip1559 {
             chain_id,
             nonce,

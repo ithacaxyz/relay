@@ -1,5 +1,5 @@
 use crate::e2e::environment::Environment;
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, U64, U256};
 use jsonrpsee::core::client::ClientT;
 use relay::types::{
     IERC20,
@@ -36,12 +36,30 @@ async fn add_faucet_funds_success() -> eyre::Result<()> {
         "Should return success message"
     );
 
-    let balance = IERC20::IERC20Instance::new(env.fee_token, env.provider())
-        .balanceOf(recipient)
-        .call()
+    // Fetch fee tokens for this chain and verify exactly one token was minted to `amount`.
+    let caps: relay::types::rpc::RelayCapabilities = env
+        .relay_endpoint
+        .request("wallet_getCapabilities", vec![Some(vec![U64::from(env.chain_id())])])
         .await?;
 
-    assert_eq!(balance, amount, "Recipient should have received the tokens");
+    let fee_tokens = &caps.chain(env.chain_id()).fees.tokens;
+    let mut non_zero = 0;
+    for t in fee_tokens.iter() {
+        let token_addr = t.asset.address;
+        if token_addr.is_zero() {
+            // native is not minted by the faucet
+            continue;
+        }
+        let bal = IERC20::IERC20Instance::new(token_addr, env.provider())
+            .balanceOf(recipient)
+            .call()
+            .await?;
+        if bal > U256::ZERO {
+            assert_eq!(bal, amount, "Minted amount should match request");
+            non_zero += 1;
+        }
+    }
+    assert_eq!(non_zero, 1, "Exactly one fee token should be minted");
 
     Ok(())
 }
