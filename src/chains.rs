@@ -124,7 +124,6 @@ impl Chains {
 
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
-                // TODO(mattsse): integrate fee config here?
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
@@ -132,6 +131,7 @@ impl Chains {
                     storage.clone(),
                     config.transactions.clone(),
                     config.funder,
+                    desc.fees.clone(),
                 )
                 .await?;
                 tokio::spawn(service);

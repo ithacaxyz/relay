@@ -7,7 +7,7 @@ use super::{
     },
 };
 use crate::{
-    config::TransactionServiceConfig,
+    config::{FeeConfig, TransactionServiceConfig},
     error::StorageError,
     signers::DynSigner,
     storage::{LockLiquidityInput, RelayStorage, StorageApi},
@@ -157,9 +157,11 @@ pub struct SignerInner {
     monitor: TransactionMonitoringHandle,
     /// Funder contract address
     funder: Address,
+    /// Fee settings for the network this signer supports.
+    fees: FeeConfig,
 }
 
-/// A signer responsible for signing and sending transactions on a single network.
+/// A signer responsible for signing and sending transactions on a _single_ network.
 #[derive(Debug, Clone, derive_more::Deref)]
 pub struct Signer {
     #[deref]
@@ -179,6 +181,7 @@ impl Signer {
         config: TransactionServiceConfig,
         monitor: TransactionMonitoringHandle,
         funder: Address,
+        fees: FeeConfig,
     ) -> eyre::Result<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -218,6 +221,7 @@ impl Signer {
             config,
             monitor,
             funder,
+            fees,
         };
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -310,7 +314,7 @@ impl Signer {
             .get_fee_history(
                 EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
                 Default::default(),
-                &[self.config.priority_fee_percentile],
+                &[self.fees.priority_fee_percentile],
             )
             .await?;
 

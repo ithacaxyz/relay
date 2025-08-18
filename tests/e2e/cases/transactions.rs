@@ -19,7 +19,7 @@ use futures_util::{
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
-    config::TransactionServiceConfig,
+    config::{FeeConfig, TransactionServiceConfig},
     signers::DynSigner,
     storage::StorageApi,
     transactions::{MIN_SIGNER_GAS, RelayTransactionKind, TransactionService, TransactionStatus},
@@ -626,6 +626,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
         storage.clone(),
         config.transaction_service_config.clone(),
         env.funder,
+        FeeConfig::default(),
     )
     .await
     .unwrap();

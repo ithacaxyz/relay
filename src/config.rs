@@ -231,12 +231,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the percentile of the priority fees to use for the transactions.
-    pub fn with_priority_fee_percentile(mut self, percentile: f64) -> Self {
-        self.transactions.priority_fee_percentile = percentile;
-        self
-    }
-
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);
@@ -707,8 +701,6 @@ pub struct TransactionServiceConfig {
     /// for querying transactions.
     #[serde(with = "crate::serde::hash_map")]
     pub public_node_endpoints: HashMap<Chain, Url>,
-    /// Percentile of the priority fees to use for the transactions.
-    pub priority_fee_percentile: f64,
 }
 
 impl Default for TransactionServiceConfig {
@@ -722,7 +714,6 @@ impl Default for TransactionServiceConfig {
             transaction_timeout: Duration::from_secs(60),
             max_queued_per_eoa: 1,
             public_node_endpoints: HashMap::default(),
-            priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
         }
     }
 }
