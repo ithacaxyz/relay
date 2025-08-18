@@ -32,7 +32,7 @@ use tokio::{
     sync::{RwLock, broadcast, mpsc},
     time::{Duration, Instant},
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Represents an active log subscription for a specific chain.
 #[derive(Debug)]
@@ -55,18 +55,15 @@ impl ChainSubscription {
         let (tx, _rx) = broadcast::channel(10000);
         let (cleanup_tx, mut cleanup_rx) = mpsc::unbounded_channel();
 
-        // Create the cleanup request handle
         let handle = ChainSubscriptionHandle {
             cleanup_tx,
             subscribers_count: Arc::new(AtomicUsize::new(0)),
         };
-
-        // Spawn background task to process the stream and handle cleanup
         let event_sender = tx.clone();
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    // Process stream events
                     result = stream.recv() => {
                         let Ok(log) = result else {
                             warn!(chain_id, "Stream error - force removing subscription");
@@ -78,7 +75,7 @@ impl ChainSubscription {
                         };
                         let _ = tx.send(keccak256(&decoded.data.header));
                     }
-                    // Handle cleanup requests
+                    // Handle cleanup request called by the last active PacketSubscription.
                     Some(()) = cleanup_rx.recv() => {
                         if monitor.try_cleanup(chain_id).await {
                             debug!(chain_id, "Chain subscription cleaned up, terminating stream task");
@@ -95,7 +92,7 @@ impl ChainSubscription {
 
     /// Generates a new [`PacketSubscription`].
     fn subscribe(&self) -> PacketSubscription {
-        self.handle.subscribers_count.fetch_add(1, Ordering::Relaxed);
+        self.handle.subscribers_count.fetch_add(1, Ordering::AcqRel);
         PacketSubscription {
             inner: self.event_sender.subscribe(),
             chain_handle: self.handle.clone(),
@@ -103,29 +100,24 @@ impl ChainSubscription {
     }
 }
 
-/// Handle for requesting cleanup of a chain subscription and track its subscribers.
+/// Handle for cleanup requests and subscriber tracking.
 #[derive(Clone, Debug)]
 struct ChainSubscriptionHandle {
     /// Channel to request cleanup
     cleanup_tx: mpsc::UnboundedSender<()>,
     /// Number of active consumers to this subscription.
     ///
-    /// We track this manually because broadcast channels don't notify when receivers drop.
-    /// Without this, the ChainSubscription would hang forever waiting for events even when
-    /// no one is listening. When the last PacketSubscription drops (counter goes 1→0),
-    /// it sends a cleanup notification via cleanup_tx to try and terminate the subscription if no
-    /// new PacketSubscription has been created.
+    /// We track this so we only notify the ChainSubscription if we are the last listener.
     subscribers_count: Arc<AtomicUsize>,
 }
 
 impl ChainSubscriptionHandle {
     /// Notify that a subscriber is being dropped
     fn notify_drop(&self) {
-        let prev = self.subscribers_count.fetch_sub(1, Ordering::Relaxed);
+        let prev = self.subscribers_count.fetch_sub(1, Ordering::AcqRel);
 
         // If we were the last subscriber, request cleanup
         if prev == 1 {
-            // notify cleanup request attempt
             let _ = self.cleanup_tx.send(());
         }
     }
@@ -195,8 +187,28 @@ impl LayerZeroVerificationMonitor {
         )
         .await;
 
-        // Collect successful verifications
-        Ok(results.into_iter().filter_map(|r| r.ok()).collect())
+        let mut packet_error = None;
+        let mut verified_guids = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(guid) => verified_guids.push(guid),
+                Err(SettlementError::Timeout(guid)) => {
+                    error!(guid = ?guid, "Packet verification timed out");
+                }
+                Err(e) => {
+                    error!(?e, "Packet monitoring error");
+                    packet_error = Some(e);
+                }
+            }
+        }
+
+        // We only want to exit cleanly if we have verified all packets OR timed-out.
+        if let Some(error) = packet_error {
+            return Err(error);
+        }
+
+        Ok(verified_guids)
     }
 
     /// Monitor a single packet with retry logic for subscription failures.
@@ -257,10 +269,7 @@ impl LayerZeroVerificationMonitor {
                             dst_chain = packet.dst_chain_id,
                             "Packet verification timed out"
                         );
-                        return Err(SettlementError::InternalError(format!(
-                            "Verification timeout for packet {}",
-                            packet.guid
-                        )));
+                        return Err(SettlementError::Timeout(packet.guid));
                     }
                 }
             }
@@ -342,7 +351,7 @@ impl LayerZeroVerificationMonitor {
         let mut subs = self.inner.log_subscriptions.write().await;
         if let Some(subscription) = subs.get(&chain_id) {
             // double-check that there are truly no subscribers
-            if subscription.handle.subscribers_count.load(Ordering::Relaxed) == 0 {
+            if subscription.handle.subscribers_count.load(Ordering::Acquire) == 0 {
                 subs.remove(&chain_id);
                 info!(chain_id, "Removed unused chain subscription");
                 return true;
