@@ -560,6 +560,7 @@ impl CallStatusCode {
 #[serde(rename_all = "camelCase")]
 pub struct CallReceipt {
     /// The chain ID the transaction was included in.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// The logs generated in the transaction.
     pub logs: Vec<Log>,
@@ -569,8 +570,10 @@ pub struct CallReceipt {
     /// The block hash the transaction was included in.
     pub block_hash: Option<BlockHash>,
     /// The block number the transaction was included in.
+    #[serde(with = "alloy::serde::quantity::opt")]
     pub block_number: Option<BlockNumber>,
     /// The gas used by the transaction.
+    #[serde(with = "alloy::serde::quantity")]
     pub gas_used: u64,
     /// The transaction hash.
     pub transaction_hash: TxHash,

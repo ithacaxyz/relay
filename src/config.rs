@@ -7,7 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
-    types::{CoinKind, TransactionServiceHandles},
+    types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{Address, ChainId, U256, map::HashMap},
@@ -30,19 +30,25 @@ use std::{
 };
 use tracing::warn;
 
+// todo(onbjerg): We should consider merging the contract addresses into a `ContractConfig` struct,
+// which would 1) make the config more readable and 2) simplify things like fetching
+// [`VersionedContracts`].
 /// Relay configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RelayConfig {
     /// Server configuration.
     pub server: ServerConfig,
-    /// Chain configuration.
-    pub chain: ChainConfig,
+    /// Chain configurations.
+    #[serde(with = "crate::serde::hash_map")]
+    pub chains: HashMap<Chain, ChainConfig>,
     /// Quote configuration.
+    #[serde(default)]
     pub quote: QuoteConfig,
     /// Email configuration.
     #[serde(default)]
     pub email: EmailConfig,
     /// Transaction service configuration.
+    #[serde(default)]
     pub transactions: TransactionServiceConfig,
     /// Interop configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,8 +56,10 @@ pub struct RelayConfig {
     /// Orchestrator address.
     pub orchestrator: Address,
     /// Previously deployed orchestrators.
+    #[serde(default)]
     pub legacy_orchestrators: BTreeSet<Address>,
     /// Previously deployed delegation proxies.
+    #[serde(default)]
     pub legacy_delegation_proxies: BTreeSet<Address>,
     /// Delegation proxy address.
     pub delegation_proxy: Address,
@@ -61,352 +69,21 @@ pub struct RelayConfig {
     pub funder: Address,
     /// Escrow address.
     pub escrow: Address,
-    /// Secrets.
-    #[serde(skip_serializing, default)]
-    pub secrets: SecretsConfig,
-    /// Database URL.
-    pub database_url: Option<String>,
-}
-
-/// Server configuration.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerConfig {
-    /// The address to serve the RPC on.
-    pub address: IpAddr,
-    /// The port to serve the RPC on.
-    pub port: u16,
-    /// The port to serve the metrics on.
-    pub metrics_port: u16,
-    /// The maximum number of concurrent connections the relay can handle.
-    pub max_connections: u32,
-}
-
-/// Chain configuration.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChainConfig {
-    /// The RPC endpoint of a chain to send transactions to.
-    pub endpoints: Vec<Url>,
-    /// Mapping of a chain ID to RPC endpoint of the sequencer for OP rollups.
-    #[serde(with = "crate::serde::hash_map")]
-    pub sequencer_endpoints: HashMap<Chain, Url>,
-    /// A fee token the relay accepts.
-    pub fee_tokens: Vec<Address>,
-    /// A token that is supported for interop.
-    pub interop_tokens: Vec<Address>,
-    /// The fee recipient address.
-    ///
-    /// Defaults to `Address::ZERO`, which means the fees will be accrued by the orchestrator
-    /// contract.
+    /// Fee recipient.
     pub fee_recipient: Address,
     /// Optional rebalance service configuration.
     ///
     /// If provided, this relay instance will handle rebalancing of liquidity across chains.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebalance_service: Option<RebalanceServiceConfig>,
-}
-
-/// Quote configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QuoteConfig {
-    /// Sets a constant rate for the price oracle. Used for testing.
-    pub constant_rate: Option<f64>,
-    /// Gas estimate configuration.
-    gas: GasConfig,
-    /// The lifetime of a fee quote.
-    #[serde(with = "crate::serde::duration")]
-    pub ttl: Duration,
-    /// The lifetime of a price rate.
-    #[serde(with = "crate::serde::duration")]
-    pub rate_ttl: Duration,
-}
-
-/// Gas estimate configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GasConfig {
-    /// Extra buffer added to Intent gas estimates.
-    pub intent_buffer: u64,
-    /// Extra buffer added to transaction gas estimates.
-    pub tx_buffer: u64,
-}
-
-impl QuoteConfig {
-    /// Returns the configured extra buffer added to intent gas estimates.
-    pub fn intent_buffer(&self) -> u64 {
-        self.gas.intent_buffer
-    }
-
-    /// Returns the configured extra buffer added to transaction gas estimates.
-    pub fn tx_buffer(&self) -> u64 {
-        self.gas.tx_buffer
-    }
-}
-
-/// Email configuration.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmailConfig {
-    /// Resend API key.
-    pub resend_api_key: Option<String>,
-    /// Porto base URL.
-    pub porto_base_url: Option<String>,
-}
-
-/// Secrets (kept out of serialized output).
-#[derive(Debug, Deserialize)]
-pub struct SecretsConfig {
-    /// The secret key to sign transactions with.
-    #[serde(with = "alloy::serde::displayfromstr")]
-    pub signers_mnemonic: Mnemonic<English>,
-    /// The funder KMS key or private key
-    pub funder_key: String,
-    /// API key for protected RPC endpoints
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_api_key: Option<String>,
-}
-
-impl Default for SecretsConfig {
-    fn default() -> Self {
-        Self {
-            signers_mnemonic: Mnemonic::<English>::from_str(
-                "test test test test test test test test test test test junk",
-            )
-            .unwrap(),
-            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
-                .to_string(),
-            service_api_key: None,
-        }
-    }
-}
-
-/// Interop configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InteropConfig {
-    /// Interval for checking pending refunds.
-    #[serde(with = "crate::serde::duration")]
-    pub refund_check_interval: Duration,
-    /// Time threshold in seconds before refunds can be processed for escrows.
-    pub escrow_refund_threshold: u64,
-    /// Settler configuration.
-    pub settler: SettlerConfig,
-}
-
-/// Configuration for the rebalance service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RebalanceServiceConfig {
-    /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binance: Option<BinanceBridgeConfig>,
-    /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub simple: Option<SimpleBridgeConfig>,
-    /// The private key of the funder account owner. Required for pulling funds from the funders.
+    /// Price feed config.
     #[serde(default)]
-    pub funder_owner_key: String,
-    /// Mapping of [`CoinKind`] to rebalance threshold.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
-    pub thresholds: HashMap<CoinKind, U256>,
-}
-
-/// Configuration for the settler service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SettlerConfig {
-    /// Settler implementation configuration.
-    #[serde(flatten)]
-    pub implementation: SettlerImplementation,
-    /// Timeout for waiting for settlement verification.
-    #[serde(with = "crate::serde::duration")]
-    pub wait_verification_timeout: Duration,
-}
-
-impl SettlerConfig {
-    /// Creates a settlement processor from this configuration.
-    pub async fn settlement_processor(
-        &self,
-        storage: RelayStorage,
-        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
-        tx_service_handles: TransactionServiceHandles,
-    ) -> eyre::Result<SettlementProcessor> {
-        // Create the settler based on config
-        let settler: Box<dyn Settler> = match &self.implementation {
-            SettlerImplementation::LayerZero(config) => Box::new(
-                config.create_settler(providers, storage.clone(), tx_service_handles).await?,
-            ),
-            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
-        };
-
-        Ok(SettlementProcessor::new(settler))
-    }
-}
-
-/// Settler implementation configuration (mutually exclusive).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SettlerImplementation {
-    /// LayerZero configuration for cross-chain settlement.
-    LayerZero(LayerZeroConfig),
-    /// Simple settler configuration for testing.
-    Simple(SimpleSettlerConfig),
-}
-
-impl SettlerImplementation {
-    /// Address of the settler.
-    pub fn address(&self) -> Address {
-        match self {
-            Self::LayerZero(c) => c.settler_address,
-            Self::Simple(c) => c.settler_address,
-        }
-    }
-}
-
-/// Simple settler configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimpleSettlerConfig {
-    /// The address of the simple settler contract.
-    pub settler_address: Address,
-    /// Private key for signing settlement write operations.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub private_key: Option<String>,
-}
-
-impl SimpleSettlerConfig {
-    /// Creates a new simple settler instance.
-    pub fn create_settler(
-        &self,
-        providers: HashMap<ChainId, DynProvider>,
-    ) -> eyre::Result<SimpleSettler> {
-        let signer = self
-            .private_key
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("no settler private key"))?
-            .parse::<PrivateKeySigner>()
-            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
-
-        Ok(SimpleSettler::new(self.settler_address, signer, providers))
-    }
-}
-
-/// LayerZero configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LayerZeroConfig {
-    /// Mapping of chain ID to LayerZero endpoint ID.
-    /// Format: { chain_id: endpoint_id }
-    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
-    #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_ids: HashMap<ChainId, EndpointId>,
-    /// Mapping of chain ID to LayerZero endpoint address.
-    #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_addresses: HashMap<ChainId, Address>,
-    /// LayerZero settler contract address.
-    pub settler_address: Address,
-}
-
-impl LayerZeroConfig {
-    /// Creates a new LayerZero settler instance with the given providers and storage.
-    pub async fn create_settler(
-        &self,
-        providers: HashMap<ChainId, DynProvider>,
-        storage: RelayStorage,
-        tx_service_handles: TransactionServiceHandles,
-    ) -> Result<LayerZeroSettler, SettlementError> {
-        LayerZeroSettler::new(
-            self.endpoint_ids.clone(),
-            self.endpoint_addresses.clone(),
-            providers,
-            self.settler_address,
-            storage,
-            tx_service_handles,
-        )
-        .await
-    }
-}
-
-/// Configuration for transaction service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionServiceConfig {
-    /// Number of signers to derive from mnemonic and use for sending transactions.
-    pub num_signers: usize,
-    /// Maximum number of transactions that can be pending at any given time.
-    pub max_pending_transactions: usize,
-    /// Maximum number of pending transactions that can be handled by a single signer.
-    pub max_transactions_per_signer: usize,
-    /// Maximum number of transactions that can be queued for a single EOA.
-    pub max_queued_per_eoa: usize,
-    /// Interval for checking signer balances.
-    #[serde(with = "crate::serde::duration")]
-    pub balance_check_interval: Duration,
-    /// Interval for checking nonce gaps.
-    #[serde(with = "crate::serde::duration")]
-    pub nonce_check_interval: Duration,
-    /// Timeout after which we consider transaction as failed, in seconds.
-    #[serde(with = "crate::serde::duration")]
-    pub transaction_timeout: Duration,
-    /// Mapping of a chain ID to RPC endpoint of the public node for OP rollups that can be used
-    /// for querying transactions.
-    #[serde(with = "crate::serde::hash_map")]
-    pub public_node_endpoints: HashMap<Chain, Url>,
-    /// Mapping of a chain to RPC endpoint streaming flashblocks.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
-    pub flashblocks_rpc_endpoints: HashMap<Chain, Url>,
-    /// Percentile of the priority fees to use for the transactions.
-    pub priority_fee_percentile: f64,
-}
-
-impl Default for TransactionServiceConfig {
-    fn default() -> Self {
-        Self {
-            num_signers: DEFAULT_NUM_SIGNERS,
-            max_pending_transactions: DEFAULT_MAX_TRANSACTIONS,
-            max_transactions_per_signer: 16,
-            balance_check_interval: Duration::from_secs(5),
-            nonce_check_interval: Duration::from_secs(60),
-            transaction_timeout: Duration::from_secs(60),
-            max_queued_per_eoa: 1,
-            public_node_endpoints: HashMap::default(),
-            priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-            flashblocks_rpc_endpoints: HashMap::default(),
-        }
-    }
-}
-
-impl Default for RelayConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig {
-                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: 9119,
-                metrics_port: 9000,
-                max_connections: 1000,
-            },
-            chain: ChainConfig {
-                endpoints: vec![],
-                sequencer_endpoints: HashMap::default(),
-                fee_tokens: vec![],
-                interop_tokens: vec![],
-                fee_recipient: Address::ZERO,
-                rebalance_service: None,
-            },
-            quote: QuoteConfig {
-                constant_rate: None,
-                gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
-                ttl: Duration::from_secs(5),
-                rate_ttl: Duration::from_secs(300),
-            },
-            email: EmailConfig::default(),
-            transactions: TransactionServiceConfig::default(),
-            interop: None,
-            legacy_orchestrators: BTreeSet::new(),
-            legacy_delegation_proxies: BTreeSet::new(),
-            orchestrator: Address::ZERO,
-            delegation_proxy: Address::ZERO,
-            simulator: Address::ZERO,
-            funder: Address::ZERO,
-            escrow: Address::ZERO,
-            secrets: SecretsConfig::default(),
-            database_url: None,
-        }
-    }
+    pub pricefeed: PriceFeedConfig,
+    /// Secrets.
+    #[serde(skip_serializing, default)]
+    pub secrets: SecretsConfig,
+    /// Database URL.
+    pub database_url: Option<String>,
 }
 
 impl RelayConfig {
@@ -464,31 +141,9 @@ impl RelayConfig {
         self
     }
 
-    /// Extends the list of fee tokens that the relay accepts.
-    pub fn with_fee_tokens(mut self, fee_tokens: &[Address]) -> Self {
-        self.chain.fee_tokens.extend_from_slice(fee_tokens);
-        self
-    }
-
-    /// Extends the list of interop tokens that the relay accepts.
-    pub fn with_interop_tokens(mut self, interop_tokens: &[Address]) -> Self {
-        self.chain.interop_tokens.extend_from_slice(interop_tokens);
-        self
-    }
-
-    /// Extends the list of RPC endpoints (as URLs) for the chain transactions.
-    pub fn with_endpoints(mut self, endpoints: &[Url]) -> Self {
-        self.chain.endpoints.extend_from_slice(endpoints);
-        self
-    }
-
-    /// Extends the list of sequencer RPC endpoints.
-    pub fn with_sequencer_endpoints(
-        mut self,
-        endpoints: impl IntoIterator<Item = (Chain, Url)>,
-    ) -> Self {
-        self.chain.sequencer_endpoints.extend(endpoints);
-        self
+    /// Set the chains.
+    pub fn with_chains(self, chains: HashMap<Chain, ChainConfig>) -> Self {
+        Self { chains, ..self }
     }
 
     /// Extends the list of public node RPC endpoints.
@@ -502,7 +157,7 @@ impl RelayConfig {
 
     /// Sets the fee recipient address.
     pub fn with_fee_recipient(mut self, fee_recipient: Address) -> Self {
-        self.chain.fee_recipient = fee_recipient;
+        self.fee_recipient = fee_recipient;
         self
     }
 
@@ -602,7 +257,7 @@ impl RelayConfig {
 
     /// Sets the rebalance service configuration.
     pub fn with_rebalance_service_config(mut self, config: Option<RebalanceServiceConfig>) -> Self {
-        self.chain.rebalance_service = config;
+        self.rebalance_service = config;
         self
     }
 
@@ -629,7 +284,7 @@ impl RelayConfig {
     /// Sets the funder owner key, and enables the rebalance service.
     pub fn with_funder_owner_key(mut self, funder_owner_key: Option<String>) -> Self {
         let Some(key) = funder_owner_key else { return self };
-        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
         rebalance_service.funder_owner_key = key;
         self
     }
@@ -645,7 +300,7 @@ impl RelayConfig {
             (None, None) => return self,
             _ => panic!("expected both Binance API key and secret"),
         };
-        let Some(rebalance_service) = self.chain.rebalance_service.as_mut() else { return self };
+        let Some(rebalance_service) = self.rebalance_service.as_mut() else { return self };
 
         if rebalance_service.binance.is_none() {
             rebalance_service.binance = Some(BinanceBridgeConfig { api_key, api_secret });
@@ -690,13 +345,491 @@ impl RelayConfig {
     }
 }
 
+/// Server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// The address to serve the RPC on.
+    pub address: IpAddr,
+    /// The port to serve the RPC on.
+    pub port: u16,
+    /// The port to serve the metrics on.
+    pub metrics_port: u16,
+    /// The maximum number of concurrent connections the relay can handle.
+    pub max_connections: u32,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 9119,
+            metrics_port: 9000,
+            max_connections: 1000,
+        }
+    }
+}
+
+/// Chain configuration for individual chains.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChainConfig {
+    /// The symbol of the native asset.
+    #[serde(default)]
+    pub native_symbol: Option<String>,
+    /// The RPC endpoint of a chain to send transactions to.
+    pub endpoint: Url,
+    /// The sequencer URL, if any.
+    #[serde(default)]
+    pub sequencer: Option<Url>,
+    /// Flashblocks streaming endpoint, if any.
+    #[serde(default)]
+    pub flashblocks: Option<Url>,
+    /// The simulation mode to use for the chain.
+    #[serde(default)]
+    pub sim_mode: SimMode,
+    /// Assets known for this chain.
+    pub assets: Assets,
+    /// Fee settings for this chain
+    #[serde(default)]
+    pub fees: FeeConfig,
+}
+
+/// Settings that affect fee estimation.
+///
+/// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special
+/// handling, this type contains all fee related settings
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeeConfig {
+    /// Percentile of the priority fees to use for the transactions.
+    ///
+    /// This is used to estimate the EIP-1559 fees via `eth_getFeeHistory`.
+    pub priority_fee_percentile: f64,
+    /// The minimum fee to set if any in wei.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_fee: Option<u64>,
+}
+
+impl Default for FeeConfig {
+    fn default() -> Self {
+        Self {
+            priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+            minimum_fee: None,
+        }
+    }
+}
+
+/// The simulation mode to use for intent simulation on a specific chain.
+///
+/// Defaults to [`SimMode::SimulateV1`] which will simulate intents using `eth_simulateV1`. For
+/// chains that do not have a working `eth_simulateV1` implementation, use [`SimMode::Trace`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SimMode {
+    /// Use `eth_simulateV1`
+    #[default]
+    SimulateV1,
+    /// Use `debug_trace`.
+    Trace,
+}
+
+impl SimMode {
+    /// Returns true if this is [`SimMode::SimulateV1`]
+    pub const fn is_simulate_v1(&self) -> bool {
+        matches!(self, Self::SimulateV1)
+    }
+}
+
+/// Quote configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuoteConfig {
+    /// Sets a constant rate for the price oracle. Used for testing.
+    pub constant_rate: Option<f64>,
+    /// Gas estimate configuration.
+    gas: GasConfig,
+    /// The lifetime of a fee quote.
+    #[serde(with = "crate::serde::duration")]
+    pub ttl: Duration,
+    /// The lifetime of a price rate.
+    #[serde(with = "crate::serde::duration")]
+    pub rate_ttl: Duration,
+}
+
+impl Default for QuoteConfig {
+    fn default() -> Self {
+        Self {
+            constant_rate: None,
+            gas: GasConfig { intent_buffer: INTENT_GAS_BUFFER, tx_buffer: TX_GAS_BUFFER },
+            ttl: Duration::from_secs(5),
+            rate_ttl: Duration::from_secs(300),
+        }
+    }
+}
+
+/// Gas estimate configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GasConfig {
+    /// Extra buffer added to Intent gas estimates.
+    pub intent_buffer: u64,
+    /// Extra buffer added to transaction gas estimates.
+    pub tx_buffer: u64,
+}
+
+impl QuoteConfig {
+    /// Returns the configured extra buffer added to intent gas estimates.
+    pub fn intent_buffer(&self) -> u64 {
+        self.gas.intent_buffer
+    }
+
+    /// Returns the configured extra buffer added to transaction gas estimates.
+    pub fn tx_buffer(&self) -> u64 {
+        self.gas.tx_buffer
+    }
+}
+
+/// Email configuration.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailConfig {
+    /// Resend API key.
+    pub resend_api_key: Option<String>,
+    /// Porto base URL.
+    pub porto_base_url: Option<String>,
+}
+
+/// Secrets (kept out of serialized output).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SecretsConfig {
+    /// The secret key to sign transactions with.
+    #[serde(with = "alloy::serde::displayfromstr")]
+    pub signers_mnemonic: Mnemonic<English>,
+    /// The funder KMS key or private key
+    pub funder_key: String,
+    /// API key for protected RPC endpoints
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_api_key: Option<String>,
+}
+
+impl Default for SecretsConfig {
+    fn default() -> Self {
+        Self {
+            signers_mnemonic: Mnemonic::<English>::from_str(
+                "test test test test test test test test test test test junk",
+            )
+            .unwrap(),
+            funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
+            service_api_key: None,
+        }
+    }
+}
+
+/// Interop configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteropConfig {
+    /// Interval for checking pending refunds.
+    #[serde(with = "crate::serde::duration")]
+    pub refund_check_interval: Duration,
+    /// Time threshold in seconds before refunds can be processed for escrows.
+    pub escrow_refund_threshold: u64,
+    /// Settler configuration.
+    pub settler: SettlerConfig,
+}
+
+/// Configuration for the rebalance service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebalanceServiceConfig {
+    /// Configuration for the Binance bridge. If provided, Binance will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binance: Option<BinanceBridgeConfig>,
+    /// Configuration for the simple bridge. If provided, Simple will be used to rebalance funds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simple: Option<SimpleBridgeConfig>,
+    /// The private key of the funder account owner. Required for pulling funds from the funders.
+    #[serde(default)]
+    pub funder_owner_key: String,
+    /// Mapping of asset identifiers to rebalance threshold.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
+    pub thresholds: HashMap<AssetUid, U256>,
+}
+
+/// Configuration for price feeds.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PriceFeedConfig {
+    /// Configuration for CoinGecko.
+    #[serde(default)]
+    pub coingecko: CoinGeckoConfig,
+}
+
+/// Configuration for CoinGecko.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CoinGeckoConfig {
+    /// A map of asset UIDs to CoinGecko coin IDs.
+    #[serde(default)]
+    pub remapping: HashMap<AssetUid, String>,
+}
+
+/// Configuration for the settler service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlerConfig {
+    /// Settler implementation configuration.
+    #[serde(flatten)]
+    pub implementation: SettlerImplementation,
+    /// Timeout for waiting for settlement verification.
+    #[serde(with = "crate::serde::duration")]
+    pub wait_verification_timeout: Duration,
+}
+
+impl SettlerConfig {
+    /// Creates a settlement processor from this configuration.
+    pub async fn settlement_processor(
+        &self,
+        storage: RelayStorage,
+        providers: alloy::primitives::map::HashMap<ChainId, DynProvider>,
+        tx_service_handles: TransactionServiceHandles,
+    ) -> eyre::Result<SettlementProcessor> {
+        // Create the settler based on config
+        let settler: Box<dyn Settler> = match &self.implementation {
+            SettlerImplementation::LayerZero(config) => Box::new(
+                config.create_settler(providers, storage.clone(), tx_service_handles).await?,
+            ),
+            SettlerImplementation::Simple(config) => Box::new(config.create_settler(providers)?),
+        };
+
+        Ok(SettlementProcessor::new(settler))
+    }
+}
+
+/// Settler implementation configuration (mutually exclusive).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlerImplementation {
+    /// LayerZero configuration for cross-chain settlement.
+    LayerZero(LayerZeroConfig),
+    /// Simple settler configuration for testing.
+    Simple(SimpleSettlerConfig),
+}
+
+impl SettlerImplementation {
+    /// Address of the settler.
+    pub fn address(&self) -> Address {
+        match self {
+            Self::LayerZero(c) => c.settler_address,
+            Self::Simple(c) => c.settler_address,
+        }
+    }
+}
+
+/// Simple settler configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimpleSettlerConfig {
+    /// The address of the simple settler contract.
+    pub settler_address: Address,
+    /// Private key for signing settlement write operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+}
+
+impl SimpleSettlerConfig {
+    /// Creates a new simple settler instance.
+    pub fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+    ) -> eyre::Result<SimpleSettler> {
+        let signer = self
+            .private_key
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("no settler private key"))?
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+        Ok(SimpleSettler::new(self.settler_address, signer, providers))
+    }
+}
+
+/// LayerZero configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayerZeroConfig {
+    /// Mapping of chain ID to LayerZero endpoint ID.
+    /// Format: { chain_id: endpoint_id }
+    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_ids: HashMap<ChainId, EndpointId>,
+    /// Mapping of chain ID to LayerZero endpoint address.
+    #[serde(with = "crate::serde::hash_map")]
+    pub endpoint_addresses: HashMap<ChainId, Address>,
+    /// LayerZero settler contract address.
+    pub settler_address: Address,
+}
+
+impl LayerZeroConfig {
+    /// Creates a new LayerZero settler instance with the given providers and storage.
+    pub async fn create_settler(
+        &self,
+        providers: HashMap<ChainId, DynProvider>,
+        storage: RelayStorage,
+        tx_service_handles: TransactionServiceHandles,
+    ) -> Result<LayerZeroSettler, SettlementError> {
+        LayerZeroSettler::new(
+            self.endpoint_ids.clone(),
+            self.endpoint_addresses.clone(),
+            providers,
+            self.settler_address,
+            storage,
+            tx_service_handles,
+        )
+        .await
+    }
+}
+
+/// Configuration for transaction service.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactionServiceConfig {
+    /// Number of signers to derive from mnemonic and use for sending transactions.
+    pub num_signers: usize,
+    /// Maximum number of transactions that can be pending at any given time.
+    pub max_pending_transactions: usize,
+    /// Maximum number of pending transactions that can be handled by a single signer.
+    pub max_transactions_per_signer: usize,
+    /// Maximum number of transactions that can be queued for a single EOA.
+    pub max_queued_per_eoa: usize,
+    /// Interval for checking signer balances.
+    #[serde(with = "crate::serde::duration")]
+    pub balance_check_interval: Duration,
+    /// Interval for checking nonce gaps.
+    #[serde(with = "crate::serde::duration")]
+    pub nonce_check_interval: Duration,
+    /// Timeout after which we consider transaction as failed, in seconds.
+    #[serde(with = "crate::serde::duration")]
+    pub transaction_timeout: Duration,
+    /// Mapping of a chain ID to RPC endpoint of the public node for OP rollups that can be used
+    /// for querying transactions.
+    #[serde(with = "crate::serde::hash_map")]
+    pub public_node_endpoints: HashMap<Chain, Url>,
+    /// Percentile of the priority fees to use for the transactions.
+    pub priority_fee_percentile: f64,
+}
+
+impl Default for TransactionServiceConfig {
+    fn default() -> Self {
+        Self {
+            num_signers: DEFAULT_NUM_SIGNERS,
+            max_pending_transactions: DEFAULT_MAX_TRANSACTIONS,
+            max_transactions_per_signer: 16,
+            balance_check_interval: Duration::from_secs(5),
+            nonce_check_interval: Duration::from_secs(60),
+            transaction_timeout: Duration::from_secs(60),
+            max_queued_per_eoa: 1,
+            public_node_endpoints: HashMap::default(),
+            priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{AssetDescriptor, AssetUid};
+    use std::collections::HashMap;
 
     #[test]
     fn test_config_v15_yaml() {
         let s = include_str!("../tests/assets/config/v15.yaml");
         let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+    }
+
+    #[test]
+    fn test_config_v21_yaml() {
+        let s = include_str!("../tests/assets/config/v21.yaml");
+        let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();
+        assert_eq!(from_yaml.chains, config.chains);
+        assert_eq!(from_yaml.pricefeed, config.pricefeed);
+        assert_eq!(from_yaml.interop, config.interop);
+        assert_eq!(from_yaml.transactions, config.transactions);
+    }
+
+    #[test]
+    fn test_chain_config_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+        "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+
+        // Create expected ChainConfig manually
+        let mut assets = HashMap::new();
+        assets.insert(
+            AssetUid::new("ethereum".to_string()),
+            AssetDescriptor {
+                address: Address::ZERO,
+                decimals: 18,
+                fee_token: true,
+                interop: false,
+            },
+        );
+        assets.insert(
+            AssetUid::new("usd-coin".to_string()),
+            AssetDescriptor {
+                address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".parse().unwrap(),
+                decimals: 6,
+                fee_token: false,
+                interop: false,
+            },
+        );
+
+        let expected = ChainConfig {
+            native_symbol: None,
+            endpoint: "ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/"
+                .parse()
+                .unwrap(),
+            sequencer: Some("https://mainnet-sequencer-dedicated.base.org/".parse().unwrap()),
+            flashblocks: Some("https://mainnet-preconf.base.org/".parse().unwrap()),
+            sim_mode: SimMode::Trace,
+            assets: Assets::new(assets),
+            fees: Default::default(),
+        };
+
+        assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn test_chain_fee_config_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    minimum_fee: 100
+        "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(config.fees, FeeConfig { minimum_fee: Some(100), ..Default::default() });
     }
 }

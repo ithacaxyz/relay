@@ -214,7 +214,6 @@ pub struct CallsStatus {
 | `QuoteError::InvalidQuoteSignature` | -32002 | Invalid relay signature |
 | `IntentError::MissingSender` | -32003 | Missing 'from' address |
 | `RelayError::UnsupportedChain` | -32004 | Unsupported chain ID |
-| `RelayError::InsufficientFunds` | -32005 | Cannot fulfill funding requirements |
 
 ### Error Response Format
 

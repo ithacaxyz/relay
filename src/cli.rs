@@ -32,12 +32,6 @@ pub struct Args {
     /// `relay.yaml`.
     #[arg(long, value_name = "CONFIG", env = "RELAY_CONFIG", default_value = "relay.yaml")]
     pub config: PathBuf,
-    /// The coin registry file. Maps chain ids and token addresses to coins (eg. ETH, USDC, USDT).
-    ///
-    /// If missing, a default one will be used and stored in the working directory under
-    /// `registry.yaml`.
-    #[arg(long, value_name = "REGISTRY", env = "REGISTRY", default_value = "registry.yaml")]
-    pub registry: PathBuf,
     /// The address to serve the RPC on.
     #[arg(long = "http.addr", value_name = "ADDR", default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
     pub address: IpAddr,
@@ -73,11 +67,6 @@ pub struct Args {
     /// The address of the escrow contract
     #[arg(long = "escrow", required_unless_present("config_only"), value_name = "ESCROW")]
     pub escrow: Option<Address>,
-    /// The RPC endpoint of a chain to send transactions to.
-    ///
-    /// Must be a valid HTTP or HTTPS URL pointing to an Ethereum JSON-RPC endpoint.
-    #[arg(long = "endpoint", required_unless_present("config_only"), value_name = "RPC_ENDPOINT")]
-    pub endpoints: Option<Vec<Url>>,
     /// The fee recipient address.
     ///
     /// Defaults to the zero address, which means the fees will be accrued by the orchestrator
@@ -99,12 +88,6 @@ pub struct Args {
     /// Extra buffer added to transaction gas estimates.
     #[arg(long, value_name = "TX_OP_GAS", default_value_t = TX_GAS_BUFFER)]
     pub tx_gas_buffer: u64,
-    /// A fee token the relay accepts.
-    #[arg(long = "fee-token", required_unless_present("config_only"), value_name = "ADDRESS")]
-    pub fee_tokens: Option<Vec<Address>>,
-    /// A fee token the relay accepts.
-    #[arg(long = "interop-token", value_name = "ADDRESS")]
-    pub interop_tokens: Option<Vec<Address>>,
     /// The database URL for the relay.
     #[arg(long = "database-url", value_name = "URL", env = "RELAY_DB_URL")]
     pub database_url: Option<String>,
@@ -126,15 +109,12 @@ pub struct Args {
         long = "funder-signing-key",
         required_unless_present("config_only"),
         value_name = "KEY",
-        env = "RELAY_FUNDER_KEY"
+        env = "RELAY_FUNDER_SIGNER_KEY"
     )]
     pub funder_key: Option<String>,
     /// The service API key for protected RPC endpoints.
     #[arg(long = "service-api-key", value_name = "KEY", env = "RELAY_SERVICE_API_KEY")]
     pub service_api_key: Option<String>,
-    /// The RPC endpoints of the sequencers for OP rollups.
-    #[arg(long = "sequencer-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
-    pub sequencer_endpoints: Vec<(Chain, Url)>,
     /// The RPC endpoints of the public nodes for OP rollups.
     #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub public_node_endpoints: Vec<(Chain, Url)>,
@@ -175,8 +155,7 @@ impl Args {
     /// Run the relayer service.
     pub async fn run(self) -> eyre::Result<()> {
         let config_path = self.config.clone();
-        let registry_path = self.registry.clone();
-        try_spawn_with_args(self, &config_path, &registry_path).await?.server.stopped().await;
+        try_spawn_with_args(self, &config_path).await?.server.stopped().await;
 
         Ok(())
     }
@@ -185,11 +164,7 @@ impl Args {
     pub fn merge_relay_config(self, config: RelayConfig) -> RelayConfig {
         config
             .with_signers_mnemonic(self.signers_mnemonic)
-            .with_endpoints(&self.endpoints.unwrap_or_default())
-            .with_sequencer_endpoints(self.sequencer_endpoints.clone())
             .with_public_node_endpoints(self.public_node_endpoints.clone())
-            .with_fee_tokens(&self.fee_tokens.unwrap_or_default())
-            .with_interop_tokens(&self.interop_tokens.unwrap_or_default())
             .with_fee_recipient(self.fee_recipient)
             .with_address(self.address)
             .with_port(self.port)

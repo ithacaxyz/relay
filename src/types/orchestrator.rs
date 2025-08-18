@@ -3,21 +3,17 @@ use alloy::{
     dyn_abi::Eip712Domain,
     primitives::{Address, FixedBytes, U256, fixed_bytes},
     providers::Provider,
-    rpc::types::{
-        TransactionReceipt,
-        simulate::{SimBlock, SimulatePayload},
-        state::StateOverride,
-    },
+    rpc::types::{TransactionReceipt, state::StateOverride},
     sol,
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
-use tracing::{debug, trace};
+use tracing::debug;
 
-use super::{KeyType, SimulationResult, Simulator::SimulatorInstance};
+use super::{GasResults, simulator::SimulatorContract};
 use crate::{
     asset::AssetInfoServiceHandle,
-    constants::P256_GAS_BUFFER,
+    config::SimMode,
     error::{IntentError, RelayError},
     types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
@@ -187,67 +183,40 @@ impl<P: Provider> Orchestrator<P> {
     /// Call `Simulator.simulateV1Logs` with the provided [`Intent`].
     ///
     /// `simulator` contract address should have its balance set to `uint256.max`.
+    ///
+    /// This respects the given [`SimMode`] when performing the simulation.
     pub async fn simulate_execute(
         &self,
+        mock_from: Address,
         simulator: Address,
         intent: &Intent,
-        key_type: KeyType,
         asset_info_handle: AssetInfoServiceHandle,
-    ) -> Result<(AssetDiffs, SimulationResult), RelayError> {
-        // Allows to account for gas variation in P256 sig verification.
-        let gas_validation_offset =
-            if key_type.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER };
+        gas_validation_offset: U256,
+        sim_mode: SimMode,
+    ) -> Result<(AssetDiffs, GasResults), RelayError> {
+        let result = SimulatorContract::new(
+            simulator,
+            self.orchestrator.provider(),
+            self.overrides.clone(),
+            sim_mode,
+        )
+        .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
+        .await;
 
-        let simulate_block = SimBlock::default()
-            .call(
-                SimulatorInstance::new(simulator, self.orchestrator.provider())
-                    .simulateV1Logs(
-                        *self.address(),
-                        true,
-                        0,
-                        U256::ZERO,
-                        U256::from(11_000),
-                        gas_validation_offset,
-                        intent.abi_encode().into(),
-                    )
-                    .into_transaction_request(),
-            )
-            .with_state_overrides(self.overrides.clone());
-
-        trace!(?simulate_block, "simulating intent");
-
-        let result = self
-            .orchestrator
-            .provider()
-            .simulate(
-                &SimulatePayload::default().extend(simulate_block.clone()).with_trace_transfers(),
-            )
-            .await?
-            .pop()
-            .and_then(|mut block| block.calls.pop())
-            .ok_or_else(|| TransportErrorKind::custom_str("could not simulate call"))?;
-
-        if !result.status {
-            debug!(?result, ?simulate_block, "Unable to simulate intent.");
-
-            if self.is_paused().await? {
-                return Err(IntentError::PausedOrchestrator.into());
-            }
-
-            return Err(IntentError::intent_revert(result.return_data).into());
+        // If simulation failed, check if orchestrator is paused
+        if result.is_err() && self.is_paused().await? {
+            return Err(IntentError::PausedOrchestrator.into());
         }
+        let result = result?;
+        let chain_id = self.orchestrator.provider().get_chain_id().await?;
 
-        let Ok(simulation_result) = SimulationResult::abi_decode(&result.return_data) else {
-            return Err(TransportErrorKind::custom_str(&format!(
-                "could not decode intent simulation return data: {}",
-                result.return_data
-            ))
-            .into());
-        };
+        debug!(chain_id, block_number = %result.block_number, account = %intent.eoa, nonce = %intent.nonce, "simulation executed");
 
+        // calculate asset diffs using the transaction request from simulation
         let mut asset_diffs = asset_info_handle
             .calculate_asset_diff(
-                simulate_block,
+                &result.tx_request,
+                self.overrides.clone(),
                 result.logs.into_iter(),
                 self.orchestrator.provider(),
             )
@@ -259,7 +228,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.paymentToken.into(), U256::from(1));
         }
 
-        Ok((asset_diffs, simulation_result))
+        Ok((asset_diffs, result.gas))
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].

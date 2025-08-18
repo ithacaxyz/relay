@@ -1,6 +1,5 @@
 use super::{
-    Asset, Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo,
-    OrchestratorContract,
+    Call, IDelegation::authorizeCall, Key, LazyMerkleTree, MerkleLeafInfo, OrchestratorContract,
 };
 use crate::{
     error::{IntentError, MerkleError},
@@ -8,11 +7,15 @@ use crate::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
         Orchestrator, Signature,
-        rpc::{AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission, SpendPermission},
+        rpc::{
+            AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
+            SpendPermission,
+        },
     },
 };
 use alloy::{
     dyn_abi::TypedData,
+    eips::eip7702::SignedAuthorization,
     primitives::{
         Address, B256, Bytes, ChainId, Keccak256, U256, aliases::U192, keccak256, map::HashMap,
     },
@@ -203,8 +206,8 @@ pub struct PartialIntent {
 pub struct FeeEstimationContext {
     /// The token to use for fee payment.
     pub fee_token: Address,
-    /// Optional authorization address for EIP-7702 delegation.
-    pub authorization_address: Option<Address>,
+    /// Optional stored authorization for EIP-7702 delegation.
+    pub stored_authorization: Option<SignedAuthorization>,
     /// The account key used for signing.
     pub account_key: Key,
     /// Whether to override key slots in state.
@@ -627,7 +630,7 @@ pub struct FundingIntentContext {
     /// The chain where funds will be escrowed
     pub chain_id: ChainId,
     /// The asset to be escrowed (native or ERC20)
-    pub asset: Asset,
+    pub asset: AddressOrNative,
     /// The amount to escrow
     pub amount: U256,
     /// The fee token to use for gas payment

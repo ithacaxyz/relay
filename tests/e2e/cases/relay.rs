@@ -1,4 +1,5 @@
 use crate::e2e::environment::Environment;
+use alloy::primitives::U64;
 use relay::rpc::RelayApiClient;
 use semver::{self, Version};
 
@@ -6,7 +7,8 @@ use semver::{self, Version};
 async fn versioned_contracts() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
-    let capabilities = env.relay_endpoint.get_capabilities(vec![env.chain_id()]).await?;
+    let capabilities =
+        env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
 
     Version::parse(
         capabilities.chain(env.chain_id()).contracts.orchestrator.version.as_ref().unwrap(),

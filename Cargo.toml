@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "18.1.9"
+version = "21.0.3"
 edition = "2024"
 publish = false
 
@@ -24,10 +24,12 @@ alloy = { version = "1.0.23", features = [
     "json-rpc",
     "k256",
     "providers",
+    "provider-debug-api",
     "rlp",
     "rpc",
     "rpc-client",
     "rpc-types",
+    "rpc-types-trace",
     "serde",
     "signers",
     "signer-local",
@@ -52,7 +54,7 @@ eyre = "0.6.12"
 futures-util = "0.3"
 http = "1"
 http-body = "1"
-jsonrpsee = { version = "0.25", features = ["server", "client", "macros"] }
+jsonrpsee = { version = "0.26", features = ["server", "client", "macros"] }
 metrics = "0.24.2"
 metrics-exporter-prometheus = "0.17"
 opentelemetry = { version = "0.30.0", features = ["trace"] }

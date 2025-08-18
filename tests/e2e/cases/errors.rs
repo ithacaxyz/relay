@@ -35,7 +35,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         })
         .await;
 
-    assert!(response.is_err_and(|err| dbg!(err.to_string()).contains("InsufficientBalance")));
+    assert!(response.is_err_and(|err| err.to_string().contains("InsufficientBalance")));
 
     Ok(())
 }

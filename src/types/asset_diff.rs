@@ -4,12 +4,14 @@ use super::{
     IERC721,
 };
 use crate::{
+    chains::Chains,
+    constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::PriceOracle,
-    types::{AssetMetadata, FeeTokens, Quote},
+    types::{AssetMetadata, Quote},
 };
 use alloy::primitives::{
-    Address, ChainId, U256, U512, address,
+    Address, ChainId, U256, U512,
     map::{HashMap, HashSet},
 };
 use futures_util::future::join_all;
@@ -62,6 +64,11 @@ impl AssetDiffs {
             !diffs.is_empty()
         });
     }
+
+    /// Returns a mutable iterator over all asset diffs across all addresses.
+    fn asset_diffs_iter_mut(&mut self) -> impl Iterator<Item = &mut AssetDiff> {
+        self.0.iter_mut().flat_map(|(_, diffs)| diffs.iter_mut())
+    }
 }
 
 /// Asset with metadata and value diff.
@@ -108,6 +115,27 @@ pub enum Asset {
 }
 
 impl Asset {
+    /// Infers the asset type from the given address.
+    ///
+    /// If the address is address 0 or `0xEeE..eEe` it is native, otherwise it is a token.
+    pub fn infer_from_address(address: Address) -> Self {
+        if address.is_zero() || address == SIMULATEV1_NATIVE_ADDRESS {
+            Self::native()
+        } else {
+            Self::token(address)
+        }
+    }
+
+    /// Create a native asset.
+    pub fn native() -> Self {
+        Self::Native
+    }
+
+    /// Create a token asset.
+    pub fn token(address: Address) -> Self {
+        Self::Token(address)
+    }
+
     /// Whether it is the native asset from a chain.
     pub fn is_native(&self) -> bool {
         matches!(self, Self::Native)
@@ -137,8 +165,7 @@ impl From<Address> for Asset {
     fn from(asset: Address) -> Self {
         // 0xee..ee is how `eth_simulateV1` represents the native asset, and 0x00..00 is how we
         // represent the native asset.
-        if asset == address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") || asset == Address::ZERO
-        {
+        if asset == SIMULATEV1_NATIVE_ADDRESS || asset == Address::ZERO {
             Asset::Native
         } else {
             Asset::Token(asset)
@@ -358,7 +385,7 @@ impl ChainAssetDiffs {
     pub async fn new(
         mut asset_diffs: AssetDiffs,
         quote: &Quote,
-        fee_tokens: &FeeTokens,
+        chains: &Chains,
         price_oracle: &PriceOracle,
     ) -> Result<Self, RelayError> {
         let chain_id = quote.chain_id;
@@ -366,31 +393,28 @@ impl ChainAssetDiffs {
         let fee_amount = quote.intent.totalPaymentAmount;
 
         // Calculate fee USD value
-        let token = fee_tokens
-            .find(chain_id, &fee_token)
+        let (token_uid, token) = chains
+            .fee_token(chain_id, fee_token)
             .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken(fee_token)))?;
-
         let usd_price = price_oracle
-            .usd_price(token.kind)
+            .usd_price(token_uid.clone())
             .await
-            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token.kind)))?;
+            .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token_uid.clone())))?;
 
         let fee_usd = calculate_usd_value(fee_amount, usd_price, token.decimals);
 
         // Populate fiat values for asset diffs
         join_all(
-            asset_diffs
-                .0
-                .iter_mut()
-                .flat_map(|(_, diffs)| diffs.iter_mut())
-                .filter(|diff| diff.metadata.decimals.is_some())
-                .map(async |diff| {
-                    let Some(token) =
-                        fee_tokens.find(chain_id, &diff.address.unwrap_or(Address::ZERO))
+            asset_diffs.asset_diffs_iter_mut().filter(|diff| diff.metadata.decimals.is_some()).map(
+                async |diff| {
+                    let Some((token_uid, _)) =
+                        chains.fee_token(chain_id, diff.address.unwrap_or(Address::ZERO))
                     else {
                         return;
                     };
-                    let Some(usd_price) = price_oracle.usd_price(token.kind).await else { return };
+                    let Some(usd_price) = price_oracle.usd_price(token_uid.clone()).await else {
+                        return;
+                    };
 
                     diff.fiat = Some(FiatValue {
                         currency: "usd".to_string(),
@@ -400,7 +424,8 @@ impl ChainAssetDiffs {
                             diff.metadata.decimals.expect("qed"),
                         ),
                     });
-                }),
+                },
+            ),
         )
         .await;
         Ok(Self { fee_usd, asset_diffs })

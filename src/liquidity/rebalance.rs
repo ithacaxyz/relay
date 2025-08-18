@@ -4,7 +4,7 @@ use crate::{
         bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     storage::{RelayStorage, StorageApi},
-    types::{CoinKind, FeeTokens},
+    types::{AssetDescriptor, AssetUid},
 };
 use alloy::primitives::{Address, ChainId, I256, U256, map::HashMap, uint};
 use core::fmt;
@@ -17,20 +17,22 @@ use std::{ops::RangeInclusive, time::Duration};
 use tracing::{info, warn};
 
 /// Represents an asset in a chain tracked by [`RebalanceService`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Asset {
+    /// The unique ID of the asset.
+    uid: AssetUid,
     /// Address of the asset, [`Address::ZERO`] for native.
     address: Address,
     /// Chain ID of the asset.
     chain_id: ChainId,
-    /// Kind of the asset.
-    kind: CoinKind,
+    /// Asset decimals.
+    decimals: u8,
 }
 
 impl fmt::Display for Asset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { address, chain_id, kind } = self;
-        write!(f, "{kind} @ {chain_id} ({address})")
+        let Self { uid, address, chain_id, .. } = self;
+        write!(f, "{uid} @ {chain_id} ({address})")
     }
 }
 
@@ -66,25 +68,24 @@ pub struct RebalanceService {
     /// Transfers that are in progress.
     transfers_in_progress: HashMap<BridgeTransferId, BridgeTransfer>,
     /// Rebalance thresholds.
-    thresholds: HashMap<CoinKind, U256>,
+    thresholds: HashMap<AssetUid, U256>,
 }
 
 impl RebalanceService {
     /// Creates a new [`RebalanceService`].
     pub fn new(
-        tokens: &FeeTokens,
+        tokens: HashMap<ChainId, (AssetUid, AssetDescriptor)>,
         tracker: LiquidityTracker,
         bridges: impl IntoIterator<Item = Box<dyn Bridge>>,
-        thresholds: HashMap<CoinKind, U256>,
+        thresholds: HashMap<AssetUid, U256>,
     ) -> Self {
         let assets = tokens
-            .iter()
-            .flat_map(|(chain, tokens)| {
-                tokens.iter().filter(|t| t.interop).map(|t| Asset {
-                    address: t.address,
-                    chain_id: *chain,
-                    kind: t.kind,
-                })
+            .into_iter()
+            .map(|(chain_id, (asset_uid, desc))| Asset {
+                uid: asset_uid.clone(),
+                address: desc.address,
+                chain_id,
+                decimals: desc.decimals,
             })
             .collect();
         Self {
@@ -101,12 +102,10 @@ impl RebalanceService {
 impl RebalanceService {
     /// Returns minimum balance that we need to hold for the given asset.
     fn get_threshold(&self, asset: &Asset) -> U256 {
-        self.thresholds.get(&asset.kind).copied().unwrap_or_else(|| match asset.kind {
-            CoinKind::ETH => uint!(100_000_000_000_000_000_U256),
-            CoinKind::USDC | CoinKind::USDT | CoinKind::EXP1 | CoinKind::EXP2 => {
-                uint!(100_000_000_U256)
-            }
-        })
+        self.thresholds
+            .get(&asset.uid)
+            .copied()
+            .unwrap_or_else(|| U256::from(10).saturating_pow(U256::from(asset.decimals - 1)))
     }
 
     /// Returns minimum amount for rebalancing to be performed.
@@ -150,7 +149,7 @@ impl RebalanceService {
 
                 let range = (*range.start())..=(range.end() + pending_inbound);
 
-                eyre::Ok((*asset, range))
+                eyre::Ok((asset.clone(), range))
             })
             .collect::<TryJoinAll<_>>()
             .await?;
@@ -206,7 +205,10 @@ impl RebalanceService {
             let min_delta = I256::from(*balance.start()) - I256::from(threshold);
             let max_delta = I256::from(*balance.end()) - I256::from(threshold);
 
-            coin_kind_to_deltas.entry(asset.kind).or_default().push((asset, min_delta..=max_delta));
+            coin_kind_to_deltas
+                .entry(asset.uid.clone())
+                .or_default()
+                .push((asset.clone(), min_delta..=max_delta));
         }
 
         for deltas in coin_kind_to_deltas.values() {
@@ -237,8 +239,8 @@ impl RebalanceService {
 
             if rebalance_amount >= self.get_min_rebalance(&max_positive.0, &min_negative.0) {
                 return Ok(Some(AssetsToRebalance {
-                    from: max_positive.0,
-                    to: min_negative.0,
+                    from: max_positive.0.clone(),
+                    to: min_negative.0.clone(),
                     amount: rebalance_amount,
                 }));
             }

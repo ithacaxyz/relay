@@ -16,23 +16,26 @@ use alloy::{
     signers::local::PrivateKeySigner,
     sol_types::{SolConstructor, SolValue},
 };
+use alloy_chains::Chain;
 use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
+    chains::RETRY_LAYER,
     config::{
-        InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig, SettlerImplementation,
-        SimpleSettlerConfig, TransactionServiceConfig,
+        ChainConfig, InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig,
+        SettlerImplementation, SimpleSettlerConfig, TransactionServiceConfig,
     },
     signers::DynSigner,
-    spawn::{RETRY_LAYER, RelayHandle, try_spawn},
+    spawn::{RelayHandle, try_spawn},
     types::{
-        CoinKind, CoinRegistry, IFunder,
+        AssetDescriptor, AssetUid, Assets, IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
 use sqlx::{ConnectOptions, Executor, PgPool, postgres::PgConnectOptions};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -125,6 +128,7 @@ pub struct Environment {
     /// Settlement configuration for cross-chain messaging
     pub settlement: SettlementConfig,
     pub deployer: DynSigner,
+    pub config: RelayConfig,
 }
 
 impl std::fmt::Debug for Environment {
@@ -209,11 +213,13 @@ pub async fn setup_anvil_instances(
 /// Helper function to spawn a local anvil instance
 fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<AnvilInstance> {
     let mut args = vec![];
-    let chain_id = 31337 + index as u64;
+
+    // Check if we're forking
+    let fork_url = std::env::var("TEST_FORK_URL");
+    let is_forking = fork_url.is_ok();
 
     // fork off a block a few blocks lower than `latest` by default
     let fork_block_number = config.fork_block_number.unwrap_or(-3).to_string();
-    let fork_url = std::env::var("TEST_FORK_URL");
     if let Ok(fork_url) = &fork_url {
         args.extend(["--fork-url", fork_url]);
         args.extend(["--fork-block-number", &fork_block_number]);
@@ -228,11 +234,19 @@ fn spawn_local_anvil(index: usize, config: &EnvironmentConfig) -> eyre::Result<A
         args.extend(["--fork-block-number", fork_block_number]);
     }
 
-    Anvil::new()
-        .chain_id(chain_id)
+    let mut anvil = Anvil::new();
+
+    // Only set chain_id if we're not forking
+    // When forking, use the forked chain's actual chain ID
+    if !is_forking {
+        let chain_id = 31337 + index as u64;
+        anvil = anvil.chain_id(chain_id);
+    }
+
+    anvil
         .args(["--optimism", "--host", "0.0.0.0"].into_iter().chain(args))
         .try_spawn()
-        .wrap_err(format!("Failed to spawn Anvil for chain {chain_id} (index {index})"))
+        .wrap_err(format!("Failed to spawn Anvil (index {index})"))
 }
 
 /// Contract addresses for deployed contracts
@@ -453,16 +467,36 @@ impl Environment {
         let chain_ids =
             try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
 
-        // Build registry with tokens from all chains
-        let mut registry = CoinRegistry::default();
-        for &chain_id in &chain_ids {
-            registry.extend(
-                contracts
-                    .erc20s
-                    .iter()
-                    .map(|contract| ((chain_id, Some(*contract)), CoinKind::USDT)),
-            );
-        }
+        // Build assets for chains. Every chain has the same assets, so we just build this once and
+        // clone.
+        //
+        // Each ERC20 has the UID derived from the order it was deployed. The native token is given
+        // the UID ETH. Everything is assumed to have 18 decimals.
+        //
+        // Only ETH and the first ERC20 is relayable across chains.
+        let erc20s = contracts.erc20s.iter().enumerate().map(|(idx, contract)| {
+            (
+                AssetUid::new(idx.to_string()),
+                AssetDescriptor {
+                    address: *contract,
+                    decimals: 18,
+                    fee_token: true,
+                    interop: idx == 0,
+                },
+            )
+        });
+        let assets = Assets::new(HashMap::from_iter(
+            std::iter::once((
+                AssetUid::new("eth".to_string()),
+                AssetDescriptor {
+                    address: Address::ZERO,
+                    decimals: 18,
+                    fee_token: true,
+                    interop: false,
+                },
+            ))
+            .chain(erc20s),
+        ));
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
             let opts = PgConnectOptions::from_str(&db_url)?;
@@ -508,34 +542,43 @@ impl Environment {
 
         // Start relay service with all endpoints
         let skip_diagnostics = false;
-        let relay_handle = try_spawn(
-            RelayConfig::default()
-                .with_port(0)
-                .with_metrics_port(0)
-                .with_endpoints(&endpoints)
-                .with_quote_ttl(Duration::from_secs(60))
-                .with_rate_ttl(Duration::from_secs(300))
-                .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
-                .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
-                .with_quote_constant_rate(Some(1.0))
-                .with_fee_tokens(&[contracts.erc20s.clone(), vec![Address::ZERO]].concat())
-                .with_interop_tokens(&[contracts.erc20s[0]])
-                .with_fee_recipient(config.fee_recipient)
-                .with_orchestrator(Some(contracts.orchestrator))
-                .with_delegation_proxy(Some(contracts.delegation))
-                .with_simulator(Some(contracts.simulator))
-                .with_funder(Some(contracts.funder))
-                .with_escrow(Some(contracts.escrow))
-                .with_intent_gas_buffer(20_000)
-                .with_tx_gas_buffer(10_000)
-                .with_transaction_service_config(config.transaction_service_config)
-                .with_interop_config(interop_config)
-                .with_rebalance_service_config(config.rebalance_service_config)
-                .with_database_url(database_url),
-            registry,
-            skip_diagnostics,
-        )
-        .await?;
+        let config = RelayConfig::default()
+            .with_port(0)
+            .with_metrics_port(0)
+            .with_chains(HashMap::from_iter(chain_ids.iter().zip(endpoints.into_iter()).map(
+                |(chain_id, endpoint)| {
+                    (
+                        Chain::from_id(*chain_id),
+                        ChainConfig {
+                            endpoint,
+                            assets: assets.clone(),
+                            native_symbol: None,
+                            sequencer: None,
+                            flashblocks: None,
+                            sim_mode: Default::default(),
+                            fees: Default::default(),
+                        },
+                    )
+                },
+            )))
+            .with_quote_ttl(Duration::from_secs(60))
+            .with_rate_ttl(Duration::from_secs(300))
+            .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
+            .with_funder_key(Some(DEPLOYER_PRIVATE_KEY.to_string()))
+            .with_quote_constant_rate(Some(1.0))
+            .with_fee_recipient(config.fee_recipient)
+            .with_orchestrator(Some(contracts.orchestrator))
+            .with_delegation_proxy(Some(contracts.delegation))
+            .with_simulator(Some(contracts.simulator))
+            .with_funder(Some(contracts.funder))
+            .with_escrow(Some(contracts.escrow))
+            .with_intent_gas_buffer(20_000)
+            .with_tx_gas_buffer(10_000)
+            .with_transaction_service_config(config.transaction_service_config)
+            .with_interop_config(interop_config)
+            .with_rebalance_service_config(config.rebalance_service_config)
+            .with_database_url(database_url);
+        let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
 
         let relay_endpoint = HttpClientBuilder::default()
             .build(relay_handle.http_url())
@@ -571,6 +614,7 @@ impl Environment {
             signers,
             settlement: SettlementConfig { layerzero: layerzero_config },
             deployer,
+            config,
         })
     }
 

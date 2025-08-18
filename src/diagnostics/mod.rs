@@ -6,14 +6,16 @@
 mod chain;
 mod layerzero;
 
+use std::sync::Arc;
+
+use chain::ConnectedChains;
 pub use chain::{ChainDiagnostics, ChainDiagnosticsResult};
 
 use crate::{
+    chains::Chains,
     config::{RelayConfig, SettlerImplementation},
     signers::DynSigner,
-    types::FeeTokens,
 };
-use alloy::providers::Provider;
 use eyre::Result;
 use futures_util::future::try_join_all;
 use tracing::{info, warn};
@@ -25,7 +27,7 @@ pub struct DiagnosticsReport {
     pub chains: Vec<ChainDiagnosticsResult>,
     /// Global warning messages
     pub global_warnings: Vec<String>,
-    /// Global error messages  
+    /// Global error messages
     pub global_errors: Vec<String>,
 }
 
@@ -71,11 +73,10 @@ impl DiagnosticsReport {
 }
 
 /// Runs diagnostics on the relay configuration
-pub async fn run_diagnostics<P: Provider + Clone>(
+pub async fn run_diagnostics(
     config: &RelayConfig,
-    providers: &[P],
+    chains: Arc<Chains>,
     signers: &[DynSigner],
-    fee_tokens: &FeeTokens,
 ) -> Result<DiagnosticsReport> {
     let mut report = DiagnosticsReport {
         chains: Vec::new(),
@@ -83,41 +84,41 @@ pub async fn run_diagnostics<P: Provider + Clone>(
         global_errors: Vec::new(),
     };
 
-    if providers.len() != config.chain.endpoints.len() {
+    if chains.len() != config.chains.len() {
         report.global_errors.push(format!(
             "Provider count ({}) doesn't match endpoint count ({})",
-            providers.len(),
-            config.chain.endpoints.len()
+            chains.len(),
+            config.chains.len()
         ));
     }
 
-    info!(provider_count = providers.len(), "Fetching chain IDs");
-    let chain_ids: Vec<_> =
-        try_join_all(providers.iter().map(async |provider| provider.get_chain_id().await)).await?;
-
     // Run chain diagnostics
-    report.chains =
-        try_join_all(providers.iter().zip(&chain_ids).map(async |(provider, chain_id)| {
-            info!(chain_id = %chain_id, "Running diagnostics");
-            ChainDiagnostics::new(provider.clone(), *chain_id, config)
-                .run(fee_tokens, signers)
-                .await
-        }))
-        .await?;
+    report.chains = try_join_all(chains.chains_iter().map(async |chain| {
+        info!(chain_id = %chain.id(), "Running diagnostics");
+        ChainDiagnostics::new(chain.clone(), config).run(signers).await
+    }))
+    .await?;
 
-    if config.chain.endpoints.len() > 1 && config.interop.is_none() {
-        report.global_errors.push(
+    if config.chains.len() > 1 && config.interop.is_none() {
+        report.global_warnings.push(
             "No configuration for interop found, but more than one endpoint was configured."
                 .to_string(),
         )
     }
+
+    // Find out connected chains through their interop assets.
+    let connected_chains = ConnectedChains::new(config);
+    connected_chains.ensure_no_mainnet_testnet_connections(
+        &mut report.global_errors,
+        &mut report.global_warnings,
+    );
 
     // Run LayerZero diagnostics if configured
     if let Some(interop) = &config.interop
         && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
     {
         info!("Running LayerZero diagnostics");
-        match layerzero::run_layerzero_diagnostics(lz_config, config, providers, &chain_ids).await {
+        match layerzero::run_layerzero_diagnostics(lz_config, chains, &connected_chains).await {
             Ok(lz_result) => {
                 report.global_warnings.extend(lz_result.warnings);
                 report.global_errors.extend(lz_result.errors);

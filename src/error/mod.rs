@@ -70,16 +70,6 @@ pub enum RelayError {
         /// The chain ID where the asset is not supported.
         chain: ChainId,
     },
-    /// Insufficient funds for the requested operation.
-    #[error("insufficient funds: required {required} of asset {asset} on chain {chain_id}")]
-    InsufficientFunds {
-        /// The amount of funds required for the operation.
-        required: alloy::primitives::U256,
-        /// The chain ID where the funds are insufficient.
-        chain_id: ChainId,
-        /// The address of the asset that has insufficient funds.
-        asset: Address,
-    },
     /// An error occurred during ABI encoding/decoding.
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
@@ -146,7 +136,6 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::RpcError(_)
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
-            | RelayError::InsufficientFunds { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
             | RelayError::Settlement(_) => internal_rpc(err.to_string()),

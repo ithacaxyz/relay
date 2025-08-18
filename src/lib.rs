@@ -9,6 +9,7 @@ pub mod config;
 pub mod constants;
 pub mod diagnostics;
 pub mod error;
+pub mod estimation;
 pub mod interop;
 pub mod liquidity;
 pub mod metrics;

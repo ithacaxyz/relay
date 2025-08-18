@@ -1,6 +1,6 @@
 //! Relay constants.
 
-use alloy::{primitives::U256, uint};
+use alloy::primitives::{Address, U256, address, uint};
 use std::time::Duration;
 
 /// Extra buffer added to Intent gas estimates signed by P256 keys to cover execution overhead
@@ -9,6 +9,11 @@ use std::time::Duration;
 /// P256 signature verification has high gas usage variance and the 10_000 value seems to be a safe
 /// bet.
 pub const P256_GAS_BUFFER: U256 = uint!(10_000_U256);
+
+/// Extra buffer accounting for the cost of a cold storage write.
+///
+/// 20_000 - 2900 gas
+pub const COLD_SSTORE_GAS_BUFFER: U256 = uint!(17_100_U256);
 
 /// Extra buffer added to Intent gas estimates to cover execution overhead
 /// and ensure sufficient gas is provided.
@@ -38,3 +43,7 @@ pub const ESCROW_REFUND_DURATION_SECS: u64 = 3600; // 1 hour
 ///
 /// This is used to generate unique escrow IDs.
 pub const ESCROW_SALT_LENGTH: usize = 12;
+
+/// Address used by eth_simulateV1 to identify ETH transfers as ERC20 transfer events.
+pub const SIMULATEV1_NATIVE_ADDRESS: Address =
+    address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");

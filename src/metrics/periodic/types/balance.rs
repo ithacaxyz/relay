@@ -1,45 +1,40 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
-use crate::metrics::periodic::{MetricCollector, MetricCollectorError};
-use alloy::{
-    primitives::{Address, ChainId},
-    providers::Provider,
+use crate::{
+    chains::Chains,
+    metrics::periodic::{MetricCollector, MetricCollectorError},
 };
+use alloy::{primitives::Address, providers::Provider};
 use metrics::gauge;
 
 /// This collector queries a chain endpoint for balance of the signer.
 #[derive(Debug)]
-pub struct BalanceCollector<P> {
+pub struct BalanceCollector {
     /// Addresses to be queried.
     addresses: Vec<Address>,
-    /// Chains endpoints.
-    providers_with_chain: Vec<(ChainId, P)>,
+    /// Chains.
+    chains: Arc<Chains>,
 }
 
-impl<P> BalanceCollector<P> {
-    pub fn new(addresses: Vec<Address>, providers_with_chain: Vec<(ChainId, P)>) -> Self {
-        Self { addresses, providers_with_chain }
+impl BalanceCollector {
+    pub fn new(addresses: Vec<Address>, chains: Arc<Chains>) -> Self {
+        Self { addresses, chains }
     }
 }
 
-impl<P> MetricCollector for BalanceCollector<P>
-where
-    P: Provider + Debug,
-{
+impl MetricCollector for BalanceCollector {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
         for address in &self.addresses {
-            futures_util::future::try_join_all(self.providers_with_chain.iter().map(
-                |(chain_id, provider)| async move {
-                    provider.get_balance(*address).await.inspect(|balance| {
-                        gauge!(
-                            "balance",
-                            "address"  => address.to_checksum(Some(*chain_id)),
-                            "chain_id" => format!("{chain_id}")
-                        )
-                        .set::<f64>(balance.into());
-                    })
-                },
-            ))
+            futures_util::future::try_join_all(self.chains.chains_iter().map(|chain| async move {
+                chain.provider().get_balance(*address).await.inspect(|balance| {
+                    gauge!(
+                        "balance",
+                        "address"  => address.to_checksum(Some(chain.id())),
+                        "chain_id" => format!("{}", chain.id())
+                    )
+                    .set::<f64>(balance.into());
+                })
+            }))
             .await?;
         }
         Ok(())

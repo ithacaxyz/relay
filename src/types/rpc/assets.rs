@@ -19,14 +19,16 @@ pub enum AddressOrNative {
 
 impl AddressOrNative {
     /// Returns the address
-    ///
-    /// # Panics
-    /// It will panic if self is of the native variant.
     pub fn address(&self) -> Address {
         match self {
             AddressOrNative::Address(address) => *address,
             AddressOrNative::Native => Address::ZERO,
         }
+    }
+
+    /// Whether it is the native asset from a chain.
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::Native)
     }
 }
 
