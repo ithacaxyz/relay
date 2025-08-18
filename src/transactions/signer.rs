@@ -1132,10 +1132,6 @@ pub struct SignerTask {
 }
 
 impl SignerTask {
-    /// Returns the signer address for this task.
-    pub fn address(&self) -> Address {
-        self.signer.address()
-    }
     /// Pushes a new traаnsaction to the signer.
     ///
     /// Note; the transaction sending future is not polled until the [`SignerTask`] is polled.

@@ -329,33 +329,30 @@ impl TransactionService {
         self.paused_signers.contains(signer_id)
     }
 
-    /// Picks the best signer and a ready transaction, respecting any signer requirement on the tx.
+    /// Picks the best signer for dispatching a transaction. Signer with the highest capacity is
+    /// returned.
     fn best_signer_and_tx(&mut self) -> Option<(&mut SignerTask, RelayTransaction)> {
         // Shuffle the signers to make sure transactions are distributed evenly.
         let mut signers = self.signers.iter_mut().collect::<Vec<_>>();
         signers.shuffle(&mut rand::rng());
 
-        // Check total pending across signers to avoid exceeding limits.
-        let total_pending: usize = signers.iter().map(|s| s.pending()).sum();
-        if total_pending >= self.config.max_pending_transactions {
-            return None;
-        }
+        let mut best_signer = None;
+        let mut best_capacity = 0;
+        let mut total_pending = 0;
 
-        // Try to find a signer with capacity that has a matching ready tx.
         for signer in signers {
-            if signer.capacity() == 0 {
-                continue;
-            }
-            let addr = signer.address();
-            if let Some(tx) = self.queue.pop_ready_matching(|tx| match tx.required_signer() {
-                Some(req) => req == addr,
-                None => true,
-            }) {
-                return Some((signer, tx));
+            total_pending += signer.pending();
+
+            let capacity = signer.capacity();
+            if capacity > best_capacity {
+                best_signer = Some(signer);
+                best_capacity = capacity;
             }
         }
 
-        None
+        best_signer
+            .filter(|_| total_pending < self.config.max_pending_transactions)
+            .and_then(|signer| Some((signer, self.queue.pop_ready()?)))
     }
 
     /// Sends the given transaction to an available signer.
@@ -558,28 +555,6 @@ impl TxQueue {
         !self.ready.is_empty()
     }
 
-    /// Returns the next transaction from the ready queue that matches the predicate.
-    /// Assumes that it will be sent immediately and accounts for it.
-    fn pop_ready_matching<F>(&mut self, predicate: F) -> Option<RelayTransaction>
-    where
-        F: FnMut(&RelayTransaction) -> bool,
-    {
-        let pos = self.ready.iter().position(predicate)?;
-        let tx = self.ready.remove(pos)?;
-
-        if let Some(eoa) = tx.eoa()
-            && let Some(ready) = self.ready_per_eoa.get_mut(eoa)
-        {
-            *ready -= 1;
-            if *ready == 0 {
-                self.ready_per_eoa.remove(eoa);
-            }
-        }
-
-        self.on_sent_transaction(&tx);
-        Some(tx)
-    }
-
     /// Invoked when a pending transaction is sent.
     fn on_sent_transaction(&mut self, tx: &RelayTransaction) {
         let Some(eoa) = tx.eoa() else { return };
@@ -588,8 +563,6 @@ impl TxQueue {
     }
 
     /// Returns the next transaction from the ready queue. Assumes that it will be sent immediately
-    /// and accounts for it. Only used in tests.
-    #[cfg(test)]
     fn pop_ready(&mut self) -> Option<RelayTransaction> {
         self.ready.pop_front().inspect(|tx| {
             if let Some(eoa) = tx.eoa()

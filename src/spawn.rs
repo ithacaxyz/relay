@@ -110,9 +110,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
-    // Use the last signer from the derived signers for faucet operations
-    let faucet_signer = signers.last().expect("should have at least one signer").clone();
-
     // build chains
     let chains = Arc::new(Chains::new(signers.clone(), storage.clone(), &config).await?);
 
@@ -168,7 +165,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         chains.clone(),
         quote_signer,
         funder_signer.clone(),
-        faucet_signer,
         config.quote,
         price_oracle.clone(),
         config.fee_recipient,

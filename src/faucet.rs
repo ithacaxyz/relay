@@ -2,7 +2,6 @@
 
 use crate::{
     chains::Chains,
-    signers::DynSigner,
     transactions::RelayTransaction,
     types::{
         IERC20,
@@ -22,16 +21,14 @@ use tracing::{error, info, instrument, warn};
 /// Faucet service for distributing test tokens.
 #[derive(Debug, Clone)]
 pub struct FaucetService {
-    /// The signer used for faucet operations.
-    faucet_signer: DynSigner,
     /// The chains supported by the relay.
     chains: Arc<Chains>,
 }
 
 impl FaucetService {
     /// Create a new faucet service.
-    pub fn new(faucet_signer: DynSigner, chains: Arc<Chains>) -> Self {
-        Self { faucet_signer, chains }
+    pub fn new(chains: Arc<Chains>) -> Self {
+        Self { chains }
     }
 
     /// Add faucet funds to an address on a specific chain.
@@ -73,15 +70,10 @@ impl FaucetService {
             });
         }
 
-        let faucet_address = self.faucet_signer.address();
-
         let calldata: Bytes = IERC20::mintCall { recipient: address, value }.abi_encode().into();
         let gas_limit = match provider
             .estimate_gas(
-                TransactionRequest::default()
-                    .to(token_address)
-                    .from(faucet_address)
-                    .input(calldata.clone().into()),
+                TransactionRequest::default().to(token_address).input(calldata.clone().into()),
             )
             .await
         {

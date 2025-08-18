@@ -161,7 +161,6 @@ impl Relay {
         chains: Arc<Chains>,
         quote_signer: DynSigner,
         funder_signer: DynSigner,
-        faucet_signer: DynSigner,
         quote_config: QuoteConfig,
         price_oracle: PriceOracle,
         fee_recipient: Address,
@@ -169,7 +168,7 @@ impl Relay {
         asset_info: AssetInfoServiceHandle,
         escrow_refund_threshold: u64,
     ) -> Self {
-        let faucet_service = FaucetService::new(faucet_signer, chains.clone());
+        let faucet_service = FaucetService::new(chains.clone());
         let inner = RelayInner {
             contracts,
             chains,
