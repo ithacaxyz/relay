@@ -291,7 +291,9 @@ impl StressTester {
             let acc_target = args.accounts;
             let caps = caps.clone();
             async move {
-                let eoa = DynSigner::from_signing_key(&B256::random().to_string()).await?;
+                let eoa_key = B256::random();
+                let eoa = DynSigner::from_signing_key(&eoa_key.to_string()).await?;
+                info!("Created EOA account: key={eoa_key:?} address={}", eoa.address());
                 let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?
                     .expect("failed to create key for account");
                 let PrepareUpgradeAccountResponse { context, digests, .. } = relay_client
