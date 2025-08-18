@@ -23,7 +23,6 @@ use alloy::{
     sol_types::{SolCall, SolEvent, SolValue},
     transports::TransportErrorKind,
 };
-use alloy_chains::Chain;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
@@ -147,13 +146,7 @@ impl<P: Provider> SimulatorContract<P> {
             );
 
         // check how to simulate
-        // TODO(mattsse): remove additional `has_simulate_v1_support` check after checking infra
-        // settings
-        if self.sim_mode.is_simulate_v1()
-            || has_simulate_v1_support(&Chain::from(
-                self.simulator.provider().get_chain_id().await?,
-            ))
-        {
+        if self.sim_mode.is_simulate_v1() {
             self.with_simulate_v1(tx_request).await
         } else {
             self.with_debug_trace(tx_request).await
@@ -321,15 +314,4 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
     }
 
     logs
-}
-
-/// Check if a chain supports the eth_simulateV1 RPC method
-fn has_simulate_v1_support(chain: &Chain) -> bool {
-    chain.is_ethereum()
-        || chain.id() == Chain::bsc_mainnet()
-        || chain.id() == Chain::bsc_testnet()
-        || chain.id() == Chain::optimism_mainnet()
-        || chain.id() == Chain::optimism_sepolia()
-        || chain.id() == Chain::base_mainnet()
-        || chain.id() == Chain::base_sepolia()
 }
