@@ -44,7 +44,6 @@ async fn respawn_cli() -> eyre::Result<()> {
                 service_api_key: Default::default(),
                 public_node_endpoints: Default::default(),
                 config_only: Default::default(),
-                priority_fee_percentile: Default::default(),
                 resend_api_key: Default::default(),
                 porto_base_url: Default::default(),
                 funder_owner_key: Default::default(),

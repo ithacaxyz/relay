@@ -9,7 +9,6 @@ use crate::{
 };
 use alloy::{
     primitives::Address,
-    providers::utils::EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
     signers::local::coins_bip39::{English, Mnemonic},
 };
 use alloy_chains::Chain;
@@ -118,12 +117,6 @@ pub struct Args {
     /// The RPC endpoints of the public nodes for OP rollups.
     #[arg(long = "public-node-endpoint", value_name = "RPC_ENDPOINT", value_parser = parse_chain_url)]
     pub public_node_endpoints: Vec<(Chain, Url)>,
-    /// Percentile of the priority fees to use for the transactions.
-    ///
-    /// Default value is `20.0` which means that priority fee for transactions will be chosen as
-    /// 20th percentile of the priority fees of transactions in latest blocks.
-    #[arg(long = "priority-fee-percentile", value_name = "PERCENTILE", default_value_t = EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE)]
-    pub priority_fee_percentile: f64, // TODO(mattsse): remove
     /// Reads all values from the config file.
     ///
     /// This makes required CLI args not required, but it is important that any required CLI args
