@@ -6,6 +6,7 @@ mod calls;
 mod cli;
 mod delegation;
 mod errors;
+mod faucet;
 mod keys;
 mod liquidity;
 mod multi_chain;

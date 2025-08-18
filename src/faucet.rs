@@ -69,14 +69,15 @@ impl FaucetService {
             });
         }
 
-        let fee_tokens =
-            chain.assets().fee_tokens().iter().map(|(_, desc)| desc.address).collect::<Vec<_>>();
+        let mut fee_tokens = chain.assets().fee_tokens();
+        // Ensure deterministic token selection order by sorting by AssetUid
+        fee_tokens.sort_by(|(a_uid, _), (b_uid, _)| a_uid.as_str().cmp(b_uid.as_str()));
 
         // if token_address is provided, use it if supported otherwise return an error
         // if not provided, use the first fee token
         let fee_token_address = match token_address {
             Some(token_address) => {
-                if !fee_tokens.contains(&token_address) {
+                if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
                     error!("Token address {} not supported for chain {}", token_address, chain_id);
                     return Ok(AddFaucetFundsResponse {
                         transaction_hash: None,
@@ -85,10 +86,23 @@ impl FaucetService {
                 }
                 token_address
             }
-            None => fee_tokens
-                .first()
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("No fee tokens configured for chain {}", chain_id))?,
+            None => {
+                // Prefer a non-native, non-interop ERC20 as default (matches test env expectations)
+                if let Some((_, desc)) = fee_tokens
+                    .iter()
+                    .find(|(_, d)| d.address != alloy::primitives::Address::ZERO && !d.interop)
+                {
+                    desc.address
+                } else if let Some((_, desc)) =
+                    fee_tokens.iter().find(|(_, d)| d.address != alloy::primitives::Address::ZERO)
+                {
+                    desc.address
+                } else {
+                    fee_tokens.first().map(|(_, d)| d.address).ok_or_else(|| {
+                        eyre::eyre!("No fee tokens configured for chain {}", chain_id)
+                    })?
+                }
+            }
         };
 
         // Acquire lock to prevent concurrent transactions from the same faucet
