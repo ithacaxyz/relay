@@ -24,12 +24,11 @@ use alloy::{
     network::{Ethereum, EthereumWallet, NetworkWallet},
     primitives::{Address, B256, Bytes, U256, uint},
     providers::{
-        DynProvider, PendingTransactionError, Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
+        DynProvider, PendingTransactionError, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
     },
     rpc::types::{TransactionReceipt, TransactionRequest},
     sol_types::SolCall,
-    transports::{RpcError, TransportErrorKind},
+    transports::{RpcError, TransportErrorKind, TransportResult},
 };
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
@@ -264,6 +263,14 @@ impl Signer {
         Ok(())
     }
 
+    /// Estimates the [`Eip1559Estimation`] with the configured settings.
+    ///
+    /// See also [`FeeConfig::adjusted_eip1559_estimation`]
+    async fn estimate_eip1559_fees(&self) -> TransportResult<Eip1559Estimation> {
+        let fees = self.provider.estimate_eip1559_fees().await?;
+        Ok(self.fees.adjusted_eip1559_estimation(fees))
+    }
+
     /// Invoked when a transaction is confirmed.
     #[instrument(skip_all)]
     async fn on_confirmed_transaction(
@@ -319,9 +326,7 @@ impl Signer {
             .await?;
 
         let last_base_fee = fee_history.latest_block_base_fee().unwrap_or_default();
-
-        let fee_estimate = Eip1559Estimator::default()
-            .estimate(last_base_fee, &fee_history.reward.unwrap_or_default());
+        let fee_estimate = self.fees.estimate_eip1559_fees(&fee_history);
 
         Ok(FeeContext {
             last_base_fee,
@@ -631,7 +636,8 @@ impl Signer {
 
         let try_close = || async {
             let fee_estimate =
-                self.provider.estimate_eip1559_fees().await.map_err(|e| (e.into(), B256::ZERO))?;
+                self.estimate_eip1559_fees().await.map_err(|e| (e.into(), B256::ZERO))?;
+
             let (max_fee, max_tip) = if let Some(min_fees) = min_fees {
                 // If we are provided with `min_fees`, this means, we are going to replace some
                 // existing transaction. Nodes usually require us to bump the fees by some margin to
@@ -694,7 +700,7 @@ impl Signer {
     async fn record_and_check_balance(&self) -> Result<(), SignerError> {
         let (balance, fees) = try_join!(
             self.provider.get_balance(self.address()).into_future(),
-            self.provider.estimate_eip1559_fees()
+            self.estimate_eip1559_fees()
         )?;
 
         let min_balance = MIN_SIGNER_GAS * U256::from(fees.max_fee_per_gas);

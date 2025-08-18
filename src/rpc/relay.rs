@@ -35,10 +35,7 @@ use alloy::{
         eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
     primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256, aliases::B192, bytes},
-    providers::{
-        DynProvider, Provider,
-        utils::{EIP1559_FEE_ESTIMATION_PAST_BLOCKS, Eip1559Estimator},
-    },
+    providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rlp::Encodable,
     rpc::types::{
         Authorization,
@@ -399,10 +396,7 @@ impl Relay {
             "Got fee parameters"
         );
 
-        let native_fee_estimate = Eip1559Estimator::default().estimate(
-            fee_history.latest_block_base_fee().unwrap_or_default(),
-            &fee_history.reward.unwrap_or_default(),
-        );
+        let native_fee_estimate = chain.fee_config().estimate_eip1559_fees(&fee_history);
 
         let Some(eth_price) = eth_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
