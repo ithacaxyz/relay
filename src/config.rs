@@ -370,7 +370,7 @@ impl Default for ServerConfig {
 }
 
 /// Chain configuration for individual chains.
-#[derive(Debug, Clone, PartialEq,  Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChainConfig {
     /// The symbol of the native asset.
     #[serde(default)]
@@ -395,8 +395,10 @@ pub struct ChainConfig {
 
 /// Settings that affect fee estimation.
 ///
-/// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special handling, this type contains all fee related settings
+/// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special
+/// handling, this type contains all fee related settings
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FeeConfig {
     /// Percentile of the priority fees to use for the transactions.
     ///
@@ -415,7 +417,6 @@ impl Default for FeeConfig {
         }
     }
 }
-
 
 /// The simulation mode to use for intent simulation on a specific chain.
 ///
@@ -801,8 +802,34 @@ sim_mode: trace
             flashblocks: Some("https://mainnet-preconf.base.org/".parse().unwrap()),
             sim_mode: SimMode::Trace,
             assets: Assets::new(assets),
+            fees: Default::default(),
         };
 
         assert_eq!(config, expected);
+    }
+
+    #[test]
+    fn test_chain_fee_config_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    minimum_fee: 100
+        "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(config.fees, FeeConfig { minimum_fee: Some(100), ..Default::default() });
     }
 }

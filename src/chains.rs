@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    config::{RelayConfig, SimMode},
+    config::{FeeConfig, RelayConfig, SimMode},
     constants::DEFAULT_POLL_INTERVAL,
     error::RelayError,
     liquidity::{
@@ -51,6 +51,8 @@ pub struct Chain {
     assets: Assets,
     /// The simulation mode this chain supports
     sim_mode: SimMode,
+    /// The fee settings for this particular chain
+    fees: FeeConfig,
 }
 
 impl Chain {
@@ -82,6 +84,11 @@ impl Chain {
     /// Returns the simulation mode [`SimMode`] that should be used when simulating calls.
     pub const fn sim_mode(&self) -> SimMode {
         self.sim_mode
+    }
+
+    /// Returns the [`FeeConfig`] for this chain.
+    pub const fn fee_config(&self) -> &FeeConfig {
+        &self.fees
     }
 }
 
@@ -117,6 +124,7 @@ impl Chains {
 
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
+                // TODO(mattsse): integrate fee config here?
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
@@ -138,6 +146,7 @@ impl Chains {
                         chain_id: chain.id(),
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,
+                        fees: desc.fees.clone(),
                     },
                 ))
             }))

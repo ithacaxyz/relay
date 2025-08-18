@@ -556,6 +556,7 @@ impl Environment {
                             sequencer: None,
                             flashblocks: None,
                             sim_mode: Default::default(),
+                            fees: Default::default(),
                         },
                     )
                 },
