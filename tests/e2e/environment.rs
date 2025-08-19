@@ -24,7 +24,7 @@ use relay::{
     chains::RETRY_LAYER,
     config::{
         ChainConfig, InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig,
-        SettlerImplementation, SimpleSettlerConfig, TransactionServiceConfig,
+        SettlerImplementation, SignerConfig, SimpleSettlerConfig, TransactionServiceConfig,
     },
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
@@ -557,7 +557,9 @@ impl Environment {
                             flashblocks: None,
                             sim_mode: Default::default(),
                             fees: Default::default(),
-                            signers: Default::default(),
+                            signers: SignerConfig {
+                                num_signers: config.transaction_service_config.num_signers,
+                            },
                         },
                     )
                 },
