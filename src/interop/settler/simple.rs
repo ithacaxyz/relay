@@ -137,6 +137,7 @@ impl Settler for SimpleSettler {
         _current_chain_id: ChainId,
         _source_chains: Vec<ChainId>,
         _orchestrator: Address,
+        _intent_settler: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError> {
         // The settlement is handled directly during intent execution
         Ok(None)
