@@ -949,7 +949,6 @@ assets:
     interop: false
 sim_mode: trace
 fees:
-    minimum_fee: 100
     signer_balance_config: !gas 100
             "#;
 
@@ -957,7 +956,6 @@ fees:
         assert_eq!(
             config.fees,
             FeeConfig {
-                minimum_fee: Some(100),
                 signer_balance_config: SignerBalanceConfig::Gas(U256::from(100)),
                 ..Default::default()
             }
@@ -982,7 +980,6 @@ assets:
     interop: false
 sim_mode: trace
 fees:
-    minimum_fee: 100
     signer_balance_config: !balance 100
             "#;
 
@@ -990,7 +987,6 @@ fees:
         assert_eq!(
             config.fees,
             FeeConfig {
-                minimum_fee: Some(100),
                 signer_balance_config: SignerBalanceConfig::Balance(U256::from(100)),
                 ..Default::default()
             }

@@ -197,6 +197,61 @@ interop:
       settler_address: "0x"
 ```
 
+##### Chain-specific fee Configuration
+
+A configuration which has different chain-specific fee settings
+
+```yaml
+fee_recipient: "0x0000000000000000000000000000000000000000"
+
+orchestrator: "0x"
+delegation_proxy: "0x"
+simulator: "0x"
+escrow: "0x"
+funder: "0x"
+
+chains:
+  ethereum:
+    endpoint: "wss://eth.rpc.com/"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        interop: true
+      usd-coin:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        fee_token: true
+        interop: true
+    fees:
+        # This will be used to calculate the minimum signer balance, it represents the min gas the
+        # signer should be able to pay for
+        signer_balance_config: !gas 10000000
+        minimum_fee: 100
+  optimism:
+    endpoint: "wss://op.rpc.com/"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+        interop: true
+      usd-coin:
+        address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+        fee_token: true
+        interop: true
+    fees:
+        # If a signer balance is below this value, it will become paused
+        signer_balance_config: !balance 10000000000
+        # optional, the minimum fee to set in wei
+        minimum_fee: 100
+
+interop:
+  settler:
+    wait_verification_timeout: 100000
+    simple:
+      settler_address: "0x"
+```
+
+
 ## Testing
 
 ```sh
