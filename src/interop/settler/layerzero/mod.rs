@@ -30,7 +30,7 @@ use alloy::{
 use async_trait::async_trait;
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
@@ -77,7 +77,7 @@ pub struct LayerZeroSettler {
     /// Handle to the batch pool for processing settlements.
     settlement_pool: LayerZeroPoolHandle,
     /// DVN verification monitor.
-    verification_monitor: Arc<LayerZeroVerificationMonitor>,
+    verification_monitor: LayerZeroVerificationMonitor,
 }
 
 impl LayerZeroSettler {
@@ -98,8 +98,7 @@ impl LayerZeroSettler {
             LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
 
         // Create LayerZero verification monitor for shared WebSocket connections
-        let verification_monitor =
-            Arc::new(LayerZeroVerificationMonitor::new(chain_configs.clone()));
+        let verification_monitor = LayerZeroVerificationMonitor::new(chain_configs.clone());
 
         // Create batch processor with pool
         let settlement_pool =
