@@ -17,6 +17,10 @@ pub trait TransportErrExt {
     /// Returns true if this is a "transaction underpriced" error thrown when we submit a
     /// transaction that has a gas price too low to be included.
     fn is_transaction_underpriced(&self) -> bool;
+
+    /// Returns true if this is a "nonce tool" error thrown when we submit a transaction with a
+    /// higher nonce that what is on chain
+    fn is_nonce_too_low(&self) -> bool;
 }
 
 impl TransportErrExt for TransportError {
@@ -38,5 +42,10 @@ impl TransportErrExt for TransportError {
         self.as_error_resp()
             .map(|err| err.message.contains("transaction underpriced"))
             .unwrap_or_default()
+    }
+
+    fn is_nonce_too_low(&self) -> bool {
+        // see also: geth: https://github.com/ethereum/go-ethereum/blob/85077be58edea572f29c3b1a6a055077f1a56a8b/core/error.go#L45-L47
+        self.as_error_resp().map(|err| err.message.contains("nonce too low")).unwrap_or_default()
     }
 }
