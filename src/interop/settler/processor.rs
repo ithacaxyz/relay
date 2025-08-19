@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    transactions::{RelayTransaction, TxId, interop::InteropBundle},
+    transactions::{RelayTransaction, interop::InteropBundle},
 };
 
 /// Errors that can occur during settlement processing.
@@ -110,7 +110,7 @@ impl SettlementProcessor {
     }
 
     /// Validates that the bundle's settler ID matches this processor's settler.
-    /// 
+    ///
     /// We trust that any settler address in a properly signed intent is valid.
     fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementError> {
         // Validate bundle settler ID
@@ -126,7 +126,6 @@ impl SettlementProcessor {
                 got: bundle.settler_id,
             });
         }
-
 
         Ok(())
     }
