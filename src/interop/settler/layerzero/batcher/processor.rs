@@ -1,14 +1,11 @@
 use super::{LayerZeroBatchMessage, LayerZeroPoolHandle, types::SettlementPathKey};
 use crate::{
-    interop::settler::{
-        SettlementError,
-        layerzero::contracts::{ILayerZeroEndpointV2, ILayerZeroSettler},
-    },
+    interop::settler::{SettlementError, layerzero::contracts::ILayerZeroEndpointV2},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
     types::{Call3, LZChainConfigs, TransactionServiceHandles, aggregate3Call},
 };
 use alloy::{
-    primitives::ChainId,
+    primitives::{B256, ChainId},
     providers::{MULTICALL3_ADDRESS, Provider},
     rpc::types::TransactionRequest,
     sol_types::SolCall,
@@ -297,11 +294,16 @@ impl LayerZeroBatchProcessor {
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
 
         // Get the peer address for the source endpoint
-        let sender = ILayerZeroSettler::new(key.settler_address, &config.provider)
-            .peers(key.src_eid)
-            .call()
-            .await
-            .map_err(|e| SettlementError::InternalError(e.to_string()))?;
+        // TODO(joshie): Once contracts team fixes peers() endpoint to return the real peer,
+        // use the commented code below instead of using key.settler_address as the sender (eg.
+        // Katana has a different settler address)
+        //
+        // let sender = ILayerZeroSettler::new(key.settler_address, &config.provider)
+        //     .peers(key.src_eid)
+        //     .call()
+        //     .await
+        //     .map_err(|e| SettlementError::InternalError(e.to_string()))?;
+        let sender = B256::left_padding_from(key.settler_address.as_slice());
 
         let nonce = endpoint
             .inboundNonce(key.settler_address, key.src_eid, sender)
