@@ -7,6 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
+    transactions::MIN_SIGNER_GAS,
     types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
@@ -392,6 +393,40 @@ pub struct ChainConfig {
     pub fees: FeeConfig,
 }
 
+/// The signer balance config.
+///
+/// This is used to configure when to pause a signer, ie, when to wait for it to be funded before
+/// signing transactions.
+///
+///
+/// This can be either:
+/// * A specific balance threshold, or
+/// * An amount of gas, the required balance to unpause will be calculated based on the current fee
+///   before signing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SignerBalanceConfig {
+    /// A specific balance threshold
+    Balance(U256),
+    /// An amount of gas.
+    Gas(U256),
+}
+
+impl SignerBalanceConfig {
+    /// This determines the minimum balance based on the current settings and the provided gas
+    /// price.
+    ///
+    /// For [SignerBalanceConfig::Balance], this just returns the configured balance.
+    ///
+    /// For [SignerBalanceConfig::Gas], this calculates the balance based on the configured gas and
+    /// provided gas price
+    pub fn minimum_signer_balance(&self, gas_price: u128) -> U256 {
+        match self {
+            Self::Balance(balance) => *balance,
+            Self::Gas(gas) => gas * U256::from(gas_price),
+        }
+    }
+}
+
 /// Settings that affect fee estimation.
 ///
 /// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special
@@ -406,6 +441,8 @@ pub struct FeeConfig {
     /// The minimum fee to set if any in wei.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_fee: Option<u64>,
+    /// The min signer balance config to use.
+    pub signer_balance_config: SignerBalanceConfig,
 }
 
 impl FeeConfig {
@@ -458,6 +495,17 @@ impl FeeConfig {
             fees.max_fee_per_gas = minimum;
         }
     }
+
+    /// Returns the minimum signer balance based on the current [`SignerBalanceConfig`] and the
+    /// provided gas price.
+    ///
+    /// If the [`SignerBalanceConfig`] is set to [`SignerBalanceConfig::Balance`], this will return
+    /// the configured balance regardless of the gas price.
+    ///
+    /// See also [`SignerBalanceConfig::minimum_signer_balance`].
+    pub fn minimum_signer_balance(&self, gas_price: u128) -> U256 {
+        self.signer_balance_config.minimum_signer_balance(gas_price)
+    }
 }
 
 impl Default for FeeConfig {
@@ -465,6 +513,7 @@ impl Default for FeeConfig {
         Self {
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
             minimum_fee: None,
+            signer_balance_config: SignerBalanceConfig::Gas(MIN_SIGNER_GAS),
         }
     }
 }
