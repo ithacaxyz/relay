@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.23", features = [
+alloy = { version = "1.0.24", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -184,6 +184,3 @@ unused_must_use = "deny"
 
 [workspace]
 members = ["tools/xtask"]
-
-[patch.crates-io]
-alloy = { git = "https://github.com/alloy-rs/alloy" }
