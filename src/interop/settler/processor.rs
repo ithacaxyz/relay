@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, Bytes, ChainId};
+use alloy::primitives::{Address, B256, Bytes, ChainId};
 use futures_util::future::try_join_all;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, error, info};
@@ -50,6 +50,9 @@ pub enum SettlementError {
     /// Internal error occurred
     #[error("Internal error: {0}")]
     InternalError(String),
+    /// Verification timeout
+    #[error("Verification timeout for packet GUID: {0}")]
+    Timeout(B256),
 }
 
 /// Processor for handling settlement transactions in cross-chain bundles.
