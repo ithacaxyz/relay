@@ -43,3 +43,7 @@ relay.yaml
 _
 plans/
 CLAUDE.local.md
+
+# direnv
+/.envrc
+.direnv
