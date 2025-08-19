@@ -1,4 +1,4 @@
-//! Helpers for OP fee estimation.
+//! Helpers for OP Stack fee estimation.
 
 use alloy::{
     primitives::{Address, address},
@@ -6,11 +6,12 @@ use alloy::{
 };
 
 /// Address of the GasPriceOracle contract.
-pub const OP_FEE_ORACLE_CONTRACT: Address = address!("0x420000000000000000000000000000000000000F");
+pub const GAS_PRICE_ORACLE_CONTRACT: Address =
+    address!("0x420000000000000000000000000000000000000F");
 
 sol! {
     #[sol(rpc)]
-    contract OpL1FeeOracle {
+    contract GasPriceOracle {
         /// Computes the L1 portion of the fee based on the provided unsigned encoded transaction.
         ///
         /// See also: <https://github.com/ethereum-optimism/optimism/blob/8d85a214e50941793c806a731de5ecc0ad065b2f/packages/contracts-bedrock/src/L2/GasPriceOracle.sol#L57-L68>

@@ -1,5 +1,8 @@
 //! A collection of providers for different chains.
 
+pub mod arb;
+pub mod op;
+
 use std::str::FromStr;
 
 use alloy::{
@@ -43,8 +46,10 @@ pub struct Chain {
     provider: DynProvider,
     /// Handle to the transaction service.
     transactions: TransactionServiceHandle,
-    /// Whether this is an OP network.
+    /// Whether this is an OP Stack rollup.
     is_optimism: bool,
+    /// Whether this is an Arbitrum rollup.
+    is_arbitrum: bool,
     /// The chain ID.
     chain_id: ChainId,
     /// The supported assets on the chain.
@@ -71,9 +76,14 @@ impl Chain {
         &self.assets
     }
 
-    /// Whether this is an opstack chain.
+    /// Whether this is an OP Stack chain.
     pub const fn is_optimism(&self) -> bool {
         self.is_optimism
+    }
+
+    /// Whether this is an Arbitrum chain.
+    pub const fn is_arbitrum(&self) -> bool {
+        self.is_arbitrum
     }
 
     /// Returns access to the [`TransactionService`] via its handle.
@@ -137,12 +147,14 @@ impl Chains {
                 tokio::spawn(service);
 
                 let is_optimism = provider.is_optimism().await?;
+                let is_arbitrum = provider.is_arbitrum().await?;
                 eyre::Ok((
                     chain.id(),
                     Chain {
                         provider,
                         transactions: handle,
                         is_optimism,
+                        is_arbitrum,
                         chain_id: chain.id(),
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,

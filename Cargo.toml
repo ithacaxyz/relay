@@ -184,3 +184,6 @@ unused_must_use = "deny"
 
 [workspace]
 members = ["tools/xtask"]
+
+[patch.crates-io]
+alloy = { git = "https://github.com/alloy-rs/alloy" }
