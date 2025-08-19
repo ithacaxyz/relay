@@ -6,15 +6,13 @@
 mod chain;
 mod layerzero;
 
-use std::sync::Arc;
-
 use chain::ConnectedChains;
 pub use chain::{ChainDiagnostics, ChainDiagnosticsResult};
+use std::sync::Arc;
 
 use crate::{
     chains::Chains,
     config::{RelayConfig, SettlerImplementation},
-    signers::DynSigner,
 };
 use eyre::Result;
 use futures_util::future::try_join_all;
@@ -76,7 +74,6 @@ impl DiagnosticsReport {
 pub async fn run_diagnostics(
     config: &RelayConfig,
     chains: Arc<Chains>,
-    signers: &[DynSigner],
 ) -> Result<DiagnosticsReport> {
     let mut report = DiagnosticsReport {
         chains: Vec::new(),
@@ -95,7 +92,7 @@ pub async fn run_diagnostics(
     // Run chain diagnostics
     report.chains = try_join_all(chains.chains_iter().map(async |chain| {
         info!(chain_id = %chain.id(), "Running diagnostics");
-        ChainDiagnostics::new(chain.clone(), config).run(signers).await
+        ChainDiagnostics::new(chain.clone(), config).run().await
     }))
     .await?;
 

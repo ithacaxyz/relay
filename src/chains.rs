@@ -53,6 +53,8 @@ pub struct Chain {
     sim_mode: SimMode,
     /// The fee settings for this particular chain
     fees: FeeConfig,
+    /// The active signers for this chain.
+    signers: Vec<DynSigner>,
 }
 
 impl Chain {
@@ -90,6 +92,16 @@ impl Chain {
     pub const fn fee_config(&self) -> &FeeConfig {
         &self.fees
     }
+
+    /// Returns an iterator over the signer addresses used by this chain.
+    pub fn signer_addresses(&self) -> impl Iterator<Item = Address> {
+        self.signers.iter().map(|s| s.address())
+    }
+
+    /// Returns how many signers are configured for this chain.
+    pub fn signers_count(&self) -> usize {
+        self.signers.len()
+    }
 }
 
 /// A collection of providers for different chains.
@@ -124,14 +136,18 @@ impl Chains {
 
                 // Only take as many signers as we need for this chain
                 let chain_signers =
-                    tx_signers.iter().take(desc.signers.num_signers).cloned().collect();
+                    tx_signers.iter().take(desc.signers.num_signers).cloned().collect::<Vec<_>>();
+
+                if chain_signers.is_empty() {
+                    eyre::bail!("No signers configured for chain {chain}");
+                }
 
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
-                    chain_signers,
+                    chain_signers.clone(),
                     storage.clone(),
                     config.transactions.clone(),
                     config.funder,
@@ -151,6 +167,7 @@ impl Chains {
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,
                         fees: desc.fees.clone(),
+                        signers: chain_signers,
                     },
                 ))
             }))
@@ -273,6 +290,11 @@ impl Chains {
     /// Get an iterator over the supported chain IDs.
     pub fn chain_ids_iter(&self) -> impl Iterator<Item = &ChainId> {
         self.chains.keys()
+    }
+
+    /// Returns the total amount of signers across all configured chains.
+    pub fn total_signers(&self) -> usize {
+        self.chains_iter().map(|c| c.signers_count()).sum()
     }
 
     /// Get the [`AssetDescriptor`] for an asset on a chain, if it exists.

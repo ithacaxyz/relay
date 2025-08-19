@@ -37,17 +37,6 @@ pub struct ChainDiagnostics<'a> {
     config: &'a RelayConfig,
 }
 
-/// Result of chain diagnostics run.
-#[derive(Debug)]
-pub struct ChainDiagnosticsResult {
-    /// Chain ID.
-    pub chain_id: ChainId,
-    /// Warning messages.
-    pub warnings: Vec<String>,
-    /// Error messages.
-    pub errors: Vec<String>,
-}
-
 impl<'a> ChainDiagnostics<'a> {
     /// Create a new ChainDiagnostics instance
     pub fn new(chain: Chain, config: &'a RelayConfig) -> Self {
@@ -55,12 +44,9 @@ impl<'a> ChainDiagnostics<'a> {
     }
 
     /// Run all diagnostics.
-    pub async fn run(self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
-        let (contract_diagnostics, balance_diagnostics, asset_diagnostics) = tokio::try_join!(
-            self.verify_contracts(signers),
-            self.check_balances(signers),
-            self.verify_assets()
-        )?;
+    pub async fn run(self) -> Result<ChainDiagnosticsResult> {
+        let (contract_diagnostics, balance_diagnostics, asset_diagnostics) =
+            tokio::try_join!(self.verify_contracts(), self.check_balances(), self.verify_assets())?;
 
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain.id(),
@@ -91,7 +77,7 @@ impl<'a> ChainDiagnostics<'a> {
     /// - LayerZero configuration: Checked separately in layerzero diagnostics module
     /// - SimpleFunder: Checks all signers are registered as gas wallets and owner key is correct,
     ///   if provided
-    async fn verify_contracts(&self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
+    async fn verify_contracts(&self) -> Result<ChainDiagnosticsResult> {
         let warnings = Vec::new();
         let mut errors = Vec::new();
 
@@ -164,11 +150,10 @@ impl<'a> ChainDiagnostics<'a> {
         // Build multicall to check gasWallets() mapping for all signers.
         let mut multicall_gas_wallets =
             self.chain.provider().multicall().dynamic::<gasWalletsCall>();
-        let gas_wallets = signers.iter().map(|s| (s.address(), ())).collect::<Vec<_>>();
-        for (address, _) in &gas_wallets {
+        for address in self.chain.signer_addresses() {
             multicall_gas_wallets = multicall_gas_wallets.add_call_dynamic(
                 CallItem::from(
-                    IFunder::new(self.config.funder, &self.chain.provider()).gasWallets(*address),
+                    IFunder::new(self.config.funder, &self.chain.provider()).gasWallets(address),
                 )
                 .allow_failure(true),
             );
@@ -197,7 +182,10 @@ impl<'a> ChainDiagnostics<'a> {
         crate::process_multicall_results!(
             errors,
             gas_wallets_result,
-            gas_wallets,
+            self.chain
+                .signer_addresses()
+                .map(|addr| (addr, AddressRole::Signer))
+                .collect::<Vec<_>>(),
             |is_gas_wallet: bool, (address, _)| {
                 if !is_gas_wallet {
                     errors.push(format!(
@@ -222,18 +210,19 @@ impl<'a> ChainDiagnostics<'a> {
         Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings, errors })
     }
 
-    /// Check balances for funder contract and signer addresses.
+    /// Check balances for funder contract and the chain's signer addresses.
     ///
     /// Balances checked:
     /// - Native ETH: Funder must have balance (error if 0), signers warned if 0
     /// - Interop tokens: Funder must have balance (error if 0)
-    async fn check_balances(&self, signers: &[DynSigner]) -> Result<ChainDiagnosticsResult> {
+    async fn check_balances(&self) -> Result<ChainDiagnosticsResult> {
         let mut errors = Vec::new();
 
         // Collect all addresses we need to check with their roles
-        let mut all_addresses = signers
-            .iter()
-            .map(|signer| (signer.address(), AddressRole::Signer))
+        let mut all_addresses = self
+            .chain
+            .signer_addresses()
+            .map(|signer| (signer, AddressRole::Signer))
             .collect::<Vec<_>>();
         all_addresses.push((self.config.funder, AddressRole::FunderContract));
 
@@ -361,6 +350,17 @@ impl<'a> ChainDiagnostics<'a> {
 
         Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
     }
+}
+
+/// Result of chain diagnostics run.
+#[derive(Debug)]
+pub struct ChainDiagnosticsResult {
+    /// Chain ID.
+    pub chain_id: ChainId,
+    /// Warning messages.
+    pub warnings: Vec<String>,
+    /// Error messages.
+    pub errors: Vec<String>,
 }
 
 alloy::sol! {
