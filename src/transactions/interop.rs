@@ -1316,6 +1316,7 @@ mod tests {
             _current_chain_id: u64,
             _source_chains: Vec<u64>,
             _orchestrator: Address,
+            _intent_settler: Address,
         ) -> Result<Option<RelayTransaction>, crate::interop::SettlementError> {
             Ok(Some(RelayTransaction::new_internal(Address::default(), vec![], 0, 1_000_000)))
         }

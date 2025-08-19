@@ -251,6 +251,7 @@ impl Settler for LayerZeroSettler {
         current_chain_id: u64,
         source_chains: Vec<u64>,
         orchestrator: Address,
+        intent_settler: Address,
     ) -> Result<Option<RelayTransaction>, SettlementError> {
         let settler_context = self.encode_settler_context(source_chains.clone())?;
 
@@ -269,13 +270,13 @@ impl Settler for LayerZeroSettler {
             let params = MessagingParams::new(
                 *source_chain_id,
                 src_config.endpoint_id,
-                self.settler_address,
+                intent_settler,
                 settlement_id,
             );
 
             tracing::debug!(?params, "LayerZero quote params");
 
-            multicall = multicall.add_dynamic(endpoint.quote(params, self.settler_address));
+            multicall = multicall.add_dynamic(endpoint.quote(params, intent_settler));
         }
 
         let quote_results = multicall.aggregate().await?;
@@ -294,7 +295,7 @@ impl Settler for LayerZeroSettler {
         let from = Address::random();
         let tx_request = TransactionRequest::default()
             .from(from)
-            .to(self.settler_address)
+            .to(intent_settler)
             .value(native_lz_fee)
             .input(calldata.clone().into());
 
@@ -323,7 +324,7 @@ impl Settler for LayerZeroSettler {
         let gas_limit = gas_limit.saturating_mul(120).saturating_div(100);
 
         let tx = RelayTransaction::new_internal_with_value(
-            self.settler_address,
+            intent_settler,
             calldata,
             current_chain_id,
             gas_limit,

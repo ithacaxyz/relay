@@ -197,14 +197,15 @@ impl SettlementProcessor {
                 "Building settlement transaction for destination"
             );
 
-            let orchestrator = dst_tx.quote().ok_or(SettlementError::MissingIntent)?.orchestrator;
+            let quote = dst_tx.quote().ok_or(SettlementError::MissingIntent)?;
             let result = self
                 .settler
                 .build_execute_send_transaction(
                     settlement_id,
                     destination_chain,
                     source_chains.clone(),
-                    orchestrator,
+                    quote.orchestrator,
+                    quote.intent.settler,
                 )
                 .await?;
 
