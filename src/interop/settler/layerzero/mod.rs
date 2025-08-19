@@ -159,8 +159,6 @@ impl LayerZeroSettler {
                     let src_config = self.get_chain_config(src_chain_id)?;
 
                     // Get the receive library address and ULN config of the dst_chain
-                    // todo(joshie): unsure if in the future we can just assume that it's always
-                    // the same. for now just fetch for each individual receiver in each chain.
                     let endpoint = ILayerZeroEndpointV2::new(
                         dst_config.endpoint_address,
                         &dst_config.provider,

@@ -1,10 +1,12 @@
 //! # LayerZero Verification Monitoring
 //!
 //! This module provides utilities for monitoring LayerZero message verifications.
-//! It maintains a single subscription per destination chain to minimize connections while serving
-//! multiple concurrent verification requests through broadcast channels.
+//! It maintains one subscription per (destination chain, receive library) combination to minimize
+//! connections while serving multiple concurrent verification requests through broadcast channels.
+//!
+//! Different settler addresses on the same chain may use different receive libraries, so we need
+//! to monitor the specific receive library that will process each packet.
 
-use super::contracts::ILayerZeroEndpointV2;
 use crate::{
     interop::settler::{
         SettlementError,
@@ -14,7 +16,7 @@ use crate::{
 };
 use alloy::{
     primitives::{
-        B256, ChainId, keccak256,
+        Address, B256, ChainId, keccak256,
         map::{HashMap, HashSet},
     },
     providers::Provider,
@@ -34,7 +36,11 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-/// Represents an active log subscription for a specific chain.
+/// Represents an active log subscription for a specific chain and receive library combination.
+///
+/// Each subscription monitors PayloadVerified events from a specific receive library address
+/// on a destination chain. Multiple packets can share the same subscription if they use the
+/// same receive library.
 #[derive(Debug)]
 struct ChainSubscription {
     /// Broadcasts header hashes of `PayloadVerified` events to all consumers
@@ -46,9 +52,9 @@ struct ChainSubscription {
 impl ChainSubscription {
     /// Spawns a new chain log subscription.
     ///
-    /// Only one subscription per chain should be spawned.
+    /// Only one subscription per chain and receive library combination should be spawned.
     fn spawn(
-        chain_id: ChainId,
+        key: SubscriptionKey,
         mut stream: Subscription<Log>,
         monitor: LayerZeroVerificationMonitor,
     ) -> Self {
@@ -66,8 +72,8 @@ impl ChainSubscription {
                 tokio::select! {
                     result = stream.recv() => {
                         let Ok(log) = result else {
-                            warn!(chain_id, "Stream error - force removing subscription");
-                            monitor.force_cleanup(chain_id).await;
+                            warn!(chain_id = key.chain_id, receive_lib = ?key.receive_library, "Stream error - force removing subscription");
+                            monitor.force_cleanup(key).await;
                             break;
                         };
                         let Ok(decoded) = PayloadVerified::decode_log(&log.inner) else {
@@ -77,14 +83,14 @@ impl ChainSubscription {
                     }
                     // Handle cleanup request called by the last active PacketSubscription.
                     Some(()) = cleanup_rx.recv() => {
-                        if monitor.try_cleanup(chain_id).await {
-                            debug!(chain_id, "Chain subscription cleaned up, terminating stream task");
+                        if monitor.try_cleanup(key).await {
+                            debug!(chain_id = key.chain_id, receive_lib = ?key.receive_library, "Chain subscription cleaned up, terminating stream task");
                             break;
                         }
                     }
                 }
             }
-            info!(chain_id, "Stream processing ended");
+            info!(chain_id = key.chain_id, receive_lib = ?key.receive_library, "Stream processing ended");
         });
 
         Self { event_sender, handle }
@@ -123,17 +129,32 @@ impl ChainSubscriptionHandle {
     }
 }
 
+/// Key for identifying unique subscriptions by chain and receive library
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SubscriptionKey {
+    /// The chain ID where the subscription is monitoring events
+    chain_id: ChainId,
+    /// The receive library address that emits PayloadVerified events
+    receive_library: Address,
+}
+
+impl SubscriptionKey {
+    fn new(chain_id: ChainId, receive_library: Address) -> Self {
+        Self { chain_id, receive_library }
+    }
+}
+
 /// Inner state for the verification monitor.
 #[derive(Debug)]
 struct LayerZeroVerificationMonitorInner {
-    /// One node subscription per destination chain
-    log_subscriptions: RwLock<HashMap<ChainId, ChainSubscription>>,
+    /// One node subscription per (chain, receive library) combination
+    log_subscriptions: RwLock<HashMap<SubscriptionKey, ChainSubscription>>,
     /// Chain configurations for accessing providers and endpoints
     chain_configs: LZChainConfigs,
 }
 
-/// LayerZero verification monitor that maintains one subscription per destination chain and
-/// broadcasts events to all interested consumers.
+/// LayerZero verification monitor that maintains one subscription per (destination chain, receive
+/// library) combination and broadcasts events to all interested consumers.
 #[derive(Debug, Clone)]
 pub struct LayerZeroVerificationMonitor {
     inner: Arc<LayerZeroVerificationMonitorInner>,
@@ -278,27 +299,23 @@ impl LayerZeroVerificationMonitor {
 
     /// Subscribes to `PayloadVerified` events for the specified packet.
     ///
-    /// If a subscription already exists for the chain, returns a new receiver for the existing
-    /// broadcast channel. Otherwise, creates a new subscription and returns a receiver for it.
+    /// If a subscription already exists for the (chain, receive library) combination, returns
+    /// a new receiver for the existing broadcast channel. Otherwise, creates a new subscription
+    /// for that specific receive library on the destination chain.
+    ///
+    /// The receive library address is taken from the packet info, which was determined when
+    /// the packet was created based on the packet's receiver (settler) address.
     pub async fn subscribe_to_payload_events(
         &self,
         packet: &LayerZeroPacketInfo,
     ) -> Result<PacketSubscription, SettlementError> {
-        // Find the source endpoint ID from the source chain config
-        let Some((_src_chain_id, src_config)) =
-            self.inner.chain_configs.iter().find(|(id, _)| **id == packet.src_chain_id)
-        else {
-            return Err(SettlementError::InternalError(format!(
-                "No config found for source chain {}",
-                packet.src_chain_id
-            )));
-        };
-        let src_endpoint_id = src_config.endpoint_id;
+        // Create subscription key using the receive library address from the packet
+        let key = SubscriptionKey::new(packet.dst_chain_id, packet.receive_lib_address);
 
-        // check if node subscription already exists for this chain
+        // check if node subscription already exists for this key
         {
             let subs = self.inner.log_subscriptions.read().await;
-            if let Some(sub) = subs.get(&packet.dst_chain_id) {
+            if let Some(sub) = subs.get(&key) {
                 return Ok(sub.subscribe());
             }
         } // Drop read lock here
@@ -307,38 +324,34 @@ impl LayerZeroVerificationMonitor {
         let mut subs = self.inner.log_subscriptions.write().await;
 
         // double-check - another task may have created it while we waited for write lock
-        if let Some(sub) = subs.get(&packet.dst_chain_id) {
+        if let Some(sub) = subs.get(&key) {
             return Ok(sub.subscribe());
         }
 
-        let Some(config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
+        let Some(dst_config) = self.inner.chain_configs.get(&packet.dst_chain_id) else {
             return Err(SettlementError::UnsupportedChain(packet.dst_chain_id));
         };
 
-        // get the receive library address
-        let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
-        let receive_lib_result =
-            endpoint.getReceiveLibrary(config.settler_address, src_endpoint_id).call().await?;
-
         // subscribe to events emitted by the library
-        let stream = config
+        let stream = dst_config
             .provider
             .subscribe_logs(
                 &Filter::new()
-                    .address(receive_lib_result.lib)
+                    .address(packet.receive_lib_address)
                     .event_signature(PayloadVerified::SIGNATURE_HASH),
             )
             .await?;
 
         // spawn the chain subscription
-        let subscription = ChainSubscription::spawn(packet.dst_chain_id, stream, self.clone());
+        let subscription = ChainSubscription::spawn(key, stream, self.clone());
         let rx = subscription.subscribe();
-        subs.insert(packet.dst_chain_id, subscription);
+        subs.insert(key, subscription);
 
         info!(
             chain_id = packet.dst_chain_id,
-            receive_lib_address = ?receive_lib_result.lib,
-            "Created global subscription for chain"
+            receive_lib_address = ?packet.receive_lib_address,
+            settler_address = ?packet.receiver,
+            "Created subscription for chain and receive library combination"
         );
 
         Ok(rx)
@@ -347,13 +360,13 @@ impl LayerZeroVerificationMonitor {
     /// Try to cleanup a chain subscription if it has no active receivers.
     ///
     /// Returns true if the subscription was removed, false otherwise.
-    async fn try_cleanup(&self, chain_id: ChainId) -> bool {
+    async fn try_cleanup(&self, key: SubscriptionKey) -> bool {
         let mut subs = self.inner.log_subscriptions.write().await;
-        if let Some(subscription) = subs.get(&chain_id) {
+        if let Some(subscription) = subs.get(&key) {
             // double-check that there are truly no subscribers
             if subscription.handle.subscribers_count.load(Ordering::Acquire) == 0 {
-                subs.remove(&chain_id);
-                info!(chain_id, "Removed unused chain subscription");
+                subs.remove(&key);
+                info!(chain_id = key.chain_id, receive_lib = ?key.receive_library, "Removed unused chain subscription");
                 return true;
             }
         }
@@ -363,10 +376,10 @@ impl LayerZeroVerificationMonitor {
     /// Force remove a chain subscription regardless of subscriber count.
     ///
     /// Used when the stream encounters an error and needs to be recreated.
-    async fn force_cleanup(&self, chain_id: ChainId) {
+    async fn force_cleanup(&self, key: SubscriptionKey) {
         let mut subs = self.inner.log_subscriptions.write().await;
-        if subs.remove(&chain_id).is_some() {
-            warn!(chain_id, "Force removed chain subscription due to stream error");
+        if subs.remove(&key).is_some() {
+            warn!(chain_id = key.chain_id, receive_lib = ?key.receive_library, "Force removed chain subscription due to stream error");
         }
     }
 }
