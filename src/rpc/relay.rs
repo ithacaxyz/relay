@@ -46,6 +46,7 @@ use alloy::{
     },
     sol_types::{SolCall, SolValue},
 };
+use futures::{StreamExt, stream::FuturesOrdered};
 use futures_util::{TryFutureExt, future::try_join_all, join};
 use itertools::Itertools;
 use jsonrpsee::{
@@ -1182,45 +1183,54 @@ impl Relay {
         // highest balances first
         sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
 
-        // todo(onbjerg): this is serial, so it can be pretty bad for performance for large
-        // multichain intents. we *could* optimistically query multiple chains at a time, even if we
-        // discard the result later
+        // Simulate funding intents in parallel, preserving the order
+        let mut funding_intents = sources
+            .into_iter()
+            .map(|(chain, asset, balance)| async move {
+                // we simulate escrowing the smallest unit of the asset to get a sense of the fees
+                let funding_context = FundingIntentContext {
+                    eoa,
+                    chain_id: chain,
+                    asset: asset.into(),
+                    amount: U256::from(1),
+                    fee_token: asset,
+                    // note(onbjerg): it doesn't matter what the output intent digest is for
+                    // simulation, as long as it's not zero. otherwise, the gas
+                    // costs will differ a lot.
+                    output_intent_digest: B256::with_last_byte(1),
+                    output_chain_id: destination_chain_id,
+                };
+                let escrow_cost = self
+                    .prepare_calls_inner(
+                        self.build_funding_intent(funding_context, request_key.clone())?,
+                        // note(onbjerg): its ok the leaf isnt correct here for simulation
+                        Some(IntentKind::MultiInput {
+                            leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
+                            fee: None,
+                        }),
+                    )
+                    .await
+                    .map_err(RelayError::internal)
+                    .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
+                    .context
+                    .quote()
+                    .expect("should always be a quote")
+                    .ty()
+                    .fees()
+                    .map(|(_, cost)| cost)
+                    .unwrap_or_default();
+
+                Result::<_, RelayError>::Ok((chain, asset, balance, escrow_cost))
+            })
+            .collect::<FuturesOrdered<_>>();
+
         let mut plan = Vec::new();
-        for (chain, asset, balance) in sources {
+        while let Some((chain, asset, balance, escrow_cost)) =
+            funding_intents.next().await.transpose()?
+        {
             if remaining.is_zero() {
                 break;
             }
-
-            // we simulate escrowing the smallest unit of the asset to get a sense of the fees
-            let funding_context = FundingIntentContext {
-                eoa,
-                chain_id: chain,
-                asset: asset.into(),
-                amount: U256::from(1),
-                fee_token: asset,
-                // note(onbjerg): it doesn't matter what the output intent digest is for simulation,
-                // as long as it's not zero. otherwise, the gas costs will differ a lot.
-                output_intent_digest: B256::with_last_byte(1),
-                output_chain_id: destination_chain_id,
-            };
-            let escrow_cost = Box::pin(self.prepare_calls_inner(
-                self.build_funding_intent(funding_context, request_key.clone())?,
-                // note(onbjerg): its ok the leaf isnt correct here for simulation
-                Some(IntentKind::MultiInput {
-                    leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
-                    fee: None,
-                }),
-            ))
-            .await
-            .map_err(RelayError::internal)
-            .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
-            .context
-            .quote()
-            .expect("should always be a quote")
-            .ty()
-            .fees()
-            .map(|(_, cost)| cost)
-            .unwrap_or_default();
 
             let take = remaining.min(balance.saturating_sub(escrow_cost));
             plan.push(FundSource {
