@@ -24,6 +24,6 @@ mod pool;
 mod processor;
 mod types;
 
-pub use pool::LayerZeroPoolHandle;
+pub use pool::{LayerZeroBatchPool, LayerZeroPoolHandle};
 pub use processor::LayerZeroBatchProcessor;
 pub use types::{LayerZeroBatchMessage, LayerZeroPoolMessages, PendingBatch};

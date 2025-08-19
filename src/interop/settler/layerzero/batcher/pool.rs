@@ -1,10 +1,12 @@
 use super::{
     LayerZeroBatchMessage, LayerZeroPoolMessages, MAX_SETTLEMENTS_PER_BATCH, PendingBatch,
+    processor::LayerZeroBatchProcessor,
     types::{PendingSettlementEntry, SettlementPathKey},
 };
 use crate::{
     interop::settler::{SettlementError, layerzero::EndpointId},
     transactions::TxId,
+    types::{LZChainConfigs, TransactionServiceHandles},
 };
 use alloy::primitives::{Address, ChainId, map::HashMap};
 use std::collections::BTreeMap;
@@ -90,17 +92,44 @@ pub struct LayerZeroBatchPool {
     highest_nonce_confirmed: HashMap<SettlementPathKey, (u64, TxId)>,
     /// Watch channels for pool size updates per settlement path key
     pool_watchers: HashMap<SettlementPathKey, watch::Sender<usize>>,
+    /// Processor for spawning settlement path handlers
+    processor: LayerZeroBatchProcessor,
 }
 
 impl LayerZeroBatchPool {
-    /// Create a new batch pool
-    pub fn new(receiver: mpsc::UnboundedReceiver<LayerZeroPoolMessages>) -> Self {
+    /// Set up the LayerZero batching system by creating a pool and returning its handle.
+    ///
+    /// This method:
+    /// 1. Creates a pool that manages pending settlements organized by [`SettlementPathKey`]
+    /// 2. Creates a processor that can spawn batchers for different settlement paths
+    /// 3. Returns a handle for submitting settlements
+    ///
+    /// When settlements arrive:
+    /// - Pool checks if this is a new settler address it hasn't seen before
+    /// - If new, pool asks processor to spawn a dedicated batcher for that settlement path
+    /// - Batcher monitors its assigned path and batches settlements
+    pub fn setup(
+        chain_configs: LZChainConfigs,
+        tx_service_handles: TransactionServiceHandles,
+    ) -> Result<LayerZeroPoolHandle, SettlementError> {
+        // Create channels for pool and processor communication
+        let (msg_sender, msg_receiver) = mpsc::unbounded_channel();
+
+        let pool_handle = LayerZeroPoolHandle::new(msg_sender);
+        let processor =
+            LayerZeroBatchProcessor::new(chain_configs, pool_handle.clone(), tx_service_handles);
+
+        // Create and spawn the pool
         Self {
-            receiver,
+            receiver: msg_receiver,
             pending_settlements: HashMap::default(),
             highest_nonce_confirmed: HashMap::default(),
             pool_watchers: HashMap::default(),
+            processor,
         }
+        .spawn();
+
+        Ok(pool_handle)
     }
 
     /// Notify pool watchers of the current pool size
@@ -124,6 +153,15 @@ impl LayerZeroBatchPool {
         {
             let _ = sender.send(Ok(()));
             return;
+        }
+
+        // Check if this is a new SettlementPathKey and spawn processor if needed.
+        //
+        // Note: No race condition here - pool processes messages sequentially,
+        // so any Subscribe message from the spawned processor will be handled
+        // after this method completes and the entry exists
+        if !self.pending_settlements.contains_key(&key) {
+            self.processor.spawn_for_settlement_path(key);
         }
 
         // Add to pending settlements

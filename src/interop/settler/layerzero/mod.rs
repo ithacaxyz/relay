@@ -43,7 +43,7 @@ pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult};
 /// Layerzero batch processing.
 pub mod batcher;
-use batcher::{LayerZeroBatchProcessor, LayerZeroPoolHandle};
+use batcher::{LayerZeroBatchPool, LayerZeroPoolHandle};
 
 /// ULN config type constant
 pub const ULN_CONFIG_TYPE: u32 = 2;
@@ -100,9 +100,8 @@ impl LayerZeroSettler {
         // Create LayerZero verification monitor for shared WebSocket connections
         let verification_monitor = LayerZeroVerificationMonitor::new(chain_configs.clone());
 
-        // Create batch processor with pool
-        let settlement_pool =
-            LayerZeroBatchProcessor::run(chain_configs.clone(), tx_service_handles).await?;
+        // Set up batch pool and processor for handling settlements
+        let settlement_pool = LayerZeroBatchPool::setup(chain_configs.clone(), tx_service_handles)?;
 
         Ok(Self {
             eid_to_chain,
