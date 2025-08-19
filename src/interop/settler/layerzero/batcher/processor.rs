@@ -2,12 +2,15 @@ use super::{
     LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool, types::SettlementPathKey,
 };
 use crate::{
-    interop::settler::{SettlementError, layerzero::contracts::ILayerZeroEndpointV2},
+    interop::settler::{
+        SettlementError,
+        layerzero::contracts::{ILayerZeroEndpointV2, ILayerZeroSettler},
+    },
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
     types::{Call3, LZChainConfigs, TransactionServiceHandles, aggregate3Call},
 };
 use alloy::{
-    primitives::{B256, ChainId},
+    primitives::ChainId,
     providers::{MULTICALL3_ADDRESS, Provider},
     rpc::types::TransactionRequest,
     sol_types::SolCall,
@@ -327,16 +330,12 @@ impl LayerZeroBatchProcessor {
         // Query the endpoint for the current inbound nonce
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
 
-        // Get the inbound nonce for the source endpoint
-        let _src_config = self
-            .chain_configs
-            .iter()
-            .find(|(_, c)| c.endpoint_id == key.src_eid)
-            .map(|(_, c)| c)
-            .ok_or_else(|| SettlementError::UnknownEndpointId(key.src_eid))?;
-
-        // The sender is the settler address on the source chain
-        let sender = B256::left_padding_from(key.settler_address.as_slice());
+        // Get the peer address for the source endpoint
+        let sender = ILayerZeroSettler::new(key.settler_address, &config.provider)
+            .peers(key.src_eid)
+            .call()
+            .await
+            .map_err(|e| SettlementError::InternalError(e.to_string()))?;
 
         let nonce = endpoint
             .inboundNonce(key.settler_address, key.src_eid, sender)
