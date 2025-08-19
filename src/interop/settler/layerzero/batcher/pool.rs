@@ -97,7 +97,7 @@ pub struct LayerZeroBatchPool {
 }
 
 impl LayerZeroBatchPool {
-    /// Set up the LayerZero batching system by creating a pool and returning an handle..
+    /// Set up the LayerZero batching system by creating a pool and returning its handle.
     ///
     /// This method:
     /// 1. Creates a pool that manages pending settlements organized by [`SettlementPathKey`]
@@ -115,22 +115,19 @@ impl LayerZeroBatchPool {
         // Create channels for pool and processor communication
         let (msg_sender, msg_receiver) = mpsc::unbounded_channel();
 
-        // Create pool handle
         let pool_handle = LayerZeroPoolHandle::new(msg_sender);
-
-        // Create the processor
         let processor =
             LayerZeroBatchProcessor::new(chain_configs, pool_handle.clone(), tx_service_handles);
 
         // Create and spawn the pool
-        let pool = Self {
+        Self {
             receiver: msg_receiver,
             pending_settlements: HashMap::default(),
             highest_nonce_confirmed: HashMap::default(),
             pool_watchers: HashMap::default(),
             processor,
-        };
-        pool.spawn();
+        }
+        .spawn();
 
         Ok(pool_handle)
     }
@@ -158,7 +155,7 @@ impl LayerZeroBatchPool {
             return;
         }
 
-        // Check if this is a new settler and spawn processor if needed
+        // Check if this is a new SettlementPathKey and spawn processor if needed.
         //
         // Note: No race condition here - pool processes messages sequentially,
         // so any Subscribe message from the spawned processor will be handled
