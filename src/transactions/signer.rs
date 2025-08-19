@@ -493,7 +493,11 @@ impl Signer {
             } else {
                 trace!("was not able to wait for tx confirmation, attempting to resend");
                 if let Err(err) = self.provider.send_raw_transaction(&best_tx.encoded_2718()).await
-                    && !err.is_already_known()
+                    // we need to ignore errors:
+                    //      if the tx is already known then the tx is still pooled and waiting for inclusion
+                    //      if the nonce is too low, then the tx just got mined and we missed the receipt
+                    // In these cases we start another iteration of fetching receipts
+                    && (!err.is_already_known() || !err.is_nonce_too_low())
                 {
                     debug!(%err, "failed to resubmit transaction");
                 }
