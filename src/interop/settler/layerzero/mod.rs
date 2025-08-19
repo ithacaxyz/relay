@@ -419,21 +419,24 @@ impl Settler for LayerZeroSettler {
                 src_config.endpoint_id,
                 packet.nonce,
                 calls,
+                packet.receiver,
             ));
         }
 
         // Send all settlements to the pool
-        let futures = settlement_requests.into_iter().map(|(chain_id, src_eid, nonce, calls)| {
-            let settlement_pool = self.settlement_pool.clone();
-            async move {
-                settlement_pool
-                    .send_settlement_and_wait(chain_id, src_eid, nonce, calls)
-                    .await
-                    .map_err(|e| {
-                        SettlementError::InternalError(format!("Settlement pool error: {e:?}"))
-                    })
-            }
-        });
+        let futures = settlement_requests.into_iter().map(
+            |(chain_id, src_eid, nonce, calls, settler_address)| {
+                let settlement_pool = self.settlement_pool.clone();
+                async move {
+                    settlement_pool
+                        .send_settlement_and_wait(chain_id, src_eid, nonce, calls, settler_address)
+                        .await
+                        .map_err(|e| {
+                            SettlementError::InternalError(format!("Settlement pool error: {e:?}"))
+                        })
+                }
+            },
+        );
         let results = join_all(futures).await;
 
         // Check if any failed

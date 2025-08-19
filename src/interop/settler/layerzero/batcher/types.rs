@@ -3,8 +3,26 @@ use crate::{
     transactions::TxId,
     types::Call3,
 };
-use alloy::primitives::ChainId;
+use alloy::primitives::{Address, ChainId};
 use tokio::sync::{oneshot, watch};
+
+/// Key for identifying unique LayerZero settlement paths (chain pair + settler)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SettlementPathKey {
+    /// Destination chain ID
+    pub chain_id: ChainId,
+    /// Source LayerZero endpoint ID
+    pub src_eid: EndpointId,
+    /// Settler address
+    pub settler_address: Address,
+}
+
+impl SettlementPathKey {
+    /// Create a new settlement path key
+    pub fn new(chain_id: ChainId, src_eid: EndpointId, settler_address: Address) -> Self {
+        Self { chain_id, src_eid, settler_address }
+    }
+}
 
 /// LayerZero settlement message to be batched with the following calls: `{ commitVerification,
 /// lzReceive, settle }`.
@@ -18,6 +36,15 @@ pub struct LayerZeroBatchMessage {
     pub nonce: u64,
     /// The calls to execute: `{ commitVerification, lzReceive, settle }`
     pub calls: Vec<Call3>,
+    /// Settler address for this message
+    pub settler_address: Address,
+}
+
+impl LayerZeroBatchMessage {
+    /// Get the settlement path key for this message
+    pub fn path_key(&self) -> SettlementPathKey {
+        SettlementPathKey::new(self.chain_id, self.src_eid, self.settler_address)
+    }
 }
 
 /// Pending batch of LayerZero messages.
@@ -59,10 +86,8 @@ pub enum LayerZeroPoolMessages {
     },
     /// Get pending gapless batch starting from highest_nonce + 1
     GetPendingBatch {
-        /// Chain ID to get batch for
-        chain_id: ChainId,
-        /// Source endpoint ID
-        src_eid: EndpointId,
+        /// Settlement stream key
+        key: SettlementPathKey,
         /// Current highest nonce confirmed
         highest_nonce: u64,
         /// Channel to send response
@@ -70,10 +95,8 @@ pub enum LayerZeroPoolMessages {
     },
     /// Update highest nonce confirmed and remove/notify processed settlements
     UpdateHighestNonce {
-        /// Chain ID
-        chain_id: ChainId,
-        /// Source endpoint ID
-        src_eid: EndpointId,
+        /// Settlement stream key
+        key: SettlementPathKey,
         /// New highest nonce
         nonce: u64,
         /// Transaction ID that processed this nonce
@@ -81,19 +104,15 @@ pub enum LayerZeroPoolMessages {
     },
     /// Get highest nonce for a specific chain/eid
     GetHighestNonce {
-        /// Chain ID
-        chain_id: ChainId,
-        /// Source endpoint ID
-        src_eid: EndpointId,
+        /// Settlement stream key
+        key: SettlementPathKey,
         /// Channel to send response
         response: oneshot::Sender<Option<u64>>,
     },
     /// Subscribe to pool size updates for a specific chain/eid
     Subscribe {
-        /// Chain ID
-        chain_id: ChainId,
-        /// Source endpoint ID
-        src_eid: EndpointId,
+        /// Settlement stream key
+        key: SettlementPathKey,
         /// Channel to send watch receiver
         response: oneshot::Sender<watch::Receiver<usize>>,
     },
