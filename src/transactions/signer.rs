@@ -703,7 +703,7 @@ impl Signer {
             self.estimate_eip1559_fees()
         )?;
 
-        let min_balance = MIN_SIGNER_GAS * U256::from(fees.max_fee_per_gas);
+        let min_balance = self.fees.minimum_signer_balance(fees.max_fee_per_gas);
 
         if !self.is_paused() {
             if balance < min_balance {

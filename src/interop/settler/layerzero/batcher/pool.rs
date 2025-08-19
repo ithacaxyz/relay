@@ -1,12 +1,12 @@
 use super::{
     LayerZeroBatchMessage, LayerZeroPoolMessages, MAX_SETTLEMENTS_PER_BATCH, PendingBatch,
-    types::PendingSettlementEntry,
+    types::{PendingSettlementEntry, SettlementPathKey},
 };
 use crate::{
     interop::settler::{SettlementError, layerzero::EndpointId},
     transactions::TxId,
 };
-use alloy::primitives::{ChainId, map::HashMap};
+use alloy::primitives::{Address, ChainId, map::HashMap};
 use std::collections::BTreeMap;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info};
@@ -30,15 +30,16 @@ impl LayerZeroPoolHandle {
         src_eid: EndpointId,
         nonce: u64,
         calls: Vec<crate::types::Call3>,
+        settler_address: Address,
     ) -> Result<(), SettlementError> {
         // Create oneshot channel for direct notification
         let (tx, rx) = oneshot::channel();
 
         // Create the message without the response sender
-        let settlement = LayerZeroBatchMessage { chain_id, src_eid, nonce, calls };
+        let settlement = LayerZeroBatchMessage { chain_id, src_eid, nonce, calls, settler_address };
 
         // Send the message with the sender separately
-        debug!(?chain_id, ?nonce, "Sending settlement for processing.");
+        debug!(?chain_id, ?nonce, ?settler_address, "Sending settlement for processing.");
         let _ = self.sender.send(LayerZeroPoolMessages::Settlement { settlement, response: tx });
         rx.await.map_err(|_| SettlementError::InternalError("Channel closed".to_string()))?
     }
@@ -46,14 +47,12 @@ impl LayerZeroPoolHandle {
     /// Get pending batch for a chain starting from highest_nonce + 1.
     pub async fn get_pending_batch(
         &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
         highest_nonce: u64,
     ) -> PendingBatch {
         let (tx, rx) = oneshot::channel();
         let _ = self.sender.send(LayerZeroPoolMessages::GetPendingBatch {
-            chain_id,
-            src_eid,
+            key,
             highest_nonce,
             response: tx,
         });
@@ -61,57 +60,36 @@ impl LayerZeroPoolHandle {
     }
 
     /// Update the highest nonce confirmed for a chain and remove processed settlements
-    pub async fn update_highest_nonce(
-        &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
-        nonce: u64,
-        tx_id: TxId,
-    ) {
-        let _ = self.sender.send(LayerZeroPoolMessages::UpdateHighestNonce {
-            chain_id,
-            src_eid,
-            nonce,
-            tx_id,
-        });
+    pub async fn update_highest_nonce(&self, key: SettlementPathKey, nonce: u64, tx_id: TxId) {
+        let _ = self.sender.send(LayerZeroPoolMessages::UpdateHighestNonce { key, nonce, tx_id });
     }
 
     /// Get highest nonce for a specific chain/eid
-    pub async fn get_highest_nonce(&self, chain_id: ChainId, src_eid: EndpointId) -> Option<u64> {
+    pub async fn get_highest_nonce(&self, key: SettlementPathKey) -> Option<u64> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.sender.send(LayerZeroPoolMessages::GetHighestNonce {
-            chain_id,
-            src_eid,
-            response: tx,
-        });
+        let _ = self.sender.send(LayerZeroPoolMessages::GetHighestNonce { key, response: tx });
         rx.await.unwrap_or(None)
     }
 
     /// Subscribe to pool size updates for a specific chain/eid
-    pub async fn subscribe(
-        &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
-    ) -> Option<watch::Receiver<usize>> {
+    pub async fn subscribe(&self, key: SettlementPathKey) -> Option<watch::Receiver<usize>> {
         let (tx, rx) = oneshot::channel();
-        self.sender
-            .send(LayerZeroPoolMessages::Subscribe { chain_id, src_eid, response: tx })
-            .ok()?;
+        self.sender.send(LayerZeroPoolMessages::Subscribe { key, response: tx }).ok()?;
         rx.await.ok()
     }
 }
 
-/// Pool maintaining pending LayerZero settlements organized by (chain_id, src_eid).
+/// Pool maintaining pending LayerZero settlements organized by SettlementPathKey.
 #[derive(Debug)]
 pub struct LayerZeroBatchPool {
     /// Receiver for service messages
     receiver: mpsc::UnboundedReceiver<LayerZeroPoolMessages>,
-    /// Pending settlements grouped by (chain_id, src_eid)
-    pending_settlements: HashMap<(ChainId, EndpointId), BTreeMap<u64, PendingSettlementEntry>>,
-    /// Highest nonce confirmed per (chain_id, src_eid) with tx_id
-    highest_nonce_confirmed: HashMap<(ChainId, EndpointId), (u64, TxId)>,
-    /// Watch channels for pool size updates per (chain_id, src_eid)
-    pool_watchers: HashMap<(ChainId, EndpointId), watch::Sender<usize>>,
+    /// Pending settlements grouped by settlement path key
+    pending_settlements: HashMap<SettlementPathKey, BTreeMap<u64, PendingSettlementEntry>>,
+    /// Highest nonce confirmed per settlement path key with tx_id
+    highest_nonce_confirmed: HashMap<SettlementPathKey, (u64, TxId)>,
+    /// Watch channels for pool size updates per settlement path key
+    pool_watchers: HashMap<SettlementPathKey, watch::Sender<usize>>,
 }
 
 impl LayerZeroBatchPool {
@@ -126,8 +104,8 @@ impl LayerZeroBatchPool {
     }
 
     /// Notify pool watchers of the current pool size
-    fn notify_pool_watchers(&self, chain_id: ChainId, src_eid: EndpointId, size: usize) {
-        if let Some(watcher) = self.pool_watchers.get(&(chain_id, src_eid)) {
+    fn notify_pool_watchers(&self, key: &SettlementPathKey, size: usize) {
+        if let Some(watcher) = self.pool_watchers.get(key) {
             let _ = watcher.send(size);
         }
     }
@@ -138,7 +116,7 @@ impl LayerZeroBatchPool {
         msg: LayerZeroBatchMessage,
         sender: oneshot::Sender<Result<(), SettlementError>>,
     ) {
-        let key = (msg.chain_id, msg.src_eid);
+        let key = msg.path_key();
 
         // Check if nonce is already confirmed
         if let Some(&(highest_nonce, _)) = self.highest_nonce_confirmed.get(&key)
@@ -154,20 +132,19 @@ impl LayerZeroBatchPool {
         pending.insert(entry.message.nonce, entry);
 
         let size = pending.len();
-        self.notify_pool_watchers(key.0, key.1, size);
+        self.notify_pool_watchers(&key, size);
     }
 
     /// Handle get pending batch message
     fn handle_get_pending_batch(
         &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
         highest_nonce: u64,
         response: oneshot::Sender<PendingBatch>,
     ) {
         let pending_batch = self
             .pending_settlements
-            .get(&(chain_id, src_eid))
+            .get(&key)
             .map(|pending| {
                 let total = pending.len();
                 let mut messages = Vec::with_capacity(MAX_SETTLEMENTS_PER_BATCH.min(total));
@@ -187,24 +164,19 @@ impl LayerZeroBatchPool {
     }
 
     /// Handle update highest nonce message - also removes processed entries and notifies callers
-    fn handle_update_highest_nonce(
-        &mut self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
-        nonce: u64,
-        tx_id: TxId,
-    ) {
-        self.highest_nonce_confirmed.insert((chain_id, src_eid), (nonce, tx_id));
+    fn handle_update_highest_nonce(&mut self, key: SettlementPathKey, nonce: u64, tx_id: TxId) {
+        self.highest_nonce_confirmed.insert(key, (nonce, tx_id));
 
         info!(
-            chain_id = chain_id,
-            src_eid = src_eid,
+            chain_id = key.chain_id,
+            src_eid = key.src_eid,
+            settler_address = ?key.settler_address,
             highest_nonce = nonce,
             "Batch confirmed on chain"
         );
 
         // Remove processed settlements and send confirmations
-        if let Some(pending) = self.pending_settlements.get_mut(&(chain_id, src_eid)) {
+        if let Some(pending) = self.pending_settlements.get_mut(&key) {
             let to_remove: Vec<_> = pending.range(..=nonce).map(|(&n, _)| n).collect();
 
             for n in to_remove {
@@ -214,37 +186,34 @@ impl LayerZeroBatchPool {
             }
 
             let size = pending.len();
-            self.notify_pool_watchers(chain_id, src_eid, size);
+            self.notify_pool_watchers(&key, size);
         }
     }
 
     /// Handle get highest nonce message
     fn handle_get_highest_nonce(
         &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
         response: oneshot::Sender<Option<u64>>,
     ) {
-        let _ = response
-            .send(self.highest_nonce_confirmed.get(&(chain_id, src_eid)).map(|(nonce, _)| *nonce));
+        let _ = response.send(self.highest_nonce_confirmed.get(&key).map(|(nonce, _)| *nonce));
     }
 
     /// Handle subscribe message
     fn handle_subscribe(
         &mut self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
         response: oneshot::Sender<watch::Receiver<usize>>,
     ) {
-        // Get or create watch channel for this chain/eid pair
-        let watcher = self.pool_watchers.entry((chain_id, src_eid)).or_insert_with(|| {
-            let current_size =
-                self.pending_settlements.get(&(chain_id, src_eid)).map(|p| p.len()).unwrap_or(0);
+        // Get or create watch channel for this pool key
+        let watcher = self.pool_watchers.entry(key).or_insert_with(|| {
+            let current_size = self.pending_settlements.get(&key).map(|p| p.len()).unwrap_or(0);
             info!(
-                chain_id = chain_id,
-                src_eid = src_eid,
+                chain_id = key.chain_id,
+                src_eid = key.src_eid,
+                settler_address = ?key.settler_address,
                 current_size = current_size,
-                "Creating pool watcher for chain pair"
+                "Creating pool watcher for settlement path"
             );
             let (tx, _) = watch::channel(current_size);
             tx
@@ -262,27 +231,17 @@ impl LayerZeroBatchPool {
                     LayerZeroPoolMessages::Settlement { settlement: message, response } => {
                         self.handle_settlement(message, response);
                     }
-                    LayerZeroPoolMessages::GetPendingBatch {
-                        chain_id,
-                        src_eid,
-                        highest_nonce,
-                        response,
-                    } => {
-                        self.handle_get_pending_batch(chain_id, src_eid, highest_nonce, response);
+                    LayerZeroPoolMessages::GetPendingBatch { key, highest_nonce, response } => {
+                        self.handle_get_pending_batch(key, highest_nonce, response);
                     }
-                    LayerZeroPoolMessages::UpdateHighestNonce {
-                        chain_id,
-                        src_eid,
-                        nonce,
-                        tx_id,
-                    } => {
-                        self.handle_update_highest_nonce(chain_id, src_eid, nonce, tx_id);
+                    LayerZeroPoolMessages::UpdateHighestNonce { key, nonce, tx_id } => {
+                        self.handle_update_highest_nonce(key, nonce, tx_id);
                     }
-                    LayerZeroPoolMessages::GetHighestNonce { chain_id, src_eid, response } => {
-                        self.handle_get_highest_nonce(chain_id, src_eid, response);
+                    LayerZeroPoolMessages::GetHighestNonce { key, response } => {
+                        self.handle_get_highest_nonce(key, response);
                     }
-                    LayerZeroPoolMessages::Subscribe { chain_id, src_eid, response } => {
-                        self.handle_subscribe(chain_id, src_eid, response);
+                    LayerZeroPoolMessages::Subscribe { key, response } => {
+                        self.handle_subscribe(key, response);
                     }
                 }
             }
