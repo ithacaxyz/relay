@@ -231,12 +231,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the number of signers to derive from mnemonic and use for sending transactions.
-    pub fn with_num_signers(mut self, num_signers: usize) -> Self {
-        self.transactions.num_signers = num_signers;
-        self
-    }
-
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);
@@ -343,6 +337,11 @@ impl RelayConfig {
         std::fs::write(path, content)?;
         Ok(())
     }
+
+    /// Returns the max signer count across all configured chains.
+    pub fn max_signer_count(&self) -> usize {
+        self.chains.values().map(|chain| chain.signers.num_signers).max().unwrap_or_default()
+    }
 }
 
 /// Server configuration.
@@ -391,6 +390,22 @@ pub struct ChainConfig {
     /// Fee settings for this chain
     #[serde(default)]
     pub fees: FeeConfig,
+    /// Number of signers to derive from mnemonic and use for sending transactions.
+    #[serde(default)]
+    pub signers: SignerConfig,
+}
+
+/// Chain specific config for signers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignerConfig {
+    /// Number of signers to derive from mnemonic and use for sending transactions.
+    pub num_signers: usize,
+}
+
+impl Default for SignerConfig {
+    fn default() -> Self {
+        Self { num_signers: DEFAULT_NUM_SIGNERS }
+    }
 }
 
 /// The signer balance config.
@@ -901,6 +916,7 @@ sim_mode: trace
             sim_mode: SimMode::Trace,
             assets: Assets::new(assets),
             fees: Default::default(),
+            signers: Default::default(),
         };
 
         assert_eq!(config, expected);
@@ -929,6 +945,33 @@ fees:
 
         let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
         assert_eq!(config.fees, FeeConfig { minimum_fee: Some(100), ..Default::default() });
+    }
+
+    #[test]
+    fn test_chain_signer_config_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    minimum_fee: 100
+signers:
+    num_signers: 1000
+        "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(config.signers, SignerConfig { num_signers: 1000 });
     }
 
     #[test]
