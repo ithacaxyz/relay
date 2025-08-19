@@ -242,7 +242,7 @@ impl LayerZeroVerificationMonitor {
                         match result {
                             Ok(header_hash) => {
                                 if header_hash == packet.header_hash {
-                                    // The DVN configuration might require multiple entities to verify the packet. Being aware of the exact configuration is unnecessary, since we can just query the chain to see if it's ready.
+                                    // PayloadVerified events are emitted for each DVN that verifies a packet. Multiple DVNs may need to verify before the message becomes executable. Rather than tracking DVN configurations, we check if the message is available for execution whenever we receive a verification.
                                     if self.inner.chain_configs.is_message_available(&packet).await? {
                                         trace!(
                                             guid = ?packet.guid,
