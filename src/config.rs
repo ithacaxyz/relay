@@ -676,6 +676,9 @@ pub struct PriceFeedConfig {
     /// Configuration for CoinGecko.
     #[serde(default)]
     pub coingecko: CoinGeckoConfig,
+    /// Configuration for DeFiLlama.
+    #[serde(default)]
+    pub defillama: DefiLlamaConfig,
 }
 
 /// Configuration for CoinGecko.
@@ -684,6 +687,20 @@ pub struct CoinGeckoConfig {
     /// A map of asset UIDs to CoinGecko coin IDs.
     #[serde(default)]
     pub remapping: HashMap<AssetUid, String>,
+}
+
+/// Configuration for DeFiLlama.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefiLlamaConfig {
+    /// Whether the DeFiLlama price fetcher is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for DefiLlamaConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Configuration for the settler service.

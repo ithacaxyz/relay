@@ -140,6 +140,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
     } else {
+        // Spawn DeFiLlama first (no API key required), then CoinGecko if configured.
+        price_oracle.spawn_fetcher(PriceFetcher::DeFiLlama, &config);
         price_oracle.spawn_fetcher(PriceFetcher::CoinGecko, &config);
     }
 

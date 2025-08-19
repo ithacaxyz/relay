@@ -1,4 +1,4 @@
-use super::CoinGecko;
+use super::{CoinGecko, DeFiLlama};
 use crate::{
     config::RelayConfig,
     price::{fetchers::PriceFetcher, metrics::CoinPairMetrics},
@@ -134,6 +134,11 @@ impl PriceOracle {
     pub fn spawn_fetcher(&self, fetcher: PriceFetcher, config: &RelayConfig) {
         match fetcher {
             PriceFetcher::CoinGecko => CoinGecko::launch(self.tx.clone(), config),
+            PriceFetcher::DeFiLlama => {
+                if config.pricefeed.defillama.enabled {
+                    DeFiLlama::launch(self.tx.clone(), config)
+                }
+            }
         }
     }
 

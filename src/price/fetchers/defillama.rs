@@ -1,9 +1,19 @@
-use crate::error::{QuoteError, RelayError};
+use crate::{
+    config::RelayConfig,
+    error::{QuoteError, RelayError},
+    price::oracle::PriceOracleMessage,
+    types::AssetUid,
+};
 use alloy::primitives::{Address, ChainId};
 use alloy_chains::Chain;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, str::FromStr};
-use tracing::error;
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+use tokio::{sync::mpsc, time::interval};
+use tracing::{error, trace};
 
 /// Response from the /prices/current endpoint
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -145,7 +155,92 @@ impl DeFiLlamaClient {
             .inspect_err(|err| {
                 error!(%err, %url, "Failed to fetch from DeFiLlama");
             })
-            .map_err(|_| QuoteError::UnavailablePriceFeed(Chain::mainnet().into()).into())
+            .map_err(|_| QuoteError::UnavailablePriceFeed.into())
+    }
+}
+
+/// Fetcher that periodically pulls USD prices from DeFiLlama and updates the price oracle.
+#[derive(Debug, Clone)]
+pub struct DeFiLlama {
+    /// The HTTP client.
+    client: DeFiLlamaClient,
+    /// Price oracle sender used to update the price.
+    update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+    /// Map of `chain:address` coin identifiers to asset UIDs to update.
+    assets: HashMap<String, Vec<AssetUid>>,
+}
+
+impl DeFiLlama {
+    /// The time interval between fetching prices.
+    const PRICE_FETCH_INTERVAL: Duration = Duration::from_secs(60);
+
+    /// Creates a new DeFiLlama fetcher.
+    pub fn new(
+        client: DeFiLlamaClient,
+        update_tx: mpsc::UnboundedSender<PriceOracleMessage>,
+        assets: HashMap<String, Vec<AssetUid>>,
+    ) -> Self {
+        Self { client, update_tx, assets }
+    }
+
+    /// Launches the DeFiLlama fetcher task from config.
+    pub fn launch(update_tx: mpsc::UnboundedSender<PriceOracleMessage>, config: &RelayConfig) {
+        // Build mapping: coin_id ("chain:address") -> [AssetUid]
+        let mut mapping: HashMap<String, Vec<AssetUid>> = HashMap::new();
+        for (chain, chain_cfg) in &config.chains {
+            let chain_ident = DeFiLlamaClient::chain_identifier(chain.id());
+            for (uid, desc) in chain_cfg.assets.iter() {
+                let coin_id = format!("{}:{}", chain_ident, desc.address);
+                mapping.entry(coin_id).or_default().push(uid.clone());
+            }
+        }
+
+        let fetcher = Self::new(DeFiLlamaClient::new(), update_tx, mapping);
+
+        tokio::spawn(async move {
+            let mut clock = interval(Self::PRICE_FETCH_INTERVAL);
+            loop {
+                clock.tick().await;
+                if let Err(err) = fetcher.update_prices().await {
+                    error!(?err, "defillama: update failed");
+                }
+                clock.reset();
+            }
+        });
+    }
+
+    /// Fetch prices and push to oracle.
+    async fn update_prices(&self) -> Result<(), RelayError> {
+        if self.assets.is_empty() {
+            return Ok(());
+        }
+
+        let timestamp = Instant::now();
+        let ids: Vec<String> = self.assets.keys().cloned().collect();
+        let resp = self.client.get_prices(&ids).await?;
+
+        trace!(count = resp.coins.len(), "defillama: received prices");
+
+        // Map response to AssetUid prices using our mapping.
+        let mut prices = Vec::new();
+        for (coin_id, data) in resp.coins {
+            if let Some(uids) = self.assets.get(&coin_id) {
+                for uid in uids {
+                    prices.push((uid.clone(), data.price));
+                }
+            }
+        }
+
+        metrics::counter!("defillama.last_update")
+            .absolute(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+        let _ = self.update_tx.send(PriceOracleMessage::UpdateUsd {
+            fetcher: crate::price::fetchers::PriceFetcher::DeFiLlama,
+            prices,
+            timestamp,
+        });
+
+        Ok(())
     }
 }
 

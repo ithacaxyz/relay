@@ -2,11 +2,13 @@ mod coingecko;
 pub use coingecko::*;
 
 mod defillama;
-pub use defillama::{CoinData, DeFiLlamaClient, PriceResponse};
+pub use defillama::{CoinData, DeFiLlama, DeFiLlamaClient, PriceResponse};
 
 /// List of supported coin fetchers.
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub enum PriceFetcher {
     /// CoinGecko.
     CoinGecko,
+    /// DeFiLlama.
+    DeFiLlama,
 }
