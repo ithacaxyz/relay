@@ -150,6 +150,14 @@ impl LayerZeroBatchPool {
     ) {
         let key = msg.path_key();
 
+        // Check if nonce is already confirmed
+        if let Some(&(highest_nonce, _)) = self.highest_nonce_confirmed.get(&key)
+            && msg.nonce <= highest_nonce
+        {
+            let _ = sender.send(Ok(()));
+            return;
+        }
+
         // Check if this is a new settler and spawn processor if needed
         //
         // Note: No race condition here - pool processes messages sequentially,
@@ -157,14 +165,6 @@ impl LayerZeroBatchPool {
         // after this method completes and the entry exists
         if !self.pending_settlements.contains_key(&key) {
             self.processor.spawn_for_settlement_path(key);
-        }
-
-        // Check if nonce is already confirmed
-        if let Some(&(highest_nonce, _)) = self.highest_nonce_confirmed.get(&key)
-            && msg.nonce <= highest_nonce
-        {
-            let _ = sender.send(Ok(()));
-            return;
         }
 
         // Add to pending settlements
