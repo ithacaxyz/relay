@@ -122,12 +122,16 @@ impl Chains {
                     );
                 }
 
+                // Only take as many signers as we need for this chain
+                let chain_signers =
+                    tx_signers.iter().take(desc.signers.num_signers).cloned().collect();
+
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
-                    tx_signers.clone(),
+                    chain_signers,
                     storage.clone(),
                     config.transactions.clone(),
                     config.funder,

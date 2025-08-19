@@ -100,10 +100,10 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let metrics =
         metrics::setup_exporter((config.server.address, config.server.metrics_port)).await;
 
-    // setup signers
+    // derive signers, as many as we need for the chain with the most signers
     let signers = DynSigner::derive_from_mnemonic(
         config.secrets.signers_mnemonic.clone(),
-        config.transactions.num_signers,
+        config.max_signer_count(),
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
 
