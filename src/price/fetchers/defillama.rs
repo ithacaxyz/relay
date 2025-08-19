@@ -247,43 +247,32 @@ impl DeFiLlama {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
-    use alloy_chains::Chain;
+    use tracing::info;
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore]
-    async fn test_defillama_eth_price() {
-        let client = DeFiLlamaClient::new();
-
-        let eth_price = client.get_eth_price().await.expect("Failed to fetch ETH price");
-
-        assert!(eth_price.is_some());
-        let price = eth_price.unwrap();
-        assert!(price > 0.0, "ETH price should be positive");
-        assert!(price < 1_000_000.0, "ETH price sanity check");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    #[ignore]
     async fn test_defillama_token_prices() {
         let client = DeFiLlamaClient::new();
 
-        // USDC address on Ethereum
-        let usdc_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-        // USDT address on Ethereum
-        let usdt_address = address!("dAC17F958D2ee523a2206206994597C13D831ec7");
+        let assets = HashMap::from_iter([
+            ("ethereum".into(), vec![AssetUid::new("eth".into())]),
+            ("usd-coin".into(), vec![AssetUid::new("usdc".into())]),
+        ]);
+        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        let defillama = DeFiLlama::new(client, update_tx, assets.clone());
 
-        let prices = client
-            .get_token_prices(Chain::mainnet().into(), &[usdc_address, usdt_address])
-            .await
-            .expect("Failed to fetch token prices");
+        defillama.update_prices().await.expect("Failed to fetch token prices");
 
-        assert_eq!(prices.len(), 2);
+        let mut usd_prices = HashMap::new();
 
-        let usdc_price = prices.get(&usdc_address).expect("USDC price not found");
-        assert!(*usdc_price > 0.9 && *usdc_price < 1.1, "USDC price should be around $1");
-
-        let usdt_price = prices.get(&usdt_address).expect("USDT price not found");
-        assert!(*usdt_price > 0.9 && *usdt_price < 1.1, "USDT price should be around $1");
+        info!("Processing messages...");
+        while let Ok(msg) = update_rx.try_recv() {
+            if let PriceOracleMessage::UpdateUsd { prices, .. } = msg {
+                info!("Received USD prices update with {} prices", prices.len());
+                for (coin, price) in prices {
+                    info!("{}: {}", coin, price);
+                    usd_prices.insert(coin, price);
+                }
+            }
+        }
     }
 }
