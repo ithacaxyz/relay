@@ -404,6 +404,7 @@ pub struct ChainConfig {
 /// * An amount of gas, the required balance to unpause will be calculated based on the current fee
 ///   before signing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", content = "value")]
 pub enum SignerBalanceConfig {
     /// A specific balance threshold in wei
     Balance(U256),
@@ -948,7 +949,9 @@ assets:
     interop: false
 sim_mode: trace
 fees:
-    signer_balance_config: !gas 100
+    signer_balance_config:
+        type: gas
+        value: 100
             "#;
 
         let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
@@ -979,7 +982,9 @@ assets:
     interop: false
 sim_mode: trace
 fees:
-    signer_balance_config: !balance 100
+    signer_balance_config:
+        type: balance
+        value: 100
             "#;
 
         let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();

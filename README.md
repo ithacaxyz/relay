@@ -225,7 +225,9 @@ chains:
     fees:
         # This will be used to calculate the minimum signer balance, it represents the min gas the
         # signer should be able to pay for
-        signer_balance_config: !gas 10000000
+        signer_balance_config: 
+            type: gas
+            value: 10000000
         minimum_fee: 100
   optimism:
     endpoint: "wss://op.rpc.com/"
@@ -240,7 +242,9 @@ chains:
         interop: true
     fees:
         # If a signer balance is below this value, it will become paused. This is in wei
-        signer_balance_config: !balance 10000000000
+        signer_balance_config:
+            type: balance
+            value: 10000000000
         # optional, the minimum fee to set in wei
         minimum_fee: 100
 
