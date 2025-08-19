@@ -4,39 +4,46 @@ use crate::{
     chains::Chains,
     metrics::periodic::{MetricCollector, MetricCollectorError},
 };
-use alloy::{primitives::Address, providers::Provider};
+use alloy::providers::Provider;
+use futures_util::StreamExt;
 use metrics::gauge;
 
-/// This collector queries a chain endpoint for balance of the signer.
+/// This collector queries a chain endpoint for balance of the signers per chain.
 #[derive(Debug)]
 pub struct BalanceCollector {
-    /// Addresses to be queried.
-    addresses: Vec<Address>,
     /// Chains.
     chains: Arc<Chains>,
 }
 
 impl BalanceCollector {
-    pub fn new(addresses: Vec<Address>, chains: Arc<Chains>) -> Self {
-        Self { addresses, chains }
+    pub fn new(chains: Arc<Chains>) -> Self {
+        Self { chains }
     }
 }
 
 impl MetricCollector for BalanceCollector {
     async fn collect(&self) -> Result<(), MetricCollectorError> {
-        for address in &self.addresses {
-            futures_util::future::try_join_all(self.chains.chains_iter().map(|chain| async move {
-                chain.provider().get_balance(*address).await.inspect(|balance| {
-                    gauge!(
-                        "balance",
-                        "address"  => address.to_checksum(Some(chain.id())),
-                        "chain_id" => format!("{}", chain.id())
-                    )
-                    .set::<f64>(balance.into());
+        // we process them buffered to avoid sending out bursts
+        let mut requests = Vec::with_capacity(self.chains.total_signers());
+        for chain in self.chains.chains_iter() {
+            for signer_addr in chain.signer_addresses() {
+                requests.push(async move {
+                    chain.provider().get_balance(signer_addr).await.inspect(|balance| {
+                        gauge!(
+                            "balance",
+                            "address"  => signer_addr.to_checksum(Some(chain.id())),
+                            "chain_id" => format!("{}", chain.id())
+                        )
+                        .set::<f64>(balance.into())
+                    })
                 })
-            }))
-            .await?;
+            }
         }
+        futures::stream::iter(requests)
+            .buffered(self.chains.len())
+            .for_each(|_| futures::future::ready(()))
+            .await;
+
         Ok(())
     }
 }

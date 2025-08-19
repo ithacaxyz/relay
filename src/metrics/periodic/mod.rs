@@ -4,7 +4,6 @@ use types::{BalanceCollector, LatencyCollector};
 mod job;
 use job::PeriodicJob;
 
-use alloy::primitives::Address;
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 
 use crate::chains::Chains;
@@ -23,12 +22,9 @@ pub trait MetricCollector: Debug {
 }
 
 /// Spawns all available periodic metric collectors.
-pub async fn spawn_periodic_collectors(
-    signers: Vec<Address>,
-    chains: Arc<Chains>,
-) -> Result<(), MetricCollectorError> {
+pub async fn spawn_periodic_collectors(chains: Arc<Chains>) -> Result<(), MetricCollectorError> {
     PeriodicJob::launch_task(
-        BalanceCollector::new(signers, chains.clone()),
+        BalanceCollector::new(chains.clone()),
         tokio::time::interval(Duration::from_secs(5)),
     );
 

@@ -85,7 +85,7 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
 /// Spawns the relay service using the provided [`RelayConfig`].
 pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Result<RelayHandle> {
     // construct db
-    let storage = if let Some(ref db_url) = config.database_url {
+    let storage = if let Some(db_url) = &config.database_url {
         info!("Using PostgreSQL as storage.");
         let pool = PgPool::connect(db_url).await?;
         sqlx::migrate!().run(&pool).await?;
@@ -111,14 +111,14 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
     // build chains
-    let chains = Arc::new(Chains::new(signers.clone(), storage.clone(), &config).await?);
+    let chains = Arc::new(Chains::new(signers, storage.clone(), &config).await?);
 
     // Run pre-flight diagnostics
     if skip_diagnostics {
         warn!("Skipping pre-flight diagnostics.");
     } else {
         info!("Running pre-flight diagnostics.");
-        let report = run_diagnostics(&config, chains.clone(), &signers).await?;
+        let report = run_diagnostics(&config, chains.clone()).await?;
         report.log();
 
         if report.has_errors() {
@@ -128,7 +128,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         }
     }
 
-    metrics::spawn_periodic_collectors(signer_addresses.clone(), chains.clone()).await?;
+    metrics::spawn_periodic_collectors(chains.clone()).await?;
 
     // construct quote signer
     let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
@@ -159,7 +159,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     )
     .await?;
 
-    // todo: avoid all this darn cloning
     let relay = Relay::new(
         contracts,
         chains.clone(),
