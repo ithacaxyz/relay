@@ -1,9 +1,8 @@
-use super::{LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool};
+use super::{
+    LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool, types::SettlementPathKey,
+};
 use crate::{
-    interop::settler::{
-        SettlementError,
-        layerzero::{EndpointId, contracts::ILayerZeroEndpointV2},
-    },
+    interop::settler::{SettlementError, layerzero::contracts::ILayerZeroEndpointV2},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
     types::{Call3, LZChainConfigs, TransactionServiceHandles, aggregate3Call},
 };
@@ -75,9 +74,19 @@ impl LayerZeroBatchProcessor {
                 }
             };
 
+            // Get settler address from destination chain config
+            let settler_address = match self.chain_configs.ensure_chain_config(chain_id) {
+                Ok(config) => config.settler_address,
+                Err(e) => {
+                    error!("Failed to get chain config for {}: {:?}", chain_id, e);
+                    continue;
+                }
+            };
+
+            let key = SettlementPathKey::new(chain_id, src_eid, settler_address);
             let processor = self.clone();
             tokio::spawn(async move {
-                processor.process_chain_pair(tx_service_handle, chain_id, src_eid).await;
+                processor.process_chain_pair(tx_service_handle, key).await;
             });
         }
 
@@ -88,25 +97,29 @@ impl LayerZeroBatchProcessor {
     async fn process_chain_pair(
         &self,
         tx_service_handle: TransactionServiceHandle,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
     ) {
         let mut interval = interval(Duration::from_millis(200));
 
         // Subscribe to pool size updates for this chain pair
-        let mut pool_size_watcher =
-            self.pool_handle.subscribe(chain_id, src_eid).await.expect("should exist");
+        let mut pool_size_watcher = self.pool_handle.subscribe(key).await.expect("should exist");
 
-        info!(chain_id = chain_id, src_eid = src_eid, "Starting batch processor for chain pair");
+        info!(
+            chain_id = key.chain_id,
+            src_eid = key.src_eid,
+            settler_address = ?key.settler_address,
+            "Starting batch processor for settlement path"
+        );
 
         loop {
             // Process next batch for this chain pair
-            if let Err(e) = self.process_next_batch(&tx_service_handle, chain_id, src_eid).await {
+            if let Err(e) = self.process_next_batch(&tx_service_handle, key).await {
                 error!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
+                    settler_address = ?key.settler_address,
                     error = ?e,
-                    "Failed to process batch for chain pair"
+                    "Failed to process batch for settlement path"
                 );
             }
 
@@ -121,8 +134,8 @@ impl LayerZeroBatchProcessor {
                         let pool_size = *pool_size_watcher.borrow();
                         if pool_size >= super::MAX_SETTLEMENTS_PER_BATCH {
                             info!(
-                                chain_id = chain_id,
-                                src_eid = src_eid,
+                                chain_id = key.chain_id,
+                                src_eid = key.src_eid,
                                 pool_size = pool_size,
                                 "Pool has enough messages, processing immediately"
                             );
@@ -147,45 +160,41 @@ impl LayerZeroBatchProcessor {
     async fn process_next_batch(
         &self,
         tx_service_handle: &TransactionServiceHandle,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
     ) -> Result<(), SettlementError> {
         // Get the highest nonce for this chain/eid
-        let current_nonce =
-            if let Some(nonce) = self.pool_handle.get_highest_nonce(chain_id, src_eid).await {
-                nonce
-            } else {
-                // No batches sent yet, get from chain
-                self.get_current_inbound_nonce(chain_id, src_eid).await?
-            };
+        let current_nonce = if let Some(nonce) = self.pool_handle.get_highest_nonce(key).await {
+            nonce
+        } else {
+            // No batches sent yet, get from chain
+            self.get_current_inbound_nonce(key).await?
+        };
 
         // Get the gapless batch starting from current_nonce
-        let mut pending_batch =
-            self.pool_handle.get_pending_batch(chain_id, src_eid, current_nonce).await;
+        let mut pending_batch = self.pool_handle.get_pending_batch(key, current_nonce).await;
 
         // If batch is empty but we have pending messages, check if we have a nonce mismatch
         if pending_batch.is_empty() && pending_batch.total_pool_available > 1 {
             info!(
-                chain_id = chain_id,
-                src_eid = src_eid,
+                chain_id = key.chain_id,
+                src_eid = key.src_eid,
                 total_available = pending_batch.total_pool_available,
                 current_nonce = current_nonce,
                 "No gapless batch found but many pending messages, checking chain nonce"
             );
 
-            let chain_nonce = self.get_current_inbound_nonce(chain_id, src_eid).await?;
+            let chain_nonce = self.get_current_inbound_nonce(key).await?;
             if chain_nonce != current_nonce {
                 info!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
                     pool_nonce = current_nonce,
                     chain_nonce = chain_nonce,
                     "Nonce mismatch detected, retrying with chain nonce"
                 );
 
                 // Try again with the chain nonce
-                pending_batch =
-                    self.pool_handle.get_pending_batch(chain_id, src_eid, chain_nonce).await;
+                pending_batch = self.pool_handle.get_pending_batch(key, chain_nonce).await;
             }
         }
 
@@ -194,8 +203,8 @@ impl LayerZeroBatchProcessor {
         }
 
         info!(
-            chain_id = chain_id,
-            src_eid = src_eid,
+            chain_id = key.chain_id,
+            src_eid = key.src_eid,
             batch_size = pending_batch.len(),
             total_available = pending_batch.total_pool_available,
             start_nonce = pending_batch.settlements.first().unwrap().nonce,
@@ -203,7 +212,8 @@ impl LayerZeroBatchProcessor {
         );
 
         // Create and queue batch transaction
-        let batch_tx = self.create_batch_transaction(chain_id, &pending_batch.settlements).await?;
+        let batch_tx =
+            self.create_batch_transaction(key.chain_id, &pending_batch.settlements).await?;
         let tx_id = batch_tx.id;
         let last_nonce = pending_batch.settlements.last().unwrap().nonce;
 
@@ -211,7 +221,7 @@ impl LayerZeroBatchProcessor {
         let _ = tx_service_handle.send_transaction_no_queue(batch_tx);
 
         // Wait for transaction to complete
-        self.wait_for_transaction(tx_service_handle, tx_id, chain_id, src_eid, last_nonce).await
+        self.wait_for_transaction(tx_service_handle, tx_id, key, last_nonce).await
     }
 
     /// Wait for transaction confirmation and update pool state.
@@ -219,21 +229,20 @@ impl LayerZeroBatchProcessor {
         &self,
         tx_service_handle: &TransactionServiceHandle,
         tx_id: TxId,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
         highest_nonce: u64,
     ) -> Result<(), SettlementError> {
         info!(
-            chain_id = chain_id,
-            src_eid = src_eid,
+            chain_id = key.chain_id,
+            src_eid = key.src_eid,
             tx_id = %tx_id,
             "Waiting for transaction to be confirmed"
         );
 
         let status = tx_service_handle.wait_for_tx(tx_id).await.map_err(|e| {
             error!(
-                chain_id = chain_id,
-                src_eid = src_eid,
+                chain_id = key.chain_id,
+                src_eid = key.src_eid,
                 tx_id = %tx_id,
                 error = ?e,
                 "Failed to wait for transaction"
@@ -244,24 +253,22 @@ impl LayerZeroBatchProcessor {
         match status {
             TransactionStatus::Confirmed(_) => {
                 info!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
                     tx_id = %tx_id,
                     highest_nonce = highest_nonce,
                     "Transaction confirmed, updating highest nonce"
                 );
 
                 // Update highest nonce (also removes processed entries)
-                self.pool_handle
-                    .update_highest_nonce(chain_id, src_eid, highest_nonce, tx_id)
-                    .await;
+                self.pool_handle.update_highest_nonce(key, highest_nonce, tx_id).await;
 
                 Ok(())
             }
             TransactionStatus::Failed(reason) => {
                 error!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
                     tx_id = %tx_id,
                     reason = ?reason,
                     "Transaction failed"
@@ -270,8 +277,8 @@ impl LayerZeroBatchProcessor {
             }
             status => {
                 error!(
-                    chain_id = chain_id,
-                    src_eid = src_eid,
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
                     tx_id = %tx_id,
                     status = ?status,
                     "Unexpected transaction status"
@@ -319,26 +326,26 @@ impl LayerZeroBatchProcessor {
     /// Get current inbound nonce from LayerZero endpoint.
     async fn get_current_inbound_nonce(
         &self,
-        chain_id: ChainId,
-        src_eid: EndpointId,
+        key: SettlementPathKey,
     ) -> Result<u64, SettlementError> {
-        let config = self.chain_configs.ensure_chain_config(chain_id)?;
+        let config = self.chain_configs.ensure_chain_config(key.chain_id)?;
 
         // Query the endpoint for the current inbound nonce
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
 
         // Get the inbound nonce for the source endpoint
-        let src_config = self
+        let _src_config = self
             .chain_configs
             .iter()
-            .find(|(_, c)| c.endpoint_id == src_eid)
+            .find(|(_, c)| c.endpoint_id == key.src_eid)
             .map(|(_, c)| c)
-            .ok_or_else(|| SettlementError::UnknownEndpointId(src_eid))?;
+            .ok_or_else(|| SettlementError::UnknownEndpointId(key.src_eid))?;
 
-        let sender = B256::left_padding_from(src_config.settler_address.as_slice());
+        // The sender is the settler address on the source chain
+        let sender = B256::left_padding_from(key.settler_address.as_slice());
 
         let nonce = endpoint
-            .inboundNonce(config.settler_address, src_eid, sender)
+            .inboundNonce(key.settler_address, key.src_eid, sender)
             .call()
             .await
             .map_err(|e| SettlementError::InternalError(e.to_string()))?;
