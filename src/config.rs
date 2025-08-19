@@ -7,6 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
+    transactions::MIN_SIGNER_GAS,
     types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
@@ -392,6 +393,41 @@ pub struct ChainConfig {
     pub fees: FeeConfig,
 }
 
+/// The signer balance config.
+///
+/// This is used to configure when to pause a signer, ie, when to wait for it to be funded before
+/// signing transactions.
+///
+///
+/// This can be either:
+/// * A specific balance threshold in wei, or
+/// * An amount of gas, the required balance to unpause will be calculated based on the current fee
+///   before signing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", content = "value")]
+pub enum SignerBalanceConfig {
+    /// A specific balance threshold in wei
+    Balance(U256),
+    /// An amount of gas.
+    Gas(U256),
+}
+
+impl SignerBalanceConfig {
+    /// This determines the minimum balance based on the current settings and the provided gas
+    /// price.
+    ///
+    /// For [SignerBalanceConfig::Balance], this just returns the configured balance.
+    ///
+    /// For [SignerBalanceConfig::Gas], this calculates the balance based on the configured gas and
+    /// provided gas price
+    pub fn minimum_signer_balance(&self, gas_price: u128) -> U256 {
+        match self {
+            Self::Balance(balance) => *balance,
+            Self::Gas(gas) => gas * U256::from(gas_price),
+        }
+    }
+}
+
 /// Settings that affect fee estimation.
 ///
 /// Across Ethereum L2s and EVM compatible L1s, various different fee rules exists that need special
@@ -406,6 +442,8 @@ pub struct FeeConfig {
     /// The minimum fee to set if any in wei.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_fee: Option<u64>,
+    /// The min signer balance config to use.
+    pub signer_balance_config: SignerBalanceConfig,
 }
 
 impl FeeConfig {
@@ -458,6 +496,17 @@ impl FeeConfig {
             fees.max_fee_per_gas = minimum;
         }
     }
+
+    /// Returns the minimum signer balance based on the current [`SignerBalanceConfig`] and the
+    /// provided gas price.
+    ///
+    /// If the [`SignerBalanceConfig`] is set to [`SignerBalanceConfig::Balance`], this will return
+    /// the configured balance regardless of the gas price.
+    ///
+    /// See also [`SignerBalanceConfig::minimum_signer_balance`].
+    pub fn minimum_signer_balance(&self, gas_price: u128) -> U256 {
+        self.signer_balance_config.minimum_signer_balance(gas_price)
+    }
 }
 
 impl Default for FeeConfig {
@@ -465,6 +514,7 @@ impl Default for FeeConfig {
         Self {
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
             minimum_fee: None,
+            signer_balance_config: SignerBalanceConfig::Gas(MIN_SIGNER_GAS),
         }
     }
 }
@@ -879,5 +929,100 @@ fees:
 
         let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
         assert_eq!(config.fees, FeeConfig { minimum_fee: Some(100), ..Default::default() });
+    }
+
+    #[test]
+    fn signer_balance_config_gas_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    signer_balance_config:
+        type: gas
+        value: 100
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                signer_balance_config: SignerBalanceConfig::Gas(U256::from(100)),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn signer_balance_config_balance_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    signer_balance_config:
+        type: balance
+        value: 100
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                signer_balance_config: SignerBalanceConfig::Balance(U256::from(100)),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn signer_balance_config_default() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                signer_balance_config: SignerBalanceConfig::Gas(MIN_SIGNER_GAS),
+                ..Default::default()
+            }
+        );
     }
 }
