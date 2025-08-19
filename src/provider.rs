@@ -1,9 +1,6 @@
 //! Alloy provider extensions.
 
-use crate::chains::{
-    arb::{NODE_INTERFACE_CONTRACT, NodeInterface},
-    op::{GAS_PRICE_ORACLE_CONTRACT, GasPriceOracle},
-};
+use crate::estimation::{arb, op};
 use alloy::{
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{Address, Bytes, ChainId, U256},
@@ -20,7 +17,7 @@ pub trait ProviderExt: Provider {
             if alloy_chains::Chain::from(chain_id).is_optimism() {
                 Ok(true)
             } else {
-                Ok(!self.get_code_at(GAS_PRICE_ORACLE_CONTRACT).await?.is_empty())
+                Ok(!self.get_code_at(op::GAS_PRICE_ORACLE_ADDRESS).await?.is_empty())
             }
         }
     }
@@ -32,7 +29,7 @@ pub trait ProviderExt: Provider {
             if alloy_chains::Chain::from(chain_id).is_arbitrum() {
                 Ok(true)
             } else {
-                Ok(!self.get_code_at(NODE_INTERFACE_CONTRACT).await?.is_empty())
+                Ok(!self.get_code_at(arb::NODE_INTERFACE_ADDRESS).await?.is_empty())
             }
         }
     }
@@ -47,7 +44,7 @@ pub trait ProviderExt: Provider {
         Self: Sized,
     {
         async move {
-            GasPriceOracle::new(GAS_PRICE_ORACLE_CONTRACT, self)
+            op::GasPriceOracle::new(op::GAS_PRICE_ORACLE_ADDRESS, self)
                 .getL1Fee(encoded_tx)
                 .call()
                 .await
@@ -70,7 +67,7 @@ pub trait ProviderExt: Provider {
         Self: Sized,
     {
         async move {
-            let contract = NodeInterface::new(NODE_INTERFACE_CONTRACT, self);
+            let contract = arb::NodeInterface::new(arb::NODE_INTERFACE_ADDRESS, self);
             let mut call = contract
                 .gasEstimateL1Component(to, false, calldata)
                 .chain_id(chain_id)

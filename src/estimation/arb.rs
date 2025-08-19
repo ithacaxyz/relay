@@ -5,7 +5,7 @@ use alloy::{
     sol,
 };
 
-/// Address of the Arbitrum [NodeInterface](https://github.com/OffchainLabs/nitro-contracts/blob/master/src/node-interface/NodeInterface.sol).
+/// Address of the Arbitrum [NodeInterface](https://github.com/OffchainLabs/nitro-contracts/blob/master/src/node-interface/NodeInterface.sol) contract.
 ///
 /// Note: This contract doesn't exist on-chain. Instead it is a virtual interface accessible at that
 /// address
@@ -14,7 +14,7 @@ pub const NODE_INTERFACE_ADDRESS: Address = address!("0x000000000000000000000000
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract ArbNodeInterface {
+    contract NodeInterface {
         /// Estimates a transaction's l1 costs.
         ///
         /// Use eth_call to call.
@@ -34,8 +34,6 @@ sol! {
         /// * `gasEstimateForL1` - an estimate of the amount of gas needed for the l1 component of this tx
         /// * `baseFee` - the l2 base fee
         /// * `l1BaseFeeEstimate` - ArbOS's l1 estimate of the l1 base fee
-        ///
-        /// Note: ``
         ///
         /// See also: <https://github.com/OffchainLabs/nitro-contracts/blob/0b8c04e8f5f66fe6678a4f53aa15f23da417260e/src/node-interface/NodeInterface.sol#L113C1-L120C87>
         function gasEstimateL1Component(
@@ -63,7 +61,7 @@ mod tests {
             ProviderBuilder::new().connect("https://arb1.arbitrum.io/rpc").await.unwrap().erased();
 
         let calldata = hex!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-        let estimate = ArbNodeInterface::new(NODE_INTERFACE_ADDRESS, provider)
+        let estimate = NodeInterface::new(NODE_INTERFACE_ADDRESS, provider)
             .gasEstimateL1Component(Address::ZERO, false, calldata.into())
             .call()
             .await

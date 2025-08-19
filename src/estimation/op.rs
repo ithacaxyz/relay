@@ -5,8 +5,8 @@ use alloy::{
     sol,
 };
 
-/// Address of the GasPriceOracle contract.
-pub const GAS_PRICE_ORACLE_CONTRACT: Address =
+/// Address of the OP Stack [GasPriceOracle](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/GasPriceOracle.sol) contract.
+pub const GAS_PRICE_ORACLE_ADDRESS: Address =
     address!("0x420000000000000000000000000000000000000F");
 
 sol! {
@@ -27,5 +27,29 @@ sol! {
         ///
         /// This assumes `(_unsignedTxSize + 68) / 255 + 16` is the practical fastlz upper-bound covers %99.99 txs.
         function getL1FeeUpperBound(uint256 _unsignedTxSize) external view returns (uint256);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        hex,
+        providers::{Provider, ProviderBuilder},
+    };
+
+    #[tokio::test]
+    async fn test_op_gas_estimate_l1() {
+        let provider =
+            ProviderBuilder::new().connect("https://mainnet.optimism.io").await.unwrap().erased();
+
+        let calldata = hex!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        let estimate = GasPriceOracle::new(GAS_PRICE_ORACLE_ADDRESS, provider)
+            .getL1Fee(calldata.into())
+            .call()
+            .await
+            .unwrap();
+
+        assert!(estimate > 0);
     }
 }

@@ -1,8 +1,5 @@
 //! A collection of providers for different chains.
 
-pub mod arb;
-pub mod op;
-
 use std::str::FromStr;
 
 use alloy::{
