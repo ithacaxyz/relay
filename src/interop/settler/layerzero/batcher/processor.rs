@@ -66,24 +66,18 @@ impl LayerZeroBatchProcessor {
         // Spawn a dedicated task for each chain pair
         for (chain_id, src_eid) in chains_to_process {
             // Get the transaction service handle for this specific chain
-            let tx_service_handle = match tx_service_handles.get(&chain_id) {
-                Some(handle) => handle.clone(),
-                None => {
-                    error!("No transaction service handle for chain {}, skipping", chain_id);
-                    continue;
-                }
+            let Some(tx_service_handle) = tx_service_handles.get(&chain_id).cloned() else {
+                error!("No transaction service handle for chain {}, skipping", chain_id);
+                continue;
             };
 
             // Get settler address from destination chain config
-            let settler_address = match self.chain_configs.ensure_chain_config(chain_id) {
-                Ok(config) => config.settler_address,
-                Err(e) => {
-                    error!("Failed to get chain config for {}: {:?}", chain_id, e);
-                    continue;
-                }
+            let Ok(config) = self.chain_configs.ensure_chain_config(chain_id) else {
+                error!("Failed to get chain config for {}", chain_id);
+                continue;
             };
 
-            let key = SettlementPathKey::new(chain_id, src_eid, settler_address);
+            let key = SettlementPathKey::new(chain_id, src_eid, config.settler_address);
             let processor = self.clone();
             tokio::spawn(async move {
                 processor.process_chain_pair(tx_service_handle, key).await;

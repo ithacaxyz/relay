@@ -6,7 +6,8 @@
 //!
 //! ## Flow
 //! 1. Settlements submitted via `LayerZeroPoolHandle::send_settlement_and_wait`
-//! 2. Pool stores by SettlementPathKey (chain_id, src_eid, settler_address) in nonce-ordered BTreeMaps
+//! 2. Pool stores by SettlementPathKey (chain_id, src_eid, settler_address) in nonce-ordered
+//!    BTreeMaps
 //! 3. Processor polls for gapless batches starting from highest confirmed nonce
 //! 4. Batches up to 20 messages into multicall transactions
 //! 5. Updates highest nonce on confirmation, notifying waiting callers
