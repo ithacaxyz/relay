@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     error::StorageError,
-    transactions::{RelayTransaction, TxId, interop::InteropBundle},
+    transactions::{RelayTransaction, interop::InteropBundle},
 };
 
 /// Errors that can occur during settlement processing.
@@ -25,16 +25,6 @@ pub enum SettlementError {
         expected: SettlerId,
         /// The settler ID we got
         got: SettlerId,
-    },
-    /// Settler address mismatch.
-    #[error("Transaction {tx_id} expected settler '{expected}' but got '{got}'")]
-    SettlerAddressMismatch {
-        /// The transaction ID with the mismatch
-        tx_id: TxId,
-        /// The expected settler address
-        expected: Address,
-        /// The settler address we got
-        got: Address,
     },
     /// Missing intent in destination transaction.
     #[error("Destination transaction missing intent")]
@@ -119,8 +109,9 @@ impl SettlementProcessor {
         self.settler.build_execute_receive_transactions(bundle).await
     }
 
-    /// Validates that the bundle's settler ID matches this processor's settler and that
-    /// all destination transactions have the correct settler address.
+    /// Validates that the bundle's settler ID matches this processor's settler.
+    ///
+    /// We trust that any settler address in a properly signed intent is valid.
     fn validate_settler(&self, bundle: &InteropBundle) -> Result<(), SettlementError> {
         // Validate bundle settler ID
         if bundle.settler_id != self.settler.id() {
@@ -134,27 +125,6 @@ impl SettlementProcessor {
                 expected: self.settler.id(),
                 got: bundle.settler_id,
             });
-        }
-
-        // Validate settler address in all destination transactions
-        let settler_address = self.settler.address();
-        for dst_tx in &bundle.dst_txs {
-            if let Some(quote) = dst_tx.quote()
-                && quote.intent.settler != settler_address
-            {
-                error!(
-                    bundle_id = ?bundle.id,
-                    tx_id = ?dst_tx.id,
-                    intent_settler = %quote.intent.settler,
-                    current_settler = %settler_address,
-                    "Destination transaction has incorrect settler address"
-                );
-                return Err(SettlementError::SettlerAddressMismatch {
-                    tx_id: dst_tx.id,
-                    expected: settler_address,
-                    got: quote.intent.settler,
-                });
-            }
         }
 
         Ok(())
