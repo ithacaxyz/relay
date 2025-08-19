@@ -327,14 +327,6 @@ impl LayerZeroBatchProcessor {
         // Query the endpoint for the current inbound nonce
         let endpoint = ILayerZeroEndpointV2::new(config.endpoint_address, &config.provider);
 
-        // Get the inbound nonce for the source endpoint
-        let _src_config = self
-            .chain_configs
-            .iter()
-            .find(|(_, c)| c.endpoint_id == key.src_eid)
-            .map(|(_, c)| c)
-            .ok_or_else(|| SettlementError::UnknownEndpointId(key.src_eid))?;
-
         // The sender is the settler address on the source chain
         let sender = B256::left_padding_from(key.settler_address.as_slice());
 
