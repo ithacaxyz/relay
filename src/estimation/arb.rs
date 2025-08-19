@@ -9,12 +9,13 @@ use alloy::{
 ///
 /// Note: This contract doesn't exist on-chain. Instead it is a virtual interface accessible at that
 /// address
-pub const NODE_INTERFACE_ADDRESS: Address = address!("0x00000000000000000000000000000000000000C8");
+pub const ARB_NODE_INTERFACE_ADDRESS: Address =
+    address!("0x00000000000000000000000000000000000000C8");
 
 sol! {
     #[sol(rpc)]
     #[derive(Debug)]
-    contract NodeInterface {
+    contract ArbNodeInterface {
         /// Estimates a transaction's l1 costs.
         ///
         /// Use eth_call to call.
@@ -61,7 +62,7 @@ mod tests {
             ProviderBuilder::new().connect("https://arb1.arbitrum.io/rpc").await.unwrap().erased();
 
         let calldata = hex!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-        let estimate = NodeInterface::new(NODE_INTERFACE_ADDRESS, provider)
+        let estimate = ArbNodeInterface::new(ARB_NODE_INTERFACE_ADDRESS, provider)
             .gasEstimateL1Component(Address::ZERO, false, calldata.into())
             .call()
             .await

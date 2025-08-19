@@ -6,12 +6,12 @@ use alloy::{
 };
 
 /// Address of the OP Stack [GasPriceOracle](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/GasPriceOracle.sol) contract.
-pub const GAS_PRICE_ORACLE_ADDRESS: Address =
+pub const OP_GAS_PRICE_ORACLE_ADDRESS: Address =
     address!("0x420000000000000000000000000000000000000F");
 
 sol! {
     #[sol(rpc)]
-    contract GasPriceOracle {
+    contract OpGasPriceOracle {
         /// Computes the L1 portion of the fee based on the provided unsigned encoded transaction.
         ///
         /// See also: <https://github.com/ethereum-optimism/optimism/blob/8d85a214e50941793c806a731de5ecc0ad065b2f/packages/contracts-bedrock/src/L2/GasPriceOracle.sol#L57-L68>
@@ -44,7 +44,7 @@ mod tests {
             ProviderBuilder::new().connect("https://mainnet.optimism.io").await.unwrap().erased();
 
         let calldata = hex!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-        let estimate = GasPriceOracle::new(GAS_PRICE_ORACLE_ADDRESS, provider)
+        let estimate = OpGasPriceOracle::new(OP_GAS_PRICE_ORACLE_ADDRESS, provider)
             .getL1Fee(calldata.into())
             .call()
             .await
