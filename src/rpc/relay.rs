@@ -8,8 +8,8 @@ use crate::{
     error::{IntentError, StorageError},
     estimation::{
         build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
+        provider::EstimationProviderExt,
     },
-    provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{

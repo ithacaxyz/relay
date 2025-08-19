@@ -5,10 +5,10 @@
 //! - **Fee Calculation**: Computing costs based on gas, prices, and network conditions
 //! - **Quote Generation**: Building complete quotes with all pricing information
 
+pub mod arb;
 pub mod fees;
+pub mod op;
+pub mod provider;
 pub mod simulator;
 
 pub use simulator::{build_delegation_override, build_simulation_overrides};
-
-pub mod arb;
-pub mod op;
