@@ -19,9 +19,10 @@ use crate::{
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
-            AddressOrNative, Asset7811, AssetFilterItem, CallKey, CallReceipt, CallStatusCode,
-            ChainCapabilities, ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
-            Meta, PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
+            AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
+            AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
+            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
+            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
             RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
@@ -34,11 +35,13 @@ use alloy::{
         eip1559::Eip1559Estimation,
         eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     },
-    primitives::{Address, B256, BlockNumber, Bytes, ChainId, U64, U256, aliases::B192, bytes},
+    primitives::{
+        Address, B256, BlockNumber, Bytes, ChainId, TxKind, U64, U256, aliases::B192, bytes,
+    },
     providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rlp::Encodable,
     rpc::types::{
-        Authorization,
+        Authorization, TransactionRequest,
         state::{AccountOverride, StateOverridesBuilder},
     },
     sol_types::{SolCall, SolValue},
@@ -52,7 +55,7 @@ use jsonrpsee::{
 use opentelemetry::trace::SpanKind;
 use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
-use tracing::{Instrument, Level, debug, error, instrument, span, warn};
+use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
 use crate::{
     chains::{Chain, Chains},
@@ -136,6 +139,13 @@ pub trait RelayApi {
         &self,
         parameters: VerifySignatureParameters,
     ) -> RpcResult<VerifySignatureResponse>;
+
+    /// Add faucet funds to an address on a specific chain.
+    #[method(name = "addFaucetFunds")]
+    async fn add_faucet_funds(
+        &self,
+        parameters: AddFaucetFundsParameters,
+    ) -> RpcResult<AddFaucetFundsResponse>;
 }
 
 /// Implementation of the Ithaca `relay_` namespace.
@@ -2162,6 +2172,92 @@ impl RelayApiServer for Relay {
         });
 
         return Ok(VerifySignatureResponse { valid: proof.is_some(), proof });
+    }
+
+    async fn add_faucet_funds(
+        &self,
+        parameters: AddFaucetFundsParameters,
+    ) -> RpcResult<AddFaucetFundsResponse> {
+        let AddFaucetFundsParameters { token_address, address, chain_id, value } = parameters;
+
+        info!(
+            "Processing faucet request for {} on chain {} with amount {}",
+            address, chain_id, value
+        );
+
+        let chain =
+            self.inner.chains.get(chain_id).ok_or(RelayError::UnsupportedChain(chain_id))?;
+
+        // Disallow faucet usage on mainnet chains
+        if alloy_chains::Chain::from(chain_id).named().is_some_and(|c| !c.is_testnet()) {
+            warn!("Faucet request blocked on mainnet (chain {chain_id})");
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Faucet disabled on mainnet".to_string()),
+            });
+        }
+
+        // Token must be a configured fee token on this chain
+        let fee_tokens = chain.assets().fee_tokens();
+        if !fee_tokens.iter().any(|(_, d)| d.address == token_address) {
+            error!("Token address {} not supported for chain {}", token_address, chain_id);
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: None,
+                message: Some("Token address not supported".to_string()),
+            });
+        }
+
+        // Build calldata for mint(recipient, value)
+        let calldata: Bytes = IERC20::mintCall { recipient: address, value }.abi_encode().into();
+
+        // Estimate gas; if it fails, treat as not supported (e.g., token lacks mint or requires
+        // role)
+        let gas_limit = match chain
+            .provider()
+            .estimate_gas(
+                TransactionRequest::default().to(token_address).input(calldata.clone().into()),
+            )
+            .await
+        {
+            Ok(g) => g,
+            Err(e) => {
+                error!(
+                    "Faucet mint not supported for token {token_address} on chain {chain_id}: {e}"
+                );
+                return Ok(AddFaucetFundsResponse {
+                    transaction_hash: None,
+                    message: Some("Token address not supported".to_string()),
+                });
+            }
+        };
+
+        // Build internal transaction; TransactionService will pick an active relay signer
+        let relay_tx = RelayTransaction::new_internal(
+            TxKind::Call(token_address),
+            calldata,
+            chain.id(),
+            gas_limit,
+        );
+
+        // Send and wait for confirmation
+        let handle = chain.transactions().clone();
+        let _ = handle.send_transaction(relay_tx.clone()).await.map_err(RelayError::from)?;
+        let status = handle.wait_for_tx(relay_tx.id).await.map_err(|_| {
+            RelayError::InternalError(eyre::eyre!("failed to wait for transaction"))
+        })?;
+
+        if !status.is_confirmed() {
+            error!("Faucet funding failed");
+            return Ok(AddFaucetFundsResponse {
+                transaction_hash: status.tx_hash(),
+                message: Some("Faucet funding failed".to_string()),
+            });
+        }
+
+        Ok(AddFaucetFundsResponse {
+            transaction_hash: status.tx_hash(),
+            message: Some("Faucet funding successful".to_string()),
+        })
     }
 }
 
