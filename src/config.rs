@@ -230,12 +230,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the number of signers to derive from mnemonic and use for sending transactions.
-    pub fn with_num_signers(mut self, num_signers: usize) -> Self {
-        self.transactions.num_signers = num_signers;
-        self
-    }
-
     /// Sets the Resend API key.
     pub fn with_resend_api_key(mut self, api_key: Option<String>) -> Self {
         self.email.resend_api_key = api_key.or(self.email.resend_api_key);

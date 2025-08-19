@@ -102,6 +102,7 @@ pub struct Args {
     pub signers_mnemonic: Mnemonic<English>,
     /// The number of signers to derive from mnemonic and use to send transactions.
     #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
+    // TODO(mattsse): remove
     pub num_signers: usize,
     /// The funder signing key (hex private key or KMS ARN).
     #[arg(
@@ -178,7 +179,6 @@ impl Args {
             .with_tx_gas_buffer(self.tx_gas_buffer)
             .with_database_url(self.database_url)
             .with_max_pending_transactions(self.max_pending_transactions)
-            .with_num_signers(self.num_signers)
             .with_resend_api_key(self.resend_api_key)
             .with_porto_base_url(self.porto_base_url)
             .with_binance_keys(self.binance_api_key, self.binance_api_secret)

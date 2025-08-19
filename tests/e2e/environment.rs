@@ -557,6 +557,7 @@ impl Environment {
                             flashblocks: None,
                             sim_mode: Default::default(),
                             fees: Default::default(),
+                            signers: Default::default(),
                         },
                     )
                 },
