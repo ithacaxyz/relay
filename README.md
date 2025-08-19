@@ -239,7 +239,7 @@ chains:
         fee_token: true
         interop: true
     fees:
-        # If a signer balance is below this value, it will become paused
+        # If a signer balance is below this value, it will become paused. This is in wei
         signer_balance_config: !balance 10000000000
         # optional, the minimum fee to set in wei
         minimum_fee: 100
