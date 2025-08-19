@@ -404,6 +404,7 @@ pub struct ChainConfig {
 /// * An amount of gas, the required balance to unpause will be calculated based on the current fee
 ///   before signing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SignerBalanceConfig {
     /// A specific balance threshold
     Balance(U256),
@@ -928,5 +929,71 @@ fees:
 
         let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
         assert_eq!(config.fees, FeeConfig { minimum_fee: Some(100), ..Default::default() });
+    }
+
+    #[test]
+    fn signer_balance_config_gas_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    minimum_fee: 100
+    signer_balance_config: !gas 100
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                minimum_fee: Some(100),
+                signer_balance_config: SignerBalanceConfig::Gas(U256::from(100)),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn signer_balance_config_balance_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    minimum_fee: 100
+    signer_balance_config: !balance 100
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                minimum_fee: Some(100),
+                signer_balance_config: SignerBalanceConfig::Balance(U256::from(100)),
+                ..Default::default()
+            }
+        );
     }
 }
