@@ -1,6 +1,4 @@
-use super::{
-    LayerZeroBatchMessage, LayerZeroPoolHandle, pool::LayerZeroBatchPool, types::SettlementPathKey,
-};
+use super::{LayerZeroBatchMessage, LayerZeroPoolHandle, types::SettlementPathKey};
 use crate::{
     interop::settler::{
         SettlementError,
@@ -16,7 +14,7 @@ use alloy::{
     sol_types::SolCall,
 };
 use std::time::Duration;
-use tokio::{sync::mpsc, time::interval};
+use tokio::time::interval;
 use tracing::{error, info};
 
 /// Processor monitoring and executing LayerZero settlement batches.
@@ -26,72 +24,40 @@ pub struct LayerZeroBatchProcessor {
     chain_configs: LZChainConfigs,
     /// Handle to communicate with batch pool
     pool_handle: LayerZeroPoolHandle,
+    /// Transaction service handles for all chains
+    tx_service_handles: TransactionServiceHandles,
 }
 
 impl LayerZeroBatchProcessor {
-    /// Run batch processor with its associated pool, returning pool handle.
-    pub async fn run(
+    /// Create a new LayerZero batch processor.
+    pub fn new(
         chain_configs: LZChainConfigs,
+        pool_handle: LayerZeroPoolHandle,
         tx_service_handles: TransactionServiceHandles,
-    ) -> Result<LayerZeroPoolHandle, SettlementError> {
-        // Create channels for pool and processor communication
-        let (msg_sender, msg_receiver) = mpsc::unbounded_channel();
-
-        // Spawn the pool
-        LayerZeroBatchPool::new(msg_receiver).spawn();
-
-        // Create pool handle
-        let pool_handle = LayerZeroPoolHandle::new(msg_sender);
-
-        // Spawn the processor
-        Self { chain_configs, pool_handle: pool_handle.clone() }.spawn(tx_service_handles).await?;
-
-        Ok(pool_handle)
+    ) -> Self {
+        Self { chain_configs, pool_handle, tx_service_handles }
     }
 
-    /// Spawn dedicated tasks for each (destination_chain, source_endpoint) pair.
-    async fn spawn(
-        self,
-        tx_service_handles: TransactionServiceHandles,
-    ) -> Result<(), SettlementError> {
-        // Build all possible (chain_id, src_eid) combinations from chain configs
-        let mut chains_to_process = Vec::new();
-        for (dst_chain_id, _) in self.chain_configs.iter() {
-            // For each destination chain, we can receive from any other chain
-            for (src_chain_id, src_config) in self.chain_configs.iter() {
-                if src_chain_id != dst_chain_id {
-                    // We process settlements on dst_chain_id that came from src_eid
-                    chains_to_process.push((*dst_chain_id, src_config.endpoint_id));
-                }
-            }
-        }
-
-        // Spawn a dedicated task for each chain pair
-        for (chain_id, src_eid) in chains_to_process {
-            // Get the transaction service handle for this specific chain
-            let Some(tx_service_handle) = tx_service_handles.get(&chain_id).cloned() else {
-                error!("No transaction service handle for chain {}, skipping", chain_id);
-                continue;
-            };
-
-            // Get settler address from destination chain config
-            let Ok(config) = self.chain_configs.ensure_chain_config(chain_id) else {
-                error!("Failed to get chain config for {}", chain_id);
-                continue;
-            };
-
-            let key = SettlementPathKey::new(chain_id, src_eid, config.settler_address);
+    /// Spawn a processor for a specific settlement path.
+    pub fn spawn_for_settlement_path(&self, key: SettlementPathKey) {
+        if let Some(tx_service_handle) = self.tx_service_handles.get(&key.chain_id).cloned() {
             let processor = self.clone();
             tokio::spawn(async move {
-                processor.process_chain_pair(tx_service_handle, key).await;
+                info!(
+                    chain_id = key.chain_id,
+                    src_eid = key.src_eid,
+                    settler_address = ?key.settler_address,
+                    "Spawning processor for settlement path"
+                );
+                processor.process_settlement_path(tx_service_handle, key).await;
             });
+        } else {
+            error!(chain_id = key.chain_id, "No transaction service handle available for chain");
         }
-
-        Ok(())
     }
 
-    /// Process batches for a specific chain pair.
-    async fn process_chain_pair(
+    /// Process batches for a specific settlement path.
+    pub async fn process_settlement_path(
         &self,
         tx_service_handle: TransactionServiceHandle,
         key: SettlementPathKey,
@@ -171,7 +137,7 @@ impl LayerZeroBatchProcessor {
         let mut pending_batch = self.pool_handle.get_pending_batch(key, current_nonce).await;
 
         // If batch is empty but we have pending messages, check if we have a nonce mismatch
-        if pending_batch.is_empty() && pending_batch.total_pool_available > 1 {
+        if pending_batch.is_empty() && pending_batch.total_pool_available > 0 {
             info!(
                 chain_id = key.chain_id,
                 src_eid = key.src_eid,
