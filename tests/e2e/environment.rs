@@ -557,9 +557,7 @@ impl Environment {
                                 flashblocks: None,
                                 sim_mode: Default::default(),
                                 fees: Default::default(),
-                                signers: SignerConfig {
-                                    num_signers: config.num_signers,
-                                },
+                                signers: SignerConfig { num_signers: config.num_signers },
                                 settler_address: Some(settler_addresses[idx]),
                             },
                         )
