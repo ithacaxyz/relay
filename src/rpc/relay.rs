@@ -1204,7 +1204,7 @@ impl Relay {
                 let funding_intent =
                     self.build_funding_intent(funding_context, request_key.clone())?;
                 tracing::debug!(
-                    chain = %chain, 
+                    chain = %chain,
                     asset = ?asset,
                     calls_len = funding_intent.calls.len(),
                     has_precalls = !funding_intent.capabilities.pre_calls.is_empty(),
@@ -1817,6 +1817,11 @@ impl RelayApiServer for Relay {
 
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
 
+                    tracing::debug!(
+                        token = ?asset.address.address(),
+                        account = ?request.account,
+                        "fetching ERC20 metadata via multicall"
+                    );
                     let (balance, decimals, name, symbol) = chain_provider
                         .multicall()
                         .add(erc20.balanceOf(request.account))
@@ -1824,7 +1829,16 @@ impl RelayApiServer for Relay {
                         .add(erc20.name())
                         .add(erc20.symbol())
                         .aggregate()
-                        .await?;
+                        .await
+                        .inspect_err(|err| {
+                            tracing::error!(
+                                chain = %chain,
+                                token = ?asset.address.address(),
+                                account = ?request.account,
+                                error = ?err,
+                                "multicall failed for ERC20"
+                            );
+                        })?;
 
                     Ok(Asset7811 {
                         address: asset.address,
