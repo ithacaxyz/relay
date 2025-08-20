@@ -604,7 +604,7 @@ async fn fund_accounts(
         .get(&chain_id)
         .ok_or_else(|| eyre::eyre!("no fee token mapping for chain {}", chain_id))?;
     if provider.get_code_at(disperse_address).await?.is_empty() {
-        info!("Deploying Disperse contract on chain {chain_id}");
+        info!("Deploying Disperse contract");
         let receipt: alloy::rpc::types::TransactionReceipt = provider
             .send_transaction(
                 TransactionRequest::default()
@@ -615,7 +615,7 @@ async fn fund_accounts(
             .get_receipt()
             .await?;
         assert!(receipt.status());
-        info!("Deployed Disperse contract on chain {chain_id}");
+        info!("Deployed Disperse contract");
     }
 
     let disperse = Disperse::new(disperse_address, &provider);
@@ -625,20 +625,15 @@ async fn fund_accounts(
         if fee_token.allowance(signer.address(), disperse_address).call().await?
             < fee_token_amount * U256::from(accounts.len())
         {
-            info!("Approving Disperse contract on chain {chain_id} for token {fee_token_address}");
+            info!("Approving Disperse contract for token {fee_token_address}");
             fee_token.approve(disperse_address, U256::MAX).send().await?.get_receipt().await?;
-            info!("Approved Disperse contract on chain {chain_id} for token {fee_token_address}");
+            info!("Approved Disperse contract for token {fee_token_address}");
         }
     }
 
     let mut funded = 0;
     for batch in accounts.chunks(50) {
-        info!(
-            "Funding accounts #{}..{}/{} on chain {chain_id}",
-            funded,
-            funded + batch.len(),
-            accounts.len()
-        );
+        info!("Funding accounts #{}..{}/{}", funded, funded + batch.len(), accounts.len());
 
         let recipients = batch.iter().map(|acc| acc.address).collect::<Vec<_>>();
         let values = std::iter::repeat_n(fee_token_amount, batch.len()).collect::<Vec<_>>();
@@ -660,12 +655,7 @@ async fn fund_accounts(
                 .await?;
         }
 
-        info!(
-            "Funded accounts #{}..{}/{} on chain {chain_id}",
-            funded,
-            funded + batch.len(),
-            accounts.len()
-        );
+        info!("Funded accounts #{}..{}/{}", funded, funded + batch.len(), accounts.len());
         funded += batch.len();
     }
 
