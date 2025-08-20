@@ -29,7 +29,7 @@ use alloy::{
 };
 use clap::Parser;
 use eyre::Context;
-use futures::{FutureExt, TryFutureExt};
+use futures::FutureExt;
 use futures_util::{StreamExt, future::try_join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
@@ -360,7 +360,7 @@ impl StressTester {
                 disperse_address,
             )
             .map(move |result| {
-                result.wrap_err_with(|| format!("funding error for chain {}", chain_id))
+                result.wrap_err_with(|| format!("failed to fund accounts on chain {}", chain_id))
             })
         }))
         .await?;
