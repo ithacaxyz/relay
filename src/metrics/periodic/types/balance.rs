@@ -4,7 +4,7 @@ use crate::{
     chains::Chains,
     metrics::periodic::{MetricCollector, MetricCollectorError},
 };
-use alloy::providers::Provider;
+use alloy::{primitives::U256, providers::Provider};
 use futures_util::StreamExt;
 use metrics::gauge;
 
@@ -32,15 +32,18 @@ impl MetricCollector for BalanceCollector {
                         let (symbol, decimals) = chain
                             .native_symbol()
                             .zip(chain.assets().native().map(|(_, asset)| asset.decimals))
-                            .unwrap_or(("UNKNOWN NATIVE", 18));
+                            .unwrap_or(("ETH", 18));
+
+                        let (div, rem) = balance.div_rem(U256::from(10).pow(U256::from(decimals)));
+                        let balance = f64::from(div) + f64::from(rem) / 10f64.powf(decimals as f64);
+
                         gauge!(
                             "balance",
                             "address" => signer_addr.to_checksum(Some(chain.id())),
                             "chain_id" => chain.id().to_string(),
                             "symbol" => symbol.to_string(),
-                            "decimals" => 10u64.pow(decimals as u32).to_string(),
                         )
-                        .set::<f64>(balance.into())
+                        .set::<f64>(balance)
                     })
                 })
             }
