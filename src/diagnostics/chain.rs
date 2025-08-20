@@ -138,15 +138,15 @@ impl<'a> ChainDiagnostics<'a> {
         );
 
         // Add settler to EIP-712 checks if they exist
-        if let Some(settler_address) = self.chain.settler_address() {
-            if let Some(interop) = self.config.interop.as_ref() {
-                match &interop.settler.implementation {
-                    SettlerImplementation::Simple(_) => {
-                        eip712s.push(("SimpleSettler", settler_address));
-                    }
-                    SettlerImplementation::LayerZero(_) => {
-                        eip712s.push(("LayerZeroSettler", settler_address));
-                    }
+        if let Some(settler_address) = self.chain.settler_address()
+            && let Some(interop) = self.config.interop.as_ref()
+        {
+            match &interop.settler.implementation {
+                SettlerImplementation::Simple(_) => {
+                    eip712s.push(("SimpleSettler", settler_address));
+                }
+                SettlerImplementation::LayerZero(_) => {
+                    eip712s.push(("LayerZeroSettler", settler_address));
                 }
             }
         }
