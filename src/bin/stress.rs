@@ -21,11 +21,12 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, B256, ChainId, U64, U256, address, keccak256, utils::format_ether},
     providers::{
-        Provider, ProviderBuilder,
+        DynProvider, Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
     },
     rpc::types::TransactionRequest,
     sol_types::SolValue,
+    transports::TransportResult,
 };
 use clap::Parser;
 use eyre::Context;
@@ -269,13 +270,31 @@ impl StressTester {
         let health = relay_client.health().await?;
         info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
-        let chain_ids = try_join_all(args.rpc_urls.iter().map(|rpc_url| async move {
-            let provider = ProviderBuilder::new().connect(rpc_url.as_str()).await?.erased();
-            provider.get_chain_id().await
-        }))
+        // Initialize providers
+        let origin_providers = try_join_all(
+            args.origin_rpc_urls
+                .clone()
+                .into_iter()
+                .map(|rpc_url| create_provider(rpc_url, signer.clone())),
+        )
         .await?;
-        let destination_chain_id = chain_ids[0];
-        info!("Output chain is {destination_chain_id}");
+        let destination_provider =
+            create_provider(args.destination_rpc_url.clone(), signer.clone()).await?;
+        let providers = origin_providers
+            .iter()
+            .chain(std::iter::once(&destination_provider))
+            .collect::<Vec<_>>();
+
+        // Gather chain IDs
+        let origin_chain_ids =
+            try_join_all(origin_providers.iter().map(Provider::get_chain_id)).await?;
+        let destination_chain_id = destination_provider.get_chain_id().await?;
+        let chain_ids = origin_chain_ids
+            .iter()
+            .chain(std::iter::once(&destination_chain_id))
+            .copied()
+            .collect::<Vec<_>>();
+        info!("Destination chain is {destination_chain_id}");
 
         // Get capabilities for all chains
         let caps = relay_client
@@ -285,8 +304,9 @@ impl StressTester {
         // Build fee token mapping across all chains
         let fee_token_map = build_fee_token_map(&caps, &chain_ids, args.fee_token).await?;
 
+        // Initialize accounts on destination chain
         info!("Initializing {} accounts", args.accounts);
-        let accounts = futures_util::future::try_join_all((0..args.accounts).map(|acc_number| {
+        let accounts = try_join_all((0..args.accounts).map(|acc_number| {
             let relay_client = relay_client.clone();
             let acc_target = args.accounts;
             let caps = caps.clone();
@@ -333,27 +353,12 @@ impl StressTester {
 
         let disperse_address = CREATE2_DEPLOYER.create2(B256::ZERO, keccak256(&Disperse::BYTECODE));
 
-        let mut providers = Vec::new();
-        for rpc_url in &args.rpc_urls {
-            let provider = ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .filler(NonceFiller::new(CachedNonceManager::default()))
-                .filler(GasFiller)
-                .filler(ChainIdFiller::new(None))
-                .wallet(EthereumWallet::from(signer.0.clone()))
-                .connect(rpc_url.as_str())
-                .await?
-                .erased();
-
-            providers.push(provider);
-        }
-
-        try_join_all(providers.iter().map(|provider| {
+        // Deploy contracts if needed and fund accounts on all chains
+        try_join_all(providers.iter().zip(chain_ids).map(|(provider, chain_id)| {
             let accounts = accounts.clone();
             let signer = signer.clone();
             let fee_token_map = fee_token_map.clone();
             async move {
-                let chain_id = provider.get_chain_id().await?;
                 let fee_token_address = fee_token_map.get(&chain_id)
                     .ok_or_else(|| eyre::eyre!("no fee token mapping for chain {}", chain_id))?;
                 if provider.get_code_at(disperse_address).await?.is_empty() {
@@ -510,6 +515,18 @@ impl StressTester {
     }
 }
 
+async fn create_provider(rpc_url: Url, signer: DynSigner) -> TransportResult<DynProvider> {
+    Ok(ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(NonceFiller::new(CachedNonceManager::default()))
+        .filler(GasFiller)
+        .filler(ChainIdFiller::new(None))
+        .wallet(EthereumWallet::from(signer.0))
+        .connect(rpc_url.as_str())
+        .await?
+        .erased())
+}
+
 /// Checks the settlement status of an interop bundle and handles it accordingly:
 /// - Done: logs success
 /// - Failed: logs error and increments failure counter
@@ -577,9 +594,12 @@ struct Args {
     /// RPC URL of the relay for relay_ namespace calls.
     #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
     relay_url: Url,
-    /// RPC URL of the chain we are testing on.
-    #[arg(long = "rpc-url", value_name = "RPC_URL", required = true)]
-    rpc_urls: Vec<Url>,
+    /// RPC URL of the origin chain
+    #[arg(long = "origin-rpc-url", value_name = "RPC_URL", required = true)]
+    origin_rpc_urls: Vec<Url>,
+    /// RPC URL of the destination chain
+    #[arg(long = "destination-rpc-url", value_name = "RPC_URL", required = true)]
+    destination_rpc_url: Url,
     /// Private key of the account to use for testing.
     ///
     /// This account should have sufficient fee tokens to cover the gas costs of the intents.
