@@ -297,7 +297,8 @@ impl Intent {
     /// Returns all keys authorized in `pre_calls`.
     pub fn pre_authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         let mut all_keys = Vec::with_capacity(self.encodedPreCalls.len());
-        for encoded_precall in &self.encodedPreCalls {
+        for (idx, encoded_precall) in self.encodedPreCalls.iter().enumerate() {
+            tracing::debug!(idx, len = encoded_precall.len(), "decoding precall");
             let pre_call = SignedCall::abi_decode(encoded_precall)?;
             all_keys.extend(pre_call.authorized_keys_from_execution_data()?);
         }
@@ -308,7 +309,9 @@ impl Intent {
     pub fn fund_transfers(&self) -> Result<Vec<(Address, U256)>, alloy::sol_types::Error> {
         self.encodedFundTransfers
             .iter()
-            .map(|transfer| {
+            .enumerate()
+            .map(|(idx, transfer)| {
+                tracing::debug!(idx, len = transfer.len(), "decoding fund transfer");
                 let transfer = Transfer::abi_decode(transfer)?;
                 Ok((transfer.token, transfer.amount))
             })
@@ -380,7 +383,8 @@ impl SignedCall {
     ) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
         let mut permissions: HashMap<B256, Vec<Permission>> = HashMap::default();
 
-        for call in self.calls()? {
+        for (idx, call) in self.calls()?.into_iter().enumerate() {
+            tracing::debug!(idx, len = call.data.len(), "checking permission call");
             // try decoding as a setSpendLimit call first.
             if let Ok(setSpendLimitCall { keyHash, token, period, limit }) =
                 setSpendLimitCall::abi_decode(&call.data)

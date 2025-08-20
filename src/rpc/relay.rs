@@ -1203,7 +1203,13 @@ impl Relay {
                 };
                 let funding_intent =
                     self.build_funding_intent(funding_context, request_key.clone())?;
-                tracing::debug!(chain = %chain, asset = ?asset, "simulating funding intent");
+                tracing::debug!(
+                    chain = %chain, 
+                    asset = ?asset,
+                    calls_len = funding_intent.calls.len(),
+                    has_precalls = !funding_intent.capabilities.pre_calls.is_empty(),
+                    "simulating funding intent"
+                );
                 let escrow_cost = self
                     .prepare_calls_inner(
                         funding_intent,
