@@ -29,7 +29,7 @@ use alloy::{
 };
 use clap::Parser;
 use eyre::Context;
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use futures_util::{StreamExt, future::try_join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
@@ -359,7 +359,9 @@ impl StressTester {
                 args.fee_token_amount,
                 disperse_address,
             )
-            .map_err(move |err| StressError::Funding(chain_id, err))
+            .map(move |result| {
+                result.wrap_err_with(|| format!("funding error for chain {}", chain_id))
+            })
         }))
         .await?;
 
@@ -548,12 +550,6 @@ async fn main() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum StressError {
-    #[error("Funding error for chain {0}: {1}")]
-    Funding(ChainId, eyre::Error),
 }
 
 /// Build a mapping of chain IDs to fee token addresses for a given fee token
