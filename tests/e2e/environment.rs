@@ -58,6 +58,7 @@ pub struct EnvironmentConfig {
     pub block_time: Option<f64>,
     pub transaction_service_config: TransactionServiceConfig,
     pub rebalance_service_config: Option<RebalanceServiceConfig>,
+    pub num_signers: usize,
     /// The default block number to use for forking.
     ///
     /// Negative value represents `latest - num`.
@@ -74,11 +75,9 @@ pub struct EnvironmentConfig {
 impl Default for EnvironmentConfig {
     fn default() -> Self {
         Self {
+            num_signers: 1,
             block_time: None,
-            transaction_service_config: TransactionServiceConfig {
-                num_signers: 1,
-                ..Default::default()
-            },
+            transaction_service_config: TransactionServiceConfig::default(),
             rebalance_service_config: None,
             fork_block_number: None,
             fee_recipient: Address::ZERO,
@@ -411,10 +410,8 @@ impl Environment {
             .await
             .wrap_err("Relay signer load failed")?;
 
-        let signers = DynSigner::derive_from_mnemonic(
-            SIGNERS_MNEMONIC.parse()?,
-            config.transaction_service_config.num_signers,
-        )?;
+        let signers =
+            DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, config.num_signers)?;
 
         let eoa = DynSigner::from_signing_key(
             &std::env::var("TEST_EOA_PRIVATE_KEY").unwrap_or(EOA_PRIVATE_KEY.to_string()),
@@ -561,7 +558,7 @@ impl Environment {
                                 sim_mode: Default::default(),
                                 fees: Default::default(),
                                 signers: SignerConfig {
-                                    num_signers: config.transaction_service_config.num_signers,
+                                    num_signers: config.num_signers,
                                 },
                                 settler_address: Some(settler_addresses[idx]),
                             },

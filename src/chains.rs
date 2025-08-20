@@ -21,7 +21,6 @@ use crate::{
         bridge::{BinanceBridge, Bridge, SimpleBridge},
     },
     metrics::TraceLayer,
-    provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{
@@ -44,10 +43,10 @@ pub struct Chain {
     provider: DynProvider,
     /// Handle to the transaction service.
     transactions: TransactionServiceHandle,
-    /// Whether this is an OP network.
-    is_optimism: bool,
-    /// The chain ID.
-    chain_id: ChainId,
+    /// The chain.
+    chain: alloy_chains::Chain,
+    /// The symbol of the native asset.
+    native_symbol: Option<String>,
     /// The supported assets on the chain.
     assets: Assets,
     /// The simulation mode this chain supports
@@ -68,7 +67,17 @@ impl Chain {
 
     /// Returns the chain id
     pub const fn id(&self) -> ChainId {
-        self.chain_id
+        self.chain.id()
+    }
+
+    /// Returns the [`alloy_chains::Chain`]
+    pub const fn chain(&self) -> &alloy_chains::Chain {
+        &self.chain
+    }
+
+    /// Returns the native symbol of the chain.
+    pub fn native_symbol(&self) -> Option<&str> {
+        self.native_symbol.as_deref()
     }
 
     /// Returns the assets on the chain.
@@ -76,9 +85,14 @@ impl Chain {
         &self.assets
     }
 
-    /// Whether this is an opstack chain.
+    /// Whether this is an OP Stack chain.
     pub const fn is_optimism(&self) -> bool {
-        self.is_optimism
+        self.chain.is_optimism()
+    }
+
+    /// Whether this is an Arbitrum chain.
+    pub const fn is_arbitrum(&self) -> bool {
+        self.chain.is_arbitrum()
     }
 
     /// Returns access to the [`TransactionService`] via its handle.
@@ -150,6 +164,12 @@ impl Chains {
                     eyre::bail!("No signers configured for chain {chain}");
                 }
 
+                info!(
+                    "Using [{}] signers for chain {chain}: {:?}",
+                    desc.signers.num_signers,
+                    chain_signers.iter().map(|s| s.address()).collect::<Vec<_>>()
+                );
+
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(
@@ -164,14 +184,13 @@ impl Chains {
                 .await?;
                 tokio::spawn(service);
 
-                let is_optimism = provider.is_optimism().await?;
                 eyre::Ok((
                     chain.id(),
                     Chain {
                         provider,
                         transactions: handle,
-                        is_optimism,
-                        chain_id: chain.id(),
+                        chain: *chain,
+                        native_symbol: desc.native_symbol.clone(),
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,
                         fees: desc.fees.clone(),

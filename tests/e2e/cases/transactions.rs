@@ -354,7 +354,6 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
     let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(0.2),
         transaction_service_config: TransactionServiceConfig {
-            num_signers,
             // set lower interval to make sure that we hit the pause logic
             balance_check_interval: Duration::from_millis(100),
             // set lower throughput to make sure that transactions are not getting included too
@@ -363,6 +362,7 @@ async fn pause_out_of_funds() -> eyre::Result<()> {
             ..Default::default()
         },
         fork_block_number: pinned_test_fork_block_number(),
+        num_signers,
         ..Default::default()
     })
     .await
@@ -438,7 +438,6 @@ async fn resume_paused() -> eyre::Result<()> {
     let env = Environment::setup_with_config(EnvironmentConfig {
         block_time: Some(0.2),
         transaction_service_config: TransactionServiceConfig {
-            num_signers,
             // set lower interval to make sure that we hit the pause logic
             balance_check_interval: Duration::from_millis(100),
             // set lower throughput to make sure that transactions are not getting included too
@@ -447,6 +446,7 @@ async fn resume_paused() -> eyre::Result<()> {
             ..Default::default()
         },
         fork_block_number: pinned_test_fork_block_number(),
+        num_signers,
         ..Default::default()
     })
     .await
@@ -575,11 +575,8 @@ async fn restart_with_pending() -> eyre::Result<()> {
         },
         ..Default::default()
     };
-    let signers = DynSigner::derive_from_mnemonic(
-        SIGNERS_MNEMONIC.parse()?,
-        config.transaction_service_config.num_signers,
-    )
-    .unwrap();
+    let signers =
+        DynSigner::derive_from_mnemonic(SIGNERS_MNEMONIC.parse()?, config.num_signers).unwrap();
     let env = Environment::setup_with_config(config.clone()).await.unwrap();
     let tx_service_handle =
         env.relay_handle.chains.get(env.chain_id()).unwrap().transactions().clone();
@@ -659,7 +656,6 @@ async fn test_signer_pull_gas() -> eyre::Result<()> {
         block_time: Some(0.5),
         transaction_service_config: TransactionServiceConfig {
             balance_check_interval: Duration::from_millis(100), // Check balance every 100ms
-            num_signers: 1,
             ..Default::default()
         },
         ..Default::default()
