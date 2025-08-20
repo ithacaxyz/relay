@@ -1195,12 +1195,9 @@ impl Relay {
 
                 // If the asset decimals on another chain do not match the asset decimals on the
                 // destination chain, adjust the balance accordingly
-                if let Some(existing_decimals) = existing_decimals
-                    && mapped.decimals != existing_decimals
-                {
-                    let diff = (mapped.decimals as i32) - (existing_decimals as i32);
-                    let factor = U256::from(10u128.pow(diff.unsigned_abs()));
-                    balance = if diff > 0 { balance * factor } else { balance / factor };
+                if let Some(existing_decimals) = existing_decimals {
+                    balance =
+                        adjust_balance_for_decimals(balance, mapped.decimals, existing_decimals);
                 }
 
                 if balance.is_zero() { None } else { Some((chain, mapped.address, balance)) }
@@ -2458,5 +2455,42 @@ impl Relay {
             balance_overrides: Default::default(),
             key: Some(request_key),
         })
+    }
+}
+
+/// Adjusts a balance based on the difference in decimals.
+///
+/// # Example
+/// - USDC on chain A has 6 decimals, balance = 1_000_000 (represents 1 USDC)
+/// - USDC on chain B has 18 decimals
+/// - Result: 1_000_000_000_000_000_000 (represents 1 USDC with 18 decimals)
+fn adjust_balance_for_decimals(balance: U256, from_decimals: u8, to_decimals: u8) -> U256 {
+    let diff = (from_decimals as i32) - (to_decimals as i32);
+    let factor = U256::from(10u128.pow(diff.unsigned_abs()));
+
+    if diff > 0 { balance / factor } else { balance * factor }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn test_adjust_balance_for_decimals() {
+        // Converting from 6 decimals to 18 decimals
+        let balance_6_decimals = U256::from(1_000_000u64);
+        let result = adjust_balance_for_decimals(balance_6_decimals, 6, 18);
+        assert_eq!(result, U256::from(1_000_000_000_000_000_000u128));
+
+        // Converting from 18 decimals to 6 decimals
+        let balance_18_decimals = U256::from(1_000_000_000_000_000_000u128);
+        let result = adjust_balance_for_decimals(balance_18_decimals, 18, 6);
+        assert_eq!(result, U256::from(1_000_000u64));
+
+        // Same decimals, no change
+        let balance = U256::from(123_456_789u64);
+        let result = adjust_balance_for_decimals(balance, 6, 6);
+        assert_eq!(result, balance);
     }
 }
