@@ -593,7 +593,7 @@ struct Args {
     /// RPC URL of the relay for relay_ namespace calls.
     #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
     relay_url: Url,
-    /// RPC URL of the source chain
+    /// RPC URLs of the source chains
     #[arg(long = "src-rpc", value_name = "RPC_URL", required = true)]
     src_rpc: Vec<Url>,
     /// RPC URL of the destination chain
