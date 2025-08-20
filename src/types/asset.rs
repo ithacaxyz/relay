@@ -115,6 +115,42 @@ pub struct AssetMetadata {
     pub decimals: Option<u8>,
 }
 
+/// Asset price, including the currency the price is denominated in, this is currently always USD.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetPrice {
+    /// The currency
+    currency: String,
+    /// The price
+    price: f64,
+}
+
+impl AssetPrice {
+    /// Creates a new price, in USD, from the argument.
+    pub fn from_price(price: f64) -> Self {
+        Self { currency: "USD".to_string(), price }
+    }
+}
+
+/// Asset metadata with price information
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetMetadataWithPrice {
+    /// Asset name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Asset symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// TokenURI if it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    /// Asset decimals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u8>,
+    /// Price information
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<AssetPrice>,
+}
+
 /// Asset type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

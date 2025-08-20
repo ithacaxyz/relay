@@ -13,9 +13,10 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
+        ChainAssetDiffs, Escrow, FundSource, FundingIntentContext, GasEstimate, Health, IERC20,
+        IEscrow, IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
+        MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -1838,15 +1839,26 @@ impl RelayApiServer for Relay {
                         .aggregate()
                         .await?;
 
+                    let price = match self.inner.chains.fee_token(*chain, asset.address.address()) {
+                        Some((uid, _)) => self
+                            .inner
+                            .price_oracle
+                            .usd_price(uid.clone())
+                            .await
+                            .map(AssetPrice::from_price),
+                        None => None,
+                    };
+
                     Ok(Asset7811 {
                         address: asset.address,
                         balance,
                         asset_type: asset.asset_type,
-                        metadata: Some(AssetMetadata {
+                        metadata: Some(AssetMetadataWithPrice {
                             name: Some(name),
                             symbol: Some(symbol),
                             decimals: Some(decimals),
                             uri: None,
+                            price,
                         }),
                     })
                 });
