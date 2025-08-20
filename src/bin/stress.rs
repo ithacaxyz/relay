@@ -271,25 +271,24 @@ impl StressTester {
         info!("Connected to relay at {}, version {}", &args.relay_url, health.version);
 
         // Initialize providers
-        let origin_providers = try_join_all(
-            args.origin_rpc_urls
+        let source_providers = try_join_all(
+            args.src_rpc
                 .clone()
                 .into_iter()
                 .map(|rpc_url| create_provider(rpc_url, signer.clone())),
         )
         .await?;
-        let destination_provider =
-            create_provider(args.destination_rpc_url.clone(), signer.clone()).await?;
-        let providers = origin_providers
+        let destination_provider = create_provider(args.dst_rpc.clone(), signer.clone()).await?;
+        let providers = source_providers
             .iter()
             .chain(std::iter::once(&destination_provider))
             .collect::<Vec<_>>();
 
         // Gather chain IDs
-        let origin_chain_ids =
-            try_join_all(origin_providers.iter().map(Provider::get_chain_id)).await?;
+        let source_chain_ids =
+            try_join_all(source_providers.iter().map(Provider::get_chain_id)).await?;
         let destination_chain_id = destination_provider.get_chain_id().await?;
-        let chain_ids = origin_chain_ids
+        let chain_ids = source_chain_ids
             .iter()
             .chain(std::iter::once(&destination_chain_id))
             .copied()
@@ -594,12 +593,12 @@ struct Args {
     /// RPC URL of the relay for relay_ namespace calls.
     #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
     relay_url: Url,
-    /// RPC URL of the origin chain
-    #[arg(long = "origin-rpc-url", value_name = "RPC_URL", required = true)]
-    origin_rpc_urls: Vec<Url>,
+    /// RPC URL of the source chain
+    #[arg(long = "src-rpc", value_name = "RPC_URL", required = true)]
+    src_rpc: Vec<Url>,
     /// RPC URL of the destination chain
-    #[arg(long = "destination-rpc-url", value_name = "RPC_URL", required = true)]
-    destination_rpc_url: Url,
+    #[arg(long = "dst-rpc", value_name = "RPC_URL", required = true)]
+    dst_rpc: Url,
     /// Private key of the account to use for testing.
     ///
     /// This account should have sufficient fee tokens to cover the gas costs of the intents.
