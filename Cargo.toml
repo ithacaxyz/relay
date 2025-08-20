@@ -13,7 +13,7 @@ path = "src/bin/stress.rs"
 name = "stress"
 
 [dependencies]
-alloy = { version = "1.0.23", features = [
+alloy = { version = "1.0.24", features = [
     "std",
     "essentials",
     "provider-ws",

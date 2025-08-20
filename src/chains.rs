@@ -20,7 +20,6 @@ use crate::{
         bridge::{BinanceBridge, Bridge, SimpleBridge},
     },
     metrics::TraceLayer,
-    provider::ProviderExt,
     signers::DynSigner,
     storage::RelayStorage,
     transactions::{
@@ -43,10 +42,8 @@ pub struct Chain {
     provider: DynProvider,
     /// Handle to the transaction service.
     transactions: TransactionServiceHandle,
-    /// Whether this is an OP network.
-    is_optimism: bool,
-    /// The chain ID.
-    chain_id: ChainId,
+    /// The chain.
+    chain: alloy_chains::Chain,
     /// The supported assets on the chain.
     assets: Assets,
     /// The simulation mode this chain supports
@@ -65,7 +62,7 @@ impl Chain {
 
     /// Returns the chain id
     pub const fn id(&self) -> ChainId {
-        self.chain_id
+        self.chain.id()
     }
 
     /// Returns the assets on the chain.
@@ -73,9 +70,14 @@ impl Chain {
         &self.assets
     }
 
-    /// Whether this is an opstack chain.
+    /// Whether this is an OP Stack chain.
     pub const fn is_optimism(&self) -> bool {
-        self.is_optimism
+        self.chain.is_optimism()
+    }
+
+    /// Whether this is an Arbitrum chain.
+    pub const fn is_arbitrum(&self) -> bool {
+        self.chain.is_arbitrum()
     }
 
     /// Returns access to the [`TransactionService`] via its handle.
@@ -162,14 +164,12 @@ impl Chains {
                 .await?;
                 tokio::spawn(service);
 
-                let is_optimism = provider.is_optimism().await?;
                 eyre::Ok((
                     chain.id(),
                     Chain {
                         provider,
                         transactions: handle,
-                        is_optimism,
-                        chain_id: chain.id(),
+                        chain: *chain,
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,
                         fees: desc.fees.clone(),
