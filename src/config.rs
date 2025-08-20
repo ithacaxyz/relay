@@ -7,7 +7,7 @@ use crate::{
     },
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
-    transactions::MIN_SIGNER_GAS,
+    transactions::{MIN_SIGNER_GAS, TOP_UP_MULTIPLIER},
     types::{AssetUid, Assets, TransactionServiceHandles},
 };
 use alloy::{
@@ -459,6 +459,10 @@ pub struct FeeConfig {
     pub minimum_fee: Option<u64>,
     /// The min signer balance config to use.
     pub signer_balance_config: SignerBalanceConfig,
+    /// The top up multiplier, this configures how much we will top up the signer account by when
+    /// it becomes paused. The funding amount will be [`top_up_multiplier`], times the minimum
+    /// signing balance calculated by [`FeeConfig::minimum_signer_balance`].
+    pub top_up_multiplier: u64,
 }
 
 impl FeeConfig {
@@ -522,6 +526,12 @@ impl FeeConfig {
     pub fn minimum_signer_balance(&self, gas_price: u128) -> U256 {
         self.signer_balance_config.minimum_signer_balance(gas_price)
     }
+
+    /// Returns the amount to top up the signer account by, by multiplying the
+    /// [`SignerBalanceConfig`] with the top up multiplier.
+    pub fn top_up_amount(&self, gas_price: u128) -> U256 {
+        self.minimum_signer_balance(gas_price) * U256::from(self.top_up_multiplier)
+    }
 }
 
 impl Default for FeeConfig {
@@ -530,6 +540,7 @@ impl Default for FeeConfig {
             priority_fee_percentile: EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
             minimum_fee: None,
             signer_balance_config: SignerBalanceConfig::Gas(MIN_SIGNER_GAS),
+            top_up_multiplier: TOP_UP_MULTIPLIER,
         }
     }
 }
@@ -841,6 +852,7 @@ impl Default for TransactionServiceConfig {
 mod tests {
     use super::*;
     use crate::types::{AssetDescriptor, AssetUid};
+    use alloy::primitives::uint;
     use std::collections::HashMap;
 
     #[test]
@@ -998,7 +1010,7 @@ fees:
         assert_eq!(
             config.fees,
             FeeConfig {
-                signer_balance_config: SignerBalanceConfig::Gas(U256::from(100)),
+                signer_balance_config: SignerBalanceConfig::Gas(uint!(100_U256)),
                 ..Default::default()
             }
         );
@@ -1031,7 +1043,7 @@ fees:
         assert_eq!(
             config.fees,
             FeeConfig {
-                signer_balance_config: SignerBalanceConfig::Balance(U256::from(100)),
+                signer_balance_config: SignerBalanceConfig::Balance(uint!(100_U256)),
                 ..Default::default()
             }
         );
@@ -1061,8 +1073,57 @@ sim_mode: trace
             config.fees,
             FeeConfig {
                 signer_balance_config: SignerBalanceConfig::Gas(MIN_SIGNER_GAS),
+                top_up_multiplier: TOP_UP_MULTIPLIER,
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn top_up_multiplier_yaml() {
+        let s = r#"
+endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
+sequencer: https://mainnet-sequencer-dedicated.base.org/
+flashblocks: https://mainnet-preconf.base.org/
+assets:
+  ethereum:
+    # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
+    address: "0x0000000000000000000000000000000000000000"
+    fee_token: true
+  usd-coin:
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    decimals: 6
+    fee_token: false
+    interop: false
+sim_mode: trace
+fees:
+    signer_balance_config:
+        type: gas
+        value: 100
+    top_up_multiplier: 3
+            "#;
+
+        let config = serde_yaml::from_str::<ChainConfig>(s).unwrap();
+        assert_eq!(
+            config.fees,
+            FeeConfig {
+                signer_balance_config: SignerBalanceConfig::Gas(uint!(100_U256)),
+                top_up_multiplier: 3,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn custom_signer_balance_top_up() {
+        let config = FeeConfig {
+            signer_balance_config: SignerBalanceConfig::Gas(uint!(100_U256)),
+            top_up_multiplier: 5,
+            ..Default::default()
+        };
+
+        let gas_price = 2;
+        let top_up_amount = config.top_up_amount(gas_price);
+        assert_eq!(uint!(1000_U256), top_up_amount);
     }
 }

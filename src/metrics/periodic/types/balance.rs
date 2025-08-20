@@ -29,10 +29,16 @@ impl MetricCollector for BalanceCollector {
             for signer_addr in chain.signer_addresses() {
                 requests.push(async move {
                     chain.provider().get_balance(signer_addr).await.inspect(|balance| {
+                        let (symbol, decimals) = chain
+                            .native_symbol()
+                            .zip(chain.assets().native().map(|(_, asset)| asset.decimals))
+                            .unwrap_or(("UNKNOWN NATIVE", 18));
                         gauge!(
                             "balance",
-                            "address"  => signer_addr.to_checksum(Some(chain.id())),
-                            "chain_id" => format!("{}", chain.id())
+                            "address" => signer_addr.to_checksum(Some(chain.id())),
+                            "chain_id" => chain.id().to_string(),
+                            "symbol" => symbol.to_string(),
+                            "decimals" => 10u64.pow(decimals as u32).to_string(),
                         )
                         .set::<f64>(balance.into())
                     })
