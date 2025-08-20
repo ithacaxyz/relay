@@ -21,7 +21,6 @@ use alloy::{
 };
 use eyre::Result;
 use relay::{
-    config::TransactionServiceConfig,
     rpc::RelayApiClient,
     types::{
         Call, IERC20, KeyType, KeyWith712Signer,
@@ -196,15 +195,8 @@ impl MultichainTransferSetup {
     ) -> Result<Self> {
         let num_chains = 3;
         // Set up environment configuration
-        let mut env_config = EnvironmentConfig {
-            num_chains,
-            use_layerzero,
-            transaction_service_config: TransactionServiceConfig {
-                num_signers: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let mut env_config =
+            EnvironmentConfig { num_chains, use_layerzero, num_signers: 1, ..Default::default() };
 
         // Override refund threshold if specified
         if let Some(threshold) = escrow_refund_threshold {

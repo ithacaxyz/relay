@@ -38,7 +38,6 @@ async fn respawn_cli() -> eyre::Result<()> {
                 tx_gas_buffer: Default::default(),
                 database_url: Default::default(),
                 max_pending_transactions: Default::default(),
-                num_signers: Default::default(),
                 signers_mnemonic: mnemonic.parse().unwrap(),
                 funder_key: Some(B256::random().to_string()),
                 service_api_key: Default::default(),
