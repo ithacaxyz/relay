@@ -21,7 +21,7 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, B256, ChainId, U64, U256, address, keccak256, utils::format_ether},
     providers::{
-        Provider, ProviderBuilder,
+        DynProvider, Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
     },
     rpc::types::TransactionRequest,
@@ -56,7 +56,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::mpsc, time::Instant};
-use tracing::{debug, error, info, level_filters::LevelFilter, trace, warn};
+use tracing::{debug, error, info, instrument, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -348,92 +348,16 @@ impl StressTester {
             providers.push(provider);
         }
 
+        // Fund accounts
         try_join_all(providers.iter().map(|provider| {
-            let accounts = accounts.clone();
-            let signer = signer.clone();
-            let fee_token_map = fee_token_map.clone();
-            async move {
-                let chain_id = provider.get_chain_id().await?;
-                let fee_token_address = fee_token_map.get(&chain_id)
-                    .ok_or_else(|| eyre::eyre!("no fee token mapping for chain {}", chain_id))?;
-                if provider.get_code_at(disperse_address).await?.is_empty() {
-                    info!("Deploying Disperse contract on chain {chain_id}");
-                    let receipt: alloy::rpc::types::TransactionReceipt = provider
-                        .send_transaction(
-                            TransactionRequest::default().to(CREATE2_DEPLOYER).input(
-                                (B256::ZERO, &Disperse::BYTECODE).abi_encode_packed().into(),
-                            ),
-                        )
-                        .await?
-                        .get_receipt()
-                        .await?;
-                    assert!(receipt.status());
-                    info!("Deployed Disperse contract on chain {chain_id}");
-                }
-
-                let disperse = Disperse::new(disperse_address, &provider);
-
-                if !fee_token_address.is_zero() {
-                    let fee_token = IERC20Instance::new(*fee_token_address, &provider);
-                    if fee_token.allowance(signer.address(), disperse_address).call().await? < args.fee_token_amount * U256::from(accounts.len()) {
-                        info!("Approving Disperse contract on chain {chain_id} for token {fee_token_address}");
-                        fee_token
-                            .approve(disperse_address, U256::MAX)
-                            .send()
-                            .await?
-                            .get_receipt()
-                            .await?;
-                            info!("Approved Disperse contract on chain {chain_id} for token {fee_token_address}");
-                    }
-                }
-
-                let mut funded = 0;
-                for batch in accounts.chunks(50) {
-                    info!(
-                        "Funding accounts #{}..{}/{} on chain {chain_id}",
-                        funded,
-                        funded + batch.len(),
-                        accounts.len()
-                    );
-
-                    let recipients = batch.iter().map(|acc| acc.address).collect::<Vec<_>>();
-                    let values = std::iter::repeat_n(args.fee_token_amount, batch.len()).collect::<Vec<_>>();
-
-                    if !fee_token_address.is_zero() {
-                        disperse
-                            .disperseToken(
-                                *fee_token_address,
-                                recipients,
-                                values,
-                            )
-                            .send()
-                            .await?
-                            .get_receipt()
-                            .await?;
-                    } else {
-                        disperse
-                            .disperseEther(
-                                recipients,
-                                values,
-                            )
-                            .value(U256::from(batch.len()) * args.fee_token_amount)
-                            .send()
-                            .await?
-                            .get_receipt()
-                            .await?;
-                    }
-
-                    info!(
-                        "Funded accounts #{}..{}/{} on chain {chain_id}",
-                        funded,
-                        funded + batch.len(),
-                        accounts.len()
-                    );
-                    funded += batch.len();
-                }
-
-                Ok::<_, eyre::Error>(())
-            }
+            fund_accounts(
+                provider,
+                accounts.clone(),
+                signer.clone(),
+                fee_token_map.clone(),
+                args.fee_token_amount,
+                disperse_address,
+            )
         }))
         .await?;
 
@@ -662,4 +586,88 @@ async fn build_fee_token_map(
     }
 
     Ok(Arc::new(fee_token_map))
+}
+
+#[instrument(level = "info", skip_all, fields(chain_id = tracing::field::Empty))]
+async fn fund_accounts(
+    provider: &DynProvider,
+    accounts: Vec<StressAccount>,
+    signer: DynSigner,
+    fee_token_map: Arc<HashMap<ChainId, Address>>,
+    fee_token_amount: U256,
+    disperse_address: Address,
+) -> eyre::Result<()> {
+    let chain_id = provider.get_chain_id().await?;
+    tracing::Span::current().record("chain_id", chain_id);
+
+    let fee_token_address = fee_token_map
+        .get(&chain_id)
+        .ok_or_else(|| eyre::eyre!("no fee token mapping for chain {}", chain_id))?;
+    if provider.get_code_at(disperse_address).await?.is_empty() {
+        info!("Deploying Disperse contract on chain {chain_id}");
+        let receipt: alloy::rpc::types::TransactionReceipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .to(CREATE2_DEPLOYER)
+                    .input((B256::ZERO, &Disperse::BYTECODE).abi_encode_packed().into()),
+            )
+            .await?
+            .get_receipt()
+            .await?;
+        assert!(receipt.status());
+        info!("Deployed Disperse contract on chain {chain_id}");
+    }
+
+    let disperse = Disperse::new(disperse_address, &provider);
+
+    if !fee_token_address.is_zero() {
+        let fee_token = IERC20Instance::new(*fee_token_address, &provider);
+        if fee_token.allowance(signer.address(), disperse_address).call().await?
+            < fee_token_amount * U256::from(accounts.len())
+        {
+            info!("Approving Disperse contract on chain {chain_id} for token {fee_token_address}");
+            fee_token.approve(disperse_address, U256::MAX).send().await?.get_receipt().await?;
+            info!("Approved Disperse contract on chain {chain_id} for token {fee_token_address}");
+        }
+    }
+
+    let mut funded = 0;
+    for batch in accounts.chunks(50) {
+        info!(
+            "Funding accounts #{}..{}/{} on chain {chain_id}",
+            funded,
+            funded + batch.len(),
+            accounts.len()
+        );
+
+        let recipients = batch.iter().map(|acc| acc.address).collect::<Vec<_>>();
+        let values = std::iter::repeat_n(fee_token_amount, batch.len()).collect::<Vec<_>>();
+
+        if !fee_token_address.is_zero() {
+            disperse
+                .disperseToken(*fee_token_address, recipients, values)
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+        } else {
+            disperse
+                .disperseEther(recipients, values)
+                .value(U256::from(batch.len()) * fee_token_amount)
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+        }
+
+        info!(
+            "Funded accounts #{}..{}/{} on chain {chain_id}",
+            funded,
+            funded + batch.len(),
+            accounts.len()
+        );
+        funded += batch.len();
+    }
+
+    Ok::<_, eyre::Error>(())
 }
