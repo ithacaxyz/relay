@@ -298,7 +298,8 @@ impl<'a> ChainDiagnostics<'a> {
     async fn verify_assets(&self) -> Result<ChainDiagnosticsResult> {
         let mut errors = Vec::new();
 
-        let assets = self.chain.assets().inner();
+        let assets: Vec<_> =
+            self.chain.assets().iter().filter(|(_, asset)| !asset.address.is_zero()).collect();
 
         if assets.is_empty() {
             return Ok(ChainDiagnosticsResult {
