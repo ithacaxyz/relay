@@ -54,8 +54,8 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 /// Lower bound of gas a signer should be able to afford before getting paused until being funded.
 pub const MIN_SIGNER_GAS: U256 = uint!(10_000_000_U256);
 
-/// Amount to top up when pulling gas (3 x MIN_SIGNER_GAS).
-pub const SIGNER_GAS_TOP_UP: U256 = uint!(30_000_000_U256);
+/// Amount to top up when pulling gas, by default this multiplies the minimum signer balance by 3.
+pub const TOP_UP_MULTIPLIER: u64 = 3;
 
 /// Errors that may occur while sending a transaction.
 #[derive(Debug, thiserror::Error)]
@@ -945,7 +945,7 @@ impl Signer {
     /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
     /// lock liquidity before broadcasting the transaction.
     pub async fn pull_gas(&self, fees: &Eip1559Estimation) -> Result<(), SignerError> {
-        let funding_amount = SIGNER_GAS_TOP_UP * U256::from(fees.max_fee_per_gas);
+        let funding_amount = self.fees.top_up_amount(fees.max_fee_per_gas);
 
         info!(
             amount = %funding_amount,

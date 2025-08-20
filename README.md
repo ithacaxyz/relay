@@ -247,6 +247,9 @@ chains:
             value: 10000000000
         # optional, the minimum fee to set in wei
         minimum_fee: 100
+        # optional, the amount to multiply the min signer balance when determining how much to fund
+        # the account by when it is paused. The default is 3
+        top_up_multiplier: 2
 
 interop:
   settler:
