@@ -14,7 +14,6 @@ pub mod interop;
 pub mod liquidity;
 pub mod metrics;
 pub mod nonce;
-pub mod op;
 pub mod otlp;
 pub mod price;
 pub mod provider;

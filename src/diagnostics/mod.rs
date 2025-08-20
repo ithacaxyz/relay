@@ -133,15 +133,19 @@ pub async fn run_diagnostics(
 #[macro_export]
 macro_rules! process_multicall_results {
     ($errors:expr, $results:expr, $items:expr, $on_success:expr) => {
+        $crate::process_multicall_results!($errors, $results, $items, $on_success, |asset| asset);
+    };
+    ($errors:expr, $results:expr, $items:expr, $on_success:expr, $on_error_name:expr) => {
         assert!(
             $results.len() == $items.len(),
             "multicall result should have returned the same number of elements"
         );
-        for (result, (name, address)) in $results.into_iter().zip($items) {
+        for (result, (uid, asset)) in $results.into_iter().zip($items) {
             match result {
-                Ok(value) => $on_success(value, (name, address)),
+                Ok(value) => $on_success(value, (uid, asset)),
                 Err(err) => {
-                    $errors.push(format!("error on calling {name}@{address:?}: {err}"));
+                    $errors
+                        .push(format!("error on calling {uid}@{:?}: {err}", $on_error_name(asset)));
                 }
             }
         }

@@ -2,8 +2,8 @@
 use crate::{
     config::RelayConfig,
     constants::{
-        DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS,
-        INTENT_GAS_BUFFER, TX_GAS_BUFFER,
+        DEFAULT_MAX_TRANSACTIONS, DEFAULT_RPC_DEFAULT_MAX_CONNECTIONS, INTENT_GAS_BUFFER,
+        TX_GAS_BUFFER,
     },
     spawn::try_spawn_with_args,
 };
@@ -100,10 +100,6 @@ pub struct Args {
     /// The mnemonic to use for deriving transaction signers.
     #[arg(long = "signers-mnemonic", value_name = "MNEMONIC", env = "RELAY_MNEMONIC")]
     pub signers_mnemonic: Mnemonic<English>,
-    /// The number of signers to derive from mnemonic and use to send transactions.
-    #[arg(long = "num-signers", value_name = "NUM", default_value_t = DEFAULT_NUM_SIGNERS)]
-    // TODO(mattsse): remove
-    pub num_signers: usize,
     /// The funder signing key (hex private key or KMS ARN).
     #[arg(
         long = "funder-signing-key",

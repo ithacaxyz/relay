@@ -12,6 +12,7 @@ pub struct AddFaucetFundsParameters {
     /// The address to send funds to.
     pub address: Address,
     /// The chain ID where the funds should be added.
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: ChainId,
     /// The amount of funds to add (in wei for native tokens).
     pub value: U256,

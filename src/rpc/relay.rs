@@ -260,7 +260,7 @@ impl Relay {
         fees: &Eip1559Estimation,
         gas_estimate: &GasEstimate,
     ) -> Result<U256, RelayError> {
-        // Include the L1 DA fees if we're on an OP rollup.
+        // Include the L1 DA fees if we're on an OP or Arbitrum rollup.
         let fee = if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
@@ -294,7 +294,19 @@ impl Relay {
                 .encode(&mut buf);
             }
 
-            chain.provider().estimate_l1_fee(buf.into()).await?
+            chain.provider().estimate_l1_op_fee(buf.into()).await?
+        } else if chain.is_arbitrum() {
+            chain
+                .provider()
+                .estimate_l1_arb_fee(
+                    chain.id(),
+                    self.orchestrator(),
+                    gas_estimate.tx,
+                    *fees,
+                    auth,
+                    intent.encode_execute(),
+                )
+                .await?
         } else {
             U256::ZERO
         };

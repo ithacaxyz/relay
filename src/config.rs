@@ -802,8 +802,6 @@ impl LayerZeroConfig {
 /// Configuration for transaction service.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransactionServiceConfig {
-    /// Number of signers to derive from mnemonic and use for sending transactions.
-    pub num_signers: usize,
     /// Maximum number of transactions that can be pending at any given time.
     pub max_pending_transactions: usize,
     /// Maximum number of pending transactions that can be handled by a single signer.
@@ -828,7 +826,6 @@ pub struct TransactionServiceConfig {
 impl Default for TransactionServiceConfig {
     fn default() -> Self {
         Self {
-            num_signers: DEFAULT_NUM_SIGNERS,
             max_pending_transactions: DEFAULT_MAX_TRANSACTIONS,
             max_transactions_per_signer: 16,
             balance_check_interval: Duration::from_secs(5),
