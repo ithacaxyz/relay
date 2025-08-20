@@ -137,10 +137,8 @@ impl<'a> ChainDiagnostics<'a> {
             |implementation, _| eip712s.push(("IthacaAccount", implementation))
         );
 
-        // Add settler to EIP-712 checks
-        // Check chain-specific settler if configured
+        // Add settler to EIP-712 checks if they exist
         if let Some(settler_address) = self.chain.settler_address() {
-            // Determine settler type from global config
             if let Some(interop) = self.config.interop.as_ref() {
                 match &interop.settler.implementation {
                     SettlerImplementation::Simple(_) => {
