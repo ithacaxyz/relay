@@ -168,18 +168,10 @@ fn validate_chain_configs(
             "Chain {src_chain_id} should be connected to chain {dst_chain_id} but chain {dst_chain_id} has no LayerZero endpoint ID configured"
         ))?;
 
-    // Get settler address for source chain
-    let src_chain =
-        chains.get(src_chain_id).ok_or_else(|| format!("Chain {src_chain_id} not found"))?;
-
-    let settler_address = src_chain
-        .settler_address()
-        .ok_or_else(|| format!("Chain {src_chain_id} has no settler_address configured"))?;
-
     Ok(ChainConnectionConfig {
         src_endpoint_address: *src_endpoint_address,
         dst_eid: *dst_eid,
-        settler_address,
+        settler_address: chains.settler_address(src_chain_id).map_err(|e| e.to_string())?,
     })
 }
 

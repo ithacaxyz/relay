@@ -854,51 +854,69 @@ mod tests {
         assert_eq!(from_yaml.transactions, config.transactions);
     }
 
-
     #[test]
     fn test_config_v22() {
         let s = include_str!("../tests/assets/config/v22.yaml");
         let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
-        
+
         // Verify that chains have settler addresses based on whether they have interop tokens
         for (chain, chain_config) in &config.chains {
             // Chain 1 (mainnet) has interop tokens, so it should have a settler address
             if chain.id() == 1 {
-                assert!(chain_config.settler_address.is_some(), "Chain 1 should have a settler address");
+                assert!(
+                    chain_config.settler_address.is_some(),
+                    "Chain 1 should have a settler address"
+                );
                 assert_eq!(
                     chain_config.settler_address.unwrap().to_string(),
                     "0x1111111111111111111111111111111111111111"
                 );
                 // Verify it actually has interop tokens
-                assert!(chain_config.assets.interop_iter().count() > 0, "Chain 1 should have interop tokens");
+                assert!(
+                    chain_config.assets.interop_iter().count() > 0,
+                    "Chain 1 should have interop tokens"
+                );
             }
             // Chain 10 (optimism) has interop tokens, so it should have a settler address
             else if chain.id() == 10 {
-                assert!(chain_config.settler_address.is_some(), "Chain 10 should have a settler address");
+                assert!(
+                    chain_config.settler_address.is_some(),
+                    "Chain 10 should have a settler address"
+                );
                 assert_eq!(
                     chain_config.settler_address.unwrap().to_string(),
                     "0x2222222222222222222222222222222222222222"
                 );
                 // Verify it actually has interop tokens
-                assert!(chain_config.assets.interop_iter().count() > 0, "Chain 10 should have interop tokens");
+                assert!(
+                    chain_config.assets.interop_iter().count() > 0,
+                    "Chain 10 should have interop tokens"
+                );
             }
             // Chain 42161 (arbitrum) has no interop tokens, so settler_address should be None
             else if chain.id() == 42161 {
-                assert!(chain_config.settler_address.is_none(), "Chain 42161 should not have a settler address");
+                assert!(
+                    chain_config.settler_address.is_none(),
+                    "Chain 42161 should not have a settler address"
+                );
                 // Verify it has no interop tokens
-                assert_eq!(chain_config.assets.interop_iter().count(), 0, "Chain 42161 should not have interop tokens");
+                assert_eq!(
+                    chain_config.assets.interop_iter().count(),
+                    0,
+                    "Chain 42161 should not have interop tokens"
+                );
             }
         }
-        
+
         // Verify LayerZero config no longer has settler_address
-        if let Some(interop) = &config.interop {
-            if let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation {
-                // This would fail to compile if settler_address field existed
-                let _ = &lz_config.endpoint_ids;
-                let _ = &lz_config.endpoint_addresses;
-            }
+        if let Some(interop) = &config.interop
+            && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
+        {
+            // This would fail to compile if settler_address field existed
+            let _ = &lz_config.endpoint_ids;
+            let _ = &lz_config.endpoint_addresses;
         }
-        
+
         // Test round-trip serialization
         let yaml = serde_yaml::to_string(&config).unwrap();
         let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();

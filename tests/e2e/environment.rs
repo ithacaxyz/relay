@@ -547,26 +547,28 @@ impl Environment {
         let config = RelayConfig::default()
             .with_port(0)
             .with_metrics_port(0)
-            .with_chains(HashMap::from_iter(chain_ids.iter().enumerate().zip(endpoints.into_iter()).map(
-                |((idx, chain_id), endpoint)| {
-                    (
-                        Chain::from_id(*chain_id),
-                        ChainConfig {
-                            endpoint,
-                            assets: assets.clone(),
-                            native_symbol: None,
-                            sequencer: None,
-                            flashblocks: None,
-                            sim_mode: Default::default(),
-                            fees: Default::default(),
-                            signers: SignerConfig {
-                                num_signers: config.transaction_service_config.num_signers,
+            .with_chains(HashMap::from_iter(
+                chain_ids.iter().enumerate().zip(endpoints.into_iter()).map(
+                    |((idx, chain_id), endpoint)| {
+                        (
+                            Chain::from_id(*chain_id),
+                            ChainConfig {
+                                endpoint,
+                                assets: assets.clone(),
+                                native_symbol: None,
+                                sequencer: None,
+                                flashblocks: None,
+                                sim_mode: Default::default(),
+                                fees: Default::default(),
+                                signers: SignerConfig {
+                                    num_signers: config.transaction_service_config.num_signers,
+                                },
+                                settler_address: Some(settler_addresses[idx]),
                             },
-                            settler_address: Some(settler_addresses[idx]),
-                        },
-                    )
-                },
-            )))
+                        )
+                    },
+                ),
+            ))
             .with_quote_ttl(Duration::from_secs(60))
             .with_rate_ttl(Duration::from_secs(300))
             .with_signers_mnemonic(SIGNERS_MNEMONIC.parse().unwrap())
