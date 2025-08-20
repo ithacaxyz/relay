@@ -142,6 +142,12 @@ impl Chains {
                     eyre::bail!("No signers configured for chain {chain}");
                 }
 
+                info!(
+                    "Using [{}] signers for chain {chain}: {:?}",
+                    desc.signers.num_signers,
+                    chain_signers.iter().map(|s| s.address()).collect::<Vec<_>>()
+                );
+
                 let provider =
                     try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
                 let (service, handle) = TransactionService::new(

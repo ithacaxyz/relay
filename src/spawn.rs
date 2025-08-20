@@ -106,6 +106,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         config.max_signer_count(),
     )?;
     let signer_addresses = signers.iter().map(|signer| signer.address()).collect::<Vec<_>>();
+    info!("Using [{}] signers: {signer_addresses:?}", config.max_signer_count());
 
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
