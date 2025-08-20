@@ -50,6 +50,11 @@ impl Assets {
         self.0.iter()
     }
 
+    /// Get a reference to the inner [`HashMap`].
+    pub const fn inner(&self) -> &HashMap<AssetUid, AssetDescriptor> {
+        &self.0
+    }
+
     /// Get assets relayable across chains.
     pub fn interop_tokens(&self) -> Vec<(AssetUid, AssetDescriptor)> {
         self.interop_iter().map(|(a, b)| (a.clone(), b.clone())).collect()
