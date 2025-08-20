@@ -47,6 +47,8 @@ pub struct Chain {
     is_optimism: bool,
     /// The chain ID.
     chain_id: ChainId,
+    /// The symbol of the native asset.
+    native_symbol: Option<String>,
     /// The supported assets on the chain.
     assets: Assets,
     /// The simulation mode this chain supports
@@ -66,6 +68,11 @@ impl Chain {
     /// Returns the chain id
     pub const fn id(&self) -> ChainId {
         self.chain_id
+    }
+
+    /// Returns the native symbol of the chain.
+    pub fn native_symbol(&self) -> Option<&str> {
+        self.native_symbol.as_deref()
     }
 
     /// Returns the assets on the chain.
@@ -170,6 +177,7 @@ impl Chains {
                         transactions: handle,
                         is_optimism,
                         chain_id: chain.id(),
+                        native_symbol: desc.native_symbol.clone(),
                         assets: desc.assets.clone(),
                         sim_mode: desc.sim_mode,
                         fees: desc.fees.clone(),
