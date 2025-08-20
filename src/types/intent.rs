@@ -431,7 +431,9 @@ pub trait SignedCalls {
 
     /// Returns the decoded calls from `executionData`.
     fn calls(&self) -> Result<Vec<Call>, alloy::sol_types::Error> {
-        <Vec<Call>>::abi_decode(self.execution_data())
+        let data = self.execution_data();
+        tracing::debug!(len = data.len(), "decoding execution data");
+        <Vec<Call>>::abi_decode(data)
     }
 
     /// Returns all keys authorized in `executionData`.

@@ -1020,6 +1020,7 @@ impl Relay {
         intent_kind: Option<IntentKind>,
     ) -> RpcResult<PrepareCallsResponse> {
         // Checks calls and precall calls in the request
+        tracing::debug!(pre_calls = request.capabilities.pre_calls.len(), "checking calls");
         request.check_calls(self.delegation_implementation())?;
 
         let provider = self.provider(request.chain_id)?;
@@ -1200,9 +1201,12 @@ impl Relay {
                     output_intent_digest: B256::with_last_byte(1),
                     output_chain_id: destination_chain_id,
                 };
+                let funding_intent =
+                    self.build_funding_intent(funding_context, request_key.clone())?;
+                tracing::debug!(chain = %chain, asset = ?asset, "simulating funding intent");
                 let escrow_cost = self
                     .prepare_calls_inner(
-                        self.build_funding_intent(funding_context, request_key.clone())?,
+                        funding_intent,
                         // note(onbjerg): its ok the leaf isnt correct here for simulation
                         Some(IntentKind::MultiInput {
                             leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },

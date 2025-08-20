@@ -250,7 +250,8 @@ impl PrepareCallsParameters {
         }
 
         // Ensure precalls only have valid calls
-        for precall in &self.capabilities.pre_calls {
+        for (idx, precall) in self.capabilities.pre_calls.iter().enumerate() {
+            tracing::debug!(idx, len = precall.executionData.len(), "checking precall");
             if has_unallowed(&precall.calls().map_err(RelayError::from)?)? {
                 return Err(IntentError::UnallowedPreCall.into());
             }
