@@ -11,6 +11,13 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
 };
 
+/// Nitro implementation doesn't account for authorization list when
+/// constructing the message to calculate compressed size from.
+/// Because of this, we add a 5% safety margin to the gas estimate.
+///
+/// https://github.com/OffchainLabs/nitro/blob/90570c4bd330bd23321b9e4ca9e41440ab544d2a/execution/nodeInterface/NodeInterface.go#L490-L515
+const ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT: u64 = 5;
+
 /// Extension trait for [`Provider`] adding helpers for interacting with rollups.
 pub trait ProviderExt: Provider {
     /// Estimates L1 DA fee of an OP Stack rollup for a given encoded unsigned transaction by using
@@ -47,27 +54,25 @@ pub trait ProviderExt: Provider {
     {
         async move {
             let contract = ArbNodeInterface::new(ARB_NODE_INTERFACE_ADDRESS, self);
-            let mut call = contract
+
+            contract
                 .gasEstimateL1Component(to, false, calldata)
                 .chain_id(chain_id)
                 .nonce(rand::random())
                 .gas(gas_limit)
                 .max_fee_per_gas(fees.max_fee_per_gas)
-                .max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
-
-            // Note: Nitro implementation doesn't account for authorization list when constructing
-            // the message to calculate compressed size from.
-            //
-            // https://github.com/OffchainLabs/nitro/blob/90570c4bd330bd23321b9e4ca9e41440ab544d2a/execution/nodeInterface/NodeInterface.go#L490-L515
-            if let Some(auth) = auth {
-                call = call.authorization_list(vec![auth]);
-            }
-
-            call.call()
+                .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
+                .call()
                 .await
                 .map(|components| {
-                    U256::from(components.l1BaseFeeEstimate)
-                        * U256::from(components.gasEstimateForL1)
+                    let mut gas_estimate = components.gasEstimateForL1;
+
+                    if auth.is_some() {
+                        gas_estimate =
+                            gas_estimate * (100 + ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT) / 100;
+                    }
+
+                    U256::from(components.l1BaseFeeEstimate) * U256::from(gas_estimate)
                 })
                 .map_err(TransportErrorKind::custom)
         }
