@@ -238,6 +238,8 @@ pub struct LayerZeroInfrastructureDeployment {
     pub relay_config: relay::config::LayerZeroConfig,
     /// Configuration for test environment
     pub test_config: LayerZeroTestConfig,
+    /// LayerZero settler addresses for each chain
+    pub settlers: Vec<Address>,
 }
 
 /// Deploy LayerZero infrastructure on all chains
@@ -367,13 +369,9 @@ pub async fn deploy_layerzero_infrastructure(
         endpoint_addresses.insert(chain_id, deployment.endpoint);
     }
 
-    let relay_config = relay::config::LayerZeroConfig {
-        endpoint_ids,
-        endpoint_addresses,
-        settler_address: settlers.first().copied().unwrap(),
-    };
+    let relay_config = relay::config::LayerZeroConfig { endpoint_ids, endpoint_addresses };
 
     let test_config = LayerZeroTestConfig { endpoints, escrows, eids };
 
-    Ok(LayerZeroInfrastructureDeployment { relay_config, test_config })
+    Ok(LayerZeroInfrastructureDeployment { relay_config, test_config, settlers })
 }

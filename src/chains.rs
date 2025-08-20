@@ -15,6 +15,7 @@ use crate::{
     config::{FeeConfig, RelayConfig, SimMode},
     constants::DEFAULT_POLL_INTERVAL,
     error::RelayError,
+    interop::SettlementError,
     liquidity::{
         LiquidityTracker, RebalanceService,
         bridge::{BinanceBridge, Bridge, SimpleBridge},
@@ -55,6 +56,8 @@ pub struct Chain {
     fees: FeeConfig,
     /// The active signers for this chain.
     signers: Vec<DynSigner>,
+    /// The settler address for this chain (if any).
+    settler_address: Option<Address>,
 }
 
 impl Chain {
@@ -101,6 +104,11 @@ impl Chain {
     /// Returns how many signers are configured for this chain.
     pub fn signers_count(&self) -> usize {
         self.signers.len()
+    }
+
+    /// Returns the settler address for this chain (if any).
+    pub const fn settler_address(&self) -> Option<Address> {
+        self.settler_address
     }
 }
 
@@ -168,6 +176,7 @@ impl Chains {
                         sim_mode: desc.sim_mode,
                         fees: desc.fees.clone(),
                         signers: chain_signers,
+                        settler_address: desc.settler_address,
                     },
                 ))
             }))
@@ -358,6 +367,16 @@ impl Chains {
     /// Get the interop service handle.
     pub fn interop(&self) -> Option<&InteropServiceHandle> {
         self.interop.as_ref()
+    }
+
+    /// Get the settler address for a chain.
+    ///
+    /// Returns an error if the chain is not supported or if the chain has no settler address
+    /// configured.
+    pub fn settler_address(&self, chain_id: ChainId) -> Result<Address, SettlementError> {
+        let chain_obj = self.get(chain_id).ok_or(SettlementError::UnsupportedChain(chain_id))?;
+
+        chain_obj.settler_address().ok_or_else(|| SettlementError::MissingSettlerAddress(chain_id))
     }
 }
 

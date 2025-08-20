@@ -22,7 +22,6 @@ impl LZChainConfigs {
         endpoint_ids: &HashMap<ChainId, EndpointId>,
         endpoint_addresses: &HashMap<ChainId, Address>,
         providers: &HashMap<ChainId, DynProvider>,
-        settler_address: Address,
     ) -> Self {
         let configs: HashMap<ChainId, LZChainConfig> = endpoint_ids
             .iter()
@@ -36,7 +35,6 @@ impl LZChainConfigs {
                         endpoint_id: *endpoint_id,
                         endpoint_address: *endpoint_address,
                         provider: provider.clone(),
-                        settler_address,
                     },
                 ))
             })

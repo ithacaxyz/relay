@@ -441,8 +441,8 @@ impl Relay {
 
         // For MultiOutput intents, set the settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
-            let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
-            intent_to_sign.settler = interop.settler_address();
+            self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
+            intent_to_sign.settler = self.inner.chains.settler_address(chain.id())?;
             intent_to_sign.settlerContext = settler_context.clone();
         }
 
@@ -2334,6 +2334,7 @@ impl Relay {
 
     /// Creates an escrow struct for funding intents.
     fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
+        self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
         let salt = B192::random().as_slice()[..ESCROW_SALT_LENGTH].try_into().map_err(|_| {
             RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
         })?;
@@ -2351,12 +2352,7 @@ impl Relay {
             depositor: context.eoa,
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
-            settler: self
-                .inner
-                .chains
-                .interop()
-                .ok_or(QuoteError::MultichainDisabled)?
-                .settler_address(),
+            settler: self.inner.chains.settler_address(context.chain_id)?,
             sender: self.orchestrator(),
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),

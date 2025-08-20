@@ -48,6 +48,16 @@ impl<'a> ChainDiagnostics<'a> {
         let (contract_diagnostics, balance_diagnostics, asset_diagnostics) =
             tokio::try_join!(self.verify_contracts(), self.check_balances(), self.verify_assets())?;
 
+        // Validate interop configuration for this chain
+        let interop_config = (self.chain.assets().interop_iter().next().is_some()
+            && self.chain.settler_address().is_none())
+        .then(|| {
+            format!(
+                "Chain {} has interop tokens but no settler_address configured",
+                self.chain.id()
+            )
+        });
+
         Ok(ChainDiagnosticsResult {
             chain_id: self.chain.id(),
             warnings: contract_diagnostics
@@ -61,6 +71,7 @@ impl<'a> ChainDiagnostics<'a> {
                 .into_iter()
                 .chain(balance_diagnostics.errors)
                 .chain(asset_diagnostics.errors)
+                .chain(interop_config)
                 .collect(),
         })
     }
@@ -127,13 +138,17 @@ impl<'a> ChainDiagnostics<'a> {
         );
 
         // Add settler to EIP-712 checks
-        if let Some(settler) = self.config.interop.as_ref().map(|i| &i.settler.implementation) {
-            match settler {
-                SettlerImplementation::Simple(_) => {
-                    eip712s.push(("SimpleSettler", settler.address()));
-                }
-                SettlerImplementation::LayerZero(_) => {
-                    eip712s.push(("LayerZeroSettler", settler.address()));
+        // Check chain-specific settler if configured
+        if let Some(settler_address) = self.chain.settler_address() {
+            // Determine settler type from global config
+            if let Some(interop) = self.config.interop.as_ref() {
+                match &interop.settler.implementation {
+                    SettlerImplementation::Simple(_) => {
+                        eip712s.push(("SimpleSettler", settler_address));
+                    }
+                    SettlerImplementation::LayerZero(_) => {
+                        eip712s.push(("LayerZeroSettler", settler_address));
+                    }
                 }
             }
         }
