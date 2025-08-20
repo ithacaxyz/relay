@@ -32,7 +32,7 @@ impl MetricCollector for BalanceCollector {
                         let (symbol, decimals) = chain
                             .native_symbol()
                             .zip(chain.assets().native().map(|(_, asset)| asset.decimals))
-                            .unwrap_or(("ETH", 18));
+                            .unwrap_or(("UNKNOWN NATIVE", 18));
                         gauge!(
                             "balance",
                             "address" => signer_addr.to_checksum(Some(chain.id())),
