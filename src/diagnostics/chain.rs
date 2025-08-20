@@ -293,22 +293,15 @@ impl<'a> ChainDiagnostics<'a> {
         Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
     }
 
-    /// Verify non-interop assets are accessible and have valid contracts.
-    ///
-    /// Interop assets are checked in the interop/settlement diagnostics when querying for the
-    /// funder contract balance.
+    /// Verify all assets are accessible, have valid contracts, and config decimals match the
+    /// chain's decimals.
     async fn verify_assets(&self) -> Result<ChainDiagnosticsResult> {
         let mut errors = Vec::new();
 
-        // Get all non-interop assets
-        let non_interop_assets: Vec<_> = self
-            .chain
-            .assets()
-            .iter()
-            .filter(|(_, asset)| !asset.interop && !asset.address.is_zero())
-            .collect();
+        let assets: Vec<_> =
+            self.chain.assets().iter().filter(|(_, asset)| !asset.address.is_zero()).collect();
 
-        if non_interop_assets.is_empty() {
+        if assets.is_empty() {
             return Ok(ChainDiagnosticsResult {
                 chain_id: self.chain.id(),
                 warnings: vec![],
@@ -316,9 +309,9 @@ impl<'a> ChainDiagnostics<'a> {
             });
         }
 
-        // Create a multicall to check decimals for each non-interop asset
+        // Create a multicall to check decimals for each asset
         let mut multicall = self.chain.provider().multicall().dynamic::<decimalsCall>();
-        for (_, asset) in &non_interop_assets {
+        for (_, asset) in assets.iter() {
             multicall = multicall.add_call_dynamic(
                 CallItem::from(IERC20::new(asset.address, &self.chain.provider()).decimals())
                     .allow_failure(true),
@@ -327,13 +320,13 @@ impl<'a> ChainDiagnostics<'a> {
 
         info!(
             chain_id = %self.chain.id(),
-            assets = non_interop_assets.len(),
-            "Verifying non-interop assets and their decimals"
+            assets = assets.len(),
+            "Verifying assets and their decimals"
         );
         crate::process_multicall_results!(
             errors,
             multicall.aggregate3().await?,
-            non_interop_assets,
+            assets,
             |chain_decimals, (uid, config_asset): (_, &AssetDescriptor)| {
                 if config_asset.decimals != chain_decimals {
                     errors.push(format!(
@@ -347,7 +340,7 @@ impl<'a> ChainDiagnostics<'a> {
                     chain_id = %self.chain.id(),
                     asset = %uid,
                     address = %config_asset.address,
-                    "Non-interop asset verified"
+                    "Asset verified"
                 );
             },
             |asset: &AssetDescriptor| asset.address
