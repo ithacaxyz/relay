@@ -25,12 +25,12 @@ pub trait MetricCollector: Debug {
 pub async fn spawn_periodic_collectors(chains: Arc<Chains>) -> Result<(), MetricCollectorError> {
     PeriodicJob::launch_task(
         BalanceCollector::new(chains.clone()),
-        tokio::time::interval(Duration::from_secs(5)),
+        tokio::time::interval(Duration::from_secs(30)),
     );
 
     PeriodicJob::launch_task(
         LatencyCollector::new(chains),
-        tokio::time::interval(Duration::from_secs(5)),
+        tokio::time::interval(Duration::from_secs(30)),
     );
 
     Ok(())

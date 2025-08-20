@@ -67,6 +67,11 @@ impl Chain {
         self.chain.id()
     }
 
+    /// Returns the [`alloy_chains::Chain`]
+    pub const fn chain(&self) -> &alloy_chains::Chain {
+        &self.chain
+    }
+
     /// Returns the native symbol of the chain.
     pub fn native_symbol(&self) -> Option<&str> {
         self.native_symbol.as_deref()
