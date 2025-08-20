@@ -1161,11 +1161,16 @@ impl Relay {
         amount: U256,
         total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
-        let mut remaining = amount.saturating_sub(existing);
+        let existing = assets.asset_on_chain(destination_chain_id, requested_asset);
+        let existing_balance = existing.map(|asset| asset.balance).unwrap_or_default();
+        let mut remaining = amount.saturating_sub(existing_balance);
         if remaining.is_zero() {
             return Ok(Some(vec![]));
         }
+
+        let existing_decimals = existing
+            .and_then(|asset| asset.metadata.as_ref())
+            .and_then(|metadata| metadata.decimals);
 
         // collect (chain, balance) for all other chains that have >0 balance
         let mut sources: Vec<(ChainId, Address, U256)> = assets
@@ -1176,19 +1181,29 @@ impl Relay {
                     return None;
                 }
 
-                let mapped = self
-                    .inner
-                    .chains
-                    .map_interop_asset(destination_chain_id, chain, requested_asset.address())?
-                    .address;
+                let mapped = self.inner.chains.map_interop_asset(
+                    destination_chain_id,
+                    chain,
+                    requested_asset.address(),
+                )?;
 
-                let balance = assets
+                let mut balance = assets
                     .iter()
-                    .find(|a| a.address.address() == mapped)
+                    .find(|a| a.address.address() == mapped.address)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
-                if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
+                // If the asset decimals on another chain do not match the asset decimals on the
+                // destination chain, adjust the balance accordingly
+                if let Some(existing_decimals) = existing_decimals
+                    && mapped.decimals != existing_decimals
+                {
+                    let diff = (mapped.decimals as i32) - (existing_decimals as i32);
+                    let factor = U256::from(10u128.pow(diff.unsigned_abs()));
+                    balance = if diff > 0 { balance * factor } else { balance / factor };
+                }
+
+                if balance.is_zero() { None } else { Some((chain, mapped.address, balance)) }
             })
             .collect();
 
