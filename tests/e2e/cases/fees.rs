@@ -10,7 +10,6 @@ use alloy::{
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
-    config::TransactionServiceConfig,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
@@ -25,10 +24,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
     let fee_recipient = Address::random();
     let env = Environment::setup_with_config(EnvironmentConfig {
         fee_recipient,
-        transaction_service_config: TransactionServiceConfig {
-            num_signers: 1,
-            ..Default::default()
-        },
+        num_signers: 1,
         ..Default::default()
     })
     .await?;
