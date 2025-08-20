@@ -663,5 +663,5 @@ async fn fund_accounts(
         funded += batch.len();
     }
 
-    Ok::<_, eyre::Error>(())
+    Ok(())
 }
