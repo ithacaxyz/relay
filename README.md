@@ -100,6 +100,8 @@ funder: "0x"
 chains:
   ethereum:
     endpoint: "wss://eth.rpc.com/"
+    # Settler address is required for chains with interop-enabled assets
+    settler_address: "0x1234567890123456789012345678901234567890"
     assets:
       ethereum:
         address: "0x0000000000000000000000000000000000000000"
@@ -112,6 +114,8 @@ chains:
         interop: true
   optimism:
     endpoint: "wss://op.rpc.com/"
+    # Each chain can have its own settler address
+    settler_address: "0x0987654321098765432109876543210987654321"
     assets:
       ethereum:
         address: "0x0000000000000000000000000000000000000000"
@@ -127,7 +131,8 @@ interop:
   settler:
     wait_verification_timeout: 100000
     simple:
-      settler_address: "0x"
+      # Note: settler_address has been moved to per-chain configuration
+      private_key: "0x..."  # Optional: private key for simple settler
 ```
 
 ##### Cross environment
@@ -169,6 +174,8 @@ chains:
   # relayed across chains on different environments.
   sepolia:
     endpoint: "wss://sepolia.rpc.com/"
+    # Settler address for Sepolia testnet
+    settler_address: "0xabcdef1234567890abcdef1234567890abcdef12"
     assets:
       teth:
         address: "0x0000000000000000000000000000000000000000"
@@ -180,6 +187,8 @@ chains:
         interop: true
   base-sepolia:
     endpoint: "wss://base-sepolia.rpc.com/"
+    # Settler address for Base Sepolia testnet
+    settler_address: "0x1234567890abcdef1234567890abcdef12345678"
     assets:
       teth:
         address: "0x0000000000000000000000000000000000000000"
@@ -194,7 +203,8 @@ interop:
   settler:
     wait_verification_timeout: 100000
     simple:
-      settler_address: "0x"
+      # Note: settler_address has been moved to per-chain configuration
+      private_key: "0x..."  # Optional: private key for simple settler
 ```
 
 ##### Chain-specific fee Configuration
@@ -213,6 +223,7 @@ funder: "0x"
 chains:
   ethereum:
     endpoint: "wss://eth.rpc.com/"
+    settler_address: "0x1234567890123456789012345678901234567890"
     assets:
       ethereum:
         address: "0x0000000000000000000000000000000000000000"
@@ -231,6 +242,7 @@ chains:
         minimum_fee: 100
   optimism:
     endpoint: "wss://op.rpc.com/"
+    settler_address: "0x0987654321098765432109876543210987654321"
     assets:
       ethereum:
         address: "0x0000000000000000000000000000000000000000"
@@ -252,7 +264,8 @@ interop:
   settler:
     wait_verification_timeout: 100000
     simple:
-      settler_address: "0x"
+      # Note: settler_address has been moved to per-chain configuration
+      private_key: "0x..."  # Optional: private key for simple settler
 ```
 
 
