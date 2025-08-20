@@ -306,7 +306,6 @@ impl<'a> ChainDiagnostics<'a> {
             .assets()
             .iter()
             .filter(|(_, asset)| !asset.interop && !asset.address.is_zero())
-            .map(|(uid, asset)| (uid.clone(), asset.clone()))
             .collect();
 
         if non_interop_assets.is_empty() {
@@ -335,7 +334,7 @@ impl<'a> ChainDiagnostics<'a> {
             errors,
             multicall.aggregate3().await?,
             non_interop_assets,
-            |chain_decimals, (uid, config_asset): (_, AssetDescriptor)| {
+            |chain_decimals, (uid, config_asset): (_, &AssetDescriptor)| {
                 if config_asset.decimals != chain_decimals {
                     errors.push(format!(
                         "Asset {} ({}) has different config decimals ({}) than the chain ({})",
@@ -351,7 +350,7 @@ impl<'a> ChainDiagnostics<'a> {
                     "Non-interop asset verified"
                 );
             },
-            |asset: AssetDescriptor| asset.address
+            |asset: &AssetDescriptor| asset.address
         );
 
         Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
