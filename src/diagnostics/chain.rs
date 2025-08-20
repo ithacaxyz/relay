@@ -4,14 +4,14 @@ use crate::{
     diagnostics::chain::IEIP712::eip712DomainCall,
     signers::DynSigner,
     types::{
-        AssetUid,
+        AssetDescriptor, AssetUid,
         DelegationProxy::{DelegationProxyInstance, implementationCall},
-        IERC20::{self, balanceOfCall},
+        IERC20::{self, balanceOfCall, decimalsCall},
         IFunder::{self, gasWalletsCall},
     },
 };
 use alloy::{
-    primitives::{Address, ChainId, U256},
+    primitives::{ChainId, U256},
     providers::{CallItem, MULTICALL3_ADDRESS, Provider, bindings::IMulticall3::getEthBalanceCall},
     sol_types::SolCall,
 };
@@ -306,7 +306,6 @@ impl<'a> ChainDiagnostics<'a> {
             .assets()
             .iter()
             .filter(|(_, asset)| !asset.interop && !asset.address.is_zero())
-            .map(|(uid, asset)| (uid.clone(), asset.address))
             .collect();
 
         if non_interop_assets.is_empty() {
@@ -317,35 +316,41 @@ impl<'a> ChainDiagnostics<'a> {
             });
         }
 
-        // Create a multicall to check balanceOf for each non-interop asset
-        let mut multicall = self.chain.provider().multicall().dynamic::<balanceOfCall>();
-        for (_, token_address) in &non_interop_assets {
+        // Create a multicall to check decimals for each non-interop asset
+        let mut multicall = self.chain.provider().multicall().dynamic::<decimalsCall>();
+        for (_, asset) in &non_interop_assets {
             multicall = multicall.add_call_dynamic(
-                CallItem::from(
-                    IERC20::new(*token_address, &self.chain.provider()).balanceOf(Address::ZERO),
-                )
-                .allow_failure(true),
+                CallItem::from(IERC20::new(asset.address, &self.chain.provider()).decimals())
+                    .allow_failure(true),
             );
         }
 
         info!(
             chain_id = %self.chain.id(),
             assets = non_interop_assets.len(),
-            "Verifying non-interop assets"
+            "Verifying non-interop assets and their decimals"
         );
-
         crate::process_multicall_results!(
             errors,
             multicall.aggregate3().await?,
             non_interop_assets,
-            |_: U256, (uid, address)| {
+            |chain_decimals, (uid, config_asset): (_, &AssetDescriptor)| {
+                if config_asset.decimals != chain_decimals {
+                    errors.push(format!(
+                        "Asset {} ({}) has different config decimals ({}) than the chain ({})",
+                        uid, config_asset.address, config_asset.decimals, chain_decimals
+                    ));
+                    return;
+                }
+
                 info!(
                     chain_id = %self.chain.id(),
                     asset = %uid,
-                    address = %address,
+                    address = %config_asset.address,
                     "Non-interop asset verified"
                 );
-            }
+            },
+            |asset: &AssetDescriptor| asset.address
         );
 
         Ok(ChainDiagnosticsResult { chain_id: self.chain.id(), warnings: vec![], errors })
