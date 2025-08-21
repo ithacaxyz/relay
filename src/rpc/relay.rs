@@ -544,7 +544,7 @@ impl Relay {
         // Fill combinedGas
         intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
         // Calculate the real fee
-        let extra_payment = self
+        let extra_fee_native = self
             .estimate_extra_fee(
                 &chain,
                 &intent_to_sign,
@@ -552,9 +552,18 @@ impl Relay {
                 &native_fee_estimate,
                 &gas_estimate,
             )
-            .await?
-            * U256::from(10u128.pow(token.decimals as u32))
-            / eth_price;
+            .await?;
+
+        let extra_payment =
+            extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
+
+        debug!(
+            chain_id = %chain.id(),
+            %extra_payment,
+            %extra_fee_native,
+            %eth_price,
+            "Calculated extra payment"
+        );
 
         // Fill empty dummy signature
         intent_to_sign.signature = bytes!("");
