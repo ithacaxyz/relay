@@ -360,7 +360,7 @@ impl StressTester {
                 disperse_address,
             )
             .map(move |result| {
-                result.wrap_err_with(|| format!("failed to fund accounts on chain {}", chain_id))
+                result.wrap_err_with(|| format!("failed to fund accounts on chain {chain_id}"))
             })
         }))
         .await?;

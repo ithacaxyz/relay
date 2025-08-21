@@ -12,6 +12,10 @@ name = "relay"
 path = "src/bin/stress.rs"
 name = "stress"
 
+[[bin]]
+path = "src/bin/chainwalker/main.rs"
+name = "chainwalker"
+
 [dependencies]
 alloy = { version = "1.0.24", features = [
     "std",
