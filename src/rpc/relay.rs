@@ -1172,8 +1172,9 @@ impl Relay {
             .and_then(|asset| asset.metadata.as_ref())
             .and_then(|metadata| metadata.decimals);
 
-        // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<(ChainId, Address, U256)> = assets
+        // collect (chain, balance, adjusted balance) for all other chains that have >0 balance
+        // adjusted balance is the balance converted to the destination chain decimals
+        let mut sources: Vec<_> = assets
             .0
             .iter()
             .filter_map(|(&chain, assets)| {
@@ -1198,9 +1199,9 @@ impl Relay {
                 if let Some(existing_decimals) = existing_decimals {
                     balance =
                         adjust_balance_for_decimals(balance, mapped.decimals, existing_decimals);
-                }
+                };
 
-                if balance.is_zero() { None } else { Some((chain, mapped.address, balance)) }
+                if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
             })
             .collect();
 
@@ -1215,9 +1216,9 @@ impl Relay {
                 let funding_context = FundingIntentContext {
                     eoa,
                     chain_id: chain,
-                    asset: asset.into(),
+                    asset: asset.address.into(),
                     amount: U256::from(1),
-                    fee_token: asset,
+                    fee_token: asset.address,
                     // note(onbjerg): it doesn't matter what the output intent digest is for
                     // simulation, as long as it's not zero. otherwise, the gas
                     // costs will differ a lot.
@@ -1256,11 +1257,24 @@ impl Relay {
                 break;
             }
 
-            let take = remaining.min(balance.saturating_sub(escrow_cost));
+            let escrow_cost_destination = if let Some(existing_decimals) = existing_decimals {
+                adjust_balance_for_decimals(escrow_cost, asset.decimals, existing_decimals)
+            } else {
+                escrow_cost
+            };
+            let take = remaining.min(balance.saturating_sub(escrow_cost_destination));
+
+            // Convert the amount back to the source chain asset decimals
+            let amount_source = if let Some(existing_decimals) = existing_decimals {
+                adjust_balance_for_decimals(take, existing_decimals, asset.decimals)
+            } else {
+                take
+            };
             plan.push(FundSource {
                 chain_id: chain,
-                amount: take,
-                address: asset,
+                amount_source,
+                amount_destination: take,
+                address: asset.address,
                 cost: escrow_cost,
             });
             remaining = remaining.saturating_sub(take);
@@ -1419,7 +1433,7 @@ impl Relay {
                 )
                 .await?
             {
-                (new_chains.iter().map(|source| source.amount).sum(), new_chains)
+                (new_chains.iter().map(|source| source.amount_destination).sum(), new_chains)
             } else {
                 // We don't have enough funds across all chains, so we revert back to single chain
                 // to produce a quote with a `feeTokenDeficit`.
@@ -1573,7 +1587,7 @@ impl Relay {
             eoa,
             chain_id: source.chain_id,
             asset: source.address.into(),
-            amount: source.amount,
+            amount: source.amount_source,
             fee_token: source.address,
             output_intent_digest,
             output_chain_id,
