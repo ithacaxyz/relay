@@ -104,7 +104,7 @@ async fn check_connection_direction(
     let mut errors = Vec::new();
 
     // Validate source chain configuration
-    let config = match validate_chain_configs(lz_config, src_chain_id, dst_chain_id) {
+    let chain_config = match validate_chain_configs(lz_config, chains, src_chain_id, dst_chain_id) {
         Ok(config) => config,
         Err(e) => {
             errors.push(e);
@@ -130,10 +130,11 @@ async fn check_connection_direction(
         src_provider: &src_provider,
         src_chain_id,
         dst_chain_id,
-        dst_eid: config.dst_eid,
+        dst_eid: chain_config.dst_eid,
+        settler_address: chain_config.settler_address,
     };
 
-    let results = ctx.execute_multicall_checks(config.src_endpoint_address).await?;
+    let results = ctx.execute_multicall_checks(chain_config.src_endpoint_address).await?;
     ctx.process_quote(&results.quote, &mut errors);
     ctx.process_library_and_config(&results.library, &mut warnings, &mut errors).await;
     ctx.process_peer(&results.peer, &mut errors);
@@ -144,6 +145,7 @@ async fn check_connection_direction(
 /// Validate that both chains have required LayerZero configuration.
 fn validate_chain_configs(
     lz_config: &LayerZeroConfig,
+    chains: &Arc<Chains>,
     src_chain_id: ChainId,
     dst_chain_id: ChainId,
 ) -> Result<ChainConnectionConfig, String> {
@@ -166,7 +168,11 @@ fn validate_chain_configs(
             "Chain {src_chain_id} should be connected to chain {dst_chain_id} but chain {dst_chain_id} has no LayerZero endpoint ID configured"
         ))?;
 
-    Ok(ChainConnectionConfig { src_endpoint_address: *src_endpoint_address, dst_eid: *dst_eid })
+    Ok(ChainConnectionConfig {
+        src_endpoint_address: *src_endpoint_address,
+        dst_eid: *dst_eid,
+        settler_address: chains.settler_address(src_chain_id).map_err(|e| e.to_string())?,
+    })
 }
 
 /// Helper struct to hold context for checking a connection direction.
@@ -176,6 +182,7 @@ struct ConnectionContext<'a> {
     src_chain_id: ChainId,
     dst_chain_id: ChainId,
     dst_eid: u32,
+    settler_address: Address,
 }
 
 /// Result of checking a LayerZero connection.
@@ -195,6 +202,7 @@ struct MulticallResults {
 struct ChainConnectionConfig {
     src_endpoint_address: Address,
     dst_eid: u32,
+    settler_address: Address,
 }
 
 impl<'a> ConnectionContext<'a> {
@@ -264,7 +272,7 @@ impl<'a> ConnectionContext<'a> {
         );
 
         let Ok(config_bytes) = endpoint
-            .getConfig(self.lz_config.settler_address, lib_address, self.dst_eid, ULN_CONFIG_TYPE)
+            .getConfig(self.settler_address, lib_address, self.dst_eid, ULN_CONFIG_TYPE)
             .call()
             .await
         else {
@@ -338,7 +346,7 @@ impl<'a> ConnectionContext<'a> {
 
     /// Process peer result.
     fn process_peer(&self, peer_result: &Result<B256, Failure>, errors: &mut Vec<String>) {
-        let expected_peer = B256::left_padding_from(self.lz_config.settler_address.as_slice());
+        let expected_peer = B256::left_padding_from(self.settler_address.as_slice());
 
         let Ok(peer_bytes32) = peer_result else {
             errors.push(format!(
@@ -353,7 +361,7 @@ impl<'a> ConnectionContext<'a> {
         if *peer_bytes32 != expected_peer {
             errors.push(format!(
                 "LayerZeroSettler@{} on chain {} has incorrect peer {} for chain {} (EID {}). Expected: {}",
-                self.lz_config.settler_address, self.src_chain_id, peer_bytes32,
+                self.settler_address, self.src_chain_id, peer_bytes32,
                 self.dst_chain_id, self.dst_eid, expected_peer
             ));
         } else {
@@ -373,14 +381,13 @@ impl<'a> ConnectionContext<'a> {
         src_endpoint_address: Address,
     ) -> eyre::Result<MulticallResults> {
         let endpoint = ILayerZeroEndpointV2::new(src_endpoint_address, self.src_provider);
-        let settler_contract =
-            ILayerZeroSettler::new(self.lz_config.settler_address, self.src_provider);
+        let settler_contract = ILayerZeroSettler::new(self.settler_address, self.src_provider);
         let settlement_id = B256::random();
 
         let params = MessagingParams::new(
             self.src_chain_id,
             self.dst_eid,
-            self.lz_config.settler_address,
+            self.settler_address,
             settlement_id,
         );
 
@@ -388,14 +395,11 @@ impl<'a> ConnectionContext<'a> {
             .src_provider
             .multicall()
             .add_call::<quoteCall>(
-                CallItem::from(endpoint.quote(params, self.lz_config.settler_address))
-                    .allow_failure(true),
+                CallItem::from(endpoint.quote(params, self.settler_address)).allow_failure(true),
             )
             .add_call::<getReceiveLibraryCall>(
-                CallItem::from(
-                    endpoint.getReceiveLibrary(self.lz_config.settler_address, self.dst_eid),
-                )
-                .allow_failure(true),
+                CallItem::from(endpoint.getReceiveLibrary(self.settler_address, self.dst_eid))
+                    .allow_failure(true),
             )
             .add_call::<peersCall>(
                 CallItem::from(settler_contract.peers(self.dst_eid)).allow_failure(true),

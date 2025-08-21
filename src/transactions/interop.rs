@@ -396,11 +396,6 @@ impl InteropServiceHandle {
         &self.liquidity_tracker
     }
 
-    /// Returns the settler address.
-    pub fn settler_address(&self) -> Address {
-        self.settlement_processor.settler_address()
-    }
-
     /// Returns the settler ID.
     pub fn settler_id(&self) -> SettlerId {
         self.settlement_processor.settler_id()
@@ -1306,10 +1301,6 @@ mod tests {
             SettlerId::Test
         }
 
-        fn address(&self) -> Address {
-            Address::default()
-        }
-
         async fn build_execute_send_transaction(
             &self,
             _settlement_id: B256,
@@ -1485,7 +1476,6 @@ mod tests {
                 escrow_refund_threshold: 300,
                 settler: SettlerConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
-                        settler_address: Address::ZERO,
                         private_key: Some(B256::random().to_string()),
                     }),
                     wait_verification_timeout: Duration::from_secs(1),
