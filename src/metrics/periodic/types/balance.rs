@@ -4,9 +4,13 @@ use crate::{
     chains::Chains,
     metrics::periodic::{MetricCollector, MetricCollectorError},
 };
-use alloy::providers::Provider;
+use alloy::{
+    primitives::{U256, utils::format_units},
+    providers::Provider,
+};
 use futures_util::StreamExt;
 use metrics::gauge;
+use tracing::error;
 
 /// This collector queries a chain endpoint for balance of the signers per chain.
 #[derive(Debug)]
@@ -32,15 +36,18 @@ impl MetricCollector for BalanceCollector {
                         let (symbol, decimals) = chain
                             .native_symbol()
                             .zip(chain.assets().native().map(|(_, asset)| asset.decimals))
-                            .unwrap_or(("UNKNOWN NATIVE", 18));
-                        gauge!(
-                            "balance",
-                            "address" => signer_addr.to_checksum(Some(chain.id())),
-                            "chain_id" => chain.id().to_string(),
-                            "symbol" => symbol.to_string(),
-                            "decimals" => 10u64.pow(decimals as u32).to_string(),
-                        )
-                        .set::<f64>(balance.into())
+                            .unwrap_or(("ETH", 18));
+
+                        match format_units_f64(*balance, decimals) {
+                            Ok(balance) => gauge!(
+                                "balance",
+                                "address" => signer_addr.to_checksum(Some(chain.id())),
+                                "chain_id" => chain.id().to_string(),
+                                "symbol" => symbol.to_string(),
+                            )
+                            .set::<f64>(balance),
+                            Err(err) => error!(?balance, ?err, "Failed to format balance"),
+                        }
                     })
                 })
             }
@@ -51,5 +58,23 @@ impl MetricCollector for BalanceCollector {
             .await;
 
         Ok(())
+    }
+}
+
+/// Formats a U256 value into a f64 with the specified number of decimals.
+fn format_units_f64(value: U256, decimals: u8) -> eyre::Result<f64> {
+    Ok(format_units(value, decimals)?.parse::<f64>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_format_units_f64() {
+        let value = U256::from_str("12345678901234567890").unwrap();
+        let decimals = 18;
+        assert_eq!(format_units_f64(value, decimals).unwrap(), 12.345678901234567);
     }
 }

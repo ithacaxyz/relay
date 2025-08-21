@@ -37,12 +37,6 @@ pub trait Settler: Send + Sync + std::fmt::Debug {
     /// This ID is used to match bundles with their corresponding settler.
     fn id(&self) -> SettlerId;
 
-    /// Returns the settler contract address.
-    ///
-    /// This is the address of the on-chain contract that handles settlement logic and is expected
-    /// to be the same across chains.
-    fn address(&self) -> Address;
-
     /// Builds a execute send transaction for the given parameters.
     ///
     /// This method is only called after all the destination intents are confirmed.

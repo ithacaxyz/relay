@@ -38,6 +38,11 @@ pub mod contracts;
 /// LayerZero-specific types.
 pub mod types;
 pub use types::EndpointId;
+
+/// LayerZero settler metrics.
+pub mod metrics;
+pub use metrics::LayerZeroChainMetrics;
+
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult};
@@ -57,8 +62,6 @@ pub struct LZChainConfig {
     pub endpoint_address: Address,
     /// Provider for this chain.
     pub provider: DynProvider,
-    /// LayerZero settler contract address for this chain.
-    pub settler_address: Address,
 }
 
 /// LayerZero settler implementation for cross-chain settlement attestation.
@@ -68,8 +71,6 @@ pub struct LayerZeroSettler {
     eid_to_chain: HashMap<EndpointId, ChainId>,
     /// Chain ID to LayerZero endpoint address mapping.
     endpoint_addresses: HashMap<ChainId, Address>,
-    /// On-chain settler contract address.
-    settler_address: Address,
     /// Storage backend for persisting data.
     storage: RelayStorage,
     /// Chain configurations.
@@ -78,6 +79,8 @@ pub struct LayerZeroSettler {
     settlement_pool: LayerZeroPoolHandle,
     /// DVN verification monitor.
     verification_monitor: LayerZeroVerificationMonitor,
+    /// Layerzero settler metrics for each chain
+    chain_metrics: HashMap<ChainId, LayerZeroChainMetrics>,
 }
 
 impl LayerZeroSettler {
@@ -86,16 +89,23 @@ impl LayerZeroSettler {
         endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
-        settler_address: Address,
         storage: RelayStorage,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<Self, SettlementError> {
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
+        let chain_metrics = endpoint_ids
+            .keys()
+            .map(|chain_id| {
+                (
+                    *chain_id,
+                    LayerZeroChainMetrics::new_with_labels(&[("chain", chain_id.to_string())]),
+                )
+            })
+            .collect();
 
         // Build chain configs
-        let chain_configs =
-            LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
+        let chain_configs = LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers);
 
         // Create LayerZero verification monitor for shared WebSocket connections
         let verification_monitor = LayerZeroVerificationMonitor::new(chain_configs.clone());
@@ -106,11 +116,11 @@ impl LayerZeroSettler {
         Ok(Self {
             eid_to_chain,
             endpoint_addresses,
-            settler_address,
             storage,
             chain_configs,
             settlement_pool,
             verification_monitor,
+            chain_metrics,
         })
     }
 
@@ -237,10 +247,6 @@ impl Settler for LayerZeroSettler {
         SettlerId::LayerZero
     }
 
-    fn address(&self) -> Address {
-        self.settler_address
-    }
-
     /// Builds a transaction to send settlement attestations to multiple destination chains via
     /// LayerZero.
     ///
@@ -284,6 +290,11 @@ impl Settler for LayerZeroSettler {
 
         let quote_results = multicall.aggregate().await?;
         let native_lz_fee: U256 = quote_results.into_iter().map(|fee| fee.nativeFee).sum();
+
+        // record fee paid in metrics for this chain
+        if let Some(metrics) = self.chain_metrics.get(&current_chain_id) {
+            metrics.record_fee_paid(native_lz_fee);
+        }
 
         tracing::debug!(?settlement_id, ?native_lz_fee, "Total LayerZero fee");
 
