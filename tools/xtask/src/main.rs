@@ -6,30 +6,13 @@ mod flags;
 fn main() -> anyhow::Result<()> {
     let flags = flags::Xtask::from_env_or_exit();
     match flags.subcommand {
+        flags::XtaskCmd::Contracts(_) => {
+            compile_contracts(&mut Shell::new()?)?;
+        }
         flags::XtaskCmd::E2e(flags::E2e { rest }) => {
-            let sh = Shell::new()?;
+            let mut sh = Shell::new()?;
 
-            // Change to the tests/account directory to build contracts
-            let account_dir = "tests/account";
-            let _dir = sh.push_dir(account_dir);
-
-            println!("Building contracts...");
-
-            // Run the forge build commands as specified in the README
-            cmd!(sh, "forge build").run()?;
-            cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC20.sol").run()?;
-            cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC721.sol").run()?;
-
-            // Drop the dir guard to return to original directory
-            drop(_dir);
-
-            // Change to the tests/e2e/layerzero/contracts directory to build contracts
-            let layerzero_dir = "tests/e2e/layerzero/contracts";
-            let _dir = sh.push_dir(layerzero_dir);
-            cmd!(sh, "./build.sh").run()?;
-
-            // Drop the dir guard to return to original directory
-            drop(_dir);
+            compile_contracts(&mut sh)?;
 
             // Get the absolute path for TEST_CONTRACTS
             let current_dir = env::current_dir()?;
@@ -50,6 +33,32 @@ fn main() -> anyhow::Result<()> {
             cmd.run()?;
         }
     }
+
+    Ok(())
+}
+
+fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
+    // Change to the tests/account directory to build contracts
+    let account_dir = "tests/account";
+    let _dir = sh.push_dir(account_dir);
+
+    println!("Building contracts...");
+
+    // Run the forge build commands as specified in the README
+    cmd!(sh, "forge build").run()?;
+    cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC20.sol").run()?;
+    cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC721.sol").run()?;
+
+    // Drop the dir guard to return to original directory
+    drop(_dir);
+
+    // Change to the tests/e2e/layerzero/contracts directory to build contracts
+    let layerzero_dir = "tests/e2e/layerzero/contracts";
+    let _dir = sh.push_dir(layerzero_dir);
+    cmd!(sh, "./build.sh").run()?;
+
+    // Drop the dir guard to return to original directory
+    drop(_dir);
 
     Ok(())
 }

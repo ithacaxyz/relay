@@ -1,3 +1,4 @@
 [alias]
 xtask = "run --package xtask --bin xtask --"
 e2e = "xtask e2e"
+contracts = "xtask contracts"
