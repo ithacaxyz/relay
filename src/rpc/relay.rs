@@ -1819,12 +1819,29 @@ impl RelayApiServer for Relay {
 
             let txs =
                 assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
+                    // get price if this is a fee token
+                    let price = match self.inner.chains.fee_token(*chain, asset.address.address()) {
+                        Some((uid, _)) => self
+                            .inner
+                            .price_oracle
+                            .usd_price(uid.clone())
+                            .await
+                            .map(AssetPrice::from_price),
+                        None => None,
+                    };
+
                     if asset.asset_type.is_native() {
                         return Ok::<_, RelayError>(Asset7811 {
                             address: AddressOrNative::Native,
                             balance: chain_provider.get_balance(request.account).await?,
                             asset_type: asset.asset_type,
-                            metadata: None,
+                            metadata: Some(AssetMetadataWithPrice {
+                                price,
+                                name: None,
+                                symbol: None,
+                                uri: None,
+                                decimals: None,
+                            }),
                         });
                     }
 
@@ -1838,16 +1855,6 @@ impl RelayApiServer for Relay {
                         .add(erc20.symbol())
                         .aggregate()
                         .await?;
-
-                    let price = match self.inner.chains.fee_token(*chain, asset.address.address()) {
-                        Some((uid, _)) => self
-                            .inner
-                            .price_oracle
-                            .usd_price(uid.clone())
-                            .await
-                            .map(AssetPrice::from_price),
-                        None => None,
-                    };
 
                     Ok(Asset7811 {
                         address: asset.address,
