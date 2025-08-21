@@ -71,7 +71,7 @@ where
             rpc.system = "jsonrpc",
             rpc.jsonrpc.request_id = field::Empty,
             rpc.method = field::Empty,
-            chain_id = self.chain_id,
+            rpc.chain_id = self.chain_id,
         );
 
         // todo: what do we do with batches
