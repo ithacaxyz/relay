@@ -59,6 +59,8 @@ where
                 rpc.system = "jsonrpc",
                 rpc.jsonrpc.request_id = %req.id(),
                 rpc.method = method,
+                // Will be filled in implementation, if possible.
+                eth.chain_id = tracing::field::Empty,
             );
 
             // the span handle is cloned here so we can record more fields later
