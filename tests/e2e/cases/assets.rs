@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::e2e::{
     AuthKind,
@@ -423,9 +423,9 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
 
     // check that the chain user assets are the same as the fee tokens
     let fee_token_addresses =
-        chain_fee_tokens.iter().map(|token| token.asset.address).collect::<Vec<_>>();
+        chain_fee_tokens.iter().map(|token| token.asset.address).collect::<BTreeSet<_>>();
     let user_asset_addresses =
-        chain_user_assets.iter().map(|asset| asset.address.address()).collect::<Vec<_>>();
+        chain_user_assets.iter().map(|asset| asset.address.address()).collect::<BTreeSet<_>>();
     assert_eq!(fee_token_addresses, user_asset_addresses);
 
     // check that all the assets have prices
