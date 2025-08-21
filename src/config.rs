@@ -393,6 +393,11 @@ pub struct ChainConfig {
     /// Number of signers to derive from mnemonic and use for sending transactions.
     #[serde(default)]
     pub signers: SignerConfig,
+    /// The settler address for this chain.
+    ///
+    /// Required if the chain has any interop-enabled tokens.
+    #[serde(default)]
+    pub settler_address: Option<Address>,
 }
 
 /// Chain specific config for signers.
@@ -738,21 +743,9 @@ pub enum SettlerImplementation {
     Simple(SimpleSettlerConfig),
 }
 
-impl SettlerImplementation {
-    /// Address of the settler.
-    pub fn address(&self) -> Address {
-        match self {
-            Self::LayerZero(c) => c.settler_address,
-            Self::Simple(c) => c.settler_address,
-        }
-    }
-}
-
 /// Simple settler configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimpleSettlerConfig {
-    /// The address of the simple settler contract.
-    pub settler_address: Address,
     /// Private key for signing settlement write operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_key: Option<String>,
@@ -771,7 +764,7 @@ impl SimpleSettlerConfig {
             .parse::<PrivateKeySigner>()
             .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
 
-        Ok(SimpleSettler::new(self.settler_address, signer, providers))
+        Ok(SimpleSettler::new(signer, providers))
     }
 }
 
@@ -786,8 +779,6 @@ pub struct LayerZeroConfig {
     /// Mapping of chain ID to LayerZero endpoint address.
     #[serde(with = "crate::serde::hash_map")]
     pub endpoint_addresses: HashMap<ChainId, Address>,
-    /// LayerZero settler contract address.
-    pub settler_address: Address,
 }
 
 impl LayerZeroConfig {
@@ -802,7 +793,6 @@ impl LayerZeroConfig {
             self.endpoint_ids.clone(),
             self.endpoint_addresses.clone(),
             providers,
-            self.settler_address,
             storage,
             tx_service_handles,
         )
@@ -874,6 +864,78 @@ mod tests {
     }
 
     #[test]
+    fn test_config_v22() {
+        let s = include_str!("../tests/assets/config/v22.yaml");
+        let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+
+        // Verify that chains have settler addresses based on whether they have interop tokens
+        for (chain, chain_config) in &config.chains {
+            // Chain 1 (mainnet) has interop tokens, so it should have a settler address
+            if chain.id() == 1 {
+                assert!(
+                    chain_config.settler_address.is_some(),
+                    "Chain 1 should have a settler address"
+                );
+                assert_eq!(
+                    chain_config.settler_address.unwrap().to_string(),
+                    "0x1111111111111111111111111111111111111111"
+                );
+                // Verify it actually has interop tokens
+                assert!(
+                    chain_config.assets.interop_iter().count() > 0,
+                    "Chain 1 should have interop tokens"
+                );
+            }
+            // Chain 10 (optimism) has interop tokens, so it should have a settler address
+            else if chain.id() == 10 {
+                assert!(
+                    chain_config.settler_address.is_some(),
+                    "Chain 10 should have a settler address"
+                );
+                assert_eq!(
+                    chain_config.settler_address.unwrap().to_string(),
+                    "0x2222222222222222222222222222222222222222"
+                );
+                // Verify it actually has interop tokens
+                assert!(
+                    chain_config.assets.interop_iter().count() > 0,
+                    "Chain 10 should have interop tokens"
+                );
+            }
+            // Chain 42161 (arbitrum) has no interop tokens, so settler_address should be None
+            else if chain.id() == 42161 {
+                assert!(
+                    chain_config.settler_address.is_none(),
+                    "Chain 42161 should not have a settler address"
+                );
+                // Verify it has no interop tokens
+                assert_eq!(
+                    chain_config.assets.interop_iter().count(),
+                    0,
+                    "Chain 42161 should not have interop tokens"
+                );
+            }
+        }
+
+        // Verify LayerZero config no longer has settler_address
+        if let Some(interop) = &config.interop
+            && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
+        {
+            // This would fail to compile if settler_address field existed
+            let _ = &lz_config.endpoint_ids;
+            let _ = &lz_config.endpoint_addresses;
+        }
+
+        // Test round-trip serialization
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();
+        assert_eq!(from_yaml.chains, config.chains);
+        assert_eq!(from_yaml.pricefeed, config.pricefeed);
+        assert_eq!(from_yaml.interop, config.interop);
+        assert_eq!(from_yaml.transactions, config.transactions);
+    }
+
+    #[test]
     fn test_chain_config_yaml() {
         let s = r#"
 endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
@@ -926,6 +988,7 @@ sim_mode: trace
             assets: Assets::new(assets),
             fees: Default::default(),
             signers: Default::default(),
+            settler_address: None,
         };
 
         assert_eq!(config, expected);

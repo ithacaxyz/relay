@@ -1,0 +1,91 @@
+# Test configuration for v22 - demonstrates per-chain settler addresses
+server:
+  address: 0.0.0.0
+  port: 9119
+  metrics_port: 9000
+  max_connections: 5000
+fee_recipient: "0x6a658769C4117012A9B6614A0C42e319A5f88e95"
+quote:
+  constantRate: null
+  gas:
+    intentBuffer: 20000
+    txBuffer: 10000
+  ttl: 30
+  rateTtl: 300
+transactions:
+  num_signers: 10
+  max_pending_transactions: 100
+  max_transactions_per_signer: 16
+  max_queued_per_eoa: 1
+  balance_check_interval: 5
+  nonce_check_interval: 60
+  transaction_timeout: 60
+  priority_fee_percentile: 20
+  public_node_endpoints:
+    base: https://mainnet.base.org/
+pricefeed:
+  coingecko:
+    remapping:
+      ethereum: "ethereum"
+      usd-coin: "usd-coin"
+# Contract addresses
+orchestrator: "0xd0cF485E3EE9F0E71DA03699430Abe240AA429e6"
+legacy_orchestrators: []
+legacy_delegation_proxies: []
+delegation_proxy: "0x71c9fb8Ef72B18C48f127E2Ef5EE267D8BEfCd1D"
+simulator: "0xcb80788813C39d90C48C2733B43b3E47e23A2D3F"
+escrow: "0x55626138525a47AF075322aAfE1df8F68993b11D"
+funder: "0x1918181eBF34291757D416055341f37074f791F2"
+interop:
+  refund_check_interval: 60
+  escrow_refund_threshold: 604800
+  settler:
+    wait_verification_timeout: 604800
+    layer_zero:
+      # Note: settler_address removed from here - now per-chain
+      endpoint_ids:
+        "1": 30101 # Ethereum Mainnet
+        "10": 30111 # Optimism
+      endpoint_addresses:
+        "1": "0x1a44076050125825900e736c501f859c50fE728c" # Ethereum Mainnet
+        "10": "0x1a44076050125825900e736c501f859c50fE728c" # Optimism
+chains:
+  # Ethereum Mainnet - has interop tokens, needs settler address
+  1:
+    endpoint: wss://ethereum.example.com
+    settler_address: "0x1111111111111111111111111111111111111111"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        decimals: 6
+        fee_token: true
+        interop: true  # This chain has interop token
+  # Optimism - has interop tokens, needs settler address
+  10:
+    endpoint: wss://optimism.example.com
+    settler_address: "0x2222222222222222222222222222222222222222"
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+        decimals: 6
+        fee_token: true
+        interop: true  # This chain has interop token
+  # Arbitrum - no interop tokens, no settler address needed
+  42161:
+    endpoint: wss://arbitrum.example.com
+    # No settler_address since no interop tokens
+    assets:
+      ethereum:
+        address: "0x0000000000000000000000000000000000000000"
+        fee_token: true
+      usd-coin:
+        address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        decimals: 6
+        fee_token: true
+        interop: false  # No interop tokens

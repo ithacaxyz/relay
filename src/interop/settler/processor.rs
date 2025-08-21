@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, Bytes, ChainId};
+use alloy::primitives::{B256, Bytes, ChainId};
 use futures_util::future::try_join_all;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, error, info};
@@ -32,6 +32,9 @@ pub enum SettlementError {
     /// Unsupported chain.
     #[error("Unsupported chain: {0}")]
     UnsupportedChain(ChainId),
+    /// Missing settler address for chain.
+    #[error("Chain {0} has no settler address configured")]
+    MissingSettlerAddress(ChainId),
     /// Unknown LayerZero endpoint ID.
     #[error("Unknown LayerZero endpoint ID: {0}")]
     UnknownEndpointId(EndpointId),
@@ -73,11 +76,6 @@ impl SettlementProcessor {
     /// * `settler` - The settler implementation to use for settlements
     pub fn new(settler: Box<dyn Settler>) -> Self {
         Self { settler }
-    }
-
-    /// Returns the settler address.
-    pub fn settler_address(&self) -> Address {
-        self.settler.address()
     }
 
     /// Returns the settler ID.
@@ -217,16 +215,13 @@ mod tests {
     use crate::{
         interop::SimpleSettler, transactions::interop::InteropBundle, types::rpc::BundleId,
     };
-    use alloy::{
-        primitives::{Address, B256},
-        signers::local::PrivateKeySigner,
-    };
+    use alloy::{primitives::B256, signers::local::PrivateKeySigner};
 
     #[tokio::test]
     async fn test_settler_id_validation_in_build_settlements() {
         // Create a settlement processor with a simple settler
         let signer = B256::random().to_string().parse::<PrivateKeySigner>().unwrap();
-        let settler = Box::new(SimpleSettler::new(Address::ZERO, signer, Default::default()));
+        let settler = Box::new(SimpleSettler::new(signer, Default::default()));
         let processor = SettlementProcessor::new(settler);
 
         // Create a bundle with a different settler ID

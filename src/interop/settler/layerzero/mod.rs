@@ -57,8 +57,6 @@ pub struct LZChainConfig {
     pub endpoint_address: Address,
     /// Provider for this chain.
     pub provider: DynProvider,
-    /// LayerZero settler contract address for this chain.
-    pub settler_address: Address,
 }
 
 /// LayerZero settler implementation for cross-chain settlement attestation.
@@ -68,8 +66,6 @@ pub struct LayerZeroSettler {
     eid_to_chain: HashMap<EndpointId, ChainId>,
     /// Chain ID to LayerZero endpoint address mapping.
     endpoint_addresses: HashMap<ChainId, Address>,
-    /// On-chain settler contract address.
-    settler_address: Address,
     /// Storage backend for persisting data.
     storage: RelayStorage,
     /// Chain configurations.
@@ -86,7 +82,6 @@ impl LayerZeroSettler {
         endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
-        settler_address: Address,
         storage: RelayStorage,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<Self, SettlementError> {
@@ -94,8 +89,7 @@ impl LayerZeroSettler {
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
 
         // Build chain configs
-        let chain_configs =
-            LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers, settler_address);
+        let chain_configs = LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers);
 
         // Create LayerZero verification monitor for shared WebSocket connections
         let verification_monitor = LayerZeroVerificationMonitor::new(chain_configs.clone());
@@ -106,7 +100,6 @@ impl LayerZeroSettler {
         Ok(Self {
             eid_to_chain,
             endpoint_addresses,
-            settler_address,
             storage,
             chain_configs,
             settlement_pool,
@@ -235,10 +228,6 @@ impl LayerZeroSettler {
 impl Settler for LayerZeroSettler {
     fn id(&self) -> SettlerId {
         SettlerId::LayerZero
-    }
-
-    fn address(&self) -> Address {
-        self.settler_address
     }
 
     /// Builds a transaction to send settlement attestations to multiple destination chains via

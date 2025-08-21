@@ -19,8 +19,6 @@ use std::{collections::HashSet, time::Duration};
 /// A simple settler implementation that does not require cross-chain attestation.
 #[derive(Debug)]
 pub struct SimpleSettler {
-    /// The address of the settler contract
-    settler_address: Address,
     /// Signer for signing settlement operations
     signer: PrivateKeySigner,
     /// Providers for each chain
@@ -29,12 +27,8 @@ pub struct SimpleSettler {
 
 impl SimpleSettler {
     /// Creates a new simple settler instance
-    pub fn new(
-        settler_address: Address,
-        signer: PrivateKeySigner,
-        providers: HashMap<ChainId, DynProvider>,
-    ) -> Self {
-        Self { settler_address, signer, providers }
+    pub fn new(signer: PrivateKeySigner, providers: HashMap<ChainId, DynProvider>) -> Self {
+        Self { signer, providers }
     }
 
     /// Gets a provider for the specified chain
@@ -43,10 +37,14 @@ impl SimpleSettler {
     }
 
     /// Fetches the EIP712 domain from the SimpleSettler contract
-    async fn eip712_domain(&self, chain_id: ChainId) -> Result<Eip712Domain, SettlementError> {
+    async fn eip712_domain(
+        &self,
+        chain_id: ChainId,
+        settler_address: Address,
+    ) -> Result<Eip712Domain, SettlementError> {
         let provider = self.provider(chain_id)?;
 
-        let contract = ISimpleSettler::new(self.settler_address, provider);
+        let contract = ISimpleSettler::new(settler_address, provider);
         let domain = contract.eip712Domain().call().await.map_err(|e| {
             SettlementError::InternalError(format!("Failed to fetch EIP712 domain: {e}"))
         })?;
@@ -67,6 +65,7 @@ impl SimpleSettler {
         settlement_id: B256,
         intent_chain: ChainId,
         source_chain: ChainId,
+        settler_address: Address,
     ) -> Result<Bytes, SettlementError> {
         // Create the EIP712 message to sign
         let message = SettlementWrite {
@@ -77,7 +76,7 @@ impl SimpleSettler {
 
         let signature = self
             .signer
-            .sign_typed_data(&message, &self.eip712_domain(source_chain).await?)
+            .sign_typed_data(&message, &self.eip712_domain(source_chain, settler_address).await?)
             .await
             .map_err(|e| SettlementError::InternalError(format!("Failed to sign: {e}")))?;
 
@@ -111,9 +110,10 @@ impl SimpleSettler {
         write_calldata: Bytes,
         settle_calldata: Bytes,
         escrow_address: Address,
+        settler_address: Address,
     ) -> Bytes {
         let calls = vec![
-            Call3 { target: self.settler_address, allowFailure: false, callData: write_calldata },
+            Call3 { target: settler_address, allowFailure: false, callData: write_calldata },
             Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata },
         ];
 
@@ -125,10 +125,6 @@ impl SimpleSettler {
 impl Settler for SimpleSettler {
     fn id(&self) -> SettlerId {
         SettlerId::Simple
-    }
-
-    fn address(&self) -> Address {
-        self.settler_address
     }
 
     async fn build_execute_send_transaction(
@@ -172,18 +168,30 @@ impl Settler for SimpleSettler {
         let results = try_join_all(bundle.dst_txs.iter().map(async |dst_tx| {
             let settlement_id = dst_tx.eip712_digest().ok_or(SettlementError::MissingIntent)?;
             let destination_chain = dst_tx.chain_id();
-            let sender = dst_tx.quote().ok_or(SettlementError::MissingIntent)?.orchestrator;
+            let quote = dst_tx.quote().ok_or(SettlementError::MissingIntent)?;
+            let sender = quote.orchestrator;
+            let intent_settler = quote.intent.settler;
 
             let txs = try_join_all(source_chains.iter().map(async |&source_chain| {
                 let write_calldata = self
-                    .build_write_calldata(sender, settlement_id, destination_chain, source_chain)
+                    .build_write_calldata(
+                        sender,
+                        settlement_id,
+                        destination_chain,
+                        source_chain,
+                        intent_settler,
+                    )
                     .await?;
 
                 let (settle_calldata, escrow_address) =
                     Self::build_settle_calldata(bundle, source_chain, settlement_id)?;
 
-                let multicall_data =
-                    self.build_multicall(write_calldata, settle_calldata, escrow_address);
+                let multicall_data = self.build_multicall(
+                    write_calldata,
+                    settle_calldata,
+                    escrow_address,
+                    intent_settler,
+                );
 
                 let tx_request = TransactionRequest::default()
                     .to(MULTICALL3_ADDRESS)
