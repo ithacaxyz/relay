@@ -38,6 +38,11 @@ pub mod contracts;
 /// LayerZero-specific types.
 pub mod types;
 pub use types::EndpointId;
+
+/// LayerZero settler metrics.
+pub mod metrics;
+pub use metrics::LayerZeroChainMetrics;
+
 /// Verification monitoring logic.
 pub mod verification;
 use verification::{LayerZeroVerificationMonitor, VerificationResult};
@@ -74,6 +79,8 @@ pub struct LayerZeroSettler {
     settlement_pool: LayerZeroPoolHandle,
     /// DVN verification monitor.
     verification_monitor: LayerZeroVerificationMonitor,
+    /// Layerzero settler metrics for each chain
+    chain_metrics: HashMap<ChainId, LayerZeroChainMetrics>,
 }
 
 impl LayerZeroSettler {
@@ -87,6 +94,15 @@ impl LayerZeroSettler {
     ) -> Result<Self, SettlementError> {
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
+        let chain_metrics = endpoint_ids
+            .keys()
+            .map(|chain_id| {
+                (
+                    *chain_id,
+                    LayerZeroChainMetrics::new_with_labels(&[("chain", chain_id.to_string())]),
+                )
+            })
+            .collect();
 
         // Build chain configs
         let chain_configs = LZChainConfigs::new(&endpoint_ids, &endpoint_addresses, &providers);
@@ -104,6 +120,7 @@ impl LayerZeroSettler {
             chain_configs,
             settlement_pool,
             verification_monitor,
+            chain_metrics,
         })
     }
 
@@ -273,6 +290,11 @@ impl Settler for LayerZeroSettler {
 
         let quote_results = multicall.aggregate().await?;
         let native_lz_fee: U256 = quote_results.into_iter().map(|fee| fee.nativeFee).sum();
+
+        // record fee paid in metrics for this chain
+        if let Some(metrics) = self.chain_metrics.get(&current_chain_id) {
+            metrics.record_fee_paid(native_lz_fee);
+        }
 
         tracing::debug!(?settlement_id, ?native_lz_fee, "Total LayerZero fee");
 
