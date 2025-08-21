@@ -354,19 +354,23 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-        // Retry logic needed due to Polygon/flashblocks potentially executing the call with old state.
+        // Retry logic needed due to Polygon/flashblocks potentially executing the call with old
+        // state.
         let mut attempt = 0;
         loop {
-            let result = self.provider.call(request.clone()).await.map_err(SignerError::from).and_then(|res| {
-                if !tx.is_intent() {
-                    return Ok(());
-                }
-                let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
-                if result != ORCHESTRATOR_NO_ERROR {
-                    return Err(SignerError::IntentRevert { revert_reason: result.into() });
-                }
-                Ok(())
-            });
+            let result =
+                self.provider.call(request.clone()).await.map_err(SignerError::from).and_then(
+                    |res| {
+                        if !tx.is_intent() {
+                            return Ok(());
+                        }
+                        let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
+                        if result != ORCHESTRATOR_NO_ERROR {
+                            return Err(SignerError::IntentRevert { revert_reason: result.into() });
+                        }
+                        Ok(())
+                    },
+                );
 
             if result.is_ok() {
                 break;
