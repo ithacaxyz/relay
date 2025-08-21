@@ -372,10 +372,10 @@ impl Signer {
                 break;
             } else if attempt < 4 {
                 attempt += 1;
-                debug!(error = ?result, "Transaction simulation failed, retrying... (attempt {}/5)", attempt);
+                debug!(error = ?result, ?request, "transaction simulation failed, retrying... (attempt {}/5)", attempt);
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             } else {
-                trace!(?result, ?request, "Transaction simulation failed after all retries");
+                trace!(?result, ?request, "transaction simulation failed after all retries");
                 result?;
             }
         }
