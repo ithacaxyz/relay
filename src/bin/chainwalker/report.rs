@@ -101,10 +101,10 @@ pub fn format_balance_map(
         let mut chain_balances = HashMap::new();
         for asset in assets {
             // If we have a filter, only include assets that were used
-            if let Some(used_set) = used_chains_and_tokens {
-                if !used_set.contains(&(*chain_id, asset.address.address())) {
-                    continue;
-                }
+            if let Some(used_set) = used_chains_and_tokens
+                && !used_set.contains(&(*chain_id, asset.address.address()))
+            {
+                continue;
             }
 
             // Get decimals from metadata if available, default to 18
