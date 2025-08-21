@@ -4,7 +4,7 @@ Tests interop by transferring tokens across all available chain connections.
 
 ## Quickstart
 
-Fund one account with the token(s) of chain in one chain.
+Fund one account with the token(s) of chain in one chain. The script will send on each hop 90% of the balance, hoping that the remaining 10% are enough to cover the fees.
 
 ### Test specific tokens only
 ```bash
