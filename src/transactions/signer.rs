@@ -354,59 +354,29 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-
-        // TEMP: to debug polygon issue
-        const MAX_RETRIES: u32 = 5;
+        // Retry logic needed due to Polygon/flashblocks potentially executing the call with old state.
         let mut attempt = 0;
-
         loop {
-            attempt += 1;
-
-            let result = self
-                .provider
-                .call(request.clone())
-                .await
-                .map_err(SignerError::from)
-                .and_then(|res| {
-                    if tx.is_intent() {
-                        let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
-
-                        if result != ORCHESTRATOR_NO_ERROR {
-                            return Err(SignerError::IntentRevert { revert_reason: result.into() });
-                        }
-
-                        Ok(())
-                    } else {
-                        Ok(())
-                    }
-                })
-                .inspect_err(|err| {
-                    trace!(?err, ?request, "transaction simulation failed");
-                });
-
-            match result {
-                Ok(_) => {
-                    if attempt > 1 {
-                        info!(
-                            "[0x756688fe] Transaction simulation succeeded at attempt {}",
-                            attempt
-                        );
-                    }
-                    break;
+            let result = self.provider.call(request.clone()).await.map_err(SignerError::from).and_then(|res| {
+                if !tx.is_intent() {
+                    return Ok(());
                 }
-                Err(err) => {
-                    // Check if error contains 0x756688fe
-                    let err_str = format!("{err:?}");
-                    if err_str.contains("0x756688fe") && attempt < MAX_RETRIES {
-                        warn!(
-                            "Transaction simulation failed with 0x756688fe, retrying (attempt {}/{})",
-                            attempt, MAX_RETRIES
-                        );
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
-                    }
-                    return Err(err);
+                let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
+                if result != ORCHESTRATOR_NO_ERROR {
+                    return Err(SignerError::IntentRevert { revert_reason: result.into() });
                 }
+                Ok(())
+            });
+
+            if result.is_ok() {
+                break;
+            } else if attempt < 4 {
+                attempt += 1;
+                debug!(error = ?result, "Transaction simulation failed, retrying... (attempt {}/5)", attempt);
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            } else {
+                trace!(?result, ?request, "Transaction simulation failed after all retries");
+                result?;
             }
         }
 
