@@ -119,9 +119,9 @@ pub struct AssetMetadata {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetPrice {
     /// The currency
-    currency: String,
+    pub currency: String,
     /// The price
-    price: f64,
+    pub price: f64,
 }
 
 impl AssetPrice {
