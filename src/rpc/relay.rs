@@ -1334,7 +1334,6 @@ impl Relay {
                     leaf_index: 1,
                     fund_transfers: vec![(
                         requested_asset,
-                        // Deduct funds that already exist on the destination chain.
                         needed_funds,
                     )],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
