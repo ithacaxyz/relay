@@ -375,7 +375,7 @@ impl StorageApi for InMemoryStorage {
             .await
             .pending_unlocks
             .iter()
-            .map(|(address, amounts)| (*address, amounts.iter().map(|(_, amount)| *amount).sum()))
+            .map(|(address, amounts)| (*address, amounts.values().sum()))
             .collect())
     }
 
