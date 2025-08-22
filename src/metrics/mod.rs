@@ -2,7 +2,6 @@
 
 mod periodic;
 use futures::{FutureExt, future::BoxFuture};
-use http::Response;
 use opentelemetry::{propagation::TextMapPropagator, trace::SpanKind};
 use opentelemetry_http::HeaderInjector;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -26,7 +25,6 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::{
     borrow::Cow,
     net::SocketAddr,
-    pin::Pin,
     sync::Mutex,
     task::{Context, Poll},
     time::{Duration, Instant},
