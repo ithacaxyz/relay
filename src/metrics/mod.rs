@@ -1,7 +1,7 @@
 //! Types for metrics.
 
 mod periodic;
-use futures::FutureExt;
+use futures::{FutureExt, future::BoxFuture};
 use http::Response;
 use opentelemetry::{propagation::TextMapPropagator, trace::SpanKind};
 use opentelemetry_http::HeaderInjector;
@@ -136,15 +136,12 @@ impl<S> HttpTracingService<S> {
 impl<S, B> Service<HttpRequest<B>> for HttpTracingService<S>
 where
     S: Service<HttpRequest<B>, Response = HttpResponse<HttpBody>>,
-    S::Response: 'static,
-    S::Error: Into<BoxError> + Send + 'static,
+    S::Error: Into<BoxError>,
     S::Future: Send + 'static,
-    B: Send + std::fmt::Debug + 'static,
 {
     type Response = S::Response;
     type Error = BoxError;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
