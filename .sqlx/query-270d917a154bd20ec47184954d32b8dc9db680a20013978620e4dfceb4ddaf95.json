@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT transaction_data\n            FROM pull_gas_transactions\n            WHERE signer_address = $1\n            AND chain_id = $2\n            AND state = 'pending'\n            ORDER BY created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "transaction_data",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "270d917a154bd20ec47184954d32b8dc9db680a20013978620e4dfceb4ddaf95"
+}
