@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE pending_bundles \n            SET status = $2, updated_at = NOW()\n            WHERE bundle_id = $1\n            ",
+  "query": "\n            UPDATE pending_bundles\n            SET status = $2, updated_at = NOW()\n            WHERE bundle_id = $1\n            ",
   "describe": {
     "columns": [],
     "parameters": {
@@ -37,5 +37,5 @@
     },
     "nullable": []
   },
-  "hash": "7f96ea98c34a6dff7c2f7448e6e014e09c5559e5e95f6f099ade3105456d3c8c"
+  "hash": "3467bdaf82adedf2757a9754e5d44c6f602399d0e473d43ad0f52570b437b55f"
 }
