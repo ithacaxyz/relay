@@ -5259,6 +5259,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry-stdout",
  "opentelemetry_sdk",
