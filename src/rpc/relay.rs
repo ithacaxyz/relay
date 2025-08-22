@@ -1301,10 +1301,38 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
+        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
+        // chain
+        //
         // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+        let (assets, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::eoa(eoa)),
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                self.inner.contracts.funder.address,
+                request.chain_id,
+                requested_asset
+            ))
+        )?;
         let requested_asset_balance_on_dst =
             assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        let funder_balance_on_dst =
+            funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        // Check if funder has sufficient liquidity for the requested asset
+        // todo(joshie): normalize decimals
+        let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
+        if funder_balance_on_dst < needed_funds {
+            debug!(
+                funder = %self.inner.contracts.funder.address,
+                chain_id = %request.chain_id,
+                %requested_asset,
+                %requested_funds,
+                %funder_balance_on_dst,
+                "Insufficient liquidity in funder"
+            );
+            return Err(QuoteError::InsufficientLiquidity.into());
+        }
 
         // Simulate the output intent first to get the fees required to execute it.
         //
@@ -1320,7 +1348,7 @@ impl Relay {
                     fund_transfers: vec![(
                         requested_asset,
                         // Deduct funds that already exist on the destination chain.
-                        requested_funds.saturating_sub(requested_asset_balance_on_dst),
+                        needed_funds,
                     )],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
