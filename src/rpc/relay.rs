@@ -577,6 +577,16 @@ impl Relay {
             extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
         ));
 
+        let Ok(extra_fee_native) = u64::try_from(extra_fee_native) else {
+            error!(%chain_id, ?extra_fee_native, "Native fee exceeds u64");
+            return Err(RelayError::InternalError(eyre::eyre!(
+                "Native fee {extra_fee_native:?} for intent on chain {chain_id} exceeds u64"
+            )));
+        };
+
+        // Adding the extra fee to the gas limit covers for additional costs that are present on
+        // L2s, such as DA costs
+        let gas_limit = gas_estimate.tx + extra_fee_native;
         let fee_token_deficit =
             intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
         let quote = Quote {
@@ -585,7 +595,7 @@ impl Relay {
             intent: intent_to_sign,
             extra_payment,
             eth_price,
-            tx_gas: gas_estimate.tx,
+            tx_gas: gas_limit,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
