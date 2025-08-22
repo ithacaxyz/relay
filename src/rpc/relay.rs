@@ -1332,10 +1332,7 @@ impl Relay {
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 1,
-                    fund_transfers: vec![(
-                        requested_asset,
-                        needed_funds,
-                    )],
+                    fund_transfers: vec![(requested_asset, needed_funds)],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
             )
@@ -1464,7 +1461,7 @@ impl Relay {
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
-            // Make sure the funder has enough balance to transfer.
+            // `sourced_funds` now also includes fees, so make sure the funder has enough balance to transfer.
             if funder_balance_on_dst < sourced_funds {
                 return Err(QuoteError::InsufficientLiquidity.into());
             }
