@@ -584,6 +584,8 @@ impl Relay {
             )));
         };
 
+        // Adding the extra fee to the gas limit covers for additional costs that are present on
+        // L2s, such as DA costs
         let gas_limit = gas_estimate.tx + extra_fee_native;
         let fee_token_deficit =
             intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
