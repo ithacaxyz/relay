@@ -1433,6 +1433,8 @@ impl Relay {
                 )
                 .await?
             {
+                // We take `amount_destination` here, because `sourced_funds` is the amount of
+                // destination chain asset
                 (new_chains.iter().map(|source| source.amount_destination).sum(), new_chains)
             } else {
                 // We don't have enough funds across all chains, so we revert back to single chain
