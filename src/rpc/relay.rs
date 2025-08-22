@@ -353,15 +353,11 @@ impl Relay {
         let (assets_response, fee_history, eth_price) = try_join!(
             // Fetch the user's balance for the fee token
             async {
-                self.get_assets(GetAssetsParameters {
-                    account: intent.eoa,
-                    asset_filter: [(
-                        chain_id,
-                        vec![AssetFilterItem::fungible(context.fee_token.into())],
-                    )]
-                    .into(),
-                    ..Default::default()
-                })
+                self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                    intent.eoa,
+                    chain_id,
+                    context.fee_token,
+                ))
                 .await
                 .map_err(RelayError::internal)
             },
@@ -1320,7 +1316,6 @@ impl Relay {
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
 
         // Check if funder has sufficient liquidity for the requested asset
-        // todo(joshie): normalize decimals
         let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
         if funder_balance_on_dst < needed_funds {
             debug!(
