@@ -1318,14 +1318,6 @@ impl Relay {
         // Check if funder has sufficient liquidity for the requested asset
         let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
         if funder_balance_on_dst < needed_funds {
-            debug!(
-                funder = %self.inner.contracts.funder.address,
-                chain_id = %request.chain_id,
-                %requested_asset,
-                %requested_funds,
-                %funder_balance_on_dst,
-                "Insufficient liquidity in funder"
-            );
             return Err(QuoteError::InsufficientLiquidity.into());
         }
 
@@ -1472,6 +1464,11 @@ impl Relay {
             // Encode the input chain IDs for the settler context
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
+
+            // Make sure the funder has enough balance to transfer.
+            if funder_balance_on_dst < sourced_funds {
+                return Err(QuoteError::InsufficientLiquidity.into());
+            }
 
             // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self
