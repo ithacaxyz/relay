@@ -1764,6 +1764,7 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
+        tracing::Span::current().record("eth.chain_id", request.chain_id);
         Ok(self.get_keys(request).await?)
     }
 
@@ -1859,6 +1860,7 @@ impl RelayApiServer for Relay {
         &self,
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
+        tracing::Span::current().record("eth.chain_id", request.chain_id);
         self.prepare_calls_inner(request, None).await
     }
 
@@ -1869,6 +1871,8 @@ impl RelayApiServer for Relay {
         let chain_id = request.chain_id.unwrap_or_else(|| {
             *self.inner.chains.chain_ids_iter().next().expect("there should be one")
         });
+        tracing::Span::current().record("eth.chain_id", chain_id);
+
         let provider = self.provider(chain_id)?;
 
         // Upgrading account should have at least one authorize admin key since
@@ -1956,6 +1960,8 @@ impl RelayApiServer for Relay {
 
     async fn upgrade_account(&self, request: UpgradeAccountParameters) -> RpcResult<()> {
         let UpgradeAccountParameters { context, signatures } = request;
+        tracing::Span::current().record("eth.chain_id", context.chain_id);
+
         let provider = self.provider(context.chain_id)?;
 
         // Ensures precall authorizes an admin key
@@ -2142,6 +2148,7 @@ impl RelayApiServer for Relay {
         parameters: VerifySignatureParameters,
     ) -> RpcResult<VerifySignatureResponse> {
         let VerifySignatureParameters { address, digest, signature, chain_id } = parameters;
+        tracing::Span::current().record("eth.chain_id", chain_id);
 
         let mut init_pre_call = None;
         let mut account = Account::new(address, self.provider(chain_id)?);
@@ -2210,6 +2217,7 @@ impl RelayApiServer for Relay {
         parameters: AddFaucetFundsParameters,
     ) -> RpcResult<AddFaucetFundsResponse> {
         let AddFaucetFundsParameters { token_address, address, chain_id, value } = parameters;
+        tracing::Span::current().record("eth.chain_id", chain_id);
 
         info!(
             "Processing faucet request for {} on chain {} with amount {}",

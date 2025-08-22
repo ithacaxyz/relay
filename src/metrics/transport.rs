@@ -1,4 +1,5 @@
 use alloy::{
+    primitives::ChainId,
     rpc::json_rpc::{RequestPacket, ResponsePacket},
     transports::{TransportError, TransportFut},
 };
@@ -16,13 +17,22 @@ use tracing_futures::Instrument;
 /// - <https://opentelemetry.io/docs/specs/semconv/rpc/json-rpc/>
 /// - <https://opentelemetry.io/docs/specs/semconv/rpc/rpc-spans/>
 #[derive(Debug, Clone)]
-pub struct TraceLayer;
+pub struct TraceLayer {
+    chain_id: ChainId,
+}
+
+impl TraceLayer {
+    /// Creates a new `TraceLayer` with the given `chain_id`.
+    pub fn new(chain_id: ChainId) -> Self {
+        Self { chain_id }
+    }
+}
 
 impl<S> Layer<S> for TraceLayer {
     type Service = TraceTransport<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        TraceTransport { inner }
+        TraceTransport { inner, chain_id: self.chain_id }
     }
 }
 
@@ -30,6 +40,7 @@ impl<S> Layer<S> for TraceLayer {
 #[derive(Debug, Clone)]
 pub struct TraceTransport<S> {
     inner: S,
+    chain_id: ChainId,
 }
 
 impl<S> Service<RequestPacket> for TraceTransport<S>
@@ -59,7 +70,8 @@ where
             rpc.jsonrpc.version = "2.0",
             rpc.system = "jsonrpc",
             rpc.jsonrpc.request_id = field::Empty,
-            rpc.method = field::Empty
+            rpc.method = field::Empty,
+            eth.chain_id = self.chain_id,
         );
 
         // todo: what do we do with batches

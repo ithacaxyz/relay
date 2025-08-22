@@ -415,7 +415,8 @@ async fn try_build_provider(
 ) -> eyre::Result<DynProvider> {
     let (transport, is_local) = create_transport(endpoint).await?;
 
-    let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
+    let builder =
+        ClientBuilder::default().layer(TraceLayer::new(chain_id)).layer(RETRY_LAYER.clone());
 
     let client = if let Some(sequencer_url) = sequencer_endpoint {
         let sequencer =
