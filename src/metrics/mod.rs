@@ -76,6 +76,7 @@ where
             let mut rp = service.call(req).instrument(span.clone()).await;
             let elapsed = timer.elapsed();
 
+            // Insert the span context for consuming later in `HttpTracingService`.
             rp.extensions_mut().insert(span.context());
 
             if let Some(error_code) = rp.as_error_code() {
@@ -150,18 +151,13 @@ where
     fn call(&mut self, request: HttpRequest<B>) -> Self::Future {
         let fut = self.inner.call(request);
         async move {
-            let rp = fut.await.map_err(Into::into)?;
-            let (mut head, body) = rp.into_parts();
-
-            let context = head
-                .extensions
-                .get::<opentelemetry::Context>()
-                .expect("Context not found in response extensions")
-                .clone();
-            TraceContextPropagator::new()
-                .inject_context(&context, &mut HeaderInjector(&mut head.headers));
-
-            Ok(Response::from_parts(head, body))
+            let mut rp = fut.await.map_err(Into::into)?;
+            // We expect the span context to be inserted by the `RpcMetricsService`.
+            if let Some(ctx) = rp.extensions().get::<opentelemetry::Context>().cloned() {
+                TraceContextPropagator::new()
+                    .inject_context(&ctx, &mut HeaderInjector(rp.headers_mut()));
+            }
+            Ok(rp)
         }
         .boxed()
     }
