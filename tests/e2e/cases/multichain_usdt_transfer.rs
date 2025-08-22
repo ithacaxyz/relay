@@ -223,12 +223,19 @@ impl MultichainTransferSetup {
         // Account upgrade deployed onchain.
         upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
 
+        let destination_decimals =
+            IERC20::new(env.erc20, env.provider_for(2)).decimals().call().await?;
+
         // Get initial balances on all chains
         let mut balances = Vec::with_capacity(num_chains);
         for i in 0..num_chains {
             let balance =
                 IERC20::new(env.erc20, env.provider_for(i)).balanceOf(wallet).call().await?;
-            balances.push(balance);
+            let decimals = IERC20::new(env.erc20, env.provider_for(i)).decimals().call().await?;
+            balances.push(
+                balance * U256::from(10u128.pow(destination_decimals as u32))
+                    / U256::from(10u128.pow(decimals as u32)),
+            );
         }
 
         // Calculate the total balance
