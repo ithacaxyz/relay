@@ -727,6 +727,7 @@ impl Signer {
                     error!(
                         signer = %self.address(),
                         chain_id = %self.chain_id,
+                        funder = %self.funder,
                         ?err,
                         "Failed to pull gas"
                     );
