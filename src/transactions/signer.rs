@@ -722,8 +722,24 @@ impl Signer {
                 self.emit_event(SignerEvent::PauseSigner(self.id()));
                 self.paused.store(true, Ordering::Relaxed);
 
+                let context_res = self.create_pull_gas_context(&fees).await.inspect_err(|err| {
+                    error!(
+                        signer = %self.address(),
+                        chain_id = %self.chain_id,
+                        funder = %self.funder,
+                        ?err,
+                        "Failed to create pull gas context"
+                    );
+                })?;
+
+                let Some(context) = context_res else {
+                    // if we get nothing, it means we can't pay for the pull gas tx, and need to
+                    // keep the signer paused. This means it will need to be funded
+                    return Ok(());
+                };
+
                 // try to pull gas after pausing
-                self.pull_gas(&fees).await.inspect_err(|err| {
+                self.initiate_pull_gas(&fees, context).await.inspect_err(|err| {
                     error!(
                         signer = %self.address(),
                         chain_id = %self.chain_id,
@@ -943,9 +959,12 @@ impl Signer {
         ))
     }
 
-    /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
-    /// lock liquidity before broadcasting the transaction.
-    pub async fn pull_gas(&self, fees: &Eip1559Estimation) -> Result<(), SignerError> {
+    /// Fetches the information required to create a pull gas transaction. If the account does not
+    /// have enough balance to broadcast the transaction, this will return None.
+    pub async fn create_pull_gas_context(
+        &self,
+        fees: &Eip1559Estimation,
+    ) -> Result<Option<PullGasContext>, SignerError> {
         let funding_amount = self.fees.top_up_amount(fees.max_fee_per_gas);
 
         info!(
@@ -967,6 +986,34 @@ impl Signer {
             async { self.provider.get_block_number().await },
             async { self.provider.estimate_gas(tx).await }
         )?;
+
+        // determine if the pull gas transaction would fail, by checking balance against the tx
+        // cost.
+        let tx_cost = fees.max_fee_per_gas * gas_limit as u128;
+        if balance < tx_cost {
+            warn!(
+                signer = %self.address(),
+                amount = %funding_amount,
+                chain_id = %self.chain_id,
+                %balance,
+                %tx_cost,
+                "Cannot call pullGas, signer balance is too low to pay for pullGas transaction"
+            );
+            return Ok(None);
+        }
+
+        Ok(Some(PullGasContext { balance, block_number, gas_limit, funding_amount, call }))
+    }
+
+    /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
+    /// lock liquidity before broadcasting the transaction.
+    pub async fn initiate_pull_gas(
+        &self,
+        fees: &Eip1559Estimation,
+        pull_gas_context: PullGasContext,
+    ) -> Result<(), SignerError> {
+        let PullGasContext { balance, block_number, gas_limit, funding_amount, call } =
+            pull_gas_context;
 
         let lock_input = LockLiquidityInput {
             current_balance: balance,
@@ -1097,6 +1144,21 @@ impl Signer {
 
         Ok(())
     }
+}
+
+/// The information required to build a pull gas transaction.
+#[derive(Debug)]
+pub struct PullGasContext {
+    /// The balance of the funder account
+    balance: U256,
+    /// The block number
+    block_number: u64,
+    /// The gas limit
+    gas_limit: u64,
+    /// The funding amount
+    funding_amount: U256,
+    /// The input for the pull gas transaction
+    call: Vec<u8>,
 }
 
 /// A unique identifier for one [`Signer`]
