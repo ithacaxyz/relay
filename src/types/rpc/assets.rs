@@ -8,13 +8,13 @@ use crate::types::{Asset, AssetMetadata, AssetType};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(untagged)]
 pub enum AddressOrNative {
-    /// Address.
-    Address(Address),
     /// The special keyword `"native"`.
     #[serde(rename = "native")]
     Native,
+    /// Address.
+    #[serde(untagged)]
+    Address(Address),
 }
 
 impl AddressOrNative {
@@ -135,12 +135,13 @@ impl GetAssetsResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::Address;
+    use super::*;
+    use alloy::primitives::{Address, address, uint};
 
     #[test]
     fn test_get_assets_parameters_roundtrip() {
         let raw = r#"{"account":"0x0000000000000000000000000000000000000000","assetFilter":{},"assetTypeFilter":[],"chainFilter":["0x1"]}"#;
-        let params = super::GetAssetsParameters {
+        let params = GetAssetsParameters {
             account: Address::ZERO,
             chain_filter: vec![1],
             ..Default::default()
@@ -148,9 +149,59 @@ mod tests {
 
         let json = serde_json::to_string(&params).unwrap();
         assert_eq!(json, raw);
-        let deserialized: super::GetAssetsParameters = serde_json::from_str(&json).unwrap();
+        let deserialized: GetAssetsParameters = serde_json::from_str(&json).unwrap();
 
         assert_eq!(params.account, deserialized.account);
         assert_eq!(params.chain_filter, deserialized.chain_filter);
+    }
+
+    #[test]
+    fn test_native_asset_7811_roundtrip() {
+        let raw = r#"{"address":"native","balance":"0xcaaea35047fe5702","type":"native","metadata":null}"#;
+
+        let expected_asset_7811 = Asset7811 {
+            address: AddressOrNative::Native,
+            balance: uint!(0xcaaea35047fe5702_U256),
+            asset_type: AssetType::Native,
+            metadata: None,
+        };
+
+        let json = serde_json::to_string(&expected_asset_7811).unwrap();
+        assert_eq!(json, raw);
+
+        let deserialized: Asset7811 = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, expected_asset_7811);
+    }
+
+    #[test]
+    fn test_address_7811_roundtrip() {
+        let raw = r#"{"address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","balance":"0xcaaea35047fe5702","type":"erc20","metadata":null}"#;
+
+        let expected_asset_7811 = Asset7811 {
+            address: AddressOrNative::Address(address!(
+                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            )),
+            balance: uint!(0xcaaea35047fe5702_U256),
+            asset_type: AssetType::ERC20,
+            metadata: None,
+        };
+
+        let json = serde_json::to_string(&expected_asset_7811).unwrap();
+        assert_eq!(json, raw);
+
+        let deserialized: Asset7811 = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, expected_asset_7811);
+    }
+
+    #[test]
+    fn test_address_or_native_roundtrip() {
+        let raw = r#""native""#;
+
+        let expected_address = AddressOrNative::Native;
+        let json = serde_json::to_string(&expected_address).unwrap();
+        assert_eq!(json, raw);
+
+        let deserialized: AddressOrNative = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, expected_address);
     }
 }
