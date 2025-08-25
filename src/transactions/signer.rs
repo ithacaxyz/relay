@@ -379,7 +379,7 @@ impl Signer {
                 attempt += 1;
                 self.metrics.simulation_retries.increment(1);
                 debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             } else {
                 trace!(?result, ?request, "transaction simulation failed");
                 result?;
