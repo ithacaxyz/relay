@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT bundle_id, refund_timestamp \n            FROM pending_refunds \n            WHERE refund_timestamp <= $1\n            ORDER BY refund_timestamp ASC\n            ",
+  "query": "\n            SELECT bundle_id, refund_timestamp\n            FROM pending_refunds\n            WHERE refund_timestamp <= $1\n            ORDER BY refund_timestamp ASC\n            ",
   "describe": {
     "columns": [
       {
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "3e7b510dd3d9019a13e64a11ae61fe8256a590a63ab2d2f7720efbb7d9f594ee"
+  "hash": "4325db0dbbaa7043d2e4dc4e01e08413a09813c047d3ff23c672d57d958efc11"
 }

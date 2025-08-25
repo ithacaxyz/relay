@@ -79,7 +79,7 @@ impl PgStorage {
     ) -> Result<()> {
         sqlx::query!(
             r#"
-            UPDATE pending_bundles 
+            UPDATE pending_bundles
             SET status = $2, updated_at = NOW()
             WHERE bundle_id = $1
             "#,
@@ -101,7 +101,7 @@ impl PgStorage {
     ) -> Result<()> {
         sqlx::query!(
             r#"
-            DELETE FROM pending_refunds 
+            DELETE FROM pending_refunds
             WHERE bundle_id = $1
             "#,
             bundle_id.as_slice()
@@ -875,9 +875,9 @@ impl StorageApi for PgStorage {
         // Store the pending refund
         sqlx::query!(
             r#"
-            INSERT INTO pending_refunds (bundle_id, refund_timestamp) 
+            INSERT INTO pending_refunds (bundle_id, refund_timestamp)
             VALUES ($1, $2)
-            ON CONFLICT (bundle_id) DO UPDATE SET 
+            ON CONFLICT (bundle_id) DO UPDATE SET
                 refund_timestamp = GREATEST(pending_refunds.refund_timestamp, EXCLUDED.refund_timestamp)
             "#,
             bundle_id.0.as_slice(),
@@ -1024,8 +1024,8 @@ impl StorageApi for PgStorage {
     ) -> Result<Vec<(BundleId, DateTime<Utc>)>> {
         let rows = sqlx::query!(
             r#"
-            SELECT bundle_id, refund_timestamp 
-            FROM pending_refunds 
+            SELECT bundle_id, refund_timestamp
+            FROM pending_refunds
             WHERE refund_timestamp <= $1
             ORDER BY refund_timestamp ASC
             "#,
@@ -1148,8 +1148,8 @@ impl StorageApi for PgStorage {
     async fn load_pending_transfers(&self) -> Result<Vec<BridgeTransfer>> {
         let rows = sqlx::query!(
             r#"
-            select transfer_data 
-            from bridge_transfers 
+            select transfer_data
+            from bridge_transfers
             where status IN ('pending', 'sent')
             ORDER BY transfer_id
             "#
@@ -1202,8 +1202,8 @@ impl StorageApi for PgStorage {
         let transaction_json = serde_json::to_value(transaction)?;
         sqlx::query!(
             r#"
-            INSERT INTO pull_gas_transactions 
-            (id, signer_address, chain_id, state, transaction_data) 
+            INSERT INTO pull_gas_transactions
+            (id, signer_address, chain_id, state, transaction_data)
             VALUES ($1, $2, $3, $4, $5)
             "#,
             transaction.tx_hash().as_slice(),
@@ -1233,7 +1233,7 @@ impl StorageApi for PgStorage {
 
         sqlx::query!(
             r#"
-            UPDATE pull_gas_transactions 
+            UPDATE pull_gas_transactions
             SET state = $2,
                 updated_at = NOW()
             WHERE id = $1
@@ -1261,7 +1261,7 @@ impl StorageApi for PgStorage {
             r#"
             SELECT transaction_data
             FROM pull_gas_transactions
-            WHERE signer_address = $1 
+            WHERE signer_address = $1
             AND chain_id = $2
             AND state = 'pending'
             ORDER BY created_at

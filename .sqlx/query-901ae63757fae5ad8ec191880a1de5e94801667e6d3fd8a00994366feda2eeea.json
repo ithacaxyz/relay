@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM pending_refunds\n            WHERE bundle_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "901ae63757fae5ad8ec191880a1de5e94801667e6d3fd8a00994366feda2eeea"
+}
