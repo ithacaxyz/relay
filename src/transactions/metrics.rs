@@ -66,6 +66,8 @@ pub struct SignerMetrics {
     pub native_spent: Gauge,
     /// Signer nonce.
     pub nonce: Counter,
+    /// Number of transaction simulation retry attempts.
+    pub simulation_retries: Counter,
 }
 
 impl SignerMetrics {
@@ -84,6 +86,7 @@ impl SignerMetrics {
             gas_spent: gauge!("signer.gas_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             native_spent: gauge!("signer.native_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             nonce: counter!("signer.nonce", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            simulation_retries: counter!("signer.simulation_retries", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
         }
     }
 }

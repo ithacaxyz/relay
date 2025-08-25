@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::e2e::{
     AuthKind,
@@ -333,7 +333,9 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
         .await?;
 
     let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
-    assert!(chain_user_assets.len() == 3);
+    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
+    // price metadata
+    assert!(chain_user_assets.len() == 4);
 
     assert!(chain_user_assets[0].address == AddressOrNative::Native);
     assert!(chain_user_assets[1].address == AddressOrNative::Address(env.erc20s[5]));
@@ -383,7 +385,62 @@ async fn get_assets_no_filter() -> eyre::Result<()> {
         .len();
 
     let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
-    assert!(chain_user_assets.len() == chain_fee_tokens_num);
+    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
+    // price metadata
+    assert!(chain_user_assets.len() == chain_fee_tokens_num + 1);
+
+    Ok(())
+}
+
+/// Ensures that querying assets without a filter returns fee tokens which also have prices
+#[tokio::test(flavor = "multi_thread")]
+async fn get_assets_price_no_filter() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+
+    let response = env
+        .relay_endpoint
+        .get_assets(GetAssetsParameters {
+            account: env.eoa.address(),
+            asset_filter: Default::default(),
+            asset_type_filter: Default::default(),
+            chain_filter: Default::default(),
+        })
+        .await?;
+
+    // Gets the number of fee tokens in the environment chain
+    let chain_fee_tokens = env
+        .relay_endpoint
+        .get_capabilities(Some(vec![U64::from(env.chain_id())]))
+        .await?
+        .0
+        .get(&env.chain_id())
+        .unwrap()
+        .fees
+        .tokens
+        .clone();
+
+    let chain_fee_tokens_num = chain_fee_tokens.len();
+
+    let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
+    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
+    // price metadata
+    assert!(chain_user_assets.len() == chain_fee_tokens_num + 1);
+
+    // check that the chain user assets are the same as the fee tokens
+    let fee_token_addresses =
+        chain_fee_tokens.iter().map(|token| token.asset.address).collect::<BTreeSet<_>>();
+    let user_asset_addresses =
+        chain_user_assets.iter().map(|asset| asset.address.address()).collect::<BTreeSet<_>>();
+    assert_eq!(fee_token_addresses, user_asset_addresses);
+
+    // check that all the assets have prices
+    for asset in chain_user_assets {
+        // check that it has metadata and has prices
+        if !asset.address.is_native() {
+            assert!(asset.metadata.as_ref().is_some_and(|meta| meta.price.is_some()));
+        }
+    }
 
     Ok(())
 }

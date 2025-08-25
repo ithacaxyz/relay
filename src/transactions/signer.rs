@@ -30,6 +30,7 @@ use alloy::{
     sol_types::SolCall,
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
+use alloy_chains::Chain;
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{
@@ -354,59 +355,34 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-
-        // TEMP: to debug polygon issue
-        const MAX_RETRIES: u32 = 5;
+        // Retry logic needed on Polygon since it sometimes executes eth_call with old state.
+        let is_polygon = Chain::from_id(self.chain_id).is_polygon();
         let mut attempt = 0;
-
         loop {
-            attempt += 1;
-
-            let result = self
-                .provider
-                .call(request.clone())
-                .await
-                .map_err(SignerError::from)
-                .and_then(|res| {
-                    if tx.is_intent() {
+            let result =
+                self.provider.call(request.clone()).await.map_err(SignerError::from).and_then(
+                    |res| {
+                        if !tx.is_intent() {
+                            return Ok(());
+                        }
                         let result = OrchestratorContract::executeCall::abi_decode_returns(&res)?;
-
                         if result != ORCHESTRATOR_NO_ERROR {
                             return Err(SignerError::IntentRevert { revert_reason: result.into() });
                         }
-
                         Ok(())
-                    } else {
-                        Ok(())
-                    }
-                })
-                .inspect_err(|err| {
-                    trace!(?err, ?request, "transaction simulation failed");
-                });
+                    },
+                );
 
-            match result {
-                Ok(_) => {
-                    if attempt > 1 {
-                        info!(
-                            "[0x756688fe] Transaction simulation succeeded at attempt {}",
-                            attempt
-                        );
-                    }
-                    break;
-                }
-                Err(err) => {
-                    // Check if error contains 0x756688fe
-                    let err_str = format!("{err:?}");
-                    if err_str.contains("0x756688fe") && attempt < MAX_RETRIES {
-                        warn!(
-                            "Transaction simulation failed with 0x756688fe, retrying (attempt {}/{})",
-                            attempt, MAX_RETRIES
-                        );
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
-                    }
-                    return Err(err);
-                }
+            if result.is_ok() {
+                break;
+            } else if is_polygon && attempt < 4 {
+                attempt += 1;
+                self.metrics.simulation_retries.increment(1);
+                debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            } else {
+                trace!(?result, ?request, "transaction simulation failed");
+                result?;
             }
         }
 
@@ -722,11 +698,28 @@ impl Signer {
                 self.emit_event(SignerEvent::PauseSigner(self.id()));
                 self.paused.store(true, Ordering::Relaxed);
 
-                // try to pull gas after pausing
-                self.pull_gas(&fees).await.inspect_err(|err| {
+                let context_res = self.create_pull_gas_context(&fees).await.inspect_err(|err| {
                     error!(
                         signer = %self.address(),
                         chain_id = %self.chain_id,
+                        funder = %self.funder,
+                        ?err,
+                        "Failed to create pull gas context"
+                    );
+                })?;
+
+                let Some(context) = context_res else {
+                    // if we get nothing, it means we can't pay for the pull gas tx, and need to
+                    // keep the signer paused. This means it will need to be funded
+                    return Ok(());
+                };
+
+                // try to pull gas after pausing
+                self.initiate_pull_gas(&fees, context).await.inspect_err(|err| {
+                    error!(
+                        signer = %self.address(),
+                        chain_id = %self.chain_id,
+                        funder = %self.funder,
                         ?err,
                         "Failed to pull gas"
                     );
@@ -942,9 +935,12 @@ impl Signer {
         ))
     }
 
-    /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
-    /// lock liquidity before broadcasting the transaction.
-    pub async fn pull_gas(&self, fees: &Eip1559Estimation) -> Result<(), SignerError> {
+    /// Fetches the information required to create a pull gas transaction. If the account does not
+    /// have enough balance to broadcast the transaction, this will return None.
+    pub async fn create_pull_gas_context(
+        &self,
+        fees: &Eip1559Estimation,
+    ) -> Result<Option<PullGasContext>, SignerError> {
         let funding_amount = self.fees.top_up_amount(fees.max_fee_per_gas);
 
         info!(
@@ -966,6 +962,34 @@ impl Signer {
             async { self.provider.get_block_number().await },
             async { self.provider.estimate_gas(tx).await }
         )?;
+
+        // determine if the pull gas transaction would fail, by checking balance against the tx
+        // cost.
+        let tx_cost = fees.max_fee_per_gas * gas_limit as u128;
+        if balance < tx_cost {
+            warn!(
+                signer = %self.address(),
+                amount = %funding_amount,
+                chain_id = %self.chain_id,
+                %balance,
+                %tx_cost,
+                "Cannot call pullGas, signer balance is too low to pay for pullGas transaction"
+            );
+            return Ok(None);
+        }
+
+        Ok(Some(PullGasContext { balance, block_number, gas_limit, funding_amount, call }))
+    }
+
+    /// Initiates a pull gas transaction to top up the signer's balance using the funder. It will
+    /// lock liquidity before broadcasting the transaction.
+    pub async fn initiate_pull_gas(
+        &self,
+        fees: &Eip1559Estimation,
+        pull_gas_context: PullGasContext,
+    ) -> Result<(), SignerError> {
+        let PullGasContext { balance, block_number, gas_limit, funding_amount, call } =
+            pull_gas_context;
 
         let lock_input = LockLiquidityInput {
             current_balance: balance,
@@ -1096,6 +1120,21 @@ impl Signer {
 
         Ok(())
     }
+}
+
+/// The information required to build a pull gas transaction.
+#[derive(Debug)]
+pub struct PullGasContext {
+    /// The balance of the funder account
+    balance: U256,
+    /// The block number
+    block_number: u64,
+    /// The gas limit
+    gas_limit: u64,
+    /// The funding amount
+    funding_amount: U256,
+    /// The input for the pull gas transaction
+    call: Vec<u8>,
 }
 
 /// A unique identifier for one [`Signer`]

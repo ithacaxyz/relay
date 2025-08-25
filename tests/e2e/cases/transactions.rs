@@ -568,7 +568,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn restart_with_pending() -> eyre::Result<()> {
     let mut config = EnvironmentConfig {
-        block_time: Some(1.0),
+        block_time: None, // No auto-mining initially
         transaction_service_config: TransactionServiceConfig {
             max_transactions_per_signer: 3,
             ..Default::default()
@@ -607,17 +607,24 @@ async fn restart_with_pending() -> eyre::Result<()> {
         .collect::<JoinAll<_>>()
         .await;
 
+    // drop one of the transactions
+    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+
+    // Mine a block to include the first batch of transactions
+    provider.anvil_mine(Some(1), None).await.unwrap();
+
     drop(tx_service_handle);
     drop(env.relay_handle);
 
-    // drop one of the transactions
-    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+    // Wait a bit to ensure the service has finished processing queued transactions
+    // We shouldn't really start a new tx service without the old one finishing
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // restart the service
     // increase signers capacity to make sure transactions are getting included quickly
     config.transaction_service_config.max_transactions_per_signer = 10;
     let (service, _handle) = TransactionService::new(
-        provider,
+        provider.clone(),
         None,
         signers,
         storage.clone(),
@@ -628,6 +635,9 @@ async fn restart_with_pending() -> eyre::Result<()> {
     .await
     .unwrap();
     tokio::spawn(service);
+
+    // Enable auto-mining after restarting the service
+    provider.anvil_set_interval_mining(1).await.unwrap();
 
     // ensure that all transactions are getting confirmed after restart
     'outer: loop {

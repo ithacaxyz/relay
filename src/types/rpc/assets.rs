@@ -4,7 +4,7 @@ use alloy::primitives::{Address, ChainId, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{Asset, AssetMetadata, AssetType};
+use crate::types::{Asset, AssetMetadataWithPrice, AssetType};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -94,6 +94,16 @@ impl GetAssetsParameters {
     pub fn eoa(account: Address) -> Self {
         Self { account, ..Default::default() }
     }
+
+    /// Generates parameters to get a specific asset for an account on a specific chain.
+    pub fn for_asset_on_chain(account: Address, chain_id: ChainId, asset: Address) -> Self {
+        Self {
+            account,
+            asset_filter: [(chain_id, vec![AssetFilterItem::fungible(asset.into())])].into(),
+            chain_filter: vec![chain_id],
+            ..Default::default()
+        }
+    }
 }
 
 /// Asset as described on ERC7811.
@@ -109,7 +119,7 @@ pub struct Asset7811 {
     pub asset_type: AssetType,
     /// Asset metadata.
     #[serde(default)]
-    pub metadata: Option<AssetMetadata>,
+    pub metadata: Option<AssetMetadataWithPrice>,
 }
 
 /// Response for `wallet_getAssets`.

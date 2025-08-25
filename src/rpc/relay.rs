@@ -13,9 +13,10 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
+        ChainAssetDiffs, Escrow, FundSource, FundingIntentContext, GasEstimate, Health, IERC20,
+        IEscrow, IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
+        MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -353,15 +354,11 @@ impl Relay {
         let (assets_response, fee_history, eth_price) = try_join!(
             // Fetch the user's balance for the fee token
             async {
-                self.get_assets(GetAssetsParameters {
-                    account: intent.eoa,
-                    asset_filter: [(
-                        chain_id,
-                        vec![AssetFilterItem::fungible(context.fee_token.into())],
-                    )]
-                    .into(),
-                    ..Default::default()
-                })
+                self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                    intent.eoa,
+                    chain_id,
+                    context.fee_token,
+                ))
                 .await
                 .map_err(RelayError::internal)
             },
@@ -1301,10 +1298,29 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
+        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
+        // chain
+        //
         // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+        let (assets, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::eoa(eoa)),
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                self.inner.contracts.funder.address,
+                request.chain_id,
+                requested_asset
+            ))
+        )?;
         let requested_asset_balance_on_dst =
             assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        let funder_balance_on_dst =
+            funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        // Check if funder has sufficient liquidity for the requested asset
+        let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
+        if funder_balance_on_dst < needed_funds {
+            return Err(QuoteError::InsufficientLiquidity.into());
+        }
 
         // Simulate the output intent first to get the fees required to execute it.
         //
@@ -1317,11 +1333,7 @@ impl Relay {
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 1,
-                    fund_transfers: vec![(
-                        requested_asset,
-                        // Deduct funds that already exist on the destination chain.
-                        requested_funds.saturating_sub(requested_asset_balance_on_dst),
-                    )],
+                    fund_transfers: vec![(requested_asset, needed_funds)],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
             )
@@ -1449,6 +1461,12 @@ impl Relay {
             // Encode the input chain IDs for the settler context
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
+
+            // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
+            // transfer.
+            if funder_balance_on_dst < sourced_funds {
+                return Err(QuoteError::InsufficientLiquidity.into());
+            }
 
             // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self
@@ -1719,6 +1737,43 @@ impl Relay {
 
         Ok(bundle)
     }
+
+    /// Gets the token price for an asset, only returns a price if it's a fee token and the inner
+    /// price fetch is successful
+    async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
+        let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
+        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+    }
+
+    /// Constructs an ERC20 getAssets response that represents the native asset, using the zero
+    /// address. This does include the native asset balance.
+    async fn native_erc20_asset(
+        &self,
+        chain_id: ChainId,
+        account: Address,
+        chain_provider: &DynProvider,
+    ) -> Result<Asset7811, RelayError> {
+        // get balance
+        let balance = chain_provider.get_balance(account).await?;
+        let native_asset =
+            AssetFilterItem { address: AddressOrNative::Native, asset_type: AssetType::Native };
+
+        // get price for the native asset
+        let price = self.get_token_price(chain_id, &native_asset).await;
+
+        Ok(Asset7811 {
+            address: Address::ZERO.into(),
+            balance,
+            asset_type: AssetType::ERC20,
+            metadata: Some(AssetMetadataWithPrice {
+                price,
+                name: None,
+                symbol: None,
+                decimals: None,
+                uri: None,
+            }),
+        })
+    }
 }
 
 #[async_trait]
@@ -1813,11 +1868,14 @@ impl RelayApiServer for Relay {
             }
         }
 
-        let chain_details = request.asset_filter.iter().map(async |(chain, assets)| {
-            let chain_provider = self.provider(*chain)?;
+        let chain_details = request.asset_filter.into_iter().map(async |(chain, assets)| {
+            let chain_provider = self.provider(chain)?;
 
             let txs =
                 assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
+                    // get price if this is a fee token
+                    let price = self.get_token_price(chain, asset).await;
+
                     if asset.asset_type.is_native() {
                         return Ok::<_, RelayError>(Asset7811 {
                             address: AddressOrNative::Native,
@@ -1842,15 +1900,31 @@ impl RelayApiServer for Relay {
                         address: asset.address,
                         balance,
                         asset_type: asset.asset_type,
-                        metadata: Some(AssetMetadata {
+                        metadata: Some(AssetMetadataWithPrice {
                             name: Some(name),
                             symbol: Some(symbol),
                             decimals: Some(decimals),
                             uri: None,
+                            price,
                         }),
                     })
                 });
-            Ok::<_, RelayError>((*chain, try_join_all(txs).await?))
+
+            // if there is a a native asset in the filter then we add a separate erc20, so that we
+            // can return price metadata for it.
+            //
+            // see `native_erc20_asset` for more information
+            if assets.iter().any(|asset| asset.asset_type.is_native()) {
+                let native_erc20 = self.native_erc20_asset(chain, request.account, &chain_provider);
+                let (native_erc20_result, txs_result) = join!(native_erc20, try_join_all(txs));
+                let mut txs = txs_result?;
+                txs.push(native_erc20_result?);
+
+                // join them
+                return Ok::<_, RelayError>((chain, txs));
+            }
+
+            Ok::<_, RelayError>((chain, try_join_all(txs).await?))
         });
 
         Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
