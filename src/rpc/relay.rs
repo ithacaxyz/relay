@@ -850,6 +850,7 @@ impl Relay {
     /// Given a key hash and a list of [`PreCall`], it tries to find a key from a requested EOA.
     ///
     /// If it cannot find it, it will attempt to fetch it from storage or on-chain.
+    #[instrument(skip_all)]
     async fn try_find_key(
         &self,
         from: Address,
@@ -874,10 +875,7 @@ impl Relay {
     }
 
     /// Generates all calls from a [`PrepareCallsParameters`].
-    async fn generate_calls(
-        &self,
-        request: &PrepareCallsParameters,
-    ) -> Result<Vec<Call>, RelayError> {
+    fn generate_calls(&self, request: &PrepareCallsParameters) -> Result<Vec<Call>, RelayError> {
         // Generate all calls that will authorize  keys and set their permissions
         let authorize_calls =
             self.authorize_into_calls(request.capabilities.authorize_keys.clone())?;
@@ -960,6 +958,7 @@ impl Relay {
     }
 
     /// Builds a chain intent.
+    #[instrument(skip_all)]
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
@@ -1032,6 +1031,7 @@ impl Relay {
         Ok((asset_diff, quote))
     }
 
+    #[instrument(skip_all)]
     async fn prepare_calls_inner(
         &self,
         mut request: PrepareCallsParameters,
@@ -1059,7 +1059,7 @@ impl Relay {
         }
 
         // Generate all requested calls.
-        request.calls = self.generate_calls(&request).await?;
+        request.calls = self.generate_calls(&request)?;
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request.get_nonce(maybe_stored.as_ref(), &provider).await?;
@@ -1115,6 +1115,7 @@ impl Relay {
     }
 
     /// Build quote with optional funding chain detection
+    #[instrument(skip_all)]
     async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
@@ -1575,6 +1576,7 @@ impl Relay {
         .into())
     }
 
+    #[instrument(skip_all)]
     async fn simulate_funding_intent(
         &self,
         eoa: Address,
@@ -1608,6 +1610,7 @@ impl Relay {
     }
 
     /// Build a single-chain quote
+    #[instrument(skip_all)]
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
@@ -1823,6 +1826,7 @@ impl RelayApiServer for Relay {
         Ok(self.get_keys(request).await?)
     }
 
+    #[instrument(skip_all)]
     async fn get_assets(&self, mut request: GetAssetsParameters) -> RpcResult<GetAssetsResponse> {
         // If no explicit asset_filter was provided, build it from the other filters, the supported
         // chains and supported fee tokens
