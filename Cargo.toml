@@ -12,9 +12,6 @@ name = "relay"
 path = "src/bin/stress.rs"
 name = "stress"
 
-[[bin]]
-path = "src/bin/chainwalker/main.rs"
-name = "chainwalker"
 
 [dependencies]
 alloy = { version = "1.0.24", features = [
@@ -188,4 +185,4 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 unused_must_use = "deny"
 
 [workspace]
-members = ["tools/xtask"]
+members = ["tools/relay-tools", "tools/xtask"]
