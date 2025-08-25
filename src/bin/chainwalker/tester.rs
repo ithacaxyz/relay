@@ -1010,7 +1010,7 @@ impl InteropTester {
             .map_err(|e| eyre!("Failed to prepare account upgrade: {}", e))?;
 
         // Ensure this is nonce 0
-        assert!(context.authorization.nonce == 0, "Authorization nonce should be 0."); 
+        assert!(context.authorization.nonce == 0, "Authorization nonce should be 0.");
 
         // Sign the digests
         let auth_sig = self.test_account.sign_hash(&digests.auth).await?;
