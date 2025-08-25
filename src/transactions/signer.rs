@@ -30,6 +30,7 @@ use alloy::{
     sol_types::SolCall,
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
+use alloy_chains::Chain;
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{
@@ -354,8 +355,8 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-        // Retry logic needed due to Polygon/flashblocks potentially executing the call with old
-        // state.
+        // Retry logic needed on Polygon since it sometimes executes eth_call with old state.
+        let is_polygon = Chain::from_id(self.chain_id).is_polygon();
         let mut attempt = 0;
         loop {
             let result =
@@ -374,12 +375,13 @@ impl Signer {
 
             if result.is_ok() {
                 break;
-            } else if attempt < 4 {
+            } else if is_polygon && attempt < 4 {
                 attempt += 1;
-                debug!(error = ?result, ?request, "transaction simulation failed, retrying... (attempt {}/5)", attempt);
+                self.metrics.simulation_retries.increment(1);
+                debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             } else {
-                trace!(?result, ?request, "transaction simulation failed after all retries");
+                trace!(?result, ?request, "transaction simulation failed");
                 result?;
             }
         }
