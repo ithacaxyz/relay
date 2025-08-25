@@ -4,7 +4,7 @@ use alloy::primitives::{Address, ChainId, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{Asset, AssetMetadata, AssetType};
+use crate::types::{Asset, AssetMetadataWithPrice, AssetType};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -119,7 +119,7 @@ pub struct Asset7811 {
     pub asset_type: AssetType,
     /// Asset metadata.
     #[serde(default)]
-    pub metadata: Option<AssetMetadata>,
+    pub metadata: Option<AssetMetadataWithPrice>,
 }
 
 /// Response for `wallet_getAssets`.

@@ -13,9 +13,10 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadata, AssetType, Call, ChainAssetDiffs, Escrow,
-        FundSource, FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind,
-        Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
+        ChainAssetDiffs, Escrow, FundSource, FundingIntentContext, GasEstimate, Health, IERC20,
+        IEscrow, IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
+        MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -1736,6 +1737,43 @@ impl Relay {
 
         Ok(bundle)
     }
+
+    /// Gets the token price for an asset, only returns a price if it's a fee token and the inner
+    /// price fetch is successful
+    async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
+        let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
+        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+    }
+
+    /// Constructs an ERC20 getAssets response that represents the native asset, using the zero
+    /// address. This does include the native asset balance.
+    async fn native_erc20_asset(
+        &self,
+        chain_id: ChainId,
+        account: Address,
+        chain_provider: &DynProvider,
+    ) -> Result<Asset7811, RelayError> {
+        // get balance
+        let balance = chain_provider.get_balance(account).await?;
+        let native_asset =
+            AssetFilterItem { address: AddressOrNative::Native, asset_type: AssetType::Native };
+
+        // get price for the native asset
+        let price = self.get_token_price(chain_id, &native_asset).await;
+
+        Ok(Asset7811 {
+            address: Address::ZERO.into(),
+            balance,
+            asset_type: AssetType::ERC20,
+            metadata: Some(AssetMetadataWithPrice {
+                price,
+                name: None,
+                symbol: None,
+                decimals: None,
+                uri: None,
+            }),
+        })
+    }
 }
 
 #[async_trait]
@@ -1830,11 +1868,14 @@ impl RelayApiServer for Relay {
             }
         }
 
-        let chain_details = request.asset_filter.iter().map(async |(chain, assets)| {
-            let chain_provider = self.provider(*chain)?;
+        let chain_details = request.asset_filter.into_iter().map(async |(chain, assets)| {
+            let chain_provider = self.provider(chain)?;
 
             let txs =
                 assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
+                    // get price if this is a fee token
+                    let price = self.get_token_price(chain, asset).await;
+
                     if asset.asset_type.is_native() {
                         return Ok::<_, RelayError>(Asset7811 {
                             address: AddressOrNative::Native,
@@ -1859,15 +1900,31 @@ impl RelayApiServer for Relay {
                         address: asset.address,
                         balance,
                         asset_type: asset.asset_type,
-                        metadata: Some(AssetMetadata {
+                        metadata: Some(AssetMetadataWithPrice {
                             name: Some(name),
                             symbol: Some(symbol),
                             decimals: Some(decimals),
                             uri: None,
+                            price,
                         }),
                     })
                 });
-            Ok::<_, RelayError>((*chain, try_join_all(txs).await?))
+
+            // if there is a a native asset in the filter then we add a separate erc20, so that we
+            // can return price metadata for it.
+            //
+            // see `native_erc20_asset` for more information
+            if assets.iter().any(|asset| asset.asset_type.is_native()) {
+                let native_erc20 = self.native_erc20_asset(chain, request.account, &chain_provider);
+                let (native_erc20_result, txs_result) = join!(native_erc20, try_join_all(txs));
+                let mut txs = txs_result?;
+                txs.push(native_erc20_result?);
+
+                // join them
+                return Ok::<_, RelayError>((chain, txs));
+            }
+
+            Ok::<_, RelayError>((chain, try_join_all(txs).await?))
         });
 
         Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
