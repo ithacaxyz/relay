@@ -380,10 +380,7 @@ impl InteropTester {
                 "Planning test sequence for token"
             );
 
-            // For a complete directed graph, construct a path that visits all edges
-            // Using a systematic approach that guarantees full coverage
-
-            // Extract unique chains and sort them to ensure consistent ordering
+            // Extract unique chains
             let mut chains: Vec<ChainId> = conns
                 .iter()
                 .flat_map(|c| vec![c.from_chain, c.to_chain])
@@ -1011,6 +1008,9 @@ impl InteropTester {
             })
             .await
             .map_err(|e| eyre!("Failed to prepare account upgrade: {}", e))?;
+
+        // Ensure this is nonce 0
+        assert!(context.authorization.nonce == 0, "Authorization nonce should be 0."); 
 
         // Sign the digests
         let auth_sig = self.test_account.sign_hash(&digests.auth).await?;
