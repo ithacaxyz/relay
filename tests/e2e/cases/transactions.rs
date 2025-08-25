@@ -620,7 +620,6 @@ async fn restart_with_pending() -> eyre::Result<()> {
     // We shouldn't really start a new tx service without the old one finishing
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-
     // restart the service
     // increase signers capacity to make sure transactions are getting included quickly
     config.transaction_service_config.max_transactions_per_signer = 10;
