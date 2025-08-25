@@ -353,15 +353,11 @@ impl Relay {
         let (assets_response, fee_history, eth_price) = try_join!(
             // Fetch the user's balance for the fee token
             async {
-                self.get_assets(GetAssetsParameters {
-                    account: intent.eoa,
-                    asset_filter: [(
-                        chain_id,
-                        vec![AssetFilterItem::fungible(context.fee_token.into())],
-                    )]
-                    .into(),
-                    ..Default::default()
-                })
+                self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                    intent.eoa,
+                    chain_id,
+                    context.fee_token,
+                ))
                 .await
                 .map_err(RelayError::internal)
             },
@@ -1301,10 +1297,29 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
+        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
+        // chain
+        //
         // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let assets = self.get_assets(GetAssetsParameters::eoa(eoa)).await?;
+        let (assets, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::eoa(eoa)),
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                self.inner.contracts.funder.address,
+                request.chain_id,
+                requested_asset
+            ))
+        )?;
         let requested_asset_balance_on_dst =
             assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        let funder_balance_on_dst =
+            funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
+
+        // Check if funder has sufficient liquidity for the requested asset
+        let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
+        if funder_balance_on_dst < needed_funds {
+            return Err(QuoteError::InsufficientLiquidity.into());
+        }
 
         // Simulate the output intent first to get the fees required to execute it.
         //
@@ -1317,11 +1332,7 @@ impl Relay {
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 1,
-                    fund_transfers: vec![(
-                        requested_asset,
-                        // Deduct funds that already exist on the destination chain.
-                        requested_funds.saturating_sub(requested_asset_balance_on_dst),
-                    )],
+                    fund_transfers: vec![(requested_asset, needed_funds)],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
                 }),
             )
@@ -1449,6 +1460,12 @@ impl Relay {
             // Encode the input chain IDs for the settler context
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
+
+            // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
+            // transfer.
+            if funder_balance_on_dst < sourced_funds {
+                return Err(QuoteError::InsufficientLiquidity.into());
+            }
 
             // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self

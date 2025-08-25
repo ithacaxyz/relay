@@ -45,6 +45,9 @@ pub enum QuoteError {
     /// Multichain functionality is disabled.
     #[error("multichain functionality is disabled: interop service not configured")]
     MultichainDisabled,
+    /// Insufficient liquidity in the funder.
+    #[error("insufficient liquidity")]
+    InsufficientLiquidity,
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -58,9 +61,9 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
-            QuoteError::UnavailablePrice(..) | QuoteError::UnavailablePriceFeed => {
-                internal_rpc(err.to_string())
-            }
+            QuoteError::UnavailablePrice(..)
+            | QuoteError::UnavailablePriceFeed
+            | QuoteError::InsufficientLiquidity => internal_rpc(err.to_string()),
         }
     }
 }

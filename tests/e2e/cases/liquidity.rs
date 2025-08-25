@@ -90,3 +90,54 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_insufficient_liquidity() -> Result<()> {
+    let env = Environment::setup().await?;
+
+    let token = env.erc20;
+    let provider = env.provider_for(0);
+
+    // Get current funder balance
+    let funder_balance = IERC20::new(token, provider).balanceOf(env.funder).call().await?;
+
+    // Create a key for signing
+    let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    // Account upgrade deployed onchain
+    upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
+
+    // Try to prepare calls with required funds that exceed funder's balance by a lot
+    // Request 10x more than what the funder has
+    let required_amount = funder_balance * U256::from(10) + U256::from(1);
+
+    let result = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            calls: vec![Call::transfer(env.erc20, env.eoa.address(), U256::from(100))],
+            chain_id: env.chain_id_for(0),
+            from: Some(env.eoa.address()),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![RequiredAsset::new(token, required_amount)],
+            },
+            key: Some(key.to_call_key()),
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+        })
+        .await;
+
+    // Should fail with insufficient liquidity error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("insufficient liquidity"),
+        "Expected insufficient liquidity error, got: {err}"
+    );
+
+    Ok(())
+}
