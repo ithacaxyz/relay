@@ -377,7 +377,7 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
-            calls: vec![],
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(1))],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
@@ -397,6 +397,24 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
             e
         })?;
 
+    // Decode the execution data to Vec<Call>
+    let calls = Vec::<Call>::abi_decode(
+        &response.context.quote().unwrap().ty().quotes[0].intent.executionData,
+    )
+    .unwrap();
+    assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");
+
+    // Verify the last call is the upgrade call
+    assert_eq!(
+        calls[1].data,
+        Bytes::from(
+            upgradeProxyAccountCall {
+                newImplementation: chain_capabilities.contracts.delegation_implementation.address
+            }
+            .abi_encode()
+        ),
+        "Last call should be upgradeProxyAccount with current delegation implementation"
+    );
     let bundle_id = send_prepared_calls(
         &env,
         &admin_key,
