@@ -442,5 +442,13 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
         }
     }
 
+    // check that there is only one native asset and one erc20 with the zero address
+    assert!(chain_user_assets.iter().filter(|asset| asset.address.is_native()).count() == 1);
+    assert!(chain_user_assets
+        .iter()
+        .filter(|asset| asset.address == AddressOrNative::Address(Address::ZERO))
+        .count() == 1
+    );
+
     Ok(())
 }
