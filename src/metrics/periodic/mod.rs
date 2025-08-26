@@ -1,15 +1,12 @@
 mod types;
-use types::{BalanceCollector, LatencyCollector};
+pub use types::*;
 
 mod job;
 use job::PeriodicJob;
 
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 
-use crate::{
-    chains::Chains, error::StorageError, metrics::periodic::types::LiquidityCollector,
-    storage::RelayStorage,
-};
+use crate::{chains::Chains, error::StorageError, storage::RelayStorage};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetricCollectorError {

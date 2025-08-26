@@ -1,11 +1,12 @@
 //! Multi-chain relay end-to-end test cases
 
 use crate::e2e::{cases::upgrade_account_eagerly, *};
-use alloy::primitives::U256;
+use alloy::primitives::{ChainId, U256};
 use eyre::Result;
 use relay::{
     config::RebalanceServiceConfig,
     liquidity::bridge::SimpleBridgeConfig,
+    metrics::periodic::{LiquidityCollector, MetricCollector, format_units_f64},
     types::{Call, IERC20, KeyType, rpc::RequiredAsset},
 };
 
@@ -76,6 +77,7 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
     let bundle_id = send_prepared_calls(&env, &key, signature, context).await?;
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(status.status.is_confirmed());
+    assert_metrics(&env, env.chain_id_for(1), token, funder_balance_1, None).await?;
 
     // Assert that we've drained funder on chain 1
     let funder_balance_1 = IERC20::new(token, provider_1).balanceOf(env.funder).call().await?;
@@ -138,6 +140,39 @@ async fn test_insufficient_liquidity() -> Result<()> {
         err.to_string().contains("insufficient liquidity"),
         "Expected insufficient liquidity error, got: {err}"
     );
+
+    Ok(())
+}
+
+/// Asserts that metrics match the expected values.
+async fn assert_metrics(
+    env: &Environment,
+    chain_id: ChainId,
+    address: Address,
+    locked: U256,
+    pending_unlock: Option<U256>,
+) -> Result<()> {
+    LiquidityCollector::new(env.relay_handle.storage.clone(), env.relay_handle.chains.clone())
+        .collect()
+        .await?;
+
+    let (asset_uid, asset) =
+        env.relay_handle.chains.asset(chain_id, address).expect("asset should exist");
+    let locked = format_units_f64(locked, asset.decimals).expect("failed to format locked");
+    let pending_unlock = pending_unlock.map(|amount| {
+        format_units_f64(amount, asset.decimals).expect("failed to format pending_unlock")
+    });
+
+    let output = env.relay_handle.metrics.render();
+    assert!(output.contains(&format!(
+        r#"liquidity_locked{{chain_id="{chain_id}",address="{address}",uid="{asset_uid}"}} {locked}"#
+    )));
+
+    if let Some(pending_unlock) = pending_unlock {
+        assert!(output.contains(&format!(
+            r#"liquidity_pending_unlock{{chain_id="{chain_id}",address="{address}",uid="{asset_uid}"}} {pending_unlock}"#)
+        ));
+    }
 
     Ok(())
 }

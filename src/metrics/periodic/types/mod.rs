@@ -9,7 +9,7 @@ mod liquidity;
 pub use liquidity::*;
 
 /// Formats a U256 value into a f64 with the specified number of decimals.
-fn format_units_f64(value: U256, decimals: u8) -> eyre::Result<f64> {
+pub fn format_units_f64(value: U256, decimals: u8) -> eyre::Result<f64> {
     Ok(format_units(value, decimals)?.parse::<f64>()?)
 }
 
