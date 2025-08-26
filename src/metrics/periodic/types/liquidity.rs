@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
+use alloy::primitives::U256;
 use futures::future::try_join;
 use itertools::Itertools;
 use metrics::gauge;
@@ -48,33 +49,30 @@ impl MetricCollector for LiquidityCollector {
 
             let decimals = asset.decimals;
 
-            if let Some(locked_liquidity) = locked.get(chain_address) {
-                match format_units_f64(*locked_liquidity, decimals) {
-                    Ok(value) => gauge!(
+            if let Some((locked_liquidity, pending_unlock)) =
+                locked.get(chain_address).zip(pending.get(chain_address).or(Some(&U256::ZERO)))
+            {
+                let locked_liquidity = format_units_f64(*locked_liquidity, decimals);
+                let pending_unlock = format_units_f64(*pending_unlock, decimals);
+
+                if let Some((locked_liquidity, pending_unlock)) =
+                    locked_liquidity.ok().zip(pending_unlock.ok())
+                {
+                    gauge!(
                         "liquidity.locked",
                         "chain_id" => chain_id.to_string(),
                         "address" => address.to_string(),
                         "uid" => uid.to_string(),
                     )
-                    .set::<f64>(value),
-                    Err(err) => {
-                        error!(?locked_liquidity, ?err, "Failed to format locked liquidity")
-                    }
-                }
-            }
+                    .set::<f64>(locked_liquidity - pending_unlock);
 
-            if let Some(pending_unlock) = pending.get(chain_address) {
-                match format_units_f64(*pending_unlock, decimals) {
-                    Ok(value) => gauge!(
+                    gauge!(
                         "liquidity.pending_unlock",
                         "chain_id" => chain_id.to_string(),
                         "address" => address.to_string(),
                         "uid" => uid.to_string(),
                     )
-                    .set::<f64>(value),
-                    Err(err) => {
-                        error!(?pending_unlock, ?err, "Failed to format pending unlock liquidity")
-                    }
+                    .set::<f64>(pending_unlock);
                 }
             }
         }
