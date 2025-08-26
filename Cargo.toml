@@ -43,7 +43,7 @@ alloy = { version = "1.0.24", features = [
     "signer-aws",
     "rand",
 ], default-features = false }
-alloy-chains = "0.2.7"
+alloy-chains = "0.2.8"
 async-trait = "0.1"
 aws-config = "1.8"
 aws-sdk-kms = { version = "1", default-features = false }
