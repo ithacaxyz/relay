@@ -1,3 +1,5 @@
+//! Periodic metric collectors.
+
 mod types;
 pub use types::*;
 
@@ -8,6 +10,7 @@ use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 
 use crate::{chains::Chains, error::StorageError, storage::RelayStorage};
 
+/// Metric collector error.
 #[derive(Debug, thiserror::Error)]
 pub enum MetricCollectorError {
     /// Error coming from RPC

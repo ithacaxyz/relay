@@ -17,6 +17,7 @@ pub struct BalanceCollector {
 }
 
 impl BalanceCollector {
+    /// Create a new balance collector.
     pub fn new(chains: Arc<Chains>) -> Self {
         Self { chains }
     }

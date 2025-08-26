@@ -21,6 +21,7 @@ pub struct LiquidityCollector {
 }
 
 impl LiquidityCollector {
+    /// Create a new liquidity collector.
     pub fn new(storage: RelayStorage, chains: Arc<Chains>) -> Self {
         Self { storage, chains }
     }
