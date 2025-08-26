@@ -77,7 +77,7 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
     let bundle_id = send_prepared_calls(&env, &key, signature, context).await?;
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(status.status.is_confirmed());
-    assert_metrics(&env, env.chain_id_for(1), token, funder_balance_1, None).await?;
+    assert_metrics(&env, env.chain_id_for(1), token, funder_balance_1, funder_balance_1).await?;
 
     // Assert that we've drained funder on chain 1
     let funder_balance_1 = IERC20::new(token, provider_1).balanceOf(env.funder).call().await?;
@@ -150,7 +150,7 @@ async fn assert_metrics(
     chain_id: ChainId,
     address: Address,
     locked: U256,
-    pending_unlock: Option<U256>,
+    pending_unlock: U256,
 ) -> Result<()> {
     LiquidityCollector::new(env.relay_handle.storage.clone(), env.relay_handle.chains.clone())
         .collect()
@@ -159,20 +159,18 @@ async fn assert_metrics(
     let (asset_uid, asset) =
         env.relay_handle.chains.asset(chain_id, address).expect("asset should exist");
     let locked = format_units_f64(locked, asset.decimals).expect("failed to format locked");
-    let pending_unlock = pending_unlock.map(|amount| {
-        format_units_f64(amount, asset.decimals).expect("failed to format pending_unlock")
-    });
+    let pending_unlock =
+        format_units_f64(pending_unlock, asset.decimals).expect("failed to format pending_unlock");
 
     let output = env.relay_handle.metrics.render();
     assert!(output.contains(&format!(
-        r#"liquidity_locked{{chain_id="{chain_id}",address="{address}",uid="{asset_uid}"}} {locked}"#
+        r#"liquidity_locked{{chain_id="{chain_id}",address="{address}",uid="{asset_uid}"}} {}"#,
+        locked - pending_unlock
     )));
 
-    if let Some(pending_unlock) = pending_unlock {
-        assert!(output.contains(&format!(
+    assert!(output.contains(&format!(
             r#"liquidity_pending_unlock{{chain_id="{chain_id}",address="{address}",uid="{asset_uid}"}} {pending_unlock}"#)
         ));
-    }
 
     Ok(())
 }
