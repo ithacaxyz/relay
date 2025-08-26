@@ -347,7 +347,8 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
     assert!(chain_user_assets[1].balance > U256::ZERO);
     assert!(chain_user_assets[2].balance > U256::ZERO);
 
-    assert!(chain_user_assets[0].metadata.is_none());
+    // we do actually include price metadata for the native asset
+    assert!(chain_user_assets[0].metadata.is_some());
     assert!(chain_user_assets[1].metadata.is_some());
     assert!(chain_user_assets[2].metadata.is_some());
 
