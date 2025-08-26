@@ -4,6 +4,7 @@ use super::{AuthorizeKey, AuthorizeKeyResponse, SendPreparedCallsResponse};
 use crate::types::{KeyHash, KeyID, SignedCall};
 use alloy::{
     dyn_abi::TypedData,
+    eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, ChainId, Signature},
     rpc::types::Authorization,
 };
@@ -221,4 +222,22 @@ pub struct GetVerifiedEmailResponse {
     pub verified: bool,
     /// The verified email address if found.
     pub email: Option<String>,
+}
+
+/// Request parameters for `wallet_getAuthorization`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAuthorizationParameters {
+    /// Address of the account to get authorization for.
+    pub address: Address,
+}
+
+/// Response for `wallet_getAuthorization`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAuthorizationResponse {
+    /// The signed authorization for account delegation.
+    pub authorization: SignedAuthorization,
+    /// The initialization data.
+    pub data: Bytes,
 }
