@@ -15,7 +15,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call,
+        Account, Call,
         IthacaAccount::{self, upgradeProxyAccountCall},
         KeyType, KeyWith712Signer, Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
@@ -243,7 +243,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
     Ok(())
 }
 
-async fn upgrade_delegation(env: &Environment, address: Address) {
+pub async fn upgrade_delegation(env: &Environment, address: Address) {
     env.provider().anvil_impersonate_account(env.eoa.address()).await.unwrap();
     let tx = TransactionRequest::default()
         .from(env.eoa.address())
@@ -342,6 +342,78 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     // Wait for bundle to not be pending.
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(status.status.is_confirmed());
+
+    Ok(())
+}
+
+/// Test that delegation upgrade is automatically added when EOA has legacy delegation
+#[tokio::test]
+async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
+    let env = Environment::setup().await.unwrap();
+
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+    let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
+
+    // Force EOA to delegation proxy and delegation impl
+    upgrade_delegation(&env, chain_capabilities.contracts.legacy_delegations[0].address).await;
+    env.provider()
+        .anvil_set_code(
+            env.eoa.address(),
+            Bytes::from(
+                [&EIP7702_DELEGATION_DESIGNATOR, env.get_legacy_delegation_proxy().as_slice()].concat(),
+            ),
+        )
+        .await?;
+
+    assert_eq!(
+        Account::new(env.eoa.address(), env.provider()).delegation_implementation().await?,
+        Some(chain_capabilities.contracts.legacy_delegations[0].address),
+        "Account delegation should be set to legacy"
+    );
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await
+        .map_err(|e| {
+            println!("prepare_calls error: {:?}", e);
+            e
+        })?;
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to not be pending.
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_confirmed(), "{status:?}");
+
+    // Verify the delegation was upgraded to the new one
+    assert_eq!(
+        Account::new(env.eoa.address(), env.provider()).delegation_implementation().await?,
+        Some(chain_capabilities.contracts.delegation_implementation.address),
+        "Account delegation should be upgraded to the current delegation"
+    );
 
     Ok(())
 }
