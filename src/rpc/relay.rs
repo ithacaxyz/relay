@@ -22,10 +22,10 @@ use crate::{
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
-            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse, Meta,
-            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
-            RelayCapabilities, SendPreparedCallsCapabilities, UpgradeAccountContext,
-            UpgradeAccountDigests, ValidSignatureProof,
+            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse, GetAuthorizationParameters,
+            GetAuthorizationResponse, Meta, PrepareCallsCapabilities, PrepareCallsContext,
+            PrepareUpgradeAccountResponse, RelayCapabilities, SendPreparedCallsCapabilities,
+            UpgradeAccountContext, UpgradeAccountDigests, ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -126,6 +126,13 @@ pub trait RelayApi {
     /// Upgrade an account.
     #[method(name = "upgradeAccount")]
     async fn upgrade_account(&self, parameters: UpgradeAccountParameters) -> RpcResult<()>;
+
+    /// Get the authorization and pre-call data for an account that was prepared for upgrade.
+    #[method(name = "getAuthorization")]
+    async fn get_authorization(
+        &self,
+        parameters: GetAuthorizationParameters,
+    ) -> RpcResult<GetAuthorizationResponse>;
 
     /// Get the status of a call batch that was sent via `send_prepared_calls`.
     ///
@@ -2114,6 +2121,26 @@ impl RelayApiServer for Relay {
         self.inner.storage.write_account(storage_account).await?;
 
         Ok(())
+    }
+
+    async fn get_authorization(
+        &self,
+        parameters: GetAuthorizationParameters,
+    ) -> RpcResult<GetAuthorizationResponse> {
+        let GetAuthorizationParameters { address } = parameters;
+
+        let account = self
+            .inner
+            .storage
+            .read_account(&address)
+            .await
+            .map_err(|e| RelayError::InternalError(e.into()))?
+            .ok_or_else(|| StorageError::AccountDoesNotExist(address))?;
+
+        Ok(GetAuthorizationResponse {
+            authorization: account.signed_authorization.clone(),
+            data: account.init_data(),
+        })
     }
 
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
