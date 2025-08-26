@@ -20,8 +20,8 @@ pub struct AssetDiffs(pub Vec<(Address, Vec<AssetDiff>)>);
 
 impl AssetDiffs {
     /// Returns a [`AssetDiffBuilder`] that can build [`AssetDiffs`].
-    pub fn builder() -> AssetDiffBuilder {
-        AssetDiffBuilder::default()
+    pub fn builder() -> AssetDiffsBuilder {
+        AssetDiffsBuilder::default()
     }
 
     /// By default, asset diffs include the intent payment. This ensures it gets removed.
@@ -208,7 +208,7 @@ pub struct AssetWithInfo {
 
 /// Builds a collapsed diff for both fungible & non-fungible tokens into [`AssetDiff`].
 #[derive(Debug, Default)]
-pub struct AssetDiffBuilder {
+pub struct AssetDiffsBuilder {
     /// Assets seen in events.
     seen_assets: HashSet<Asset>,
     // For each account: fungible token credits/debits & non fungible token in/out.
@@ -223,7 +223,7 @@ struct AccountChanges {
     non_fungible: HashSet<(Asset, DiffDirection, U256)>,
 }
 
-impl AssetDiffBuilder {
+impl AssetDiffsBuilder {
     /// Returns an iterator over seen assets.
     pub fn seen_assets(&self) -> impl Iterator<Item = &Asset> {
         self.seen_assets.iter()

@@ -3,13 +3,16 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetType, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
 };
 use alloy::{
-    primitives::{Address, ChainId, Log, U256, map::HashMap},
+    primitives::{
+        Address, ChainId, Log, U256,
+        map::{HashMap, HashSet},
+    },
     providers::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
@@ -20,6 +23,7 @@ use alloy::{
 };
 use schnellru::{ByLength, LruMap};
 use std::{
+    ops::Not,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -250,10 +254,59 @@ impl AssetInfoServiceHandle {
         &self,
         _tx_request: &TransactionRequest,
         _state_overrides: StateOverride,
-        _calls: impl Iterator<Item = CallFrame>,
-        _provider: &P,
+        calls: impl Iterator<Item = CallFrame>,
+        provider: &P,
     ) -> Result<AssetDeficits, RelayError> {
-        Ok(AssetDeficits(Vec::new()))
+        // TODO: use a builder similar to asset difs
+
+        let mut deficits = HashMap::new();
+        let mut assets = HashSet::new();
+        for call in calls {
+            let Some(contract) = call.to else { continue };
+            let asset = Asset::Token(contract);
+
+            let Some(revert_reason) = call.revert_reason else { continue };
+            if !revert_reason.contains("transfer amount exceeds balance") {
+                continue;
+            }
+
+            let Ok((from, amount)) = IERC20::transferFromCall::abi_decode(&call.input)
+                .map(|transfer| (transfer.from, transfer.amount))
+                .or_else(|_| {
+                    IERC20::transferCall::abi_decode(&call.input)
+                        .map(|transfer| (call.from, transfer.amount))
+                })
+            else {
+                continue;
+            };
+
+            assets.insert(asset);
+            *deficits.entry(from).or_insert_with(HashMap::new).entry(asset).or_default() += amount;
+        }
+
+        // fetch assets metadata
+        let mut metadata = self.get_asset_info_list(provider, assets.into_iter().collect()).await?;
+
+        Ok(AssetDeficits(
+            deficits
+                .into_iter()
+                .map(|(address, tokens)| {
+                    (
+                        address,
+                        tokens
+                            .into_iter()
+                            .map(|(asset, value)| AssetDeficit {
+                                address: asset.is_native().not().then(|| asset.address()),
+                                token_kind: asset.is_native().not().then_some(AssetType::ERC20),
+                                metadata: metadata.remove(&asset).unwrap().metadata,
+                                value,
+                                fiat: None,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
