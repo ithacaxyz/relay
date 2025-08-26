@@ -1774,7 +1774,7 @@ impl Relay {
         let price = self.get_token_price(chain_id, &native_asset).await;
 
         Ok(Asset7811 {
-            address: Address::ZERO.into(),
+            address: AddressOrNative::Address(Address::ZERO),
             balance,
             asset_type: AssetType::ERC20,
             metadata: Some(AssetMetadataWithPrice {
