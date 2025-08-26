@@ -44,6 +44,10 @@ pub struct TransactionServiceMetrics {
     pub blocks_until_inclusion: Histogram,
     /// How long transactions have spent in queue before being sent.
     pub time_in_queue: Histogram,
+    /// Maximum estimated fee per gas, in wei.
+    pub max_fee_per_gas: Histogram,
+    /// Maximum estimated priority fee per gas, in wei.
+    pub max_priority_fee_per_gas: Histogram,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.
