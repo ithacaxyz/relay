@@ -1035,6 +1035,9 @@ impl Relay {
             None
         };
 
+        // Generate all requested calls.
+        request.calls = self.generate_calls(&request)?;
+
         // Check if upgrade is needed (only for non-precalls with a delegated account)
         if !request.capabilities.pre_call
             && let Some(status) = &delegation_status
@@ -1043,9 +1046,6 @@ impl Relay {
         {
             request.calls.push(Call::upgrade_proxy_account(new_impl));
         }
-
-        // Generate all requested calls.
-        request.calls = self.generate_calls(&request)?;
 
         // Get stored account for nonce calculation
         let maybe_stored = delegation_status.as_ref().and_then(|s| s.stored_account().cloned());
