@@ -333,9 +333,7 @@ async fn get_assets_with_filter() -> eyre::Result<()> {
         .await?;
 
     let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
-    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
-    // price metadata
-    assert!(chain_user_assets.len() == 4);
+    assert!(chain_user_assets.len() == 3);
 
     assert!(chain_user_assets[0].address == AddressOrNative::Native);
     assert!(chain_user_assets[1].address == AddressOrNative::Address(env.erc20s[5]));
@@ -385,9 +383,7 @@ async fn get_assets_no_filter() -> eyre::Result<()> {
         .len();
 
     let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
-    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
-    // price metadata
-    assert!(chain_user_assets.len() == chain_fee_tokens_num + 1);
+    assert!(chain_user_assets.len() == chain_fee_tokens_num);
 
     Ok(())
 }
@@ -423,9 +419,7 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
     let chain_fee_tokens_num = chain_fee_tokens.len();
 
     let chain_user_assets = response.0.get(&env.chain_id()).unwrap();
-    // we need to add one for the Address::ZERO native erc20 we use in the response to represent
-    // price metadata
-    assert!(chain_user_assets.len() == chain_fee_tokens_num + 1);
+    assert!(chain_user_assets.len() == chain_fee_tokens_num);
 
     // check that the chain user assets are the same as the fee tokens
     let fee_token_addresses =
@@ -444,11 +438,6 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
 
     // check that there is only one native asset and one erc20 with the zero address
     assert!(chain_user_assets.iter().filter(|asset| asset.address.is_native()).count() == 1);
-    assert!(chain_user_assets
-        .iter()
-        .filter(|asset| asset.address == AddressOrNative::Address(Address::ZERO))
-        .count() == 1
-    );
 
     Ok(())
 }
