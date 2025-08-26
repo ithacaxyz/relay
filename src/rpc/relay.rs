@@ -127,7 +127,7 @@ pub trait RelayApi {
     #[method(name = "upgradeAccount")]
     async fn upgrade_account(&self, parameters: UpgradeAccountParameters) -> RpcResult<()>;
 
-    /// Get the authorization and initialization data for an account that was prepared for upgrade.
+    /// Get the authorization and initialization data for an account that is intended to be delegated.
     #[method(name = "getAuthorization")]
     async fn get_authorization(
         &self,
