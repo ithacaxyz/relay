@@ -391,11 +391,7 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
             balance_overrides: Default::default(),
             key: Some(admin_key.to_call_key()),
         })
-        .await
-        .map_err(|e| {
-            println!("prepare_calls error: {:?}", e);
-            e
-        })?;
+        .await?;
 
     // Decode the execution data to Vec<Call>
     let calls = Vec::<Call>::abi_decode(
