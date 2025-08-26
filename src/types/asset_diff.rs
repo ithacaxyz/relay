@@ -210,12 +210,20 @@ struct FungibleTransfer {
     recipients: HashSet<Address>,
 }
 
+/// Tracks non-fungible token transfers.
+#[derive(Debug, Clone)]
+struct NftTransfer {
+    /// Recipient for outgoing transfers (None for incoming).
+    recipient: Option<Address>,
+}
+
 #[derive(Debug, Default)]
 struct AccountChanges {
     /// Account debits and credits per asset.
     fungible: HashMap<Asset, FungibleTransfer>,
-    /// Account nft sends and receives.
-    non_fungible: HashSet<(Asset, DiffDirection, U256)>,
+    /// Account nft sends and receives, keyed by (asset, direction, id) so we can easily look up
+    /// the opposite direction of nft transfers.
+    non_fungible: HashMap<(Asset, DiffDirection, U256), NftTransfer>,
 }
 
 impl AssetDiffBuilder {
@@ -230,9 +238,11 @@ impl AssetDiffBuilder {
             changes
                 .non_fungible
                 .iter()
-                .filter(|(asset, change, _)| change.is_incoming() && asset.is_native().not())
+                .filter(|((asset, direction, _), _)| {
+                    direction.is_incoming() && asset.is_native().not()
+                })
                 // Safe to call .address() since we filter off native assets.
-                .map(|(asset, _, id)| (asset.address(), *id))
+                .map(|((asset, _, id), _)| (asset.address(), *id))
         })
     }
 
@@ -261,23 +271,25 @@ impl AssetDiffBuilder {
     pub fn record_erc721(&mut self, asset: Asset, transfer: IERC721::Transfer) {
         self.seen_assets.insert(asset);
 
-        for &(eoa, diff) in &[
-            (transfer.from, DiffDirection::Outgoing), // sent
-            (transfer.to, DiffDirection::Incoming),   // received
+        for (eoa, diff, recipient) in [
+            (transfer.from, DiffDirection::Outgoing, Some(transfer.to)), // sent
+            (transfer.to, DiffDirection::Incoming, None),                // received
         ] {
-            // we are only interested in collapsed/net diffs. When a eoa sends and
+            // We are only interested in collapsed/net diffs. When an eoa sends and
             // receives the same NFT, it should not have an entry.
             //
-            // * if there is no other diff: insert it
             // * if the eoa is sending, but there is a diff with a receiving event: just remove
             //   existing
             // * if the eoa is receiving, but there is a diff with a sending event: just remove
             //   existing
 
-            let nft_set = &mut self.per_account.entry(eoa).or_default().non_fungible;
+            let nft_map = &mut self.per_account.entry(eoa).or_default().non_fungible;
+            let key = (asset, diff, transfer.id);
+            let opposite_key = (asset, diff.opposite(), transfer.id);
 
-            if !nft_set.remove(&(asset, diff.opposite(), transfer.id)) {
-                nft_set.insert((asset, diff, transfer.id));
+            if nft_map.remove(&opposite_key).is_none() {
+                // No opposite direction exists, so insert this one
+                nft_map.insert(key, NftTransfer { recipient });
             }
         }
     }
@@ -325,7 +337,7 @@ impl AssetDiffBuilder {
             }
 
             // non-fungible tokens
-            for (asset, direction, id) in changes.non_fungible {
+            for ((asset, direction, id), nft) in changes.non_fungible {
                 let info = &metadata[&asset];
                 let uri = asset
                     .is_native()
@@ -341,8 +353,7 @@ impl AssetDiffBuilder {
                     value: id,
                     direction,
                     fiat: None,
-                    // TODO: track nft recipients
-                    recipients: Vec::new(),
+                    recipients: nft.recipient.into_iter().collect(),
                 });
             }
 
