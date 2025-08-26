@@ -35,8 +35,7 @@ pub struct Meta {
     /// ERC20 token to pay for the gas of the calls.
     ///
     /// Defaults to the native token.
-    #[serde(default)]
-    pub fee_token: Address,
+    pub fee_token: Option<Address>,
     /// Nonce.
     pub nonce: Option<U256>,
 }

@@ -4,7 +4,11 @@ use alloy::primitives::{Address, ChainId, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{Asset, AssetMetadataWithPrice, AssetType};
+use crate::{
+    chains::Chain,
+    price::{PriceOracle, calculate_usd_value},
+    types::{Asset, AssetMetadataWithPrice, AssetType},
+};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -140,6 +144,48 @@ impl GetAssetsResponse {
                     .map(|asset| asset.balance)
             })
             .unwrap_or_default()
+    }
+
+    /// Finds the fee token with the highest USD value on the specified chain.
+    pub async fn find_best_fee_token(
+        &self,
+        chain_id: ChainId,
+        chain: &Chain,
+        price_oracle: &PriceOracle,
+    ) -> Address {
+        let Some(assets) = self.0.get(&chain_id) else {
+            return Address::ZERO;
+        };
+
+        let mut best_token = Address::ZERO;
+        let mut best_value = 0.0_f64;
+
+        for asset in assets {
+            let address = asset.address.address();
+
+            // Check if it's a valid fee token
+            let Some((uid, desc)) =
+                chain.assets().fee_token_iter().find(|(_, desc)| desc.address == address)
+            else {
+                continue;
+            };
+
+            // Calculate USD value from metadata if available, otherwise use oracle
+            let usd_value = match &asset.metadata {
+                Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
+                    let decimals = meta.decimals.unwrap_or(18);
+                    calculate_usd_value(asset.balance, meta.price.as_ref().unwrap().price, decimals)
+                }
+                _ => price_oracle.usd_value(asset.balance, uid, desc).await.unwrap_or(0.0),
+            };
+
+            if usd_value > best_value {
+                best_value = usd_value;
+                best_token = address;
+            }
+        }
+
+        best_token
     }
 }
 

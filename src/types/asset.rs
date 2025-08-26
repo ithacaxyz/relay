@@ -4,6 +4,9 @@ use alloy::primitives::Address;
 use derive_more::{Display, FromStr};
 use serde::{Deserialize, Serialize};
 
+/// The default fiat currency for asset prices.
+const DEFAULT_FIAT_CURRENCY: &str = "USD";
+
 /// A unique ID for an asset.
 #[derive(Debug, Display, Clone, Eq, PartialEq, FromStr, Hash, Serialize, Deserialize)]
 pub struct AssetUid(String);
@@ -127,7 +130,12 @@ pub struct AssetPrice {
 impl AssetPrice {
     /// Creates a new price, in USD, from the argument.
     pub fn from_price(price: f64) -> Self {
-        Self { currency: "USD".to_string(), price }
+        Self { currency: DEFAULT_FIAT_CURRENCY.to_string(), price }
+    }
+
+    /// Checks if the price is in USD.
+    pub fn is_usd(&self) -> bool {
+        self.currency.to_lowercase() == DEFAULT_FIAT_CURRENCY.to_lowercase()
     }
 }
 

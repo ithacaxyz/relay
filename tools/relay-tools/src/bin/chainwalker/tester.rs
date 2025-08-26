@@ -808,7 +808,11 @@ impl InteropTester {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: conn.to_token_address, nonce: None },
+                    meta: Meta {
+                        fee_payer: None,
+                        fee_token: Some(conn.to_token_address),
+                        nonce: None,
+                    },
                     pre_calls: vec![],
                     pre_call: false,
                     // Required funds specifies what we need on destination chain

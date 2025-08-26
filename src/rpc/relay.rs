@@ -844,6 +844,25 @@ impl Relay {
         Ok(self.inner.chains.ensure_chain(chain_id)?.provider().clone())
     }
 
+    /// Helper to get stored account if not delegated
+    async fn get_stored_account_if_not_delegated(
+        &self,
+        from: Address,
+        provider: &DynProvider,
+    ) -> Result<Option<CreatableAccount>, RelayError> {
+        if Account::new(from, provider.clone()).is_delegated().await? {
+            return Ok(None);
+        }
+
+        self.inner
+            .storage
+            .read_account(&from)
+            .await
+            .map_err(|e| RelayError::InternalError(e.into()))?
+            .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(from).boxed()))
+            .map(Some)
+    }
+
     /// Converts authorized keys into a list of [`Call`].
     fn authorize_into_calls(&self, keys: Vec<AuthorizeKey>) -> Result<Vec<Call>, KeysError> {
         let mut calls = Vec::with_capacity(keys.len());
@@ -1018,7 +1037,9 @@ impl Relay {
                 request.chain_id,
                 request_key.prehash,
                 FeeEstimationContext {
-                    fee_token: request.capabilities.meta.fee_token,
+                    // fee_token should have been set in the beginning of prepare_calls_inner if it
+                    // was not provided by the user
+                    fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
                     stored_authorization: maybe_stored
                         .as_ref()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1051,21 +1072,29 @@ impl Relay {
 
         let provider = self.provider(request.chain_id)?;
 
-        // Find if the address is delegated or if we have a stored account in storage that can use
-        // to delegate.
-        let mut maybe_stored = None;
-        if let Some(from) = &request.from
-            && !Account::new(*from, provider.clone()).is_delegated().await?
-        {
-            maybe_stored = Some(
-                self.inner
-                    .storage
-                    .read_account(from)
-                    .await
-                    .map_err(|e| RelayError::InternalError(e.into()))?
-                    .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed()))?,
-            );
-        }
+        // Get stored account and ensure fee_token is set (only for non-pre_call)
+        let maybe_stored = if request.capabilities.pre_call {
+            None
+        } else {
+            let from = request.from.ok_or(IntentError::MissingSender)?;
+            if request.capabilities.meta.fee_token.is_none() {
+                let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+                let (acc, best_fee_token) =
+                    try_join!(self.get_stored_account_if_not_delegated(from, &provider), async {
+                        let assets = self
+                            .get_assets(GetAssetsParameters::eoa(from))
+                            .await
+                            .map_err(RelayError::internal)?;
+                        Ok(assets
+                            .find_best_fee_token(request.chain_id, &chain, &self.inner.price_oracle)
+                            .await)
+                    })?;
+                request.capabilities.meta.fee_token = Some(best_fee_token);
+                acc
+            } else {
+                self.get_stored_account_if_not_delegated(from, &provider).await?
+            }
+        };
 
         // Generate all requested calls.
         request.calls = self.generate_calls(&request)?;
@@ -1299,7 +1328,7 @@ impl Relay {
         maybe_stored: Option<&CreatableAccount>,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
-        let source_fee = request.capabilities.meta.fee_token == requested_asset;
+        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1754,7 +1783,7 @@ impl Relay {
     /// price fetch is successful
     async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
-        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+        self.inner.price_oracle.usd_conversion_rate(uid.clone()).await.map(AssetPrice::from_price)
     }
 
     /// Constructs an ERC20 getAssets response that represents the native asset, using the zero
@@ -2553,7 +2582,7 @@ impl Relay {
             from: Some(context.eoa),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(context.fee_token), nonce: None },
                 revoke_keys: vec![],
                 pre_calls: vec![],
                 pre_call: false,

@@ -125,7 +125,7 @@ pub async fn prepare_calls(
                 revoke_keys: tx.revoke_keys(),
                 meta: Meta {
                     fee_payer: None,
-                    fee_token: tx.fee_token.unwrap_or(env.fee_token),
+                    fee_token: Some(tx.fee_token.unwrap_or(env.fee_token)),
                     nonce: tx.nonce,
                 },
                 pre_calls,

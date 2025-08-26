@@ -127,7 +127,7 @@ impl StressAccount {
                     from: Some(self.address),
                     capabilities: PrepareCallsCapabilities {
                         authorize_keys: vec![],
-                        meta: Meta { fee_payer: None, fee_token, nonce: None },
+                        meta: Meta { fee_payer: None, fee_token: Some(fee_token), nonce: None },
                         revoke_keys: vec![],
                         pre_calls: vec![],
                         pre_call: false,
