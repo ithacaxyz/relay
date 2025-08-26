@@ -9,6 +9,10 @@ publish = false
 name = "chainwalker"
 path = "src/bin/chainwalker/main.rs"
 
+[[bin]]
+name = "stress"
+path = "src/bin/stress/main.rs"
+
 [dependencies]
 alloy = { version = "1.0.24", features = [
     "std",
@@ -20,11 +24,31 @@ alloy = { version = "1.0.24", features = [
     "serde",
     "signers",
     "transports",
+    "provider-ws",
+    "essentials",
+    "getrandom",
+    "dyn-abi",
+    "eip712",
+    "eips",
+    "k256",
+    "provider-debug-api",
+    "rlp",
+    "rpc",
+    "rpc-types-trace",
+    "signer-local",
+    "sol-types",
+    "network",
+    "signer-mnemonic",
+    "signer-aws",
+    "rand",
 ], default-features = false }
 alloy-chains = "0.2.8"
 clap = { version = "4.0", features = ["derive", "env"] }
 eyre = "0.6"
+futures = "0.3"
+futures-util = "0.3"
 jsonrpsee = { version = "0.26", features = ["client", "client-core", "http-client"] }
+rand = "0.9"
 relay = { path = "../.." }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
