@@ -1047,9 +1047,6 @@ impl Relay {
             request.calls.push(Call::upgrade_proxy_account(new_impl));
         }
 
-        // Get stored account for nonce calculation
-        let maybe_stored = delegation_status.as_ref().and_then(|s| s.stored_account().cloned());
-
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request
             .get_nonce(delegation_status.as_ref().and_then(|s| s.stored_account()), &provider)
@@ -1087,7 +1084,11 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
+            .compute_signing_digest(
+                delegation_status.as_ref().and_then(|s| s.stored_account()),
+                self.orchestrator(),
+                &provider,
+            )
             .await
             .map_err(RelayError::from)?;
 
