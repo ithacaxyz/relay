@@ -2141,7 +2141,7 @@ impl RelayApiServer for Relay {
 
         Ok(GetAuthorizationResponse {
             authorization: account.signed_authorization.clone(),
-            data: account.init_data(),
+            data: account.pre_call.executionData,
         })
     }
 

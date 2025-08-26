@@ -11,8 +11,8 @@ use relay::{
     types::{
         KeyType, KeyWith712Signer, SignedCalls,
         rpc::{
-            AuthorizeKey, PrepareUpgradeAccountParameters, UpgradeAccountCapabilities,
-            UpgradeAccountParameters, UpgradeAccountSignatures,
+            AuthorizeKey, GetAuthorizationParameters, PrepareUpgradeAccountParameters,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -101,6 +101,55 @@ async fn returning_customer() -> eyre::Result<()> {
 
     // Upgrading again should succeed
     upgrade_account_eagerly(&env, &[key2.to_authorized()], &key2, AuthKind::Auth).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_authorization() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+    let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    // First, prepare and upgrade the account
+    let prepare_response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities { authorize_keys: vec![key.to_authorized()] },
+        })
+        .await?;
+
+    // Sign Intent digest
+    let precall_signature = env.eoa.sign_hash(&prepare_response.digests.exec).await?;
+
+    // Sign 7702 delegation
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Store the expected values before calling upgrade_account
+    let authorization = authorization.clone();
+    let init_data = prepare_response.context.pre_call.executionData.clone();
+
+    // Upgrade account
+    env.relay_endpoint
+        .upgrade_account(UpgradeAccountParameters {
+            context: prepare_response.context,
+            signatures: UpgradeAccountSignatures {
+                auth: authorization.signature()?,
+                exec: precall_signature,
+            },
+        })
+        .await?;
+
+    let response = env
+        .relay_endpoint
+        .get_authorization(GetAuthorizationParameters { address: env.eoa.address() })
+        .await?;
+
+    assert_eq!(response.authorization, authorization);
+    assert_eq!(response.data, init_data);
 
     Ok(())
 }
