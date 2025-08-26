@@ -88,6 +88,13 @@ impl Call {
         )
     }
 
+    /// Create a call to upgrade the proxy account to a new implementation.
+    pub fn upgrade_proxy_account(new_implementation: Address) -> Self {
+        Self::self_call(
+            upgradeProxyAccountCall { newImplementation: new_implementation }.abi_encode().into(),
+        )
+    }
+
     /// Whether this call is whitelisted for precalls.
     pub fn is_whitelisted_precall(
         &self,
