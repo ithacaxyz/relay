@@ -21,7 +21,7 @@ alloy = { version = "1.0.24", features = [
     "signers",
     "transports",
 ], default-features = false }
-alloy-chains = "0.2.7"
+alloy-chains = "0.2.8"
 clap = { version = "4.0", features = ["derive", "env"] }
 eyre = "0.6"
 jsonrpsee = { version = "0.26", features = ["client", "client-core", "http-client"] }
