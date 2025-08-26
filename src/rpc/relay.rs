@@ -1867,7 +1867,8 @@ impl RelayApiServer for Relay {
                             metadata: Some(AssetMetadataWithPrice {
                                 name: None,
                                 symbol: None,
-                                decimals: None,
+                                // use a constant 18 for native assets
+                                decimals: Some(18),
                                 uri: None,
                                 price,
                             }),
