@@ -8,9 +8,6 @@ publish = false
 path = "src/bin/relay.rs"
 name = "relay"
 
-[[bin]]
-path = "src/bin/stress.rs"
-name = "stress"
 
 
 [dependencies]
