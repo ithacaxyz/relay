@@ -22,10 +22,11 @@ use crate::{
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
-            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse, GetAuthorizationParameters,
-            GetAuthorizationResponse, Meta, PrepareCallsCapabilities, PrepareCallsContext,
-            PrepareUpgradeAccountResponse, RelayCapabilities, SendPreparedCallsCapabilities,
-            UpgradeAccountContext, UpgradeAccountDigests, ValidSignatureProof,
+            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
+            GetAuthorizationParameters, GetAuthorizationResponse, Meta, PrepareCallsCapabilities,
+            PrepareCallsContext, PrepareUpgradeAccountResponse, RelayCapabilities,
+            SendPreparedCallsCapabilities, UpgradeAccountContext, UpgradeAccountDigests,
+            ValidSignatureProof,
         },
     },
     version::RELAY_SHORT_VERSION,
@@ -127,7 +128,8 @@ pub trait RelayApi {
     #[method(name = "upgradeAccount")]
     async fn upgrade_account(&self, parameters: UpgradeAccountParameters) -> RpcResult<()>;
 
-    /// Get the authorization and initialization data for an account that is intended to be delegated.
+    /// Get the authorization and initialization data for an account that is intended to be
+    /// delegated.
     #[method(name = "getAuthorization")]
     async fn get_authorization(
         &self,
