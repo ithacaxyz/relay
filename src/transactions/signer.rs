@@ -269,7 +269,10 @@ impl Signer {
     /// See also [`FeeConfig::adjusted_eip1559_estimation`]
     async fn estimate_eip1559_fees(&self) -> TransportResult<Eip1559Estimation> {
         let fees = self.provider.estimate_eip1559_fees().await?;
-        Ok(self.fees.adjusted_eip1559_estimation(fees))
+        let adjusted_fees = self.fees.adjusted_eip1559_estimation(fees);
+        self.metrics.max_fee_per_gas.record(adjusted_fees.max_fee_per_gas as f64);
+        self.metrics.max_priority_fee_per_gas.record(adjusted_fees.max_priority_fee_per_gas as f64);
+        Ok(adjusted_fees)
     }
 
     /// Invoked when a transaction is confirmed.
