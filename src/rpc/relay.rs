@@ -524,7 +524,16 @@ impl Relay {
         // client.
         intent_to_sign.set_legacy_payment_amount(U256::from(1));
 
-        let (asset_diffs, sim_result) = orchestrator
+        // If the user didn't provide any fund transfers OR the previous simulation failed due to
+        // insufficient funds, we need to calculate the asset deficits. They will be used for two
+        // things:
+        // 1. Next simulation, to continue the quotes building.
+        // 2. Return to the user.
+        // TODO: set the actual value
+        let calculate_asset_deficits = false;
+
+        // Simulate the intent
+        let (_asset_deficits, asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 mock_from,
                 self.simulator(),
@@ -532,6 +541,7 @@ impl Relay {
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
                 chain.sim_mode(),
+                calculate_asset_deficits,
             )
             .await?;
 

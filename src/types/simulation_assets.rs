@@ -1,14 +1,9 @@
-use super::{
-    AssetType,
-    IERC20::{self},
-    IERC721,
-};
 use crate::{
     chains::Chains,
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::PriceOracle,
-    types::{AssetMetadata, Quote},
+    types::{AssetMetadata, AssetType, IERC20, IERC721, Quote},
 };
 use alloy::primitives::{
     Address, ChainId, U256, U512,
@@ -83,7 +78,7 @@ pub struct AssetDiff {
     /// Token metadata.
     #[serde(flatten)]
     pub metadata: AssetMetadata,
-    /// Value or id.
+    /// ERC-20 value or ERC-721 token ID.
     pub value: U256,
     /// Incoming or outgoing direction.
     pub direction: DiffDirection,
@@ -101,6 +96,29 @@ pub struct FiatValue {
     /// Value as f64
     #[serde_as(as = "DisplayFromStr")]
     pub value: f64,
+}
+
+/// Asset deficits per account based on simulated execution logs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetDeficits(pub Vec<(Address, Vec<AssetDeficit>)>);
+
+/// Asset with metadata and deficit value.
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetDeficit {
+    /// Asset address. `None` represents the native token.
+    pub address: Option<Address>,
+    /// Token kind. ERC20 or ERC721.
+    #[serde(rename = "type")]
+    pub token_kind: Option<AssetType>,
+    /// Token metadata.
+    #[serde(flatten)]
+    pub metadata: AssetMetadata,
+    /// Value or id.
+    pub value: U256,
+    /// Optional fiat value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fiat: Option<FiatValue>,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.

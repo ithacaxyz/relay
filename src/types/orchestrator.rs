@@ -8,6 +8,7 @@ use alloy::{
     sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
+use futures::future::try_join;
 use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
@@ -15,7 +16,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     config::SimMode,
     error::{IntentError, RelayError},
-    types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
+    types::{AssetDeficits, AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -193,12 +194,14 @@ impl<P: Provider> Orchestrator<P> {
         asset_info_handle: AssetInfoServiceHandle,
         gas_validation_offset: U256,
         sim_mode: SimMode,
-    ) -> Result<(AssetDiffs, GasResults), RelayError> {
+        calculate_asset_deficits: bool,
+    ) -> Result<(AssetDeficits, AssetDiffs, GasResults), RelayError> {
         let result = SimulatorContract::new(
             simulator,
             self.orchestrator.provider(),
             self.overrides.clone(),
             sim_mode,
+            calculate_asset_deficits,
         )
         .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
         .await;
@@ -212,15 +215,23 @@ impl<P: Provider> Orchestrator<P> {
 
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa, nonce = %intent.nonce, "simulation executed");
 
-        // calculate asset diffs using the transaction request from simulation
-        let mut asset_diffs = asset_info_handle
-            .calculate_asset_diff(
+        let (asset_deficits, mut asset_diffs) = try_join(
+            // calculate asset deficits using the transaction request from simulation
+            asset_info_handle.calculate_asset_deficit(
+                &result.tx_request,
+                self.overrides.clone(),
+                result.calls.into_iter(),
+                self.orchestrator.provider(),
+            ),
+            // calculate asset diffs using the transaction request from simulation
+            asset_info_handle.calculate_asset_diff(
                 &result.tx_request,
                 self.overrides.clone(),
                 result.logs.into_iter(),
                 self.orchestrator.provider(),
-            )
-            .await?;
+            ),
+        )
+        .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let payer = if intent.payer.is_zero() { intent.eoa } else { intent.payer };
@@ -228,7 +239,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.paymentToken.into(), U256::from(1));
         }
 
-        Ok((asset_diffs, result.gas))
+        Ok((asset_deficits, asset_diffs, result.gas))
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].

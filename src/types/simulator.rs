@@ -86,6 +86,7 @@ pub struct SimulatorContract<P: Provider> {
     simulator: Simulator::SimulatorInstance<P>,
     overrides: StateOverride,
     sim_mode: SimMode,
+    calculate_asset_deficits: bool,
 }
 
 impl<P: Provider> SimulatorContract<P> {
@@ -95,11 +96,13 @@ impl<P: Provider> SimulatorContract<P> {
         provider: P,
         overrides: StateOverride,
         sim_mode: SimMode,
+        calculate_asset_deficits: bool,
     ) -> Self {
         Self {
             simulator: Simulator::SimulatorInstance::new(simulator_address, provider),
             overrides,
             sim_mode,
+            calculate_asset_deficits,
         }
     }
 
@@ -145,8 +148,9 @@ impl<P: Provider> SimulatorContract<P> {
                 .into(),
             );
 
-        // check how to simulate
-        if self.sim_mode.is_simulate_v1() {
+        // Use `eth_simulateV1` if `sim_mode` allows it and we don't need to calculate asset
+        // deficits
+        if self.sim_mode.is_simulate_v1() && !self.calculate_asset_deficits {
             self.with_simulate_v1(tx_request).await
         } else {
             self.with_debug_trace(tx_request).await
@@ -181,6 +185,7 @@ impl<P: Provider> SimulatorContract<P> {
 
         Ok(SimulationExecutionResult {
             gas,
+            calls: Vec::new(),
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
             tx_request,
             block_number,
@@ -219,12 +224,8 @@ impl<P: Provider> SimulatorContract<P> {
                 .ok_or_else(|| TransportErrorKind::custom_str("no output from simulation"))?,
         )?;
 
-        Ok(SimulationExecutionResult {
-            gas,
-            logs: collect_logs_from_frame(call_frame),
-            tx_request,
-            block_number,
-        })
+        let (calls, logs) = collect_calls_and_logs_from_frame(call_frame);
+        Ok(SimulationExecutionResult { gas, calls, logs, tx_request, block_number })
     }
 }
 
@@ -233,6 +234,9 @@ impl<P: Provider> SimulatorContract<P> {
 pub struct SimulationExecutionResult {
     /// Gas estimates from the simulation result
     pub gas: GasResults,
+    /// Calls collected from the simulation. `calls` and `logs` fields of each [`CallFrame`] are
+    /// not populated.
+    pub calls: Vec<CallFrame>,
     /// Logs with topics collected from the simulation (including ETH transfers as defined on
     /// eth_simulateV1)
     pub logs: Vec<Log>,
@@ -275,16 +279,20 @@ fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
     })
 }
 
-/// Collect logs from non-reverting calls, including ETH transfers as logs similarly to
-/// eth_simulateV1.
+/// Collects calls and logs recursively from a given frame.
 ///
-/// Only logs with topics are collected.
-fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
+/// 1. All calls, including reverting ones. `logs` and `calls` fields of each [`CallFrame`] are not
+///    populated.
+/// 1. Logs from non-reverting calls, including ETH transfers as logs similarly to `eth_simulateV1`.
+///    Only logs with topics are collected.
+fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, Vec<Log>) {
+    let mut calls = Vec::with_capacity(1);
     let mut logs = Vec::with_capacity(32);
     let mut stack = vec![root_frame];
 
-    while let Some(frame) = stack.pop() {
+    while let Some(mut frame) = stack.pop() {
         if frame.error.is_some() || frame.revert_reason.is_some() {
+            calls.push(frame);
             continue;
         }
 
@@ -302,7 +310,7 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
         }
 
         // extract logs
-        for log in frame.logs {
+        for log in frame.logs.drain(..) {
             if let (Some(address), Some(topics)) = (log.address, log.topics)
                 && !topics.is_empty()
             {
@@ -310,8 +318,9 @@ fn collect_logs_from_frame(root_frame: CallFrame) -> Vec<Log> {
             };
         }
 
-        stack.extend(frame.calls.into_iter().rev());
+        stack.extend(frame.calls.drain(..).rev());
+        calls.push(frame);
     }
 
-    logs
+    (calls, logs)
 }

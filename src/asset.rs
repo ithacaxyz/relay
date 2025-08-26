@@ -3,7 +3,7 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
@@ -14,7 +14,7 @@ use alloy::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
-    rpc::types::{TransactionRequest, state::StateOverride},
+    rpc::types::{TransactionRequest, state::StateOverride, trace::geth::CallFrame},
     sol_types::{SolCall, SolEventInterface},
     transports::TransportErrorKind,
 };
@@ -242,6 +242,18 @@ impl AssetInfoServiceHandle {
         )?;
 
         Ok(builder.build(metadata, tokens_uris))
+    }
+
+    /// Calculates the asset deficit for each account and asset based on calls.
+    /// TODO: implement
+    pub async fn calculate_asset_deficit<P: Provider>(
+        &self,
+        _tx_request: &TransactionRequest,
+        _state_overrides: StateOverride,
+        _calls: impl Iterator<Item = CallFrame>,
+        _provider: &P,
+    ) -> Result<AssetDeficits, RelayError> {
+        Ok(AssetDeficits(Vec::new()))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
