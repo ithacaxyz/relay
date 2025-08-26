@@ -361,7 +361,8 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
         .anvil_set_code(
             env.eoa.address(),
             Bytes::from(
-                [&EIP7702_DELEGATION_DESIGNATOR, env.get_legacy_delegation_proxy().as_slice()].concat(),
+                [&EIP7702_DELEGATION_DESIGNATOR, env.get_legacy_delegation_proxy().as_slice()]
+                    .concat(),
             ),
         )
         .await?;
