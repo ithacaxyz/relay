@@ -599,6 +599,8 @@ impl Relay {
             ChainAssetDiffs::new(asset_diffs, &quote, &self.inner.chains, &self.inner.price_oracle)
                 .await?;
 
+        // TODO: calculate `ChainAssetDeficits` to add fiat values
+
         Ok((chain_asset_diffs, quote))
     }
 
