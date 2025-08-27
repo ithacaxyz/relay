@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::Address;
 use derive_more::{Display, FromStr};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 /// A unique ID for an asset.
@@ -68,6 +69,11 @@ impl Assets {
     /// Iterate over all assets that are accepted as fee tokens.
     pub fn fee_token_iter(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
         self.iter().filter(|(_, desc)| desc.fee_token)
+    }
+
+    /// Iterate over all assets that are accepted as fee tokens sorted by asset address.
+    pub fn fee_token_iter_sorted(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
+        self.iter().filter(|(_, desc)| desc.fee_token).sorted_by_key(|(_, desc)| *desc.address)
     }
 }
 

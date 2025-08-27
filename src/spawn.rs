@@ -129,7 +129,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         }
     }
 
-    metrics::spawn_periodic_collectors(storage.clone(), chains.clone()).await?;
+    metrics::spawn_periodic_collectors(&config, storage.clone(), chains.clone()).await?;
 
     // construct quote signer
     let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
