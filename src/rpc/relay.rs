@@ -1857,7 +1857,9 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
-        tracing::Span::current().record("eth.chain_id", request.chain_ids[0]);
+        if let Some(&first) = request.chain_ids.first() {
+            tracing::Span::current().record("eth.chain_id", first);
+        }
         Ok(self.get_keys(request).await?)
     }
 
