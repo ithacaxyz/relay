@@ -199,6 +199,8 @@ pub struct PartialIntent {
     pub pre_calls: Vec<SignedCall>,
     /// Funds required in the destination chain.
     pub fund_transfers: Vec<(Address, U256)>,
+    /// The delegation implementation address.
+    pub delegation_implementation: Address,
 }
 
 /// Context for fee estimation that groups execution-related parameters.

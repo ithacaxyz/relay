@@ -1,18 +1,24 @@
+//! Periodic metric collectors.
+
 mod types;
-use types::{BalanceCollector, LatencyCollector};
+pub use types::*;
 
 mod job;
 use job::PeriodicJob;
 
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 
-use crate::chains::Chains;
+use crate::{chains::Chains, error::StorageError, storage::RelayStorage};
 
+/// Metric collector error.
 #[derive(Debug, thiserror::Error)]
 pub enum MetricCollectorError {
     /// Error coming from RPC
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<alloy::transports::TransportErrorKind>),
+    /// Error coming from storage
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
 }
 
 /// Trait for a collector that records its own metric.
@@ -22,9 +28,17 @@ pub trait MetricCollector: Debug {
 }
 
 /// Spawns all available periodic metric collectors.
-pub async fn spawn_periodic_collectors(chains: Arc<Chains>) -> Result<(), MetricCollectorError> {
+pub async fn spawn_periodic_collectors(
+    storage: RelayStorage,
+    chains: Arc<Chains>,
+) -> Result<(), MetricCollectorError> {
     PeriodicJob::launch_task(
         BalanceCollector::new(chains.clone()),
+        tokio::time::interval(Duration::from_secs(30)),
+    );
+
+    PeriodicJob::launch_task(
+        LiquidityCollector::new(storage, chains.clone()),
         tokio::time::interval(Duration::from_secs(30)),
     );
 

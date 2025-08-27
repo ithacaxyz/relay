@@ -204,6 +204,12 @@ pub trait StorageApi: Debug + Send + Sync {
         input: LockLiquidityInput,
     ) -> Result<()>;
 
+    /// Gets total locked liquidity, by chain ID and asset address.
+    async fn get_total_locked_liquidity(&self) -> Result<HashMap<ChainAddress, U256>>;
+
+    /// Gets total pending unlocks, by chain ID and asset address.
+    async fn get_total_pending_unlocks(&self) -> Result<HashMap<ChainAddress, U256>>;
+
     /// Updates a bridge-specific data for a transfer.
     async fn update_transfer_bridge_data(
         &self,

@@ -112,22 +112,22 @@ mod tests {
         primitives::{Bytes, address},
         providers::{CallItem, MULTICALL3_ADDRESS, Provider, ProviderBuilder},
     };
-    use alloy_chains::Chain;
 
     #[tokio::test]
-    async fn test_layerzero_quote_base_op_sepolia() {
-        // Test configuration
-        let base_sepolia_url = "https://base-sepolia.rpc.ithaca.xyz";
-        let base_sepolia_endpoint = address!("0x6EDCE65403992e310A62460808c4b910D972f10f");
-        let op_sepolia_eid: u32 = 40232;
-        let settler_address = address!("0x1C716Cb3BbDc3bc28B9C57615F6234506061b483");
-        let base_provider = ProviderBuilder::new().connect_http(base_sepolia_url.parse().unwrap());
-        let endpoint = ILayerZeroEndpointV2::new(base_sepolia_endpoint, &base_provider);
+    async fn test_layerzero_quote_ethereum_mainnet() {
+        // Test configuration for Ethereum mainnet
+        let ethereum_mainnet_url = "https://reth-ethereum.ithaca.xyz/rpc";
+        let ethereum_mainnet_endpoint = address!("0x1a44076050125825900e736c501f859c50fE728c");
+        let optimism_eid: u32 = 30111; // Optimism mainnet EID
+        let settler_address = address!("0xF387a549986cC804e19Ef23c2D55b9a5eF053944");
+        let ethereum_provider =
+            ProviderBuilder::new().connect_http(ethereum_mainnet_url.parse().unwrap());
+        let endpoint = ILayerZeroEndpointV2::new(ethereum_mainnet_endpoint, &ethereum_provider);
         let settlement_id = B256::random();
 
         let params = MessagingParams::new(
-            Chain::base_sepolia().id(),
-            op_sepolia_eid,
+            1, // Ethereum mainnet chain ID
+            optimism_eid,
             settler_address,
             settlement_id,
         );
@@ -139,11 +139,11 @@ mod tests {
         );
 
         // Test send + executeSend with multicall
-        let settler_contract = ILayerZeroSettler::new(settler_address, &base_provider);
-        let settler_context: Bytes = vec![op_sepolia_eid].abi_encode().into(); // ABI-encoded remote EID
+        let settler_contract = ILayerZeroSettler::new(settler_address, &ethereum_provider);
+        let settler_context: Bytes = vec![optimism_eid].abi_encode().into(); // ABI-encoded remote EID
 
         // Build multicall: first send(), then executeSend()
-        let (send, execute_send) = base_provider
+        let (send, execute_send) = ethereum_provider
             .multicall()
             .add_call::<sendCall>(
                 CallItem::from(settler_contract.send(settlement_id, settler_context.clone()))
@@ -167,20 +167,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_layerzero_diagnostics_base_op_sepolia() {
-        let base_provider = ProviderBuilder::new()
-            .connect_http("https://base-sepolia.rpc.ithaca.xyz".parse().unwrap());
+    async fn test_layerzero_diagnostics_ethereum_mainnet() {
+        let ethereum_provider = ProviderBuilder::new()
+            .connect_http("https://reth-ethereum.ithaca.xyz/rpc".parse().unwrap());
         let endpoint = ILayerZeroEndpointV2::new(
-            address!("0x6EDCE65403992e310A62460808c4b910D972f10f"),
-            &base_provider,
+            address!("0x1a44076050125825900e736c501f859c50fE728c"),
+            &ethereum_provider,
         );
-        let settler = address!("0x4225041FF3DB1C7d7a1029406bB80C7298767aca");
-        let op_eid = 40232u32;
+        let settler = address!("0xF387a549986cC804e19Ef23c2D55b9a5eF053944");
+        let optimism_eid = 30111u32; // Optimism mainnet EID
 
         // Receive lib + ULN config via getConfig
-        let lib_info = endpoint.getReceiveLibrary(settler, op_eid).call().await.unwrap();
+        let lib_info = endpoint.getReceiveLibrary(settler, optimism_eid).call().await.unwrap();
         let config_bytes = endpoint
-            .getConfig(settler, lib_info.lib, op_eid, ULN_CONFIG_TYPE)
+            .getConfig(settler, lib_info.lib, optimism_eid, ULN_CONFIG_TYPE)
             .call()
             .await
             .unwrap();
