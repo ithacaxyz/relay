@@ -186,6 +186,7 @@ impl<P: Provider> Orchestrator<P> {
     /// `simulator` contract address should have its balance set to `uint256.max`.
     ///
     /// This respects the given [`SimMode`] when performing the simulation.
+    #[expect(clippy::too_many_arguments)]
     pub async fn simulate_execute(
         &self,
         mock_from: Address,
