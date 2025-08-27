@@ -339,9 +339,10 @@ async fn setup_chain<P: Provider + WalletProvider>(
 
     // Additional minting for funder on secondary chains
     if !is_primary {
-        for _ in 0..5 {
-            mint_erc20s(&contracts.erc20s[..2], &[contracts.funder], provider).await?;
-        }
+        let erc20s = &contracts.erc20s[..2];
+        let funder = &[contracts.funder];
+        let minting_iter = (0..5).map(|_| mint_erc20s(erc20s, funder, provider));
+        join_all(minting_iter).await.into_iter().collect::<Result<Vec<_>>>()?;
     }
 
     Ok(contracts)
@@ -897,70 +898,103 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
 
-    // Deploy contracts using environment variables if provided, otherwise deploy new ones
+    // Deploy orchestrator first (or use env var)
     let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
         Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?
     } else {
         deploy_orchestrator(provider, &contracts_path).await?
     };
 
-    let funder = deploy_funder(provider, &contracts_path, orchestrator).await?;
+    // Prepare futures for parallel deployment
+    let funder_future = async { deploy_funder(provider, &contracts_path, orchestrator).await };
 
-    let (delegation_implementation, delegation_proxy) =
+    let delegation_future = async {
         if let Ok(address) = std::env::var("TEST_PROXY") {
             let delegation_implementation =
                 deploy_delegation_implementation(provider, &contracts_path, orchestrator).await?;
-            (
+            Ok::<_, eyre::Error>((
                 delegation_implementation,
                 Address::from_str(&address).wrap_err("Proxy address parse failed.")?,
-            )
+            ))
         } else {
-            deploy_delegation_contracts(provider, &contracts_path, orchestrator).await?
-        };
-
-    let simulator = if let Ok(address) = std::env::var("TEST_SIMULATOR") {
-        Address::from_str(&address).wrap_err("Simulator address parse failed.")?
-    } else {
-        deploy_simulator(provider, &contracts_path).await?
-    };
-
-    // Deploy ERC20 tokens
-    let erc20s = if let Ok(address) = std::env::var("TEST_ERC20") {
-        let mut erc20s = Vec::with_capacity(10);
-        erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
-        // Deploy remaining ERC20s
-        while erc20s.len() < 10 {
-            erc20s.push(deploy_erc20(provider, &contracts_path).await?);
+            deploy_delegation_contracts(provider, &contracts_path, orchestrator).await
         }
-        erc20s
-    } else {
-        deploy_erc20_tokens(provider, &contracts_path, 10).await?
     };
 
-    let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
-        Address::from_str(&address).wrap_err("ERC721 address parse failed.")?
-    } else {
-        deploy_erc721(provider, &contracts_path).await?
+    let simulator_future = async {
+        if let Ok(address) = std::env::var("TEST_SIMULATOR") {
+            Ok(Address::from_str(&address).wrap_err("Simulator address parse failed.")?)
+        } else {
+            deploy_simulator(provider, &contracts_path).await
+        }
     };
 
-    let escrow = if let Ok(address) = std::env::var("TEST_ESCROW") {
-        Address::from_str(&address).wrap_err("Escrow address parse failed.")?
-    } else {
-        deploy_escrow(provider, &contracts_path).await?
+    let erc20s_future = async {
+        if let Ok(address) = std::env::var("TEST_ERC20") {
+            let mut erc20s = Vec::with_capacity(10);
+            erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
+            // Deploy remaining ERC20s in parallel
+            let remaining = deploy_erc20_tokens(provider, &contracts_path, 9).await?;
+            erc20s.extend(remaining);
+            Ok::<_, eyre::Error>(erc20s)
+        } else {
+            deploy_erc20_tokens(provider, &contracts_path, 10).await
+        }
     };
 
-    let settler = if let Ok(address) = std::env::var("TEST_SETTLER") {
-        Address::from_str(&address).wrap_err("Settler address parse failed.")?
-    } else {
-        deploy_settler(provider, &contracts_path, provider.default_signer_address()).await?
+    let erc721_future = async {
+        if let Ok(address) = std::env::var("TEST_ERC721") {
+            Ok(Address::from_str(&address).wrap_err("ERC721 address parse failed.")?)
+        } else {
+            deploy_erc721(provider, &contracts_path).await
+        }
     };
 
-    // Deploy Multicall3 if needed
-    if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
-        provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
-    }
+    let escrow_future = async {
+        if let Ok(address) = std::env::var("TEST_ESCROW") {
+            Ok(Address::from_str(&address).wrap_err("Escrow address parse failed.")?)
+        } else {
+            deploy_escrow(provider, &contracts_path).await
+        }
+    };
 
-    // Deploy legacy contracts for upgrade tests
+    let settler_future = async {
+        if let Ok(address) = std::env::var("TEST_SETTLER") {
+            Ok(Address::from_str(&address).wrap_err("Settler address parse failed.")?)
+        } else {
+            deploy_settler(provider, &contracts_path, provider.default_signer_address()).await
+        }
+    };
+
+    let multicall_future = async {
+        if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
+            provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
+        }
+        Ok::<_, eyre::Error>(())
+    };
+
+    // Execute all independent deployments in parallel
+    let (
+        funder,
+        (delegation_implementation, delegation_proxy),
+        simulator,
+        erc20s,
+        erc721,
+        escrow,
+        settler,
+        _,
+    ) = tokio::try_join!(
+        funder_future,
+        delegation_future,
+        simulator_future,
+        erc20s_future,
+        erc721_future,
+        escrow_future,
+        settler_future,
+        multicall_future
+    )?;
+
+    // Deploy legacy contracts (depend on earlier deployments for consistent addresses)
     let legacy_orchestrator = deploy_orchestrator(provider, &contracts_path).await?;
     let (_, legacy_delegation_proxy) =
         deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator).await?;
@@ -1067,17 +1101,14 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
     .await
 }
 
-/// Deploy multiple ERC20 tokens
+/// Deploy multiple ERC20 tokens in parallel
 async fn deploy_erc20_tokens<P: Provider>(
     provider: &P,
     contracts_path: &Path,
     count: usize,
 ) -> eyre::Result<Vec<Address>> {
-    let mut erc20s = Vec::with_capacity(count);
-    for _ in 0..count {
-        erc20s.push(deploy_erc20(provider, contracts_path).await?);
-    }
-    Ok(erc20s)
+    let deployment_futures = (0..count).map(|_| deploy_erc20(provider, contracts_path));
+    try_join_all(deployment_futures).await
 }
 
 /// Deploy an ERC721 token
