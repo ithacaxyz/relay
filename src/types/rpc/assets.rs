@@ -1,6 +1,7 @@
 //! RPC account-related request and response types.
 
 use alloy::primitives::{Address, ChainId, U256};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -157,35 +158,32 @@ impl GetAssetsResponse {
             return Address::ZERO;
         };
 
-        let mut best_token = Address::ZERO;
-        let mut best_value = 0.0_f64;
-
-        for asset in assets {
+        let values = join_all(assets.iter().filter_map(|asset| {
             let address = asset.address.address();
+            chain.assets().fee_token_iter().find(|(_, desc)| desc.address == address).map(
+                |(uid, desc)| async move {
+                    let usd_value = match &asset.metadata {
+                        Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
+                            let decimals = meta.decimals.unwrap_or(18);
+                            calculate_usd_value(
+                                asset.balance,
+                                meta.price.as_ref().unwrap().price,
+                                decimals,
+                            )
+                        }
+                        _ => price_oracle.usd_value(asset.balance, uid, desc).await.unwrap_or(0.0),
+                    };
+                    (address, usd_value)
+                },
+            )
+        }))
+        .await;
 
-            // Check if it's a valid fee token
-            let Some((uid, desc)) =
-                chain.assets().fee_token_iter().find(|(_, desc)| desc.address == address)
-            else {
-                continue;
-            };
-
-            // Calculate USD value from metadata if available, otherwise use oracle
-            let usd_value = match &asset.metadata {
-                Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
-                    let decimals = meta.decimals.unwrap_or(18);
-                    calculate_usd_value(asset.balance, meta.price.as_ref().unwrap().price, decimals)
-                }
-                _ => price_oracle.usd_value(asset.balance, uid, desc).await.unwrap_or(0.0),
-            };
-
-            if usd_value > best_value {
-                best_value = usd_value;
-                best_token = address;
-            }
-        }
-
-        best_token
+        values
+            .into_iter()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(token, _)| token)
+            .unwrap_or(Address::ZERO)
     }
 }
 
