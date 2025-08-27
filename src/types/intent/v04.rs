@@ -158,8 +158,8 @@ mod tests {
     use crate::{
         signers::DynSigner,
         types::{
-            intent::{Intent, MULTICHAIN_NONCE_PREFIX},
             Call,
+            intent::{Intent, MULTICHAIN_NONCE_PREFIX},
         },
     };
     use alloy::{

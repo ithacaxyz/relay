@@ -387,4 +387,3 @@ pub struct FundSource {
     /// want to separate this out.
     pub cost: U256,
 }
-
