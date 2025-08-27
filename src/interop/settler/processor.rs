@@ -176,7 +176,7 @@ impl SettlementProcessor {
                     destination_chain,
                     source_chains.clone(),
                     quote.orchestrator,
-                    quote.intent.settler,
+                    quote.intent.settler(),
                 )
                 .await?;
 

@@ -170,7 +170,7 @@ impl Settler for SimpleSettler {
             let destination_chain = dst_tx.chain_id();
             let quote = dst_tx.quote().ok_or(SettlementError::MissingIntent)?;
             let sender = quote.orchestrator;
-            let intent_settler = quote.intent.settler;
+            let intent_settler = quote.intent.settler();
 
             let txs = try_join_all(source_chains.iter().map(async |&source_chain| {
                 let write_calldata = self

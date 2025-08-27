@@ -5,7 +5,6 @@ use alloy::{
     providers::Provider,
     rpc::types::{TransactionReceipt, state::StateOverride},
     sol,
-    sol_types::SolValue,
     transports::{TransportErrorKind, TransportResult},
 };
 use futures::future::try_join;
@@ -214,7 +213,7 @@ impl<P: Provider> Orchestrator<P> {
         let result = result?;
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
 
-        debug!(chain_id, block_number = %result.block_number, account = %intent.eoa, nonce = %intent.nonce, "simulation executed");
+        debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
         let (asset_deficits, mut asset_diffs) = try_join(
             // calculate asset deficits using the transaction request from simulation
@@ -241,9 +240,9 @@ impl<P: Provider> Orchestrator<P> {
         .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
-        let payer = if intent.payer.is_zero() { intent.eoa } else { intent.payer };
-        if payer == intent.eoa {
-            asset_diffs.remove_payer_fee(payer, intent.paymentToken.into(), U256::from(1));
+        let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
+        if payer == *intent.eoa() {
+            asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
         Ok((asset_deficits, asset_diffs, result.gas))
