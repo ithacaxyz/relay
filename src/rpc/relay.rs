@@ -6,17 +6,15 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
-    estimation::{
-        build_delegation_override, build_simulation_overrides, fees::approx_intrinsic_cost,
-    },
+    estimation::{build_simulation_overrides, fees::approx_intrinsic_cost},
     provider::ProviderExt,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
         Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
-        ChainAssetDiffs, Escrow, FundSource, FundingIntentContext, GasEstimate, Health, IERC20,
-        IEscrow, IntentKind, Intents, Key, KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX,
-        MerkleLeafInfo,
+        ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
+        Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
+        MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         rpc::{
@@ -49,7 +47,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use futures::{StreamExt, stream::FuturesOrdered};
-use futures_util::{TryFutureExt, future::try_join_all, join};
+use futures_util::{future::try_join_all, join};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -402,20 +400,8 @@ impl Relay {
                 .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
-        // Fetch orchestrator and delegation in parallel (fee_history and eth_price already fetched
-        // above)
-        let (orchestrator, delegation) = try_join!(
-            // Fetch orchestrator from the account and ensure it is supported
-            async {
-                let orchestrator_addr = account.get_orchestrator().await?;
-                if !self.is_supported_orchestrator(&orchestrator_addr) {
-                    return Err(RelayError::UnsupportedOrchestrator(orchestrator_addr));
-                }
-                Ok(Orchestrator::new(orchestrator_addr, &provider).with_overrides(overrides))
-            },
-            // Fetch delegation from the account and ensure it is supported
-            self.has_supported_delegation(&account).map_err(RelayError::from)
-        )?;
+        let orchestrator =
+            self.get_supported_orchestrator(&account, &provider).await?.with_overrides(overrides);
 
         debug!(
             %chain_id,
@@ -442,7 +428,7 @@ impl Relay {
             .with_payer(intent.payer.unwrap_or_default())
             .with_payment_token(token.address)
             .with_payment_recipient(self.inner.fee_recipient)
-            .with_supported_account_implementation(delegation)
+            .with_supported_account_implementation(intent.delegation_implementation)
             .with_encoded_pre_calls(
                 intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
             )
@@ -825,36 +811,6 @@ impl Relay {
             .collect())
     }
 
-    /// Returns the delegation implementation address from the requested account.
-    ///
-    /// It will return error if the delegation proxy is invalid.
-    #[instrument(skip_all)]
-    async fn get_delegation_implementation<P: Provider + Clone>(
-        &self,
-        account: &Account<P>,
-    ) -> Result<Address, RelayError> {
-        if let Some(delegation) = account.delegation_implementation().await? {
-            return Ok(delegation);
-        }
-
-        // Attempt to retrieve the delegation proxy from storage, since it might not be
-        // deployed yet.
-        let Some(stored) = self.inner.storage.read_account(&account.address()).await? else {
-            return Err(RelayError::Auth(AuthError::EoaNotDelegated(account.address()).boxed()));
-        };
-
-        let address = account.address();
-        let account = account.clone().with_overrides(
-            build_delegation_override(address, *stored.signed_authorization.address()).build(),
-        );
-
-        account.delegation_implementation().await?.ok_or_else(|| {
-            RelayError::Auth(
-                AuthError::InvalidDelegationProxy(*stored.signed_authorization.address()).boxed(),
-            )
-        })
-    }
-
     /// Returns an iterator over all installed [`Chain`]s.
     pub fn chains(&self) -> impl Iterator<Item = &Chain> {
         self.inner.chains.chains_iter()
@@ -918,36 +874,42 @@ impl Relay {
         Ok(authorize_calls.into_iter().chain(request.calls.clone()).chain(revoke_calls).collect())
     }
 
-    /// Checks if the orchestrator is supported.
-    fn is_supported_orchestrator(&self, orchestrator: &Address) -> bool {
-        self.orchestrator() == *orchestrator
-            || self.legacy_orchestrators().any(|c| c == *orchestrator)
-    }
-
-    /// Checks if the account has a supported delegation implementation. If so, returns it.
-    async fn has_supported_delegation<P: Provider + Clone>(
+    /// Returns the orchestrator if it's supported, otherwise returns an error.
+    async fn get_supported_orchestrator<P: Provider + Clone>(
         &self,
         account: &Account<P>,
-    ) -> Result<Address, RelayError> {
-        let address = self.get_delegation_implementation(account).await?;
-        if self.delegation_implementation() == address
-            || self.legacy_delegations().any(|c| c == address)
-        {
-            return Ok(address);
+        provider: P,
+    ) -> Result<Orchestrator<P>, RelayError> {
+        let address = account.get_orchestrator().await?;
+        if self.orchestrator() == address || self.legacy_orchestrators().any(|c| c == address) {
+            Ok(Orchestrator::new(address, provider))
+        } else {
+            Err(RelayError::UnsupportedOrchestrator(address))
         }
-        Err(AuthError::InvalidDelegation(address).into())
     }
 
-    /// Ensures the account has the latest delegation implementation. Otherwise, returns error.
-    async fn ensure_latest_delegation<P: Provider + Clone>(
+    /// Checks if a delegation implementation needs upgrading.
+    ///
+    /// Returns Some(new_impl) if upgrade needed, None if current.
+    /// Returns error if delegation is neither current nor legacy (unsupported).
+    fn maybe_delegation_upgrade(
         &self,
-        account: &Account<P>,
-    ) -> Result<(), RelayError> {
-        let address = self.has_supported_delegation(account).await?;
-        if self.delegation_implementation() != address {
-            return Err(AuthError::InvalidDelegation(address).into());
+        current_implementation: Address,
+    ) -> Result<Option<Address>, RelayError> {
+        let current = self.delegation_implementation();
+
+        // Check if it's the current implementation (up to date)
+        if current_implementation == current {
+            return Ok(None);
         }
-        Ok(())
+
+        // Check if it's a legacy implementation (needs upgrade)
+        if self.legacy_delegations().any(|c| c == current_implementation) {
+            return Ok(Some(current));
+        }
+
+        // It's neither current nor legacy - this is an error
+        Err(AuthError::InvalidDelegation(current_implementation).into())
     }
 
     /// Simulates the account initialization call.
@@ -960,6 +922,18 @@ impl Relay {
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
 
+        // Get the delegation implementation from the stored authorization
+        let delegation_impl = Account::new(account.address, self.provider(chain_id)?)
+            .with_delegation_override(account.signed_authorization.address())
+            .delegation_implementation()
+            .await?
+            .ok_or_else(|| {
+                RelayError::Auth(
+                    AuthError::InvalidDelegationProxy(*account.signed_authorization.address())
+                        .boxed(),
+                )
+            })?;
+
         // Ensures that initialization precall works
         self.estimate_fee(
             PartialIntent {
@@ -969,6 +943,7 @@ impl Relay {
                 payer: None,
                 pre_calls: vec![account.pre_call.clone()],
                 fund_transfers: vec![],
+                delegation_implementation: delegation_impl,
             },
             chain_id,
             false,
@@ -992,7 +967,7 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<&CreatableAccount>,
+        delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
@@ -1029,19 +1004,21 @@ impl Relay {
                     payer: request.capabilities.meta.fee_payer,
                     // stored PreCall should come first since it's been signed by the root
                     // EOA key.
-                    pre_calls: maybe_stored
+                    pre_calls: delegation_status
+                        .stored_account()
                         .iter()
                         .map(|acc| acc.pre_call.clone())
                         .chain(request.capabilities.pre_calls.clone())
                         .collect(),
                     fund_transfers: intent_kind.fund_transfers(),
+                    delegation_implementation: delegation_status.try_implementation()?,
                 },
                 request.chain_id,
                 request_key.prehash,
                 FeeEstimationContext {
                     fee_token: request.capabilities.meta.fee_token,
-                    stored_authorization: maybe_stored
-                        .as_ref()
+                    stored_authorization: delegation_status
+                        .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
                     account_key: key,
                     key_slot_override: false,
@@ -1072,27 +1049,29 @@ impl Relay {
 
         let provider = self.provider(request.chain_id)?;
 
-        // Find if the address is delegated or if we have a stored account in storage that can use
-        // to delegate.
-        let mut maybe_stored = None;
-        if let Some(from) = &request.from
-            && !Account::new(*from, provider.clone()).is_delegated().await?
-        {
-            maybe_stored = Some(
-                self.inner
-                    .storage
-                    .read_account(from)
-                    .await
-                    .map_err(|e| RelayError::InternalError(e.into()))?
-                    .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(*from).boxed()))?,
-            );
-        }
+        // Get delegation status if there's a sender
+        let delegation_status = if let Some(from) = request.from {
+            Some(Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?)
+        } else {
+            None
+        };
 
         // Generate all requested calls.
         request.calls = self.generate_calls(&request)?;
 
+        // Check if upgrade is needed (only for non-precalls with a delegated account)
+        if !request.capabilities.pre_call
+            && let Some(status) = &delegation_status
+            && let Ok(impl_addr) = status.try_implementation()
+            && let Some(new_impl) = self.maybe_delegation_upgrade(impl_addr)?
+        {
+            request.calls.push(Call::upgrade_proxy_account(new_impl));
+        }
+
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
-        let nonce = request.get_nonce(maybe_stored.as_ref(), &provider).await?;
+        let nonce = request
+            .get_nonce(delegation_status.as_ref().and_then(|s| s.stored_account()), &provider)
+            .await?;
 
         // If we're dealing with a PreCall do not estimate
         let (asset_diff, context) = if request.capabilities.pre_call {
@@ -1105,8 +1084,14 @@ impl Relay {
 
             (AssetDiffResponse::default(), PrepareCallsContext::with_precall(precall))
         } else {
+            // Regular flow - sender and delegation status are required
+            let Some(ref delegation_status) = delegation_status else {
+                // delegation_status is None, only if we haven't received a from in the parameters
+                return Err(IntentError::MissingSender.into());
+            };
+
             let (asset_diffs, quotes) =
-                self.build_quotes(&request, nonce, maybe_stored.as_ref(), intent_kind).await?;
+                self.build_quotes(&request, nonce, delegation_status, intent_kind).await?;
 
             let sig = self
                 .inner
@@ -1120,7 +1105,11 @@ impl Relay {
 
         // Calculate the digest that the user will need to sign.
         let (digest, typed_data) = context
-            .compute_signing_digest(maybe_stored.as_ref(), self.orchestrator(), &provider)
+            .compute_signing_digest(
+                delegation_status.as_ref().and_then(|s| s.stored_account()),
+                self.orchestrator(),
+                &provider,
+            )
             .await
             .map_err(RelayError::from)?;
 
@@ -1150,7 +1139,7 @@ impl Relay {
         &self,
         request: &PrepareCallsParameters,
         nonce: U256,
-        maybe_stored: Option<&CreatableAccount>,
+        delegation_status: &DelegationStatus,
         intent_kind: Option<IntentKind>,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         // todo(onbjerg): this is incorrect. we still want to also do multichain if you do not have
@@ -1168,11 +1157,11 @@ impl Relay {
                 required_funds.address,
                 required_funds.value,
                 nonce,
-                maybe_stored,
+                delegation_status,
             )
             .await
         } else {
-            self.build_single_chain_quote(request, maybe_stored, nonce, intent_kind)
+            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind)
                 .await
                 .map_err(Into::into)
         }
@@ -1310,14 +1299,14 @@ impl Relay {
     /// - Since simulating it as a multichain intent raises the fees, we need to source funds again;
     ///   we continue this process a number of times, until `balance + funding - required_assets -
     ///   fee >= 0`.
-    #[instrument(skip(self, request, maybe_stored), fields(chain_id = request.chain_id))]
+    #[instrument(skip(self, request, delegation_status), fields(chain_id = request.chain_id))]
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
         requested_asset: Address,
         requested_funds: U256,
         nonce: U256,
-        maybe_stored: Option<&CreatableAccount>,
+        delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let source_fee = request.capabilities.meta.fee_token == requested_asset;
@@ -1360,7 +1349,7 @@ impl Relay {
         let (_, quotes) = self
             .build_single_chain_quote(
                 request,
-                maybe_stored,
+                delegation_status,
                 nonce,
                 Some(IntentKind::MultiOutput {
                     leaf_index: 1,
@@ -1400,7 +1389,7 @@ impl Relay {
                 "Falling back to single chain for intent"
             );
             return self
-                .build_single_chain_quote(request, maybe_stored, nonce, None)
+                .build_single_chain_quote(request, delegation_status, nonce, None)
                 .await
                 .map_err(Into::into);
         }
@@ -1469,7 +1458,7 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(request, maybe_stored, nonce, None)
+                    .build_single_chain_quote(request, delegation_status, nonce, None)
                     .await
                     .map_err(Into::into);
             };
@@ -1503,7 +1492,7 @@ impl Relay {
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
                     request,
-                    maybe_stored,
+                    delegation_status,
                     nonce,
                     IntentKind::MultiOutput {
                         leaf_index: funding_chains.len(),
@@ -1644,12 +1633,17 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
-        maybe_stored: Option<&CreatableAccount>,
+        delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
     ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
-            .build_intent(request, maybe_stored, nonce, intent_kind.unwrap_or(IntentKind::Single))
+            .build_intent(
+                request,
+                delegation_status,
+                nonce,
+                intent_kind.unwrap_or(IntentKind::Single),
+            )
             .await?;
 
         Ok((
@@ -1777,36 +1771,6 @@ impl Relay {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
         self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
     }
-
-    /// Constructs an ERC20 getAssets response that represents the native asset, using the zero
-    /// address. This does include the native asset balance.
-    async fn native_erc20_asset(
-        &self,
-        chain_id: ChainId,
-        account: Address,
-        chain_provider: &DynProvider,
-    ) -> Result<Asset7811, RelayError> {
-        // get balance
-        let balance = chain_provider.get_balance(account).await?;
-        let native_asset =
-            AssetFilterItem { address: AddressOrNative::Native, asset_type: AssetType::Native };
-
-        // get price for the native asset
-        let price = self.get_token_price(chain_id, &native_asset).await;
-
-        Ok(Asset7811 {
-            address: Address::ZERO.into(),
-            balance,
-            asset_type: AssetType::ERC20,
-            metadata: Some(AssetMetadataWithPrice {
-                price,
-                name: None,
-                symbol: None,
-                decimals: None,
-                uri: None,
-            }),
-        })
-    }
 }
 
 #[async_trait]
@@ -1915,7 +1879,14 @@ impl RelayApiServer for Relay {
                             address: AddressOrNative::Native,
                             balance: chain_provider.get_balance(request.account).await?,
                             asset_type: asset.asset_type,
-                            metadata: None,
+                            metadata: Some(AssetMetadataWithPrice {
+                                name: None,
+                                symbol: None,
+                                // use a constant 18 for native assets
+                                decimals: Some(18),
+                                uri: None,
+                                price,
+                            }),
                         });
                     }
 
@@ -1943,21 +1914,6 @@ impl RelayApiServer for Relay {
                         }),
                     })
                 });
-
-            // if there is a a native asset in the filter then we add a separate erc20, so that we
-            // can return price metadata for it.
-            //
-            // see `native_erc20_asset` for more information
-            if assets.iter().any(|asset| asset.asset_type.is_native()) {
-                let native_erc20 = self.native_erc20_asset(chain, request.account, &chain_provider);
-                let (native_erc20_result, txs_result) = join!(native_erc20, try_join_all(txs));
-                let mut txs = txs_result?;
-                txs.push(native_erc20_result?);
-
-                // join them
-                return Ok::<_, RelayError>((chain, txs));
-            }
-
             Ok::<_, RelayError>((chain, try_join_all(txs).await?))
         });
 
@@ -2003,19 +1959,11 @@ impl RelayApiServer for Relay {
             signature: Bytes::new(),
         };
 
-        let account =
-            Account::new(request.address, &provider).with_delegation_override(&request.delegation);
-
-        let (auth_nonce, _) = try_join!(
-            async {
-                provider
-                    .get_transaction_count(request.address)
-                    .pending()
-                    .await
-                    .map_err(RelayError::from)
-            },
-            self.ensure_latest_delegation(&account)
-        )?;
+        let auth_nonce = provider
+            .get_transaction_count(request.address)
+            .pending()
+            .await
+            .map_err(RelayError::from)?;
 
         let authorization =
             Authorization { chain_id: U256::ZERO, address: request.delegation, nonce: auth_nonce };
@@ -2092,8 +2040,9 @@ impl RelayApiServer for Relay {
             return Err(AuthError::InvalidAuthAddress { expected: context.address, got }.into());
         }
 
-        let delegated_account = Account::new(context.address, &provider)
-            .with_delegation_override(context.authorization.address());
+        let auth_address = *context.authorization.address();
+        let delegated_account =
+            Account::new(context.address, &provider).with_delegation_override(&auth_address);
 
         let mut storage_account = CreatableAccount::new(
             context.address,
@@ -2105,9 +2054,17 @@ impl RelayApiServer for Relay {
         storage_account.pre_call =
             storage_account.pre_call.with_signature(signatures.exec.as_bytes().into());
 
-        let (_, _, (pre_call_digest, _), expected_nonce) = try_join!(
-            // Ensure it's using the lasted delegation implementation.
-            self.ensure_latest_delegation(&delegated_account,),
+        // Check the delegation implementation
+        let impl_addr = delegated_account
+            .delegation_implementation()
+            .await?
+            .ok_or(AuthError::InvalidDelegation(auth_address))?;
+
+        if impl_addr != self.delegation_implementation() {
+            return Err(AuthError::InvalidDelegation(impl_addr).into());
+        }
+
+        let (_, (pre_call_digest, _), expected_nonce) = try_join!(
             // Ensures the initialization precall is successful.
             self.simulate_init(&storage_account, context.chain_id),
             // Calculate precall digest.

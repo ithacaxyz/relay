@@ -189,6 +189,12 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the legacy orchestrator addresses.
+    pub fn with_legacy_orchestrators(mut self, legacy_orchestrators: &[Address]) -> Self {
+        self.legacy_orchestrators.extend(legacy_orchestrators);
+        self
+    }
+
     /// Sets the legacy delegation proxy addresses.
     pub fn with_legacy_delegation_proxies(mut self, legacy_delegation_proxies: &[Address]) -> Self {
         self.legacy_delegation_proxies.extend(legacy_delegation_proxies);

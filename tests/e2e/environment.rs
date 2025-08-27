@@ -255,6 +255,8 @@ struct ContractAddresses {
     #[allow(dead_code)]
     delegation_implementation: Address,
     orchestrator: Address,
+    legacy_orchestrator: Address,
+    legacy_delegation_proxy: Address,
     funder: Address,
     escrow: Address,
     settler: Address,
@@ -351,6 +353,18 @@ impl Environment {
     /// Read [`Self::setup`] for more information on setup.
     pub async fn setup() -> eyre::Result<Self> {
         Self::setup_with_config(EnvironmentConfig::default()).await
+    }
+
+    /// Get the legacy delegation proxy address from the relay's config.
+    /// This is used for testing upgrade scenarios.
+    pub fn get_legacy_delegation_proxy(&self) -> Address {
+        // The legacy delegation is the first one in the list
+        *self
+            .config
+            .legacy_delegation_proxies
+            .iter()
+            .next()
+            .expect("Legacy delegation should be configured")
     }
 
     /// Sets up a multi-chain test environment with N chains.
@@ -580,7 +594,10 @@ impl Environment {
             .with_transaction_service_config(config.transaction_service_config)
             .with_interop_config(interop_config)
             .with_rebalance_service_config(config.rebalance_service_config)
-            .with_database_url(database_url);
+            .with_database_url(database_url)
+            .with_legacy_orchestrators(&[contracts.legacy_orchestrator])
+            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy]);
+
         let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
 
         let relay_endpoint = HttpClientBuilder::default()
@@ -943,11 +960,18 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
     }
 
+    // Deploy legacy contracts for upgrade tests
+    let legacy_orchestrator = deploy_orchestrator(provider, &contracts_path).await?;
+    let (_, legacy_delegation_proxy) =
+        deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator).await?;
+
     Ok(ContractAddresses {
         simulator,
         delegation: delegation_proxy,
         delegation_implementation,
         orchestrator,
+        legacy_orchestrator,
+        legacy_delegation_proxy,
         funder,
         escrow,
         settler,

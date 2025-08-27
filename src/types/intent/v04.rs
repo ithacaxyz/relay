@@ -157,14 +157,11 @@ mod tests {
     use super::*;
     use crate::{
         signers::DynSigner,
-        types::{
-            Call,
-            intent::{Intent, MULTICHAIN_NONCE_PREFIX},
-        },
+        types::intent::{Intent, MULTICHAIN_NONCE_PREFIX},
     };
     use alloy::{
         dyn_abi::Eip712Domain,
-        primitives::{Address, Bytes, address, b256, bytes, uint},
+        primitives::{Address, Bytes, address, b256, bytes},
     };
 
     #[test]

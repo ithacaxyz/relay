@@ -252,6 +252,14 @@ impl StorageApi for RelayStorage {
         self.inner.lock_liquidity_for_bridge(transfer, input).await
     }
 
+    async fn get_total_locked_liquidity(&self) -> api::Result<HashMap<ChainAddress, U256>> {
+        self.inner.get_total_locked_liquidity().await
+    }
+
+    async fn get_total_pending_unlocks(&self) -> api::Result<HashMap<ChainAddress, U256>> {
+        self.inner.get_total_pending_unlocks().await
+    }
+
     async fn update_transfer_bridge_data(
         &self,
         transfer_id: BridgeTransferId,
