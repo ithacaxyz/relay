@@ -440,11 +440,15 @@ impl Relay {
                     .collect(),
             );
 
-        // For MultiOutput intents, set the interop flag, settler address and context
+        // For multichain intents, set the interop flag
+        if !context.intent_kind.is_single() {
+            intent_to_sign = intent_to_sign.with_interop();
+        }
+
+        // For MultiOutput intents, set the settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
             self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
             intent_to_sign = intent_to_sign
-                .with_interop()
                 .with_settler(self.inner.chains.settler_address(chain.id())?)
                 .with_settler_context(settler_context.clone());
         }
