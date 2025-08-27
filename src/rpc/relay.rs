@@ -438,18 +438,18 @@ impl Relay {
                     .into_iter()
                     .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
                     .collect(),
-            )
-            .with_is_multichain(!context.intent_kind.is_single());
+            );
 
-        // For MultiOutput intents, set the settler address and context
+        // For MultiOutput intents, set the interop flag, settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
             self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
             intent_to_sign = intent_to_sign
+                .with_interop()
                 .with_settler(self.inner.chains.settler_address(chain.id())?)
                 .with_settler_context(settler_context.clone());
         }
 
-        if intent_to_sign.is_multichain() {
+        if intent_to_sign.is_interop() {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
                 .with_mock_merkle_signature(

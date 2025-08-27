@@ -166,15 +166,15 @@ mod tests {
 
     #[test]
     fn is_multichain() {
-        assert!(!Intent::default().is_multichain());
-        assert!(
-            Intent::v04().with_nonce(U256::from(MULTICHAIN_NONCE_PREFIX << 240)).is_multichain()
-        );
+        assert!(!Intent::v04().is_nonce_multichain());
+        assert!(!Intent::v04().is_interop());
+        assert!(Intent::v04().with_nonce(MULTICHAIN_NONCE_PREFIX << 240).is_nonce_multichain());
         assert!(
             Intent::v04()
                 .with_nonce((MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338))
-                .is_multichain()
-        )
+                .is_nonce_multichain()
+        );
+        assert!(Intent::v04().with_interop().is_interop());
     }
 
     #[test]
@@ -202,8 +202,7 @@ mod tests {
             .with_payment_signature(bytes!(""))
             .with_supported_account_implementation(Address::ZERO)
             .with_funder(Address::ZERO)
-            .with_funder_signature(bytes!(""))
-            .with_is_multichain(false);
+            .with_funder_signature(bytes!(""));
 
         // Single chain op
         intent = intent.with_nonce(U256::from(31338));
@@ -257,8 +256,7 @@ mod tests {
             .with_payment_signature(bytes!(""))
             .with_supported_account_implementation(Address::ZERO)
             .with_funder(Address::ZERO)
-            .with_funder_signature(bytes!(""))
-            .with_is_multichain(false);
+            .with_funder_signature(bytes!(""));
 
         let expected_digest =
             b256!("0x01cdc1e4abcc1e13c42346be0202934a6d29e74a956779e1ea49136ce3f13b70");

@@ -31,7 +31,6 @@ fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Inte
         .with_settler(Address::ZERO)
         .with_expiry(U256::ZERO)
         .with_settler_context(bytes!(""))
-        .with_is_multichain(false)
 }
 
 /// Test merkle root calculation for a batch of intents

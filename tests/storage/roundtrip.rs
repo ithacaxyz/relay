@@ -140,8 +140,7 @@ impl Fixtures {
             .with_funder_signature(r_bytes.clone())
             .with_settler(r_address)
             .with_expiry(r_u256)
-            .with_settler_context(r_bytes.clone())
-            .with_is_multichain(false);
+            .with_settler_context(r_bytes.clone());
         let quote = Quote {
             chain_id: r_u64,
             intent,

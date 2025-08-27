@@ -129,10 +129,10 @@ impl Intent {
         self
     }
 
-    /// Sets whether the intent should use multichain mode.
-    pub fn with_is_multichain(mut self, is_multichain: bool) -> Self {
+    /// Sets the intent as interop/multichain.
+    pub fn with_interop(mut self) -> Self {
         match &mut self {
-            Intent::V04(intent) => intent.isMultichain = is_multichain,
+            Intent::V04(intent) => intent.isMultichain = true,
         }
         self
     }
@@ -350,12 +350,18 @@ impl Intent {
         }
     }
 
-    /// Whether the intent should use the multichain mode - i.e verify with merkle sigs
-    /// and send the cross chain message.
-    pub fn is_multichain(&self) -> bool {
+    /// Whether the intent is marked as interop/multichain via the isMultichain field.
+    pub fn is_interop(&self) -> bool {
         match self {
             Intent::V04(intent) => intent.isMultichain,
         }
+    }
+
+    /// Whether the intent has a multichain nonce prefix.
+    ///
+    /// Checks if the nonce has the MULTICHAIN_NONCE_PREFIX in the upper 16 bits.
+    pub fn is_nonce_multichain(&self) -> bool {
+        SignedCalls::is_multichain(self)
     }
 
     /// The funder address.
