@@ -102,6 +102,13 @@ pub struct FiatValue {
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDeficits(pub Vec<(Address, Vec<AssetDeficit>)>);
 
+impl AssetDeficits {
+    /// Creates a new builder for asset deficits.
+    pub fn builder() -> AssetDeficitsBuilder {
+        AssetDeficitsBuilder::default()
+    }
+}
+
 /// Asset with metadata and deficit value.
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -523,6 +530,62 @@ pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
     let result = U512::from(amount).saturating_mul(U512::from(usd_price * 1e18))
         / U512::from(10u128.pow(decimals as u32));
     result.to::<u128>() as f64 / 1e18
+}
+
+/// Builder for constructing [`AssetDeficits`] from individual deficit records.
+#[derive(Debug, Default)]
+pub struct AssetDeficitsBuilder {
+    /// Assets seen in events.
+    seen_assets: HashSet<Asset>,
+    /// Deficits per account.
+    per_account: HashMap<Address, HashMap<Asset, U256>>,
+}
+
+impl AssetDeficitsBuilder {
+    /// Creates a new empty builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records a deficit for a specific account and asset.
+    pub fn record_deficit(&mut self, account: Address, asset: Asset, amount: U256) {
+        self.seen_assets.insert(asset);
+        self.per_account
+            .entry(account)
+            .or_default()
+            .entry(asset)
+            .and_modify(|deficit| *deficit += amount)
+            .or_insert(amount);
+    }
+
+    /// Returns an iterator over seen assets.
+    pub fn seen_assets(&self) -> impl Iterator<Item = &Asset> {
+        self.seen_assets.iter()
+    }
+
+    /// Builds and returns [`AssetDeficits`].
+    pub fn build(self, metadata: HashMap<Asset, AssetWithInfo>) -> AssetDeficits {
+        AssetDeficits(
+            self.per_account
+                .into_iter()
+                .map(|(account, deficits)| {
+                    (
+                        account,
+                        deficits
+                            .into_iter()
+                            .map(|(asset, value)| AssetDeficit {
+                                address: asset.is_native().not().then(|| asset.address()),
+                                token_kind: asset.is_native().not().then_some(AssetType::ERC20),
+                                metadata: metadata[&asset].metadata.clone(),
+                                value,
+                                fiat: None,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
 }
 
 #[cfg(test)]

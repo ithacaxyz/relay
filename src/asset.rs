@@ -3,16 +3,13 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
-        Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetType, AssetWithInfo,
+        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
     },
 };
 use alloy::{
-    primitives::{
-        Address, ChainId, Log, U256, address,
-        map::{HashMap, HashSet},
-    },
+    primitives::{Address, ChainId, Log, U256, address, map::HashMap},
     providers::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
@@ -23,7 +20,6 @@ use alloy::{
 };
 use schnellru::{ByLength, LruMap};
 use std::{
-    ops::Not,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -256,10 +252,8 @@ impl AssetInfoServiceHandle {
         calls: impl Iterator<Item = CallFrame>,
         provider: &P,
     ) -> Result<AssetDeficits, RelayError> {
-        // TODO: use a builder similar to asset difs
+        let mut builder = AssetDeficits::builder();
 
-        let mut deficits = HashMap::new();
-        let mut assets = HashSet::new();
         for call in calls {
             let Some(to) = call.to else { continue };
 
@@ -315,33 +309,14 @@ impl AssetInfoServiceHandle {
                 continue;
             }
 
-            assets.insert(asset);
-            *deficits.entry(from).or_insert_with(HashMap::new).entry(asset).or_default() += amount;
+            builder.record_deficit(from, asset, amount);
         }
 
         // Fetch assets metadata
-        let mut metadata = self.get_asset_info_list(provider, assets.into_iter().collect()).await?;
+        let metadata =
+            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
 
-        Ok(AssetDeficits(
-            deficits
-                .into_iter()
-                .map(|(address, tokens)| {
-                    (
-                        address,
-                        tokens
-                            .into_iter()
-                            .map(|(asset, value)| AssetDeficit {
-                                address: asset.is_native().not().then(|| asset.address()),
-                                token_kind: asset.is_native().not().then_some(AssetType::ERC20),
-                                metadata: metadata.remove(&asset).unwrap().metadata,
-                                value,
-                                fiat: None,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ))
+        Ok(builder.build(metadata))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
