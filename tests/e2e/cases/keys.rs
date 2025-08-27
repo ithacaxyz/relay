@@ -191,3 +191,128 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_keys_multi_chain() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let session_key =
+        KeyWith712Signer::random_session(KeyType::P256)?.unwrap().with_permissions(vec![
+            Permission::Call(CallPermission {
+                to: env.erc20,
+                selector: MockErc20::transferCall::SELECTOR.into(),
+            }),
+        ]);
+
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    // Add session key
+    TxContext {
+        authorization_keys: vec![&session_key],
+        expected: ExpectedOutcome::Pass,
+        key: Some(&admin_key),
+        ..Default::default()
+    }
+    .process(0, &env)
+    .await?;
+
+    // Test 1: Get keys for multiple specific chains
+    let response = env
+        .relay_endpoint
+        .get_keys(relay::types::rpc::GetKeysParameters {
+            address: env.eoa.address(),
+            chain_ids: env.chain_ids.clone(),
+        })
+        .await?;
+
+    // Should have keys for at least the first chain (where we delegated)
+    let first_chain_id_hex = format!("0x{:x}", env.chain_ids[0]);
+    assert!(response.contains_key(&first_chain_id_hex));
+    assert_eq!(response.get(&first_chain_id_hex).unwrap().len(), 2); // admin + session key
+
+    // If there are multiple chains configured, verify we only get keys for delegated chains
+    if env.chain_ids.len() > 1 {
+        // Other chains should not have keys (account not delegated there)
+        for chain_id in &env.chain_ids[1..] {
+            let chain_hex = format!("0x{:x}", chain_id);
+            assert!(!response.contains_key(&chain_hex), "Unexpected keys on chain {}", chain_hex);
+        }
+    }
+
+    // Test 2: Get keys for all chains (empty chain_ids)
+    let all_chains_response = env
+        .relay_endpoint
+        .get_keys(relay::types::rpc::GetKeysParameters {
+            address: env.eoa.address(),
+            chain_ids: vec![],
+        })
+        .await?;
+
+    // Should include at least the chain we delegated on
+    assert!(!all_chains_response.is_empty());
+    assert!(all_chains_response.contains_key(&first_chain_id_hex));
+
+    // When requesting all chains, we should get the same or more chains than when specifying them
+    assert!(all_chains_response.len() >= response.len());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_keys_multiple_specific_chains() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    // Test requesting multiple chains at once, including a non-existent chain
+    let mut test_chain_ids = env.chain_ids.clone();
+    let non_existent_chain = 999999u64;
+    test_chain_ids.push(non_existent_chain);
+
+    let response = env
+        .relay_endpoint
+        .get_keys(relay::types::rpc::GetKeysParameters {
+            address: env.eoa.address(),
+            chain_ids: test_chain_ids,
+        })
+        .await?;
+
+    // Should have keys for the first delegated chain
+    let first_chain_hex = format!("0x{:x}", env.chain_ids[0]);
+    assert!(response.contains_key(&first_chain_hex));
+    assert_eq!(response.get(&first_chain_hex).unwrap().len(), 1); // just admin key
+
+    // Should not have keys for non-existent chain
+    let non_existent_chain_hex = format!("0x{:x}", non_existent_chain);
+    assert!(!response.contains_key(&non_existent_chain_hex));
+
+    // Should not have keys for other configured but non-delegated chains
+    for chain_id in &env.chain_ids[1..] {
+        let chain_hex = format!("0x{:x}", chain_id);
+        assert!(!response.contains_key(&chain_hex));
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_keys_non_delegated_account() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    // Try to get keys for a non-delegated account
+    let response = env
+        .relay_endpoint
+        .get_keys(relay::types::rpc::GetKeysParameters {
+            address: env.eoa.address(),
+            chain_ids: env.chain_ids.clone(),
+        })
+        .await?;
+
+    // Response should be empty for non-delegated accounts
+    assert!(response.is_empty());
+
+    Ok(())
+}

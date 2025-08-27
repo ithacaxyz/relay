@@ -71,7 +71,7 @@ use crate::{
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
-            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
+            GetKeysParameters, GetKeysResponse, PrepareCallsParameters, PrepareCallsResponse,
             PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
             SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
             VerifySignatureParameters, VerifySignatureResponse,
@@ -94,8 +94,7 @@ pub trait RelayApi {
 
     /// Get all keys for an account.
     #[method(name = "getKeys")]
-    async fn get_keys(&self, parameters: GetKeysParameters)
-    -> RpcResult<Vec<AuthorizeKeyResponse>>;
+    async fn get_keys(&self, parameters: GetKeysParameters) -> RpcResult<GetKeysResponse>;
 
     /// Get all assets for an account.
     #[method(name = "getAssets")]
@@ -758,13 +757,53 @@ impl Relay {
         Ok(tx)
     }
 
-    /// Get keys from an account.
+    /// Get keys from an account across multiple chains.
     #[instrument(skip_all)]
-    async fn get_keys(
+    async fn get_keys(&self, request: GetKeysParameters) -> Result<GetKeysResponse, RelayError> {
+        // If no chains specified, use all supported chains
+        let chains = if request.chain_ids.is_empty() {
+            self.inner.chains.chain_ids_iter().copied().collect()
+        } else {
+            request.chain_ids.clone()
+        };
+
+        // Query keys from all requested chains in parallel
+        let futures = chains.iter().map(|&chain_id| {
+            let req = GetKeysParameters {
+                address: request.address,
+                chain_ids: vec![chain_id], // For backward compat with internal method
+            };
+            async move {
+                let keys = self.get_keys_for_chain(req, chain_id).await;
+                (chain_id, keys)
+            }
+        });
+
+        let results: Vec<(ChainId, Result<Vec<AuthorizeKeyResponse>, RelayError>)> =
+            futures_util::future::join_all(futures).await;
+
+        // Build response with chain-specific results
+        // Only include chains where we successfully got keys (omit errors and non-delegated)
+        let mut response = GetKeysResponse::new();
+        for (chain_id, result) in results {
+            if let Ok(keys) = result {
+                // Format chain_id as hex string (e.g., "0x1" for mainnet)
+                let chain_id_hex = format!("0x{:x}", chain_id);
+                response.insert(chain_id_hex, keys);
+            }
+        }
+
+        Ok(response)
+    }
+
+    /// Get keys from an account on a specific chain.
+    #[instrument(skip_all)]
+    async fn get_keys_for_chain(
         &self,
         request: GetKeysParameters,
+        chain_id: ChainId,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        match self.get_keys_onchain(request.clone()).await {
+        match self.get_keys_onchain_single(request.address, chain_id).await {
             Ok(keys) => Ok(keys),
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
@@ -780,18 +819,19 @@ impl Relay {
         }
     }
 
-    /// Get keys from an account onchain.
+    /// Get keys from an account onchain for a specific chain.
     #[instrument(skip_all)]
-    async fn get_keys_onchain(
+    async fn get_keys_onchain_single(
         &self,
-        request: GetKeysParameters,
+        address: Address,
+        chain_id: ChainId,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        let account = Account::new(request.address, self.provider(request.chain_id)?);
+        let account = Account::new(address, self.provider(chain_id)?);
 
         let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
 
         if !is_delegated? {
-            return Err(AuthError::EoaNotDelegated(request.address).boxed().into());
+            return Err(AuthError::EoaNotDelegated(address).boxed().into());
         }
 
         // Get all keys from account
@@ -856,12 +896,17 @@ impl Relay {
             }
         }
 
-        Ok(self
-            .get_keys(GetKeysParameters { address: from, chain_id })
-            .await?
-            .into_iter()
-            .find(|key| key.hash == key_hash)
-            .map(|k| k.authorize_key.key))
+        // Get keys for the specific chain
+        let response =
+            self.get_keys(GetKeysParameters { address: from, chain_ids: vec![chain_id] }).await?;
+
+        // Format chain_id as hex string to match response format
+        let chain_id_hex = format!("0x{:x}", chain_id);
+
+        Ok(response
+            .get(&chain_id_hex)
+            .and_then(|keys| keys.iter().find(|key| key.hash == key_hash))
+            .map(|k| k.authorize_key.key.clone()))
     }
 
     /// Generates all calls from a [`PrepareCallsParameters`].
@@ -1819,8 +1864,7 @@ impl RelayApiServer for Relay {
         self.get_capabilities(chains).await
     }
 
-    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        tracing::Span::current().record("eth.chain_id", request.chain_id);
+    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
         Ok(self.get_keys(request).await?)
     }
 
@@ -2242,10 +2286,17 @@ impl RelayApiServer for Relay {
 
         let mut init_pre_call = None;
         let mut account = Account::new(address, self.provider(chain_id)?);
-        let signatures: Vec<Signature> = self
-            .get_keys(GetKeysParameters { address, chain_id })
-            .await?
-            .into_iter()
+        // Get keys for the specific chain
+        let response =
+            self.get_keys(GetKeysParameters { address, chain_ids: vec![chain_id] }).await?;
+
+        // Format chain_id as hex string to match response format
+        let chain_id_hex = format!("0x{:x}", chain_id);
+
+        let signatures: Vec<Signature> = response
+            .get(&chain_id_hex)
+            .unwrap_or(&vec![])
+            .iter()
             .filter_map(|k| {
                 k.authorize_key.key.isSuperAdmin.then_some(Signature {
                     innerSignature: signature.clone(),
