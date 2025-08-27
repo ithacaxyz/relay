@@ -4,12 +4,12 @@ use crate::{
     error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
         Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
-        IERC20::{self, IERC20Events},
+        IERC20::{self, IERC20Events, IERC20Instance},
         IERC721::{self, IERC721Events},
     },
 };
 use alloy::{
-    primitives::{Address, ChainId, Log, U256, address, map::HashMap},
+    primitives::{Address, ChainId, Log, U256, map::HashMap},
     providers::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
@@ -255,22 +255,25 @@ impl AssetInfoServiceHandle {
         let mut builder = AssetDeficits::builder();
 
         for call in calls {
-            let Some(to) = call.to else { continue };
+            let Some(callee) = call.to else { continue };
 
-            let (asset, from, amount) = if let Ok((from, amount)) =
+            // Extract sender and amount
+            let (asset, from, to, amount) = if let Ok((from, to, amount)) =
                 // First try to decode as `transferFrom`, as it's
                 // more likely the user is interacting with a
                 // contract that tries to pull funds from their
                 // wallet
-                IERC20::transferFromCall::abi_decode(&call.input)
-                        .map(|transfer| (transfer.from, transfer.amount))
-                        .or_else(|_| {
-                            // Then try to decode as `transfer` in case the user is making a direct
-                            // transfer
-                            IERC20::transferCall::abi_decode(&call.input)
-                                .map(|transfer| (call.from, transfer.amount))
-                        }) {
-                (Asset::Token(to), from, amount)
+                IERC20::transferFromCall::abi_decode(
+                        &call.input,
+                    )
+                    .map(|transfer| (transfer.from, transfer.to, transfer.amount))
+                    .or_else(|_| {
+                        // Then try to decode as `transfer` in case the user is making a direct
+                        // transfer
+                        IERC20::transferCall::abi_decode(&call.input)
+                            .map(|transfer| (call.from, transfer.to, transfer.amount))
+                    }) {
+                (Asset::Token(callee), from, to, amount)
             } else {
                 // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
                 // native token transfer either, because tracing of calls with insufficient native
@@ -288,7 +291,9 @@ impl AssetInfoServiceHandle {
                     revert_reason.contains("arithmetic underflow or overflow")
                 )
             {
-            } else if let Some(error) =
+            }
+            // Check common custom contract errors
+            else if let Some(error) =
                 call.output.and_then(|output| ContractErrorsErrors::abi_decode(&output).ok())
                 && matches!(
                     error,
@@ -300,11 +305,12 @@ impl AssetInfoServiceHandle {
                 )
             {
             }
-            // TODO: do not hardcode USDT address
-            else if to == address!("0xdac17f958d2ee523a2206206994597c13d831ec7")
-                && call.error.is_some()
+            // USDT transfers just revert on not enough allowance or insufficient funds
+            else if call.error.is_some()
+                && self.get_asset_info_list(provider, vec![asset]).await?[&asset].metadata.symbol.as_deref() == Some("USDT")
+                // Make sure it's not a revert due to insufficient allowance
+                && IERC20Instance::new(asset.address(), provider).allowance(from, to).call().await? > amount
             {
-                // USDT transfers just revert on not enough allowance or insufficient funds
             } else {
                 continue;
             }
