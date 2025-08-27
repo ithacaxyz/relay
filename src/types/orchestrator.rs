@@ -217,8 +217,18 @@ impl<P: Provider> Orchestrator<P> {
 
         let (asset_deficits, mut asset_diffs) = try_join(
             // calculate asset deficits using the transaction request from simulation
-            asset_info_handle
-                .calculate_asset_deficit(result.calls.into_iter(), self.orchestrator.provider()),
+            async {
+                if calculate_asset_deficits {
+                    asset_info_handle
+                        .calculate_asset_deficit(
+                            result.calls.into_iter(),
+                            self.orchestrator.provider(),
+                        )
+                        .await
+                } else {
+                    Ok(AssetDeficits::default())
+                }
+            },
             // calculate asset diffs using the transaction request from simulation
             asset_info_handle.calculate_asset_diff(
                 &result.tx_request,

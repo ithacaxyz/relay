@@ -99,7 +99,7 @@ pub struct FiatValue {
 }
 
 /// Asset deficits per account based on simulated execution logs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDeficits(pub Vec<(Address, Vec<AssetDeficit>)>);
 
 /// Asset with metadata and deficit value.
