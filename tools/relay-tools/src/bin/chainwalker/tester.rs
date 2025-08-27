@@ -588,7 +588,10 @@ impl InteropTester {
         // Check if account is already delegated/initialized
         let mut account_initialized = self
             .relay_client
-            .get_keys(GetKeysParameters { address: self.test_account.address(), chain_ids: vec![1] })
+            .get_keys(GetKeysParameters {
+                address: self.test_account.address(),
+                chain_ids: vec![1],
+            })
             .await
             .is_ok();
 
