@@ -472,7 +472,7 @@ impl Relay {
                 .sign_typed_data(
                     &intent_to_sign.as_eip712().map_err(RelayError::from)?,
                     &orchestrator
-                        .eip712_domain(intent_to_sign.is_multichain())
+                        .eip712_domain(intent_to_sign.is_nonce_multichain())
                         .await
                         .map_err(RelayError::from)?,
                 )
