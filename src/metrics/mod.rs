@@ -1,6 +1,6 @@
 //! Types for metrics.
 
-mod periodic;
+pub mod periodic;
 use futures::{FutureExt, future::BoxFuture};
 use opentelemetry::{propagation::TextMapPropagator, trace::SpanKind};
 use opentelemetry_http::HeaderInjector;

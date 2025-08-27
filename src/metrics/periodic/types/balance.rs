@@ -2,12 +2,9 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     chains::Chains,
-    metrics::periodic::{MetricCollector, MetricCollectorError},
+    metrics::periodic::{MetricCollector, MetricCollectorError, types::format_units_f64},
 };
-use alloy::{
-    primitives::{U256, utils::format_units},
-    providers::Provider,
-};
+use alloy::providers::Provider;
 use futures_util::StreamExt;
 use metrics::gauge;
 use tracing::error;
@@ -20,6 +17,7 @@ pub struct BalanceCollector {
 }
 
 impl BalanceCollector {
+    /// Create a new balance collector.
     pub fn new(chains: Arc<Chains>) -> Self {
         Self { chains }
     }
@@ -58,23 +56,5 @@ impl MetricCollector for BalanceCollector {
             .await;
 
         Ok(())
-    }
-}
-
-/// Formats a U256 value into a f64 with the specified number of decimals.
-fn format_units_f64(value: U256, decimals: u8) -> eyre::Result<f64> {
-    Ok(format_units(value, decimals)?.parse::<f64>()?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_format_units_f64() {
-        let value = U256::from_str("12345678901234567890").unwrap();
-        let decimals = 18;
-        assert_eq!(format_units_f64(value, decimals).unwrap(), 12.345678901234567);
     }
 }

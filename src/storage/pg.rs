@@ -1018,6 +1018,49 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
+    async fn get_total_locked_liquidity(&self) -> Result<HashMap<ChainAddress, U256>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT chain_id, asset_address, amount
+            FROM locked_liquidity
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            result.insert(
+                (row.chain_id as u64, Address::from_slice(&row.asset_address)),
+                numeric_to_u256(&row.amount),
+            );
+        }
+        Ok(result)
+    }
+
+    async fn get_total_pending_unlocks(&self) -> Result<HashMap<ChainAddress, U256>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT chain_id, asset_address, SUM(amount) AS "amount!: BigDecimal"
+            FROM pending_unlocks
+            GROUP BY chain_id, asset_address
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            result.insert(
+                (row.chain_id as u64, Address::from_slice(&row.asset_address)),
+                numeric_to_u256(&row.amount),
+            );
+        }
+        Ok(result)
+    }
+
     async fn get_pending_refunds_ready(
         &self,
         current_time: DateTime<Utc>,

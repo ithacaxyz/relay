@@ -364,6 +364,21 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
+    async fn get_total_locked_liquidity(&self) -> Result<HashMap<ChainAddress, U256>> {
+        Ok(self.liquidity.read().await.locked_liquidity.clone())
+    }
+
+    async fn get_total_pending_unlocks(&self) -> Result<HashMap<ChainAddress, U256>> {
+        Ok(self
+            .liquidity
+            .read()
+            .await
+            .pending_unlocks
+            .iter()
+            .map(|(address, amounts)| (*address, amounts.values().sum()))
+            .collect())
+    }
+
     async fn update_transfer_bridge_data(
         &self,
         transfer_id: BridgeTransferId,
