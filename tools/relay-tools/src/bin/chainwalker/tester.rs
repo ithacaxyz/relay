@@ -974,7 +974,7 @@ impl InteropTester {
 
             // Normalize this fee to the max decimals and add
             let normalized_fee =
-                normalize_amount(quote.intent.totalPaymentAmount, decimals, max_decimals);
+                normalize_amount(quote.intent.total_payment_amount(), decimals, max_decimals);
             total_fee_normalized += normalized_fee;
         }
 

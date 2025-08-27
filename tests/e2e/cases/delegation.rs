@@ -66,7 +66,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // todo(onbjerg): this assumes a single intent
     assert!(
-        good_quote.context.quote().unwrap().ty().quotes[0].intent.supportedAccountImplementation
+        good_quote.context.quote().unwrap().ty().quotes[0]
+            .intent
+            .supported_account_implementation()
             == caps.chain(env.chain_id()).contracts.delegation_implementation.address
     );
 
@@ -395,7 +397,7 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
 
     // Decode the execution data to Vec<Call>
     let calls = Vec::<Call>::abi_decode(
-        &response.context.quote().unwrap().ty().quotes[0].intent.executionData,
+        response.context.quote().unwrap().ty().quotes[0].intent.execution_data(),
     )
     .unwrap();
     assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");

@@ -346,9 +346,8 @@ impl Signer {
     ) -> Result<(), SignerError> {
         if let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind {
             // Set payment recipient to us if it hasn't been set
-            let payment_recipient = &mut quote.intent.paymentRecipient;
-            if payment_recipient.is_zero() {
-                *payment_recipient = self.address();
+            if quote.intent.payment_recipient().is_zero() {
+                quote.intent.set_payment_recipient(self.address());
             }
         }
 

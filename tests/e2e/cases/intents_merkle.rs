@@ -9,30 +9,28 @@ use relay::types::{Call, Intent, Intents, LazyMerkleTree};
 
 /// Creates a test intent with specified nonce and payment token
 fn create_test_intent(eoa: Address, nonce: U256, payment_token: Address) -> Intent {
-    Intent {
-        eoa,
-        executionData: Vec::<Call>::new().abi_encode().into(),
-        nonce,
-        payer: Address::ZERO,
-        paymentToken: payment_token,
-        prePaymentMaxAmount: U256::ZERO,
-        totalPaymentMaxAmount: U256::ZERO,
-        combinedGas: uint!(500000_U256),
-        encodedPreCalls: vec![],
-        encodedFundTransfers: vec![],
-        prePaymentAmount: U256::ZERO,
-        totalPaymentAmount: U256::ZERO,
-        paymentRecipient: Address::ZERO,
-        signature: Bytes::default(),
-        paymentSignature: Bytes::default(),
-        supportedAccountImplementation: Address::ZERO,
-        funder: Address::ZERO,
-        funderSignature: Bytes::default(),
-        settler: Address::ZERO,
-        expiry: U256::ZERO,
-        settlerContext: bytes!(""),
-        isMultichain: false,
-    }
+    Intent::latest()
+        .with_eoa(eoa)
+        .with_execution_data(Vec::<Call>::new().abi_encode().into())
+        .with_nonce(nonce)
+        .with_payer(Address::ZERO)
+        .with_payment_token(payment_token)
+        .with_pre_payment_max_amount(U256::ZERO)
+        .with_total_payment_max_amount(U256::ZERO)
+        .with_combined_gas(uint!(500000_U256))
+        .with_encoded_pre_calls(vec![])
+        .with_encoded_fund_transfers(vec![])
+        .with_pre_payment_amount(U256::ZERO)
+        .with_total_payment_amount(U256::ZERO)
+        .with_payment_recipient(Address::ZERO)
+        .with_signature(Bytes::default())
+        .with_payment_signature(Bytes::default())
+        .with_supported_account_implementation(Address::ZERO)
+        .with_funder(Address::ZERO)
+        .with_funder_signature(Bytes::default())
+        .with_settler(Address::ZERO)
+        .with_expiry(U256::ZERO)
+        .with_settler_context(bytes!(""))
 }
 
 /// Test merkle root calculation for a batch of intents
