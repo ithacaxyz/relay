@@ -69,8 +69,8 @@ impl Quotes {
     /// Returns `None` if there are no inner quotes.
     pub fn fees(&self) -> Option<(Address, U256)> {
         Some((
-            self.quotes.first()?.intent.paymentToken,
-            self.quotes.iter().map(|quote| quote.intent.totalPaymentMaxAmount).sum(),
+            self.quotes.first()?.intent.payment_token(),
+            self.quotes.iter().map(|quote| quote.intent.total_payment_max_amount()).sum(),
         ))
     }
 

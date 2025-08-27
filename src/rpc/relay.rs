@@ -435,36 +435,35 @@ impl Relay {
             / f64::from(eth_price);
 
         // fill intent
-        let mut intent_to_sign = Intent {
-            eoa: intent.eoa,
-            executionData: intent.execution_data.clone(),
-            nonce: intent.nonce,
-            payer: intent.payer.unwrap_or_default(),
-            paymentToken: token.address,
-            paymentRecipient: self.inner.fee_recipient,
-            supportedAccountImplementation: delegation,
-            encodedPreCalls: intent
-                .pre_calls
-                .into_iter()
-                .map(|pre_call| pre_call.abi_encode().into())
-                .collect(),
-            encodedFundTransfers: intent
-                .fund_transfers
-                .into_iter()
-                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
-                .collect(),
-            isMultichain: !context.intent_kind.is_single(),
-            ..Default::default()
-        };
+        let mut intent_to_sign = Intent::latest()
+            .with_eoa(intent.eoa)
+            .with_execution_data(intent.execution_data.clone())
+            .with_nonce(intent.nonce)
+            .with_payer(intent.payer.unwrap_or_default())
+            .with_payment_token(token.address)
+            .with_payment_recipient(self.inner.fee_recipient)
+            .with_supported_account_implementation(delegation)
+            .with_encoded_pre_calls(
+                intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
+            )
+            .with_encoded_fund_transfers(
+                intent
+                    .fund_transfers
+                    .into_iter()
+                    .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                    .collect(),
+            )
+            .with_is_multichain(!context.intent_kind.is_single());
 
         // For MultiOutput intents, set the settler address and context
         if let IntentKind::MultiOutput { settler_context, .. } = &context.intent_kind {
             self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
-            intent_to_sign.settler = self.inner.chains.settler_address(chain.id())?;
-            intent_to_sign.settlerContext = settler_context.clone();
+            intent_to_sign = intent_to_sign
+                .with_settler(self.inner.chains.settler_address(chain.id())?)
+                .with_settler_context(settler_context.clone());
         }
 
-        if intent_to_sign.isMultichain {
+        if intent_to_sign.is_multichain() {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
                 .with_mock_merkle_signature(
@@ -490,17 +489,19 @@ impl Relay {
                 .await
                 .map_err(RelayError::from)?;
 
-            intent_to_sign.signature = Signature {
-                innerSignature: signature,
-                keyHash: context.account_key.key_hash(),
-                prehash,
-            }
-            .abi_encode_packed()
-            .into();
+            intent_to_sign = intent_to_sign.with_signature(
+                Signature {
+                    innerSignature: signature,
+                    keyHash: context.account_key.key_hash(),
+                    prehash,
+                }
+                .abi_encode_packed()
+                .into(),
+            );
         }
 
-        if !intent_to_sign.encodedFundTransfers.is_empty() {
-            intent_to_sign.funder = self.inner.contracts.funder.address;
+        if !intent_to_sign.encoded_fund_transfers().is_empty() {
+            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
         }
 
         let gas_validation_offset =
@@ -522,7 +523,11 @@ impl Relay {
         // which ensures the simulation never reverts. Whether the user can actually really
         // pay for the intent execution or not is determined later and communicated to the
         // client.
-        intent_to_sign.set_legacy_payment_amount(U256::from(1));
+        intent_to_sign = intent_to_sign
+            .with_pre_payment_amount(U256::from(1))
+            .with_pre_payment_max_amount(U256::from(1))
+            .with_total_payment_amount(U256::from(1))
+            .with_total_payment_max_amount(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
@@ -548,7 +553,7 @@ impl Relay {
         debug!(eoa = %intent.eoa, gas_estimate = ?gas_estimate, "Estimated intent");
 
         // Fill combinedGas
-        intent_to_sign.combinedGas = U256::from(gas_estimate.intent);
+        intent_to_sign = intent_to_sign.with_combined_gas(U256::from(gas_estimate.intent));
         // Calculate the real fee
         let extra_fee_native = self
             .estimate_extra_fee(
@@ -572,19 +577,24 @@ impl Relay {
         );
 
         // Fill empty dummy signature
-        intent_to_sign.signature = bytes!("");
-        intent_to_sign.funderSignature = bytes!("");
+        intent_to_sign =
+            intent_to_sign.with_signature(bytes!("")).with_funder_signature(bytes!(""));
 
         // Fill payment information
         //
         // If the fee has already been specified (multichain inputs only), we only simulate to get
         // asset diffs. Otherwise, we simulate to get the fee.
-        intent_to_sign.set_legacy_payment_amount(context.intent_kind.multi_input_fee().unwrap_or(
+        let payment_amount = context.intent_kind.multi_input_fee().unwrap_or(
             extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
-        ));
+        );
+        intent_to_sign = intent_to_sign
+            .with_pre_payment_amount(payment_amount)
+            .with_pre_payment_max_amount(payment_amount)
+            .with_total_payment_amount(payment_amount)
+            .with_total_payment_max_amount(payment_amount);
 
         let fee_token_deficit =
-            intent_to_sign.totalPaymentMaxAmount.saturating_sub(fee_token_balance);
+            intent_to_sign.total_payment_max_amount().saturating_sub(fee_token_balance);
         let quote = Quote {
             chain_id,
             payment_token_decimals: token.decimals,
@@ -662,35 +672,44 @@ impl Relay {
         let provider = self.provider(chain_id)?;
 
         let authorization_address = quote.authorization_address;
-        let intent = &mut quote.intent;
 
         // Fill Intent with the fee payment signature (if exists).
-        intent.paymentSignature = capabilities.fee_signature.clone();
-
-        // Fill Intent with the user signature.
-        intent.signature = signature;
+        quote.intent = quote
+            .intent
+            .with_payment_signature(capabilities.fee_signature.clone())
+            .with_signature(signature);
 
         // Compute EIP-712 digest for the intent
-        let (eip712_digest, _) = intent
+        let (eip712_digest, _) = quote
+            .intent
             .compute_eip712_data(quote.orchestrator, &provider)
             .await
             .map_err(RelayError::from)?;
 
         // Sign fund transfers if any
-        if !intent.encodedFundTransfers.is_empty() {
+        if !quote.intent.encoded_fund_transfers().is_empty() {
             // Set funder contract address and sign
-            intent.funderSignature = self
-                .inner
-                .funder_signer
-                .sign_payload_hash(eip712_digest)
-                .await
-                .map_err(RelayError::from)?;
-            intent.funder = self.inner.contracts.funder.address;
+            quote.intent = quote
+                .intent
+                .with_funder_signature(
+                    self.inner
+                        .funder_signer
+                        .sign_payload_hash(eip712_digest)
+                        .await
+                        .map_err(RelayError::from)?,
+                )
+                .with_funder(self.inner.contracts.funder.address);
         }
 
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
-        intent.set_legacy_payment_amount(intent.prePaymentMaxAmount);
+        let payment_amount = quote.intent.pre_payment_max_amount();
+        quote.intent = quote
+            .intent
+            .with_pre_payment_amount(payment_amount)
+            .with_pre_payment_max_amount(payment_amount)
+            .with_total_payment_amount(payment_amount)
+            .with_total_payment_max_amount(payment_amount);
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
@@ -698,7 +717,7 @@ impl Relay {
         let authorization = if authorization_address.is_some() {
             self.inner
                 .storage
-                .read_account(&intent.eoa)
+                .read_account(quote.intent.eoa())
                 .await
                 .map(|opt| opt.map(|acc| acc.signed_authorization))?
         } else {
@@ -720,8 +739,10 @@ impl Relay {
                 return Err(AuthError::AuthItemNotChainAgnostic.into());
             }
 
-            let expected_nonce =
-                provider.get_transaction_count(quote.intent.eoa).await.map_err(RelayError::from)?;
+            let expected_nonce = provider
+                .get_transaction_count(*quote.intent.eoa())
+                .await
+                .map_err(RelayError::from)?;
 
             if expected_nonce != auth.nonce {
                 return Err(AuthError::AuthItemInvalidNonce {
@@ -731,17 +752,17 @@ impl Relay {
                 .into());
             }
         } else {
-            let account = Account::new(quote.intent.eoa, provider);
+            let account = Account::new(*quote.intent.eoa(), provider);
             // todo: same as above
             if !account.is_delegated().await? {
-                return Err(AuthError::EoaNotDelegated(quote.intent.eoa).into());
+                return Err(AuthError::EoaNotDelegated(*quote.intent.eoa()).into());
             }
         }
 
         // set our payment recipient
-        quote.intent.paymentRecipient = self.inner.fee_recipient;
+        quote.intent = quote.intent.with_payment_recipient(self.inner.fee_recipient);
 
-        let tx = RelayTransaction::new(quote.clone(), authorization.clone(), eip712_digest);
+        let tx = RelayTransaction::new(quote, authorization.clone(), eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
@@ -1361,7 +1382,7 @@ impl Relay {
             .checked_sub(requested_funds)
             .and_then(|n| {
                 n.checked_sub(if source_fee {
-                    output_quote.intent.totalPaymentMaxAmount
+                    output_quote.intent.total_payment_max_amount()
                 } else {
                     U256::ZERO
                 })
@@ -1375,7 +1396,7 @@ impl Relay {
                 %requested_funds,
                 %requested_asset_balance_on_dst,
                 %source_fee,
-                fee = %output_quote.intent.totalPaymentMaxAmount,
+                fee = %output_quote.intent.total_payment_max_amount(),
                 "Falling back to single chain for intent"
             );
             return self
@@ -1418,7 +1439,7 @@ impl Relay {
                 %requested_funds,
                 %requested_asset_balance_on_dst,
                 %source_fee,
-                fee = %output_quote.intent.totalPaymentMaxAmount,
+                fee = %output_quote.intent.total_payment_max_amount(),
                 "Trying to source funds"
             );
             let (sourced_funds, funding_chains) = if let Some(new_chains) = self
@@ -1430,7 +1451,7 @@ impl Relay {
                     asset,
                     requested_funds
                         + if source_fee {
-                            output_quote.intent.totalPaymentMaxAmount
+                            output_quote.intent.total_payment_max_amount()
                         } else {
                             U256::ZERO
                         },
@@ -1463,7 +1484,7 @@ impl Relay {
                 %requested_funds,
                 %requested_asset_balance_on_dst,
                 %source_fee,
-                fee = %output_quote.intent.totalPaymentMaxAmount,
+                fee = %output_quote.intent.total_payment_max_amount(),
                 ?input_chain_ids,
                 "Found potential fund sources"
             );
@@ -1505,7 +1526,7 @@ impl Relay {
                 .checked_sub(requested_funds)
                 .and_then(|n| {
                     n.checked_sub(if source_fee {
-                        output_quote.intent.totalPaymentMaxAmount
+                        output_quote.intent.total_payment_max_amount()
                     } else {
                         U256::ZERO
                     })
@@ -2081,7 +2102,8 @@ impl RelayApiServer for Relay {
         );
 
         // Signed by the root eoa key.
-        storage_account.pre_call.signature = signatures.exec.as_bytes().into();
+        storage_account.pre_call =
+            storage_account.pre_call.with_signature(signatures.exec.as_bytes().into());
 
         let (_, _, (pre_call_digest, _), expected_nonce) = try_join!(
             // Ensure it's using the lasted delegation implementation.

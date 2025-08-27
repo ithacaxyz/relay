@@ -66,7 +66,9 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // todo(onbjerg): this assumes a single intent
     assert!(
-        good_quote.context.quote().unwrap().ty().quotes[0].intent.supportedAccountImplementation
+        good_quote.context.quote().unwrap().ty().quotes[0]
+            .intent
+            .supported_account_implementation()
             == caps.chain(env.chain_id()).contracts.delegation_implementation.address
     );
 

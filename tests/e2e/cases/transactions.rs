@@ -161,7 +161,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
                 let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
                     unreachable!()
                 };
-                quote.intent.signature = Default::default();
+                quote.intent = quote.intent.clone().with_signature(Default::default());
                 invalid += 1;
             }
 

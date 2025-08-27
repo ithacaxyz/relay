@@ -119,30 +119,29 @@ impl Fixtures {
             signature: r_bytes.clone(),
         };
         let account = CreatableAccount::new(r_address, pre_call, authorization.clone());
-        let intent = Intent {
-            eoa: r_address,
-            executionData: r_bytes.clone(),
-            nonce: r_u256,
-            payer: r_address,
-            paymentToken: r_address,
-            prePaymentMaxAmount: r_u256,
-            totalPaymentMaxAmount: r_u256,
-            combinedGas: r_u256,
-            encodedPreCalls: vec![r_bytes.clone()],
-            prePaymentAmount: r_u256,
-            totalPaymentAmount: r_u256,
-            paymentRecipient: r_address,
-            signature: r_bytes.clone(),
-            paymentSignature: r_bytes.clone(),
-            supportedAccountImplementation: r_address,
-            encodedFundTransfers: vec![r_bytes.clone()],
-            funder: r_address,
-            funderSignature: r_bytes.clone(),
-            settler: r_address,
-            expiry: r_u256,
-            settlerContext: r_bytes.clone(),
-            isMultichain: false,
-        };
+        let intent = Intent::latest()
+            .with_eoa(r_address)
+            .with_execution_data(r_bytes.clone())
+            .with_nonce(r_u256)
+            .with_payer(r_address)
+            .with_payment_token(r_address)
+            .with_pre_payment_max_amount(r_u256)
+            .with_total_payment_max_amount(r_u256)
+            .with_combined_gas(r_u256)
+            .with_encoded_pre_calls(vec![r_bytes.clone()])
+            .with_pre_payment_amount(r_u256)
+            .with_total_payment_amount(r_u256)
+            .with_payment_recipient(r_address)
+            .with_signature(r_bytes.clone())
+            .with_payment_signature(r_bytes.clone())
+            .with_supported_account_implementation(r_address)
+            .with_encoded_fund_transfers(vec![r_bytes.clone()])
+            .with_funder(r_address)
+            .with_funder_signature(r_bytes.clone())
+            .with_settler(r_address)
+            .with_expiry(r_u256)
+            .with_settler_context(r_bytes.clone())
+            .with_is_multichain(false);
         let quote = Quote {
             chain_id: r_u64,
             intent,

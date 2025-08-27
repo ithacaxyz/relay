@@ -450,7 +450,7 @@ impl PrepareCallsContext {
             PrepareCallsContext::Quote(context) => {
                 let output_quote = context.ty().quotes.last().expect("should exist");
                 if let Some(root) = context.ty().multi_chain_root {
-                    Ok((root, TypedData::from_struct(&output_quote.intent, None)))
+                    Ok((root, output_quote.intent.typed_data(None)))
                 } else {
                     output_quote
                         .intent
