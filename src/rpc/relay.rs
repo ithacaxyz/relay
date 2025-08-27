@@ -760,10 +760,15 @@ impl Relay {
     /// Get keys from an account across multiple chains.
     #[instrument(skip_all)]
     async fn get_keys(&self, request: GetKeysParameters) -> Result<GetKeysResponse, RelayError> {
-        // If no chains specified, use all supported chains
+        // If chains specified, ensure they are supported,
+        // if any are not supported, return an error,
+        // if no chains specified, use all supported chains
         let chains = if request.chain_ids.is_empty() {
             self.inner.chains.chain_ids_iter().copied().collect()
         } else {
+            for &chain_id in &request.chain_ids {
+                self.inner.chains.ensure_chain(chain_id)?;
+            }
             request.chain_ids.clone()
         };
 
@@ -787,7 +792,6 @@ impl Relay {
         let mut response = GetKeysResponse::new();
         for (chain_id, result) in results {
             if let Ok(keys) = result {
-                // Format chain_id as hex string (e.g., "0x1" for mainnet)
                 let chain_id_hex = format!("0x{:x}", chain_id);
                 response.insert(chain_id_hex, keys);
             }
