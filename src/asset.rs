@@ -1,7 +1,12 @@
 //! Asset info service.
 use crate::{
     config::RelayConfig,
-    error::{AssetError, RelayError},
+    constants::SIMULATEV1_NATIVE_ADDRESS,
+    error::{
+        AssetError,
+        ContractErrors::{self, ContractErrorsErrors},
+        RelayError,
+    },
     types::{
         Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetType, AssetWithInfo,
         IERC20::{self, IERC20Events},
@@ -18,7 +23,7 @@ use alloy::{
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
     rpc::types::{TransactionRequest, state::StateOverride, trace::geth::CallFrame},
-    sol_types::{SolCall, SolEventInterface},
+    sol_types::{SolCall, SolEventInterface, SolInterface},
     transports::TransportErrorKind,
 };
 use schnellru::{ByLength, LruMap};
@@ -249,7 +254,6 @@ impl AssetInfoServiceHandle {
     }
 
     /// Calculates the asset deficit for each account and asset based on calls.
-    /// TODO: implement
     pub async fn calculate_asset_deficit<P: Provider>(
         &self,
         _tx_request: &TransactionRequest,
@@ -263,22 +267,53 @@ impl AssetInfoServiceHandle {
         let mut assets = HashSet::new();
         for call in calls {
             let Some(contract) = call.to else { continue };
-            let asset = Asset::Token(contract);
 
-            let Some(revert_reason) = call.revert_reason else { continue };
-            if !revert_reason.contains("transfer amount exceeds balance") {
+            let (asset, from, amount) =
+                if let Some(value) =
+                    // TOOD: I don't think this is correct, a native transfer would just fail if
+                    // there's not enough funds
+                    call.value.filter(|v| !v.is_zero() && call.typ != "DELEGATECALL")
+                {
+                    (Asset::Native, call.from, value)
+                } else {
+                    let Ok((from, amount)) = IERC20::transferFromCall::abi_decode(&call.input)
+                        .map(|transfer| (transfer.from, transfer.amount))
+                        .or_else(|_| {
+                            IERC20::transferCall::abi_decode(&call.input)
+                                .map(|transfer| (call.from, transfer.amount))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    (Asset::Token(contract), from, amount)
+                };
+
+            if let Some(revert_reason) = call.revert_reason
+                && (
+                    // OpenZeppelin < 5.0.0
+                    revert_reason.contains("transfer amount exceeds balance") ||
+                    // Solmate and other implementations that don't use SafeMath
+                    revert_reason.contains("arithmetic underflow or overflow")
+                )
+            {
+            } else if let Some(error) =
+                call.output.and_then(|output| ContractErrorsErrors::abi_decode(&output).ok())
+                && matches!(
+                    error,
+                    ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
+                        | ContractErrorsErrors::InsufficientBalance(_) // Solady
+                        | ContractErrorsErrors::TransferFailed(_) // Solady
+                        | ContractErrorsErrors::TransferFromFailed(_) // Solady
+                )
+            {
+            } else if contract == "USDT" && call.error.is_some() {
+                // USDT transfers just revert on not enough allowance or insufficient funds
+            } else {
                 continue;
             }
 
-            let Ok((from, amount)) = IERC20::transferFromCall::abi_decode(&call.input)
-                .map(|transfer| (transfer.from, transfer.amount))
-                .or_else(|_| {
-                    IERC20::transferCall::abi_decode(&call.input)
-                        .map(|transfer| (call.from, transfer.amount))
-                })
-            else {
-                continue;
-            };
+            // TODO: handle native token transfers made with SafeTransferLib
 
             assets.insert(asset);
             *deficits.entry(from).or_insert_with(HashMap::new).entry(asset).or_default() += amount;
