@@ -1756,36 +1756,6 @@ impl Relay {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
         self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
     }
-
-    /// Constructs an ERC20 getAssets response that represents the native asset, using the zero
-    /// address. This does include the native asset balance.
-    async fn native_erc20_asset(
-        &self,
-        chain_id: ChainId,
-        account: Address,
-        chain_provider: &DynProvider,
-    ) -> Result<Asset7811, RelayError> {
-        // get balance
-        let balance = chain_provider.get_balance(account).await?;
-        let native_asset =
-            AssetFilterItem { address: AddressOrNative::Native, asset_type: AssetType::Native };
-
-        // get price for the native asset
-        let price = self.get_token_price(chain_id, &native_asset).await;
-
-        Ok(Asset7811 {
-            address: Address::ZERO.into(),
-            balance,
-            asset_type: AssetType::ERC20,
-            metadata: Some(AssetMetadataWithPrice {
-                price,
-                name: None,
-                symbol: None,
-                decimals: None,
-                uri: None,
-            }),
-        })
-    }
 }
 
 #[async_trait]
@@ -1894,7 +1864,14 @@ impl RelayApiServer for Relay {
                             address: AddressOrNative::Native,
                             balance: chain_provider.get_balance(request.account).await?,
                             asset_type: asset.asset_type,
-                            metadata: None,
+                            metadata: Some(AssetMetadataWithPrice {
+                                name: None,
+                                symbol: None,
+                                // use a constant 18 for native assets
+                                decimals: Some(18),
+                                uri: None,
+                                price,
+                            }),
                         });
                     }
 
@@ -1922,21 +1899,6 @@ impl RelayApiServer for Relay {
                         }),
                     })
                 });
-
-            // if there is a a native asset in the filter then we add a separate erc20, so that we
-            // can return price metadata for it.
-            //
-            // see `native_erc20_asset` for more information
-            if assets.iter().any(|asset| asset.asset_type.is_native()) {
-                let native_erc20 = self.native_erc20_asset(chain, request.account, &chain_provider);
-                let (native_erc20_result, txs_result) = join!(native_erc20, try_join_all(txs));
-                let mut txs = txs_result?;
-                txs.push(native_erc20_result?);
-
-                // join them
-                return Ok::<_, RelayError>((chain, txs));
-            }
-
             Ok::<_, RelayError>((chain, try_join_all(txs).await?))
         });
 
