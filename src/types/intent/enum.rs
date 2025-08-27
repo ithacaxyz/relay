@@ -211,10 +211,10 @@ impl Intent {
 
     // Mutable accessor for payment recipient
 
-    /// Mutable access to payment recipient.
-    pub fn payment_recipient_mut(&mut self) -> &mut Address {
+    /// Sets the payment recipient.
+    pub fn set_payment_recipient(&mut self, recipient: Address) {
         match self {
-            Intent::V04(intent) => &mut intent.paymentRecipient,
+            Intent::V04(intent) => intent.paymentRecipient = recipient,
         }
     }
 
