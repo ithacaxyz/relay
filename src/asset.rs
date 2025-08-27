@@ -1,12 +1,7 @@
 //! Asset info service.
 use crate::{
     config::RelayConfig,
-    constants::SIMULATEV1_NATIVE_ADDRESS,
-    error::{
-        AssetError,
-        ContractErrors::{self, ContractErrorsErrors},
-        RelayError,
-    },
+    error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
         Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetType, AssetWithInfo,
         IERC20::{self, IERC20Events},
@@ -15,7 +10,7 @@ use crate::{
 };
 use alloy::{
     primitives::{
-        Address, ChainId, Log, U256,
+        Address, ChainId, Log, U256, address,
         map::{HashMap, HashSet},
     },
     providers::{
@@ -254,10 +249,10 @@ impl AssetInfoServiceHandle {
     }
 
     /// Calculates the asset deficit for each account and asset based on calls.
+    ///
+    /// Supports only ERC-20 tokens.
     pub async fn calculate_asset_deficit<P: Provider>(
         &self,
-        _tx_request: &TransactionRequest,
-        _state_overrides: StateOverride,
         calls: impl Iterator<Item = CallFrame>,
         provider: &P,
     ) -> Result<AssetDeficits, RelayError> {
@@ -303,17 +298,20 @@ impl AssetInfoServiceHandle {
                     error,
                     ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
                         | ContractErrorsErrors::InsufficientBalance(_) // Solady
+                        | ContractErrorsErrors::ETHTransferFailed(_) // Solady
                         | ContractErrorsErrors::TransferFailed(_) // Solady
                         | ContractErrorsErrors::TransferFromFailed(_) // Solady
                 )
             {
-            } else if contract == "USDT" && call.error.is_some() {
+            }
+            // TODO: do not hardcode USDT address
+            else if contract == address!("0xdac17f958d2ee523a2206206994597c13d831ec7")
+                && call.error.is_some()
+            {
                 // USDT transfers just revert on not enough allowance or insufficient funds
             } else {
                 continue;
             }
-
-            // TODO: handle native token transfers made with SafeTransferLib
 
             assets.insert(asset);
             *deficits.entry(from).or_insert_with(HashMap::new).entry(asset).or_default() += amount;
