@@ -8,7 +8,7 @@ use alloy::{
     hex,
     network::{EthereumWallet, TransactionBuilder, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, address, bytes},
+    primitives::{Address, Bytes, TxKind, U64, U256, address, bytes},
     providers::{
         DynProvider, MULTICALL3_ADDRESS, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi,
     },
@@ -701,8 +701,8 @@ impl Environment {
             .await?;
 
         // Extract keys for the requested chain
-        let chain_id_hex = format!("0x{:x}", self.chain_id_for(chain_index));
-        Ok(response.get(&chain_id_hex).cloned().unwrap_or_default())
+        let chain_id_key = U64::from(self.chain_id_for(chain_index));
+        Ok(response.get(&chain_id_key).cloned().unwrap_or_default())
     }
 
     /// Gets the on-chain EOA authorized keys for the default chain.

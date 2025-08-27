@@ -2,7 +2,10 @@ use crate::e2e::{
     AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::upgrade_account_eagerly,
     environment::Environment, run_e2e,
 };
-use alloy::{primitives::U256, sol_types::SolCall};
+use alloy::{
+    primitives::{U64, U256},
+    sol_types::SolCall,
+};
 use relay::{
     rpc::RelayApiClient,
     types::{
@@ -229,9 +232,9 @@ async fn get_keys_multi_chain() -> eyre::Result<()> {
         })
         .await?;
 
-    let first_chain_id_hex = format!("0x{:x}", chain_id);
-    assert!(response.contains_key(&first_chain_id_hex));
-    assert_eq!(response.get(&first_chain_id_hex).unwrap().len(), 2); // admin + session key
+    let first_chain_id = U64::from(chain_id);
+    assert!(response.contains_key(&first_chain_id));
+    assert_eq!(response.get(&first_chain_id).unwrap().len(), 2); // admin + session key
 
     // Test 2: Request multiple chains when only delegated on one
     if chain_ids.len() > 1 {
@@ -245,10 +248,10 @@ async fn get_keys_multi_chain() -> eyre::Result<()> {
 
         // Should only have keys for the chain where we delegated
         assert_eq!(multi_chain_result.len(), 1);
-        assert!(multi_chain_result.contains_key(&first_chain_id_hex));
+        assert!(multi_chain_result.contains_key(&first_chain_id));
 
-        let non_delegated_chain_hex = format!("0x{:x}", chain_ids[1]);
-        assert!(!multi_chain_result.contains_key(&non_delegated_chain_hex));
+        let non_delegated_chain = U64::from(chain_ids[1]);
+        assert!(!multi_chain_result.contains_key(&non_delegated_chain));
     }
 
     // Test 3: Get keys for all chains (empty chain_ids)
@@ -262,8 +265,8 @@ async fn get_keys_multi_chain() -> eyre::Result<()> {
 
     // Should only include the chain where we delegated
     assert!(!all_chains_response.is_empty());
-    assert!(all_chains_response.contains_key(&first_chain_id_hex));
-    assert_eq!(all_chains_response.get(&first_chain_id_hex).unwrap().len(), 2); // admin + session key
+    assert!(all_chains_response.contains_key(&first_chain_id));
+    assert_eq!(all_chains_response.get(&first_chain_id).unwrap().len(), 2); // admin + session key
 
     // Test 4: Request an unsupported chain ID
     let non_existent_chain = 999999u64;

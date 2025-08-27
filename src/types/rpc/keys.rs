@@ -1,6 +1,6 @@
 //! RPC key-related request and response types.
 
-use alloy::primitives::{Address, B256, Bytes, ChainId};
+use alloy::primitives::{Address, B256, Bytes, ChainId, U64};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -26,7 +26,7 @@ pub struct GetKeysParameters {
 /// Response for wallet_getKeys with multi-chain support.
 /// Maps chain ID (as hex string) to array of authorized keys for that chain.
 /// Chains where the account is not delegated or where errors occurred are omitted.
-pub type GetKeysResponse = HashMap<String, Vec<AuthorizeKeyResponse>>;
+pub type GetKeysResponse = HashMap<U64, Vec<AuthorizeKeyResponse>>;
 
 /// Represents a key authorization request.
 ///

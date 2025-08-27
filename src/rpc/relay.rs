@@ -773,15 +773,10 @@ impl Relay {
         };
 
         // Query keys from all requested chains in parallel
-        let futures = chains.iter().map(|&chain_id| {
-            let req = GetKeysParameters {
-                address: request.address,
-                chain_ids: vec![chain_id], // For backward compat with internal method
-            };
-            async move {
-                let keys = self.get_keys_for_chain(req, chain_id).await;
-                (chain_id, keys)
-            }
+        let address = request.address;
+        let futures = chains.iter().map(|&chain_id| async move {
+            let keys = self.get_keys_for_chain(address, chain_id).await;
+            (chain_id, keys)
         });
 
         let results: Vec<(ChainId, Result<Vec<AuthorizeKeyResponse>, RelayError>)> =
@@ -792,8 +787,7 @@ impl Relay {
         let mut response = GetKeysResponse::new();
         for (chain_id, result) in results {
             if let Ok(keys) = result {
-                let chain_id_hex = format!("0x{:x}", chain_id);
-                response.insert(chain_id_hex, keys);
+                response.insert(U64::from(chain_id), keys);
             }
         }
 
@@ -804,17 +798,17 @@ impl Relay {
     #[instrument(skip_all)]
     async fn get_keys_for_chain(
         &self,
-        request: GetKeysParameters,
+        address: Address,
         chain_id: ChainId,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        match self.get_keys_onchain_single(request.address, chain_id).await {
+        match self.get_keys_onchain_single(address, chain_id).await {
             Ok(keys) => Ok(keys),
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
                 // before its onchain commit.
                 if let RelayError::Auth(auth_err) = &err
                     && auth_err.is_eoa_not_delegated()
-                    && let Some(account) = self.inner.storage.read_account(&request.address).await?
+                    && let Some(account) = self.inner.storage.read_account(&address).await?
                 {
                     return account.authorized_keys();
                 }
@@ -900,17 +894,11 @@ impl Relay {
             }
         }
 
-        // Get keys for the specific chain
-        let response =
-            self.get_keys(GetKeysParameters { address: from, chain_ids: vec![chain_id] }).await?;
+        // Get keys for the specific chain (treat errors as no keys available)
+        let keys = self.get_keys_for_chain(from, chain_id).await.unwrap_or_default();
+        let key = keys.iter().find(|k| k.hash == key_hash).map(|k| k.authorize_key.key.clone());
 
-        // Format chain_id as hex string to match response format
-        let chain_id_hex = format!("0x{:x}", chain_id);
-
-        Ok(response
-            .get(&chain_id_hex)
-            .and_then(|keys| keys.iter().find(|key| key.hash == key_hash))
-            .map(|k| k.authorize_key.key.clone()))
+        Ok(key)
     }
 
     /// Generates all calls from a [`PrepareCallsParameters`].
@@ -2290,16 +2278,9 @@ impl RelayApiServer for Relay {
 
         let mut init_pre_call = None;
         let mut account = Account::new(address, self.provider(chain_id)?);
-        // Get keys for the specific chain
-        let response =
-            self.get_keys(GetKeysParameters { address, chain_ids: vec![chain_id] }).await?;
-
-        // Format chain_id as hex string to match response format
-        let chain_id_hex = format!("0x{:x}", chain_id);
-
-        let signatures: Vec<Signature> = response
-            .get(&chain_id_hex)
-            .unwrap_or(&vec![])
+        // Get keys for the specific chain (treat errors as no keys available)
+        let keys = self.get_keys_for_chain(address, chain_id).await.unwrap_or_default();
+        let signatures: Vec<Signature> = keys
             .iter()
             .filter_map(|k| {
                 k.authorize_key.key.isSuperAdmin.then_some(Signature {
