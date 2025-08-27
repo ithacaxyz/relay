@@ -1,7 +1,4 @@
-use alloy::{
-    primitives::U256,
-    providers::{Failure, MulticallError},
-};
+use alloy::{primitives::U256, providers::Failure};
 use itertools::Itertools;
 use std::{fmt::Debug, sync::Arc};
 
@@ -69,9 +66,11 @@ impl MetricCollector for BalanceCollector {
             let chain = chain_ref.clone();
             let funder = self.funder;
             funder_requests.push(BalancesFuture::Funder(Box::pin(async move {
-                chain
+                let mut balances = chain
                     .assets()
                     .fee_token_iter_sorted()
+                    // Filter out native token, we need to handle it separately
+                    .filter(|(_, desc)| !desc.address.is_zero())
                     .fold(
                         chain.provider().multicall().dynamic::<balanceOfCall>(),
                         |multicall, (_, token)| {
@@ -81,7 +80,22 @@ impl MetricCollector for BalanceCollector {
                     )
                     .aggregate3()
                     .await
-                    .map(|balances| (chain, balances))
+                    .map_err(eyre::Report::from)?;
+
+                // Add native token balance at the position of native token in fee token list
+                if let Some(native_balance_position) = chain
+                    .assets()
+                    .fee_token_iter_sorted()
+                    .position(|(_, desc)| desc.address.is_zero())
+                {
+                    let native_balance =
+                        chain.provider().get_balance(funder).await.map_err(eyre::Report::from)?;
+                    balances.insert(native_balance_position, Ok(native_balance));
+                } else {
+                    error!(chain_id = ?chain.id(), "No native token found");
+                }
+
+                eyre::Ok((chain, balances))
             })));
         }
 
@@ -101,7 +115,7 @@ impl MetricCollector for BalanceCollector {
                         record_funder_metrics(self.funder, chain, balances);
                     }
                 }
-                Result::<_, MulticallError>::Ok(())
+                eyre::Ok(())
             })
             .buffered(self.chains.len())
             .for_each(|_| futures::future::ready(()))
