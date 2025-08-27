@@ -1,8 +1,10 @@
 use super::{
     Key, KeyHash, OrchestratorContract::accountImplementationOfCall, Signature, rpc::Permission,
+    storage::CreatableAccount,
 };
 use crate::{
     error::{AuthError, RelayError},
+    storage::StorageApi,
     types::IDelegation,
 };
 use IthacaAccount::{
@@ -296,6 +298,42 @@ impl<P: Provider> Account<P> {
             && code[..] != EIP7702_CLEARED_DELEGATION)
     }
 
+    /// Gets the delegation status of the account.
+    ///
+    /// Checks both on-chain delegation and stored authorizations.
+    pub async fn delegation_status<S: StorageApi>(
+        &self,
+        storage: &S,
+    ) -> Result<DelegationStatus, RelayError>
+    where
+        P: Clone,
+    {
+        // Check if account is delegated on-chain
+        if let Some(implementation) = self.delegation_implementation().await? {
+            return Ok(DelegationStatus::Delegated { implementation });
+        }
+
+        // Check if there's a stored authorization
+        if let Some(stored) = storage.read_account(&self.address()).await? {
+            // Get the implementation address the delegation proxy points to
+            let account_with_delegation =
+                self.clone().with_delegation_override(stored.signed_authorization.address());
+
+            if let Some(implementation) =
+                account_with_delegation.delegation_implementation().await?
+            {
+                return Ok(DelegationStatus::Stored { account: Box::new(stored), implementation });
+            } else {
+                return Err(RelayError::Auth(
+                    AuthError::InvalidDelegationProxy(*stored.signed_authorization.address())
+                        .boxed(),
+                ));
+            }
+        }
+
+        Ok(DelegationStatus::None { eoa: self.address() })
+    }
+
     /// Returns a list of all non expired keys as (KeyHash, Key) tuples.
     pub async fn keys(&self) -> TransportResult<Vec<(B256, Key)>> {
         debug!(eoa = %self.delegation.address(), "Fetching keys");
@@ -387,5 +425,48 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
+    }
+}
+
+/// Represents the delegation status of an account.
+#[derive(Debug, Clone)]
+pub enum DelegationStatus {
+    /// Account is not delegated yet but has a stored authorization with implementation.
+    Stored {
+        /// The stored account data.
+        account: Box<CreatableAccount>,
+        /// The implementation address the delegation proxy points to.
+        implementation: Address,
+    },
+    /// Account is delegated with the given implementation address.
+    Delegated {
+        /// The current delegation implementation address.
+        implementation: Address,
+    },
+    /// Account has no delegation.
+    None {
+        /// The EOA address that has no delegation.
+        eoa: Address,
+    },
+}
+
+impl DelegationStatus {
+    /// Returns the implementation address if there is one, or error if None.
+    pub fn try_implementation(&self) -> Result<Address, RelayError> {
+        match self {
+            DelegationStatus::Stored { implementation, .. } => Ok(*implementation),
+            DelegationStatus::Delegated { implementation } => Ok(*implementation),
+            DelegationStatus::None { eoa } => {
+                Err(RelayError::Auth(AuthError::EoaNotDelegated(*eoa).boxed()))
+            }
+        }
+    }
+
+    /// Returns the stored account if this is a Stored status (not delegated on the target chain)
+    pub fn stored_account(&self) -> Option<&CreatableAccount> {
+        match self {
+            DelegationStatus::Stored { account, .. } => Some(account.as_ref()),
+            _ => None,
+        }
     }
 }
