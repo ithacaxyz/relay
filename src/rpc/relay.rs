@@ -800,25 +800,6 @@ impl Relay {
         Ok(self.inner.chains.ensure_chain(chain_id)?.provider().clone())
     }
 
-    /// Helper to get stored account if not delegated
-    async fn get_stored_account_if_not_delegated(
-        &self,
-        from: Address,
-        provider: &DynProvider,
-    ) -> Result<Option<CreatableAccount>, RelayError> {
-        if Account::new(from, provider.clone()).is_delegated().await? {
-            return Ok(None);
-        }
-
-        self.inner
-            .storage
-            .read_account(&from)
-            .await
-            .map_err(|e| RelayError::InternalError(e.into()))?
-            .ok_or_else(|| RelayError::Auth(AuthError::EoaNotDelegated(from).boxed()))
-            .map(Some)
-    }
-
     /// Converts authorized keys into a list of [`Call`].
     fn authorize_into_calls(&self, keys: Vec<AuthorizeKey>) -> Result<Vec<Call>, KeysError> {
         let mut calls = Vec::with_capacity(keys.len());
@@ -1051,8 +1032,9 @@ impl Relay {
 
         // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            let status = Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?;
-            
+            let status =
+                Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?;
+
             // Ensure fee_token is set for non-pre_call requests
             if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
                 let chain = self.inner.chains.ensure_chain(request.chain_id)?;
@@ -1065,7 +1047,7 @@ impl Relay {
                     .await;
                 request.capabilities.meta.fee_token = Some(best_fee_token);
             }
-            
+
             Some(status)
         } else {
             None
