@@ -13,6 +13,7 @@ use alloy::{
         coins_bip39::{English, Mnemonic},
     },
 };
+use futures::stream::FuturesOrdered;
 use futures_util::{
     StreamExt, TryStreamExt,
     future::{JoinAll, TryJoinAll, join_all, try_join_all},
@@ -122,11 +123,15 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     // setup accounts
     let num_accounts = 100;
     let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
-    let accounts =
-        futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(1)
-            .try_collect::<Vec<_>>()
-            .await?;
+    let mut account_stream =
+        keys.into_iter().map(|key| MockAccount::with_key(&env, key)).collect::<FuturesOrdered<_>>();
+
+    let mut accounts = Vec::new();
+    while let Some(account) = account_stream.next().await {
+        let account = account?;
+        accounts.push(account)
+    }
+
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(num_accounts, num_accounts, 0, &env);
@@ -142,9 +147,8 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .collect::<TryJoinAll<_>>()
         .await
         .unwrap();
-    for handle in handles {
-        assert_confirmed(handle).await;
-    }
+
+    join_all(handles.into_iter().map(assert_confirmed)).await;
     assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
     // send `num_accounts` more transactions some of which are failing
@@ -170,14 +174,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .collect::<TryJoinAll<_>>()
         .await?;
 
-    for handle in handles {
-        wait_for_tx(handle).await;
-    }
+    join_all(handles.into_iter().map(wait_for_tx)).await;
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
 
-    // otherwise it will be marked as LEAK.
-    drop(env);
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(())
