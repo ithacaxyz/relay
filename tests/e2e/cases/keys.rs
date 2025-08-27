@@ -295,10 +295,13 @@ async fn get_keys_non_delegated_account() -> eyre::Result<()> {
             address: env.eoa.address(),
             chain_ids: vec![env.chain_ids[0]],
         })
-        .await?;
+        .await;
 
-    // Should return empty for non-delegated accounts
-    assert!(result.is_empty(), "Expected empty response for non-delegated account");
+    assert!(result.is_err(), "Expected error for non-delegated account");
+
+    // Delegate on 1 chain
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
 
     // Test with all chains (empty chain_ids)
     let all_chains_result = env
@@ -309,11 +312,24 @@ async fn get_keys_non_delegated_account() -> eyre::Result<()> {
         })
         .await?;
 
-    // Should also return empty for non-delegated accounts
-    assert!(
-        all_chains_result.is_empty(),
-        "Expected empty response for non-delegated account on all chains"
-    );
+    // Should return keys for the delegated chain
+    assert!(all_chains_result.contains_key(&U64::from(env.chain_ids[0])));
+    assert_eq!(all_chains_result.get(&U64::from(env.chain_ids[0])).unwrap().len(), 1);
+
+    // Test with multiple chains, 1 delegated
+    let multi_chain_result = env
+        .relay_endpoint
+        .get_keys(relay::types::rpc::GetKeysParameters {
+            address: env.eoa.address(),
+            chain_ids: vec![env.chain_ids[0]],
+        })
+        .await?;
+
+    // Should return keys for the delegated chain
+    assert!(multi_chain_result.contains_key(&U64::from(env.chain_ids[0])));
+    assert_eq!(multi_chain_result.get(&U64::from(env.chain_ids[0])).unwrap().len(), 1);
+
+    // TODO: Test with multiple chains, 0 delegated (once we have multiple chains in the test env)
 
     Ok(())
 }

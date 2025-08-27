@@ -24,8 +24,8 @@ pub struct GetKeysParameters {
 }
 
 /// Response for wallet_getKeys with multi-chain support.
-/// Maps chain ID (as hex string) to array of authorized keys for that chain.
-/// Chains where the account is not delegated or where errors occurred are omitted.
+/// Maps chain ID (as QUANTITY hex string per JSON-RPC spec) to array of authorized keys for that
+/// chain. Chains where the account is not delegated or where errors occurred are omitted.
 pub type GetKeysResponse = HashMap<U64, Vec<AuthorizeKeyResponse>>;
 
 /// Represents a key authorization request.

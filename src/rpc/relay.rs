@@ -772,26 +772,15 @@ impl Relay {
             request.chain_ids.clone()
         };
 
-        // Query keys from all requested chains in parallel
+        // Query keys from all requested chains in parallel and bubble errors
         let address = request.address;
-        let futures = chains.iter().map(|&chain_id| async move {
-            let keys = self.get_keys_for_chain(address, chain_id).await;
-            (chain_id, keys)
-        });
+        let pairs = try_join_all(chains.into_iter().map(|chain_id| async move {
+            Ok::<_, RelayError>((chain_id, self.get_keys_for_chain(address, chain_id).await?))
+        }))
+        .await?;
 
-        let results: Vec<(ChainId, Result<Vec<AuthorizeKeyResponse>, RelayError>)> =
-            futures_util::future::join_all(futures).await;
-
-        // Build response with chain-specific results
-        // Only include chains where we successfully got keys (omit errors and non-delegated)
-        let mut response = GetKeysResponse::new();
-        for (chain_id, result) in results {
-            if let Ok(keys) = result {
-                response.insert(U64::from(chain_id), keys);
-            }
-        }
-
-        Ok(response)
+        // Build response from successful results
+        Ok(pairs.into_iter().map(|(chain_id, keys)| (U64::from(chain_id), keys)).collect())
     }
 
     /// Get keys from an account on a specific chain.
@@ -895,7 +884,7 @@ impl Relay {
         }
 
         // Get keys for the specific chain (treat errors as no keys available)
-        let keys = self.get_keys_for_chain(from, chain_id).await.unwrap_or_default();
+        let keys = self.get_keys_for_chain(from, chain_id).await?;
         let key = keys.iter().find(|k| k.hash == key_hash).map(|k| k.authorize_key.key.clone());
 
         Ok(key)
@@ -1857,9 +1846,6 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
-        if let Some(&first) = request.chain_ids.first() {
-            tracing::Span::current().record("eth.chain_id", first);
-        }
         Ok(self.get_keys(request).await?)
     }
 
@@ -2282,7 +2268,7 @@ impl RelayApiServer for Relay {
         let mut init_pre_call = None;
         let mut account = Account::new(address, self.provider(chain_id)?);
         // Get keys for the specific chain (treat errors as no keys available)
-        let keys = self.get_keys_for_chain(address, chain_id).await.unwrap_or_default();
+        let keys = self.get_keys_for_chain(address, chain_id).await?;
         let signatures: Vec<Signature> = keys
             .iter()
             .filter_map(|k| {
