@@ -261,29 +261,31 @@ impl AssetInfoServiceHandle {
         let mut deficits = HashMap::new();
         let mut assets = HashSet::new();
         for call in calls {
-            let Some(contract) = call.to else { continue };
+            let Some(to) = call.to else { continue };
 
-            let (asset, from, amount) =
-                if let Some(value) =
-                    // TOOD: I don't think this is correct, a native transfer would just fail if
-                    // there's not enough funds
-                    call.value.filter(|v| !v.is_zero() && call.typ != "DELEGATECALL")
-                {
-                    (Asset::Native, call.from, value)
-                } else {
-                    let Ok((from, amount)) = IERC20::transferFromCall::abi_decode(&call.input)
+            let (asset, from, amount) = if let Ok((from, amount)) =
+                // First try to decode as `transferFrom`, as it's
+                // more likely the user is interacting with a
+                // contract that tries to pull funds from their
+                // wallet
+                IERC20::transferFromCall::abi_decode(&call.input)
                         .map(|transfer| (transfer.from, transfer.amount))
                         .or_else(|_| {
+                            // Then try to decode as `transfer` in case the user is making a direct
+                            // transfer
                             IERC20::transferCall::abi_decode(&call.input)
                                 .map(|transfer| (call.from, transfer.amount))
-                        })
-                    else {
-                        continue;
-                    };
+                        }) {
+                (Asset::Token(to), from, amount)
+            } else {
+                // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
+                // native token transfer either, because tracing of calls with insufficient native
+                // token balance fails with an error.
+                continue;
+            };
 
-                    (Asset::Token(contract), from, amount)
-                };
-
+            // Check if the call is reverted / errored due to insufficient balance. We check through
+            // several common ERC-20 implementations, including specialized cases such as USDT.
             if let Some(revert_reason) = call.revert_reason
                 && (
                     // OpenZeppelin < 5.0.0
@@ -305,7 +307,7 @@ impl AssetInfoServiceHandle {
             {
             }
             // TODO: do not hardcode USDT address
-            else if contract == address!("0xdac17f958d2ee523a2206206994597c13d831ec7")
+            else if to == address!("0xdac17f958d2ee523a2206206994597c13d831ec7")
                 && call.error.is_some()
             {
                 // USDT transfers just revert on not enough allowance or insufficient funds
@@ -317,7 +319,7 @@ impl AssetInfoServiceHandle {
             *deficits.entry(from).or_insert_with(HashMap::new).entry(asset).or_default() += amount;
         }
 
-        // fetch assets metadata
+        // Fetch assets metadata
         let mut metadata = self.get_asset_info_list(provider, assets.into_iter().collect()).await?;
 
         Ok(AssetDeficits(
