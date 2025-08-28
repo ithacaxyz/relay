@@ -2,10 +2,10 @@ use super::{SignedCall, SignedCalls};
 use crate::types::{Key, Orchestrator};
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Keccak256, U256, keccak256},
+    primitives::{keccak256, Address, Keccak256, B256, U256},
     providers::DynProvider,
     sol,
-    sol_types::SolValue,
+    sol_types::{SolStruct, SolValue},
 };
 use serde::{Deserialize, Serialize};
 
