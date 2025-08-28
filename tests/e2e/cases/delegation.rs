@@ -482,7 +482,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     assert!(!status.status.is_pending(), "Bundle should not be pending");
 
     // Now test a multichain transfer where the chain0 account is on v5, but the chain1 account is
-    // not yet deployed and still on v04 (since that was the original init_data)
+    // not yet deployed but stored in db as v4
 
     // Check balances on both chains
     let chain0_balance =
