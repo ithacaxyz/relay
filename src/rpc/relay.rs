@@ -46,6 +46,7 @@ use alloy::{
     },
     sol_types::{SolCall, SolValue},
 };
+use alloy_chains::NamedChain;
 use futures::{StreamExt, stream::FuturesOrdered};
 use futures_util::{future::try_join_all, join};
 use itertools::Itertools;
@@ -1904,13 +1905,18 @@ impl RelayApiServer for Relay {
                     let price = self.get_token_price(chain, asset).await;
 
                     if asset.asset_type.is_native() {
+                        let symbol = NamedChain::try_from(chain)
+                            .ok()
+                            .and_then(|c| c.native_currency_symbol())
+                            .map(ToString::to_string);
+
                         return Ok::<_, RelayError>(Asset7811 {
                             address: AddressOrNative::Native,
                             balance: chain_provider.get_balance(request.account).await?,
                             asset_type: asset.asset_type,
                             metadata: Some(AssetMetadataWithPrice {
                                 name: None,
-                                symbol: None,
+                                symbol,
                                 // use a constant 18 for native assets
                                 decimals: Some(18),
                                 uri: None,
