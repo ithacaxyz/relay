@@ -343,22 +343,22 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Test that delegation upgrade happens even with accounts only stored and not onchain.
-#[tokio::test]
-async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> {
-    // Skip this test if DATABASE_URL is not set
-    if std::env::var("DATABASE_URL").is_err() {
-        // We restart the relay, and so we need a persistent storage
-        return Ok(());
-    }
-
-    let mut env = Environment::setup().await?;
-    
+/// Helper function to test delegation upgrade with stored accounts
+async fn test_delegation_upgrade_with_stored_account_impl(
+    env: &mut Environment,
+    use_lazy: bool,
+) -> eyre::Result<()> {
     // First restart with legacy (v4) contracts as current
     env.restart_with_legacy().await?;
     
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
-    let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+    
+    // Upgrade account either lazily or eagerly based on parameter
+    if use_lazy {
+        let _auth = upgrade_account_lazily(env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+    } else {
+        let _auth = upgrade_account_eagerly(env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+    }
 
     // Now restart with latest (v5) contracts as current
     env.restart_with_latest().await?;
@@ -484,6 +484,32 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(!status.status.is_pending(), "Bundle should not be pending");
 
+
+    Ok(())
+}
+
+/// Test that delegation upgrade happens even with accounts only stored and not onchain.
+#[tokio::test]
+async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> {
+    // Skip this test if DATABASE_URL is not set
+    if std::env::var("DATABASE_URL").is_err() {
+        // We restart the relay, and so we need a persistent storage
+        return Ok(());
+    }
+
+    // Test with lazy upgrade
+    {
+        let mut env = Environment::setup().await?;
+        println!("Testing with upgrade_account_lazily...");
+        test_delegation_upgrade_with_stored_account_impl(&mut env, true).await?;
+    }
+
+    // Test with eager upgrade
+    {
+        let mut env = Environment::setup().await?;
+        println!("Testing with upgrade_account_eagerly...");
+        test_delegation_upgrade_with_stored_account_impl(&mut env, false).await?;
+    }
 
     Ok(())
 }
