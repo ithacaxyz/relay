@@ -43,7 +43,7 @@ impl ExtraFeeInfo {
 
     /// Returns the amount of gas to add to the gas limit to account for the l1 fee. This will
     /// return zero on chains that are not arbitrum.
-    pub fn extra_l1_gas(&self) -> u64 {
+    pub fn extra_gas(&self) -> u64 {
         match self {
             Self::Arbitrum { l1_gas_estimate, .. } => *l1_gas_estimate,
             _ => 0,
