@@ -19,6 +19,7 @@ mod pause;
 mod paymaster;
 mod porto;
 mod relay;
+mod rpc_snap;
 mod signature;
 mod simple;
 mod simple_settlement;

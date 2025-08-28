@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::types::{Asset, AssetMetadataWithPrice, AssetType};
 
 /// Address-based asset or native.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AddressOrNative {
     /// The special keyword `"native"`.
     #[serde(rename = "native")]

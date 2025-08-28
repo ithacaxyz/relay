@@ -1,0 +1,160 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "0x7a69": [
+    {
+      "address": "native",
+      "balance": "0x3635c9adc5dea00000",
+      "type": "native",
+      "metadata": {
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x05b4cb126885fb10464fdd12666feb25e2563b76",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x0c8e79f3534b00d9a3d4a856b665bf4ebc22f2ba",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x12975173b87f7595ee45dffb2ab812ece596bf84",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x196dbcbb54b8ec4958c959d8949ebfe87ac2aaaf",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x82c6d3ed4cd33d8ec1e51d0b5cc1d822eaa0c3dc",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x82dc47734901ee7d4f4232f398752cb9dd5daccc",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
+      "balance": "0x56bc75e2d63100000",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0xe1da8919f262ee86f9be05059c9280142cf23f48",
+      "balance": "0x56bc75e2d63100000",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0xf7cd8fa9b94db2aa972023b379c7f72c65e4de9d",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    }
+  ]
+}

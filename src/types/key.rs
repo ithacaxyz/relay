@@ -277,14 +277,21 @@ pub struct KeyWith712Signer {
 impl KeyWith712Signer {
     /// Returns a random non admin [`Self`] from a [`KeyType`].
     pub fn random_session(key_type: KeyType) -> eyre::Result<Option<Self>> {
-        let mut key = Self::random_admin(key_type)?.unwrap();
-        key.key.isSuperAdmin = false;
-        Ok(Some(key))
+        Self::mock_session_with_key(key_type, B256::random())
     }
 
     /// Returns a random admin [`Self`] from a [`KeyType`].
     pub fn random_admin(key_type: KeyType) -> eyre::Result<Option<Self>> {
         Self::mock_admin_with_key(key_type, B256::random())
+    }
+
+    /// Returns a non admin [`Self`] from a [`KeyType`].
+    ///
+    /// This is intended for testing.
+    pub fn mock_session_with_key(key_type: KeyType, mock_key: B256) -> eyre::Result<Option<Self>> {
+        let mut key = Self::mock_admin_with_key(key_type, mock_key)?.unwrap();
+        key.key.isSuperAdmin = false;
+        Ok(Some(key))
     }
 
     /// Returns a admin [`Self`] from a [`KeyType`].

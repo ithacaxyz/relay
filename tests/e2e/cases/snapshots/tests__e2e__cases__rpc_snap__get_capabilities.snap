@@ -1,0 +1,159 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "0x7a69": {
+    "contracts": {
+      "orchestrator": {
+        "address": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+        "version": "0.4.6"
+      },
+      "accountImplementation": {
+        "address": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431",
+        "version": "0.4.11"
+      },
+      "legacyOrchestrators": [
+        {
+          "address": "0x6379ebd504941f50d5bfde9348b37593bd29c835",
+          "version": "0.4.6"
+        }
+      ],
+      "legacyAccountImplementations": [
+        {
+          "address": "0x5b3120d0da5fdcba7aef87a9c3c64829c1c0d76b",
+          "version": "0.4.11"
+        }
+      ],
+      "accountProxy": {
+        "address": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
+        "version": null
+      },
+      "simulator": {
+        "address": "0x8ce361602b935680e8dec218b820ff5056beb7af",
+        "version": null
+      },
+      "funder": {
+        "address": "0xa15bb66138824a1c7167f5e85b957d04dd34e468",
+        "version": null
+      },
+      "escrow": {
+        "address": "0xd04ff4a75edd737a73e92b2f2274cb887d96e110",
+        "version": null
+      }
+    },
+    "fees": {
+      "recipient": "0x0000000000000000000000000000000000000000",
+      "quoteConfig": {
+        "constantRate": 1.0,
+        "gas": {
+          "intentBuffer": 20000,
+          "txBuffer": 10000
+        },
+        "ttl": 60,
+        "rateTtl": 300
+      },
+      "tokens": [
+        {
+          "uid": "0",
+          "address": "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": true,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "1",
+          "address": "0xe1da8919f262ee86f9be05059c9280142cf23f48",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "2",
+          "address": "0x0c8e79f3534b00d9a3d4a856b665bf4ebc22f2ba",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "3",
+          "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "4",
+          "address": "0xf7cd8fa9b94db2aa972023b379c7f72c65e4de9d",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "5",
+          "address": "0x12975173b87f7595ee45dffb2ab812ece596bf84",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "6",
+          "address": "0x82dc47734901ee7d4f4232f398752cb9dd5daccc",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "7",
+          "address": "0x196dbcbb54b8ec4958c959d8949ebfe87ac2aaaf",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "8",
+          "address": "0x82c6d3ed4cd33d8ec1e51d0b5cc1d822eaa0c3dc",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "9",
+          "address": "0x05b4cb126885fb10464fdd12666feb25e2563b76",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "mockSymbol",
+          "nativeRate": "0xde0b6b3a7640000"
+        },
+        {
+          "uid": "eth",
+          "address": "0x0000000000000000000000000000000000000000",
+          "decimals": 18,
+          "feeToken": true,
+          "interop": false,
+          "symbol": "ETH",
+          "nativeRate": "0xde0b6b3a7640000"
+        }
+      ]
+    }
+  }
+}
