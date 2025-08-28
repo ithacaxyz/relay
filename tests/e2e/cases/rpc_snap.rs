@@ -12,12 +12,14 @@ use alloy::{
 };
 use relay::{
     rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
     types::{
         Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             GetAssetsParameters, GetKeysParameters, Meta, Permission, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareUpgradeAccountParameters, RequiredAsset,
-            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            SendPreparedCallsParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
+            UpgradeAccountSignatures,
         },
     },
 };
@@ -124,7 +126,7 @@ async fn test_prepare_calls() -> eyre::Result<()> {
     let balance =
         IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
             / uint!(2_U256);
-    let mut response = env
+    let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             calls: vec![Call::transfer(env.erc20, Address::ZERO, uint!(1_U256))],
@@ -194,7 +196,7 @@ async fn test_prepare_upgrade_account() -> eyre::Result<()> {
         })
         .await?;
 
-    // Nonces are random, so we need to redact them and the digest.
+    // Nonces are random, so we need to redact them and the digest that depends on them.
     insta::assert_json_snapshot!(response, {
         ".digests.exec" => reduction_from_str::<B256>("digest"),
         ".context.preCall.nonce" => reduction_from_str::<B256>("nonce"),
@@ -204,15 +206,59 @@ async fn test_prepare_upgrade_account() -> eyre::Result<()> {
     Ok(())
 }
 
-// async fn test_send_prepared_calls() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+#[tokio::test]
+async fn test_send_prepared_calls() -> eyre::Result<()> {
+    let config =
+        EnvironmentConfig { num_chains: 2, fee_recipient: Address::ZERO, ..Default::default() };
+    let env = Environment::setup_with_config(config.clone()).await?;
 
-//     let response = env.relay_endpoint.send_prepared_calls().await?;
+    // Create a key for signing
+    let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
 
-//     insta::assert_json_snapshot!(response);
+    // Account upgrade deployed onchain.
+    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
-//     Ok(())
-// }
+    let balance =
+        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
+            / uint!(2_U256);
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, uint!(1_U256))],
+            chain_id: env.chain_id_for(0),
+            from: Some(env.eoa.address()),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: Default::default(),
+                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+                pre_calls: Default::default(),
+                pre_call: Default::default(),
+                required_funds: vec![RequiredAsset::new(env.erc20, balance)],
+                revoke_keys: Default::default(),
+            },
+            balance_overrides: Default::default(),
+            state_overrides: Default::default(),
+            key: Some(key.to_call_key()),
+        })
+        .await?;
+
+    let signature = key.sign_payload_hash(response.digest).await?;
+
+    let response = env
+        .relay_endpoint
+        .send_prepared_calls(SendPreparedCallsParameters {
+            capabilities: Default::default(),
+            context: response.context,
+            key: key.to_call_key(),
+            signature,
+        })
+        .await?;
+
+    insta::assert_json_snapshot!(response, {
+        ".id" => reduction_from_str::<B256>("id"),
+    });
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_upgrade_account() -> eyre::Result<()> {
