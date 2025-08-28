@@ -157,6 +157,7 @@ sol! {
 pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
+    version: Option<semver::Version>,
 }
 
 impl<P: Provider> Orchestrator<P> {
@@ -165,12 +166,24 @@ impl<P: Provider> Orchestrator<P> {
         Self {
             orchestrator: OrchestratorContractInstance::new(address, provider),
             overrides: StateOverride::default(),
+            version: None,
         }
     }
 
     /// Get the address of the orchestrator.
     pub fn address(&self) -> &Address {
         self.orchestrator.address()
+    }
+
+    /// Get the version of the orchestrator.
+    pub fn version(&self) -> Option<&semver::Version> {
+        self.version.as_ref()
+    }
+
+    /// Sets the version of the orchestrator.
+    pub fn with_version(mut self, version: Option<String>) -> Self {
+        self.version = version.and_then(|v| semver::Version::parse(&v).ok());
+        self
     }
 
     /// Sets overrides for all calls on this orchestrator.
@@ -199,7 +212,13 @@ impl<P: Provider> Orchestrator<P> {
             self.overrides.clone(),
             sim_mode,
         )
-        .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
+        .simulate(
+            *self.address(),
+            mock_from,
+            intent.abi_encode(),
+            gas_validation_offset,
+            self.version.as_ref(),
+        )
         .await;
 
         // If simulation failed, check if orchestrator is paused

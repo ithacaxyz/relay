@@ -67,6 +67,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 schnellru = "0.2.4"
+semver = "1.0.26"
 serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
@@ -118,7 +119,6 @@ derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
-semver = "1.0.26"
 tempfile = "3.21"
 
 [build-dependencies]
