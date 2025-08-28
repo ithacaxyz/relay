@@ -22,7 +22,7 @@ use alloy::{
 /// Because of this, we add a 5% safety margin to the gas estimate.
 ///
 /// https://github.com/OffchainLabs/nitro/blob/90570c4bd330bd23321b9e4ca9e41440ab544d2a/execution/nodeInterface/NodeInterface.go#L490-L515
-pub const ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT: u64 = 5;
+const ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT: u64 = 5;
 
 /// Extension trait for [`Provider`] adding helpers for interacting with rollups.
 pub trait ProviderExt: Provider {
