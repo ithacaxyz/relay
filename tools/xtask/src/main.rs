@@ -12,6 +12,7 @@ fn main() -> anyhow::Result<()> {
         flags::XtaskCmd::E2e(flags::E2e { rest }) => {
             let mut sh = Shell::new()?;
 
+            compile_legacy_contracts(&mut sh)?;
             compile_contracts(&mut sh)?;
 
             // Get the absolute path for TEST_CONTRACTS
@@ -42,7 +43,7 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     let account_dir = "tests/account";
     let _dir = sh.push_dir(account_dir);
 
-    println!("Building contracts...");
+    println!("Building latest contracts...");
 
     // Run the forge build commands as specified in the README
     cmd!(sh, "forge build").run()?;
@@ -59,6 +60,21 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
 
     // Drop the dir guard to return to original directory
     drop(_dir);
+
+    Ok(())
+}
+
+
+fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
+    let _dir = sh.push_dir("tests/account");
+
+    println!("Installing account v0.4.6...");
+    cmd!(sh, "forge install --no-git --shalow accountv4=ithacaxyz/account@v0.4.6").run()?;
+
+    println!("Building v0.4.6 contracts...");
+    let _dir = sh.push_dir("tests/account/lib/accountv4");
+    cmd!(sh, "forge build").run()?;
+    
 
     Ok(())
 }

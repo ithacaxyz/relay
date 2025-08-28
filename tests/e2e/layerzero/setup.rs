@@ -180,7 +180,7 @@ async fn deploy_layerzero_contracts<P: Provider>(
     // Deploy LayerZero settler with the endpoint address and owner
     let settler = deploy_contract(
         provider,
-        &test_contracts_path.join("LayerZeroSettler.sol/LayerZeroSettler.json"),
+        &test_contracts_path.join("../lib/accountv4/out/LayerZeroSettler.sol/LayerZeroSettler.json"),
         Some(SolValue::abi_encode(&(endpoint, LAYERZERO_DEPLOYER_ADDRESS)).into()),
     )
     .await
