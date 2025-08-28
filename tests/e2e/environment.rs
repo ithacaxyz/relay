@@ -23,8 +23,9 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     chains::RETRY_LAYER,
     config::{
-        ChainConfig, InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig,
-        SettlerImplementation, SignerConfig, SimpleSettlerConfig, TransactionServiceConfig,
+        ChainConfig, InteropConfig, LegacyOrchestrator, RebalanceServiceConfig, RelayConfig,
+        SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
+        TransactionServiceConfig,
     },
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
@@ -255,7 +256,7 @@ struct ContractAddresses {
     #[allow(dead_code)]
     delegation_implementation: Address,
     orchestrator: Address,
-    legacy_orchestrator: Address,
+    legacy_orchestrator: LegacyOrchestrator,
     legacy_delegation_proxy: Address,
     funder: Address,
     escrow: Address,
@@ -1000,9 +1001,13 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
     )?;
 
     // Deploy legacy contracts (depend on earlier deployments for consistent addresses)
-    let legacy_orchestrator = deploy_orchestrator(provider, &contracts_path).await?;
+    let legacy_orchestrator = LegacyOrchestrator {
+        orchestrator: deploy_orchestrator(provider, &contracts_path).await?,
+        simulator: deploy_simulator(provider, &contracts_path).await?,
+    };
     let (_, legacy_delegation_proxy) =
-        deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator).await?;
+        deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator.orchestrator)
+            .await?;
 
     Ok(ContractAddresses {
         simulator,

@@ -99,9 +99,10 @@ impl<'a> ChainDiagnostics<'a> {
             ("Escrow", self.config.escrow),
         ];
 
-        // Add legacy orchestrators to be checked
+        // Add legacy orchestrators and simulators to be checked
         for legacy_orchestrator in &self.config.legacy_orchestrators {
-            eip712s.push(("Orchestrator", *legacy_orchestrator));
+            eip712s.push(("Orchestrator", legacy_orchestrator.orchestrator));
+            eip712s.push(("Simulator", legacy_orchestrator.simulator));
         }
 
         // Build multicall to obtain the implementation address of every proxy: main and legacy

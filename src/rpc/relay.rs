@@ -17,6 +17,7 @@ use crate::{
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
@@ -912,7 +913,11 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-        if self.orchestrator() == address || self.legacy_orchestrators().any(|c| c == address) {
+        if self.orchestrator() == address
+            || self
+                .legacy_orchestrators()
+                .any(|contracts| contracts.orchestrator.address == address)
+        {
             Ok(Orchestrator::new(address, provider))
         } else {
             Err(RelayError::UnsupportedOrchestrator(address))
@@ -2453,8 +2458,8 @@ impl Relay {
     }
 
     /// Previously deployed orchestrators.
-    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = Address> {
-        self.inner.contracts.legacy_orchestrators.iter().map(|c| c.address)
+    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = &VersionedOrchestratorContracts> {
+        self.inner.contracts.legacy_orchestrators.iter()
     }
 
     /// Previously deployed delegation implementations.
