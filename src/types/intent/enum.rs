@@ -33,11 +33,7 @@ impl Intent {
     /// - Orchestrator version >= 0.5.0 creates V05 Intent
     /// - Orchestrator version < 0.5.0 creates V04 Intent
     pub fn for_orchestrator(version: &semver::Version) -> Self {
-        if *version >= semver::Version::new(0, 5, 0) {
-            Self::v05()
-        } else {
-            Self::v04()
-        }
+        if *version >= semver::Version::new(0, 5, 0) { Self::v05() } else { Self::v04() }
     }
 
     /// Creates a new v04 Intent.
