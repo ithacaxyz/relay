@@ -49,16 +49,20 @@ impl VersionedContract {
             .await
             .map(|domain| {
                 tracing::debug!(
-                    "Fetched version '{}' from eip712Domain for contract {}",
-                    domain.version,
-                    address
+                    name = %domain.name,
+                    contract = %address,
+                    version = %domain.version,
+                    "Fetched EIP712 domain"
                 );
                 domain.version
             })
             .ok();
 
         if version.is_none() {
-            tracing::debug!("Failed to fetch version from eip712Domain for contract {}", address);
+            tracing::debug!(
+                contract = %address,
+                "Failed to fetch EIP712 domain"
+            );
         }
 
         Self { address, version }
@@ -103,13 +107,13 @@ impl VersionedContracts {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
                 tracing::debug!(
-                    "Creating VersionedContract for legacy orchestrator {}",
-                    legacy.orchestrator
+                    orchestrator = %legacy.orchestrator,
+                    "Creating VersionedContract for legacy orchestrator"
                 );
                 let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await;
                 tracing::debug!(
-                    "Creating VersionedContract for legacy simulator {}",
-                    legacy.simulator
+                    simulator = %legacy.simulator,
+                    "Creating VersionedContract for legacy simulator"
                 );
                 let simulator = VersionedContract::new(legacy.simulator, provider).await;
                 Ok::<_, RelayError>(VersionedOrchestratorContracts { orchestrator, simulator })
@@ -128,8 +132,8 @@ impl VersionedContracts {
 
         let orchestrator = async {
             tracing::debug!(
-                "Creating VersionedContract for current orchestrator {}",
-                config.orchestrator
+                orchestrator = %config.orchestrator,
+                "Creating VersionedContract for current orchestrator"
             );
             Ok(VersionedContract::new(config.orchestrator, provider).await)
         };

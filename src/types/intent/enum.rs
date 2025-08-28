@@ -34,10 +34,8 @@ impl Intent {
     /// - Orchestrator version < 0.5.0 creates V04 Intent
     pub fn for_orchestrator(version: &semver::Version) -> Self {
         if *version >= semver::Version::new(0, 5, 0) {
-            tracing::debug!("Creating V05 Intent for orchestrator version {}", version);
             Self::v05()
         } else {
-            tracing::debug!("Creating V04 Intent for orchestrator version {}", version);
             Self::v04()
         }
     }
