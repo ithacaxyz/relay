@@ -70,14 +70,6 @@ mod eip712 {
 }
 
 impl IntentV04 {
-    /// Sets the payment amount fields so it has the same behaviour as legacy Intent.
-    pub fn set_legacy_payment_amount(&mut self, amount: U256) {
-        self.prePaymentAmount = amount;
-        self.prePaymentMaxAmount = amount;
-        self.totalPaymentAmount = amount;
-        self.totalPaymentMaxAmount = amount;
-    }
-
     /// Calculate a digest of the [`IntentV04`], used for checksumming.
     ///
     /// # Note

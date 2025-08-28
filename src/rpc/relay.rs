@@ -513,7 +513,7 @@ impl Relay {
         // which ensures the simulation never reverts. Whether the user can actually really
         // pay for the intent execution or not is determined later and communicated to the
         // client.
-        intent_to_sign.set_legacy_payment_amount(U256::from(1));
+        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
@@ -573,7 +573,7 @@ impl Relay {
         let payment_amount = context.intent_kind.multi_input_fee().unwrap_or(
             extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
         );
-        intent_to_sign.set_legacy_payment_amount(payment_amount);
+        intent_to_sign.set_payment(payment_amount);
 
         let fee_token_deficit =
             intent_to_sign.total_payment_max_amount().saturating_sub(fee_token_balance);
@@ -686,7 +686,7 @@ impl Relay {
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
         let payment_amount = quote.intent.pre_payment_max_amount();
-        quote.intent.set_legacy_payment_amount(payment_amount);
+        quote.intent.set_payment(payment_amount);
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.

@@ -492,14 +492,19 @@ impl Intent {
 
     // Pass-through methods to underlying implementation
 
-    /// Sets the payment amount fields so it has the same behaviour as legacy Intent.
-    pub fn set_legacy_payment_amount(&mut self, amount: U256) {
+    /// Sets payment amount and max specified amount.
+    pub fn set_payment(&mut self, amount: U256) {
         match self {
             Intent::V05(intent) => {
                 intent.paymentMaxAmount = amount;
                 intent.paymentAmount = amount;
             }
-            Intent::V04(intent) => intent.set_legacy_payment_amount(amount),
+            Intent::V04(intent) => {
+                intent.prePaymentAmount = amount;
+                intent.prePaymentMaxAmount = amount;
+                intent.totalPaymentAmount = amount;
+                intent.totalPaymentMaxAmount = amount;
+            }
         }
     }
 
