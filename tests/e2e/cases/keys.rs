@@ -417,10 +417,10 @@ async fn get_keys_three_chains_two_have_session() -> eyre::Result<()> {
         let mut attempts = 0;
         loop {
             let status = env.relay_endpoint.get_calls_status(bundle.id).await.ok();
-            if let Some(status) = status {
-                if !status.status.is_pending() {
-                    break;
-                }
+            if let Some(status) = status
+                && !status.status.is_pending()
+            {
+                break;
             }
             attempts += 1;
             if attempts > 20 {
