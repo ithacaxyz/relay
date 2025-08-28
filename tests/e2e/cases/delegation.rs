@@ -344,10 +344,10 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
 }
 
 /// Helper function to test delegation upgrade with stored accounts
-async fn test_delegation_upgrade_with_stored_account_impl(
-    env: &mut Environment,
-    use_lazy: bool,
-) -> eyre::Result<()> {
+async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyre::Result<()> {
+    // Start a brand new environment
+    let mut env = Environment::setup().await?;
+    
     // First restart with legacy (v4) contracts as current
     env.restart_with_legacy().await?;
     
@@ -355,9 +355,9 @@ async fn test_delegation_upgrade_with_stored_account_impl(
     
     // Upgrade account either lazily or eagerly based on parameter
     if use_lazy {
-        let _auth = upgrade_account_lazily(env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+        let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
     } else {
-        let _auth = upgrade_account_eagerly(env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+        let _auth = upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
     }
 
     // Now restart with latest (v5) contracts as current
@@ -497,19 +497,11 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
         return Ok(());
     }
 
-    // Test with lazy upgrade
-    {
-        let mut env = Environment::setup().await?;
-        println!("Testing with upgrade_account_lazily...");
-        test_delegation_upgrade_with_stored_account_impl(&mut env, true).await?;
-    }
+    // Test upgrade from a stored/offchain account
+    test_delegation_upgrade_with_stored_account_impl(true).await?;
 
-    // Test with eager upgrade
-    {
-        let mut env = Environment::setup().await?;
-        println!("Testing with upgrade_account_eagerly...");
-        test_delegation_upgrade_with_stored_account_impl(&mut env, false).await?;
-    }
+    // Test upgrade from a onchain account
+    test_delegation_upgrade_with_stored_account_impl(false).await?;
 
     Ok(())
 }
