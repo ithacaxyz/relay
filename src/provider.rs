@@ -46,7 +46,7 @@ pub trait ProviderExt: Provider {
 
     /// Estimates L1 DA fee components of an Arbitrum rollup for given transaction parameters by
     /// using [`NodeInterface`]. Returns the raw gas estimate and base fee estimate components
-    /// without applying any adjustments.
+    /// after applying adjustments based on [`ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT`].
     fn estimate_l1_arb_fee_components(
         &self,
         chain_id: ChainId,
