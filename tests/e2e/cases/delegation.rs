@@ -531,7 +531,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     let v04_calls =
         Vec::<Call>::abi_decode(mc_quote.ty().quotes[0].intent.execution_data()).unwrap();
     // Other two calls are approve and escrow
-    assert!(&v04_calls[2].data[..4] == &upgradeProxyAccountCall::SELECTOR);
+    assert!(v04_calls[2].data[..4] == upgradeProxyAccountCall::SELECTOR);
 
     // Execute the multichain transfer
     let mc_bundle_id = send_prepared_calls(
