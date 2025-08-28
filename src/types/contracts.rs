@@ -70,8 +70,8 @@ pub struct VersionedContracts {
     /// This is directly fetched from the proxy.
     #[serde(rename = "accountImplementation")]
     pub delegation_implementation: VersionedContract,
-    /// Previously deployed orchestrators.
-    pub legacy_orchestrators: Vec<VersionedContract>,
+    /// Previously deployed orchestrators and simulators.
+    pub legacy_orchestrators: Vec<VersionedOrchestratorContracts>,
     /// Previously deployed delegation implementations.
     #[serde(rename = "legacyAccountImplementations")]
     pub legacy_delegations: Vec<VersionedContract>,
@@ -90,8 +90,11 @@ impl VersionedContracts {
     /// Generates a [`VersionedContracts`] from [`RelayConfig`].
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
-            try_join_all(config.legacy_orchestrators.iter().map(async |&address| {
-                Ok::<_, RelayError>(VersionedContract::new(address, provider).await)
+            try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
+                Ok::<_, RelayError>(VersionedOrchestratorContracts {
+                    orchestrator: VersionedContract::new(legacy.orchestrator, provider).await,
+                    simulator: VersionedContract::new(legacy.simulator, provider).await,
+                })
             }));
 
         let legacy_delegations =
@@ -137,4 +140,13 @@ impl VersionedContracts {
             escrow: VersionedContract::no_version(config.escrow),
         })
     }
+}
+
+/// Orchestrator and simulator versioned contracts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionedOrchestratorContracts {
+    /// Orchestrator contract.
+    pub orchestrator: VersionedContract,
+    /// Simulator contract.
+    pub simulator: VersionedContract,
 }
