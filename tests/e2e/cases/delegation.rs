@@ -15,12 +15,13 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Account, Call,
+        Account, Call, IERC20,
         IthacaAccount::{self, upgradeProxyAccountCall},
         KeyType, KeyWith712Signer, Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
+use std::ops::Div;
 
 /// Ensures unsupported delegation implementations and proxies are caught.
 #[tokio::test(flavor = "multi_thread")]
@@ -351,7 +352,7 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
 /// Helper function to test delegation upgrade with stored accounts
 async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyre::Result<()> {
     // Start a brand new environment
-    let mut env = Environment::setup().await?;
+    let mut env = Environment::setup_multi_chain(2).await?;
 
     // First restart with legacy (v4) contracts as current
     env.restart_with_v4().await?;
@@ -479,6 +480,71 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     // Wait for bundle to complete
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(!status.status.is_pending(), "Bundle should not be pending");
+
+    // Now test a multichain transfer where the chain0 account is on v5, but the chain1 account is
+    // not yet deployed and still on v04 (since that was the original init_data)
+
+    // Check balances on both chains
+    let chain0_balance =
+        IERC20::new(env.erc20, env.provider_for(0)).balanceOf(env.eoa.address()).call().await?;
+    let chain1_balance =
+        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?;
+
+    // Create a transfer on chain 0 that requires MORE funds than available on chain 0
+    // This will force pulling funds from chain 1
+    let required_amount = chain0_balance + chain1_balance.div(U256::from(2)); // More than what's on chain 0
+
+    let multichain_response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(100))],
+            chain_id: env.chain_id_for(0),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                // Request more funds than available on chain 0 to trigger multichain
+                required_funds: vec![relay::types::rpc::RequiredAsset::new(
+                    env.erc20,
+                    required_amount,
+                )],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    let mc_quote = multichain_response.context.quote().unwrap();
+    assert_eq!(mc_quote.ty().quotes.len(), 2, "Should have exactly 2 quotes for 2-chain transfer");
+
+    // Chain0 (Destination intent) has been upgraded to v05
+    let has_v05 = mc_quote.ty().quotes[1].intent.as_v05().is_some();
+
+    // Chain1 (Escrow intent) is using the stored account, so it needs an upgrade at the end
+    let has_v04 = mc_quote.ty().quotes[0].intent.as_v04().is_some();
+    assert!(has_v04 && has_v05, "Multichain transfer should have one V04 and one V05 Intent");
+
+    let v04_calls =
+        Vec::<Call>::abi_decode(mc_quote.ty().quotes[0].intent.execution_data()).unwrap();
+    // Other two calls are approve and escrow
+    assert!(&v04_calls[2].data[..4] == &upgradeProxyAccountCall::SELECTOR);
+
+    // Execute the multichain transfer
+    let mc_bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(multichain_response.digest).await?,
+        multichain_response.context,
+    )
+    .await?;
+
+    // Wait for multichain bundle to complete
+    let mc_status = await_calls_status(&env, mc_bundle_id).await?;
+    assert!(mc_status.status.is_confirmed(), "Multichain transfer should be confirmed");
 
     Ok(())
 }
