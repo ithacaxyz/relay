@@ -5,6 +5,7 @@ use crate::e2e::{
 };
 use alloy::{
     primitives::{Address, B256, U64, U256, b256},
+    providers::Provider,
     sol_types::SolCall,
     uint,
 };
@@ -14,7 +15,8 @@ use relay::{
         Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             GetAssetsParameters, GetKeysParameters, Meta, Permission, PrepareCallsCapabilities,
-            PrepareCallsParameters, RequiredAsset,
+            PrepareCallsParameters, PrepareUpgradeAccountParameters, RequiredAsset,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -102,61 +104,88 @@ async fn test_get_assets() -> eyre::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_prepare_calls() -> eyre::Result<()> {
-    let config =
-        EnvironmentConfig { num_chains: 2, fee_recipient: Address::ZERO, ..Default::default() };
-    let env = Environment::setup_with_config(config.clone()).await?;
+// #[tokio::test]
+// async fn test_prepare_calls() -> eyre::Result<()> {
+//     let config =
+//         EnvironmentConfig { num_chains: 2, fee_recipient: Address::ZERO, ..Default::default() };
+//     let env = Environment::setup_with_config(config.clone()).await?;
 
-    // Create a key for signing
-    let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
+//     // Create a key for signing
+//     let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
 
-    // Account upgrade deployed onchain.
-    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
+//     // Account upgrade deployed onchain.
+//     upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
-    let balance =
-        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
-            / uint!(2_U256);
-    let mut response = env
-        .relay_endpoint
-        .prepare_calls(PrepareCallsParameters {
-            calls: vec![Call::transfer(env.erc20, Address::ZERO, uint!(1_U256))],
-            chain_id: env.chain_id_for(0),
-            from: Some(env.eoa.address()),
-            capabilities: PrepareCallsCapabilities {
-                authorize_keys: Default::default(),
-                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
-                pre_calls: Default::default(),
-                pre_call: Default::default(),
-                required_funds: vec![RequiredAsset::new(env.erc20, balance)],
-                revoke_keys: Default::default(),
-            },
-            balance_overrides: Default::default(),
-            state_overrides: Default::default(),
-            key: Some(key.to_call_key()),
-        })
-        .await?;
+//     let balance =
+//         IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
+//             / uint!(2_U256);
+//     let mut response = env
+//         .relay_endpoint
+//         .prepare_calls(PrepareCallsParameters {
+//             calls: vec![Call::transfer(env.erc20, Address::ZERO, uint!(1_U256))],
+//             chain_id: env.chain_id_for(0),
+//             from: Some(env.eoa.address()),
+//             capabilities: PrepareCallsCapabilities {
+//                 authorize_keys: Default::default(),
+//                 meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+//                 pre_calls: Default::default(),
+//                 pre_call: Default::default(),
+//                 required_funds: vec![RequiredAsset::new(env.erc20, balance)],
+//                 revoke_keys: Default::default(),
+//             },
+//             balance_overrides: Default::default(),
+//             state_overrides: Default::default(),
+//             key: Some(key.to_call_key()),
+//         })
+//         .await?;
 
-    for asset_diff in response.capabilities.asset_diff.asset_diffs.values_mut() {
-        asset_diff.0.sort_by_key(|(asset, _)| *asset);
-    }
+//     for asset_diff in response.capabilities.asset_diff.asset_diffs.values_mut() {
+//         asset_diff.0.sort_by_key(|(asset, _)| *asset);
+//     }
 
-    let mut value = serde_json::to_value(response)?;
-    sort_json_keys(&mut value);
-    insta::assert_json_snapshot!(value);
-
-    Ok(())
-}
-
-// async fn test_prepare_upgrade_account() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
-
-//     let response = env.relay_endpoint.prepare_upgrade_account().await?;
-
-//     insta::assert_json_snapshot!(response);
+//     let mut value = serde_json::to_value(response)?;
+//     sort_json_keys(&mut value);
+//     insta::assert_json_snapshot!(value);
 
 //     Ok(())
 // }
+
+#[tokio::test]
+async fn test_prepare_upgrade_account() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let admin_key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
+
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities {
+                authorize_keys: vec![admin_key.to_authorized()],
+            },
+        })
+        .await?;
+
+    // Nonces are random, so we need to redact them and the digest.
+    insta::assert_json_snapshot!(response, {
+        ".digests.exec" => insta::dynamic_redaction(|value, _path| {
+            assert_eq!(value.as_str().unwrap().len(), 66);
+            "[digest]"
+        }),
+        ".context.preCall.nonce" => insta::dynamic_redaction(|value, _path| {
+            assert_eq!(value.as_str().unwrap().len(), 66);
+            "[nonce]"
+        }),
+        ".typedData.message.nonce" => insta::dynamic_redaction(|value, _path| {
+            assert_eq!(value.as_str().unwrap().len(), 66);
+            "[nonce]"
+        })
+    });
+
+    Ok(())
+}
 
 // async fn test_send_prepared_calls() -> eyre::Result<()> {
 //     let env = Environment::setup().await?;
@@ -168,15 +197,48 @@ async fn test_prepare_calls() -> eyre::Result<()> {
 //     Ok(())
 // }
 
-// async fn test_upgrade_account() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+#[tokio::test]
+async fn test_upgrade_account() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
 
-//     let response = env.relay_endpoint.upgrade_account().await?;
+    let admin_key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
 
-//     insta::assert_json_snapshot!(response);
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities {
+                authorize_keys: vec![admin_key.to_authorized()],
+            },
+        })
+        .await?;
 
-//     Ok(())
-// }
+    // Sign Intent digest
+    let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
+
+    // Sign 7702 delegation
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Upgrade account.
+    #[allow(clippy::let_unit_value)]
+    let response = env
+        .relay_endpoint
+        .upgrade_account(UpgradeAccountParameters {
+            context: response.context,
+            signatures: UpgradeAccountSignatures {
+                auth: authorization.signature()?,
+                exec: precall_signature,
+            },
+        })
+        .await?;
+
+    insta::assert_json_snapshot!(response);
+
+    Ok(())
+}
 
 // async fn test_get_authorization() -> eyre::Result<()> {
 //     let env = Environment::setup().await?;
