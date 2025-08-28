@@ -44,6 +44,20 @@ sol! {
     contract Simulator {
         function simulateV1Logs(
             address ep,
+            uint8 paymentPerGasPrecision,
+            uint256 paymentPerGas,
+            uint256 combinedGasIncrement,
+            uint256 combinedGasVerificationOffset,
+            bytes calldata encodedIntent
+        ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas);
+    }
+
+    #[sol(rpc)]
+    #[derive(Debug)]
+    #[allow(clippy::too_many_arguments)]
+    contract SimulatorV4 {
+        function simulateV1Logs(
+            address ep,
             bool isPrePayment,
             uint8 paymentPerGasPrecision,
             uint256 paymentPerGas,
@@ -121,7 +135,6 @@ impl<P: Provider> SimulatorContract<P> {
             .simulator
             .simulateV1Logs(
                 orchestrator_address,
-                true,
                 0,
                 U256::ZERO,
                 U256::from(11_000),

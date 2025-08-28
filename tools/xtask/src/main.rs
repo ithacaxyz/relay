@@ -64,17 +64,15 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     let _dir = sh.push_dir("tests/account");
 
     println!("Installing account v0.4.6...");
-    cmd!(sh, "forge install --no-git --shalow accountv4=ithacaxyz/account@v0.4.6").run()?;
+    cmd!(sh, "forge install --no-git --shallow accountv4=ithacaxyz/account@v0.4.6").run()?;
 
     println!("Building v0.4.6 contracts...");
-    let _dir = sh.push_dir("tests/account/lib/accountv4");
+    let _dir = sh.push_dir("lib/accountv4");
     cmd!(sh, "forge build").run()?;
-    
 
     Ok(())
 }
