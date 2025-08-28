@@ -643,16 +643,6 @@ impl Intent {
         }
     }
 
-    /// Decode Intent from ABI-encoded bytes.
-    pub fn abi_decode(data: &[u8]) -> alloy::sol_types::Result<Self> {
-        // Try V05 first as it's the latest version
-        if let Ok(intent) = IntentV05::abi_decode(data) {
-            return Ok(Intent::V05(intent));
-        }
-        // Fall back to V04
-        Ok(Intent::V04(IntentV04::abi_decode(data)?))
-    }
-
     /// Get the ABI-encoded packed bytes of the intent.
     pub fn abi_encode_packed(&self) -> Vec<u8> {
         match self {
