@@ -64,7 +64,6 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     let _dir = sh.push_dir("tests/account");
 
@@ -74,7 +73,6 @@ fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     println!("Building v0.4.6 contracts...");
     let _dir = sh.push_dir("tests/account/lib/accountv4");
     cmd!(sh, "forge build").run()?;
-    
 
     Ok(())
 }
