@@ -348,6 +348,106 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Test that delegation upgrade happens even with accounts only stored and not onchain.
+#[tokio::test]
+async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> {
+    // Skip this test if DATABASE_URL is not set
+    if std::env::var("DATABASE_URL").is_err() {
+        // We restart the relay, and so we need a persistent storage
+        return Ok(());
+    }
+
+    let mut env = Environment::setup().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+
+    // Get the legacy contracts from env (these are pre-deployed during setup)
+    let legacy_orchestrator = env.config.legacy_orchestrators.iter().next().copied().unwrap();
+    let legacy_delegation = env.get_legacy_delegation_proxy();
+
+    // Restart relay with swapped configuration:
+    // - Legacy contracts become current
+    // - Current contracts become legacy
+    let mut config = env.config.clone();
+    config.legacy_orchestrators.clear();
+    config.legacy_delegation_proxies.clear();
+    config.legacy_orchestrators.insert(config.orchestrator);
+    config.legacy_delegation_proxies.insert(config.delegation_proxy);
+    config.orchestrator = legacy_orchestrator;
+    config.delegation_proxy = legacy_delegation;
+    env.restart_relay(config).await?;
+
+    // Get new capabilities after restart
+    let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
+
+    // The current orchestrator is now in the legacy list
+    assert!(
+        chain_capabilities.contracts.orchestrator.address == legacy_orchestrator,
+        "Current orchestrator should now be in legacy list"
+    );
+
+    // Prepare a call - should auto-add upgrade because account has legacy delegation
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(1))],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    // Decode the execution data to Vec<Call>
+    let calls = Vec::<Call>::abi_decode(
+        response.context.quote().unwrap().ty().quotes[0].intent.execution_data(),
+    )
+    .unwrap();
+
+    // Should have user call + upgrade call
+    assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");
+
+    // Verify the last call is the upgrade call
+    assert_eq!(
+        calls[1].data,
+        Bytes::from(
+            upgradeProxyAccountCall {
+                newImplementation: chain_capabilities.contracts.delegation_implementation.address
+            }
+            .abi_encode()
+        ),
+        "Last call should be upgradeProxyAccount with current delegation implementation"
+    );
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to complete
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(!status.status.is_pending(), "Bundle should not be pending");
+
+    assert_eq!(
+        Account::new(env.eoa.address(), env.provider()).get_orchestrator().await?,
+        legacy_orchestrator,
+    );
+
+    Ok(())
+}
+
 /// Test that delegation upgrade is automatically added when EOA has legacy delegation
 #[tokio::test]
 async fn test_delegation_auto_upgrade() -> eyre::Result<()> {

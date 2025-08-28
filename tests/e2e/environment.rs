@@ -357,6 +357,35 @@ impl Environment {
         Self::setup_with_config(EnvironmentConfig::default()).await
     }
 
+    /// Restarts the relay with an updated configuration.
+    ///
+    /// # Important
+    /// This method does NOT properly stop the previous background services like TransactionService,
+    /// InteropService, RebalanceService, and AssetInfoService.
+    pub async fn restart_relay(&mut self, config: RelayConfig) -> eyre::Result<()> {
+        // Stop the current relay RPC server
+        // NOTE: This only stops the RPC server, not background services
+        self.relay_handle.server.stop()?;
+
+        // Wait a moment for the server to fully shutdown
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Spawn a new relay with the updated config
+        let skip_diagnostics = false;
+        let new_handle = try_spawn(config.clone(), skip_diagnostics).await?;
+
+        // Update the relay endpoint with the new server URL
+        self.relay_endpoint = HttpClientBuilder::default()
+            .build(new_handle.http_url())
+            .wrap_err("Failed to build relay client for restarted relay")?;
+
+        // Update the handle and config
+        self.relay_handle = new_handle;
+        self.config = config;
+
+        Ok(())
+    }
+
     /// Get the legacy delegation proxy address from the relay's config.
     /// This is used for testing upgrade scenarios.
     pub fn get_legacy_delegation_proxy(&self) -> Address {
