@@ -354,7 +354,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     let mut env = Environment::setup().await?;
 
     // First restart with legacy (v4) contracts as current
-    env.restart_with_legacy().await?;
+    env.restart_with_v4().await?;
 
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
@@ -370,9 +370,6 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
 
     // Now restart with latest (v5) contracts as current
     env.restart_with_latest().await?;
-
-    // Get new capabilities after restart
-    let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
 
     // Prepare a call - should auto-add upgrade because account has legacy delegation
     let response = env

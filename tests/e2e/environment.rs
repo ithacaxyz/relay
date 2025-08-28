@@ -416,7 +416,7 @@ impl Environment {
 
     /// Restarts the relay with legacy (v4) contracts as current.
     /// Latest (v5) contracts become the legacy set.
-    pub async fn restart_with_legacy(&mut self) -> eyre::Result<()> {
+    pub async fn restart_with_v4(&mut self) -> eyre::Result<()> {
         // Clone the current config
         let mut config = self.config.clone();
 
