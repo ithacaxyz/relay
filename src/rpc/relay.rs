@@ -913,11 +913,7 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-        if self.orchestrator() == address
-            || self
-                .legacy_orchestrators()
-                .any(|contracts| contracts.orchestrator.address == address)
-        {
+        if self.orchestrator() == address || self.get_legacy_orchestrator(address).is_some() {
             Ok(Orchestrator::new(address, provider))
         } else {
             Err(RelayError::UnsupportedOrchestrator(address))
@@ -2457,9 +2453,12 @@ impl Relay {
         self.inner.contracts.orchestrator.address
     }
 
-    /// Previously deployed orchestrators.
-    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = &VersionedOrchestratorContracts> {
-        self.inner.contracts.legacy_orchestrators.values()
+    /// Get previously deployed orchestrator and simulator by orchestrator address.
+    pub fn get_legacy_orchestrator(
+        &self,
+        address: Address,
+    ) -> Option<&VersionedOrchestratorContracts> {
+        self.inner.contracts.legacy_orchestrators.get(&address)
     }
 
     /// Previously deployed delegation implementations.
