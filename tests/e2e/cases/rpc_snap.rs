@@ -16,10 +16,10 @@ use relay::{
     types::{
         Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
-            GetAssetsParameters, GetKeysParameters, Meta, Permission, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareUpgradeAccountParameters, RequiredAsset,
-            SendPreparedCallsParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
-            UpgradeAccountSignatures,
+            GetAssetsParameters, GetAuthorizationParameters, GetKeysParameters, Meta, Permission,
+            PrepareCallsCapabilities, PrepareCallsParameters, PrepareUpgradeAccountParameters,
+            RequiredAsset, SendPreparedCallsParameters, UpgradeAccountCapabilities,
+            UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -303,15 +303,52 @@ async fn test_upgrade_account() -> eyre::Result<()> {
     Ok(())
 }
 
-// async fn test_get_authorization() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+#[tokio::test]
+async fn test_get_authorization() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
 
-//     let response = env.relay_endpoint.get_authorization().await?;
+    let admin_key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
 
-//     insta::assert_json_snapshot!(response);
+    let response = env
+        .relay_endpoint
+        .prepare_upgrade_account(PrepareUpgradeAccountParameters {
+            address: env.eoa.address(),
+            delegation: env.delegation,
+            chain_id: None,
+            capabilities: UpgradeAccountCapabilities {
+                authorize_keys: vec![admin_key.to_authorized()],
+            },
+        })
+        .await?;
 
-//     Ok(())
-// }
+    // Sign Intent digest
+    let precall_signature = env.eoa.sign_hash(&response.digests.exec).await?;
+
+    // Sign 7702 delegation
+    let nonce = env.provider().get_transaction_count(env.eoa.address()).await?;
+    let authorization = AuthKind::Auth.sign(&env, nonce).await?;
+
+    // Upgrade account.
+    env.relay_endpoint
+        .upgrade_account(UpgradeAccountParameters {
+            context: response.context,
+            signatures: UpgradeAccountSignatures {
+                auth: authorization.signature()?,
+                exec: precall_signature,
+            },
+        })
+        .await?;
+
+    // Get authorization
+    let response = env
+        .relay_endpoint
+        .get_authorization(GetAuthorizationParameters { address: env.eoa.address() })
+        .await?;
+
+    insta::assert_json_snapshot!(response);
+
+    Ok(())
+}
 
 // async fn test_get_calls_status() -> eyre::Result<()> {
 //     let env = Environment::setup().await?;
