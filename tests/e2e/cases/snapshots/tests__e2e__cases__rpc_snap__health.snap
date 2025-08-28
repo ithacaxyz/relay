@@ -3,6 +3,6 @@ source: tests/e2e/cases/rpc_snap.rs
 expression: response
 ---
 {
-  "status": "rpc ok",
-  "version": "22.0.1-dev (8a1d1fa)"
+  "status": "[status]",
+  "version": "[version]"
 }

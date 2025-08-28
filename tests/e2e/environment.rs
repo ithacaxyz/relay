@@ -4,7 +4,7 @@ use super::*;
 use crate::e2e::layerzero::{LayerZeroTestConfig, setup::deploy_layerzero_infrastructure};
 use alloy::{
     consensus::{SignableTransaction, TxEip1559, TxEnvelope},
-    eips::Encodable2718,
+    eips::{BlockNumberOrTag, Encodable2718},
     hex,
     network::{EthereumWallet, TransactionBuilder, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
@@ -18,6 +18,7 @@ use alloy::{
 };
 use alloy_chains::Chain;
 use eyre::{self, ContextCompat, WrapErr};
+use futures::TryFutureExt;
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
