@@ -8,8 +8,6 @@ publish = false
 path = "src/bin/relay.rs"
 name = "relay"
 
-
-
 [dependencies]
 alloy = { version = "1.0.24", features = [
     "std",
