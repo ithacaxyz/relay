@@ -12,9 +12,14 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use relay::{
-    rpc::RelayApiClient, signers::Eip712PayLoadSigner, types::{
-        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters}, Account, Call, IthacaAccount::{self, upgradeProxyAccountCall}, KeyType, KeyWith712Signer, Signature, SignedCall
-    }
+    rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
+    types::{
+        Account, Call,
+        IthacaAccount::{self, upgradeProxyAccountCall},
+        KeyType, KeyWith712Signer, Signature, SignedCall,
+        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
+    },
 };
 
 /// Ensures unsupported delegation implementations and proxies are caught.
@@ -347,17 +352,20 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
 async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyre::Result<()> {
     // Start a brand new environment
     let mut env = Environment::setup().await?;
-    
+
     // First restart with legacy (v4) contracts as current
     env.restart_with_legacy().await?;
-    
+
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
-    
+
     // Upgrade account either lazily or eagerly based on parameter
     if use_lazy {
-        let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+        let _auth =
+            upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
     } else {
-        let _auth = upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+        let _auth =
+            upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth)
+                .await?;
     }
 
     // Now restart with latest (v5) contracts as current
@@ -365,7 +373,6 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
 
     // Get new capabilities after restart
     let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
-
 
     // Prepare a call - should auto-add upgrade because account has legacy delegation
     let response = env
@@ -390,17 +397,12 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
 
     // Decode the execution data to Vec<Call>
     let quote = response.context.quote().unwrap();
-    
+
     // Assert that the quote is using v04 Intent (since account was created on v04 orchestrator)
     let intent = &quote.ty().quotes[0].intent;
-    assert!(
-        intent.as_v04().is_some()
-    );
-    
-    let calls = Vec::<Call>::abi_decode(
-        intent.execution_data(),
-    )
-    .unwrap();
+    assert!(intent.as_v04().is_some());
+
+    let calls = Vec::<Call>::abi_decode(intent.execution_data()).unwrap();
 
     // Should have user call + upgrade call
     assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");
@@ -432,7 +434,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     // After upgrade, the account should now be using the latest orchestrator
     assert_eq!(
         Account::new(env.eoa.address(), env.provider()).get_orchestrator().await?,
-        env.orchestrator,  // Should be using the current (v5) orchestrator
+        env.orchestrator, // Should be using the current (v5) orchestrator
     );
 
     let response = env
@@ -457,19 +459,14 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
 
     // Decode the execution data to Vec<Call>
     let quote = response.context.quote().unwrap();
-    
+
     // Assert that the quote is using v05 Intent (since we have upgraded it)
     let intent = &quote.ty().quotes[0].intent;
-    assert!(
-        intent.as_v05().is_some()
-    );
-    
-    let calls = Vec::<Call>::abi_decode(
-        intent.execution_data(),
-    )
-    .unwrap();
+    assert!(intent.as_v05().is_some());
 
-    // Should have user call 
+    let calls = Vec::<Call>::abi_decode(intent.execution_data()).unwrap();
+
+    // Should have user call
     assert_eq!(calls.len(), 1, "Expected exactly 1 call (user transfer)");
 
     let bundle_id = send_prepared_calls(
@@ -483,7 +480,6 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     // Wait for bundle to complete
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(!status.status.is_pending(), "Bundle should not be pending");
-
 
     Ok(())
 }

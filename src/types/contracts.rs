@@ -102,14 +102,17 @@ impl VersionedContracts {
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
-                tracing::debug!("Creating VersionedContract for legacy orchestrator {}", legacy.orchestrator);
+                tracing::debug!(
+                    "Creating VersionedContract for legacy orchestrator {}",
+                    legacy.orchestrator
+                );
                 let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await;
-                tracing::debug!("Creating VersionedContract for legacy simulator {}", legacy.simulator);
+                tracing::debug!(
+                    "Creating VersionedContract for legacy simulator {}",
+                    legacy.simulator
+                );
                 let simulator = VersionedContract::new(legacy.simulator, provider).await;
-                Ok::<_, RelayError>(VersionedOrchestratorContracts {
-                    orchestrator,
-                    simulator,
-                })
+                Ok::<_, RelayError>(VersionedOrchestratorContracts { orchestrator, simulator })
             }));
 
         let legacy_delegations =
@@ -123,11 +126,13 @@ impl VersionedContracts {
                 Ok(VersionedContract::new(implementation, provider).await)
             }));
 
-        let orchestrator =
-            async { 
-                tracing::debug!("Creating VersionedContract for current orchestrator {}", config.orchestrator);
-                Ok(VersionedContract::new(config.orchestrator, provider).await) 
-            };
+        let orchestrator = async {
+            tracing::debug!(
+                "Creating VersionedContract for current orchestrator {}",
+                config.orchestrator
+            );
+            Ok(VersionedContract::new(config.orchestrator, provider).await)
+        };
 
         let delegation_implementation = async {
             let delegation_implementation =

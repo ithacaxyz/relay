@@ -393,24 +393,24 @@ impl Environment {
     pub async fn restart_with_latest(&mut self) -> eyre::Result<()> {
         // Clone the current config
         let mut config = self.config.clone();
-        
+
         // Clear legacy sets
         config.legacy_orchestrators.clear();
         config.legacy_delegation_proxies.clear();
-        
+
         // Add v4 contracts to legacy
         config.legacy_orchestrators.insert(self.contracts.legacy_orchestrator);
         config.legacy_delegation_proxies.insert(self.contracts.legacy_delegation_proxy);
-        
+
         // Set v5 contracts as current
         config.orchestrator = self.contracts.orchestrator;
         config.simulator = self.contracts.simulator;
         config.delegation_proxy = self.contracts.delegation;
-        
+
         // Update Environment's fields to match
         self.orchestrator = self.contracts.orchestrator;
         self.delegation = self.contracts.delegation;
-        
+
         self.restart_relay(config).await
     }
 
@@ -419,27 +419,27 @@ impl Environment {
     pub async fn restart_with_legacy(&mut self) -> eyre::Result<()> {
         // Clone the current config
         let mut config = self.config.clone();
-        
+
         // Clear legacy sets
         config.legacy_orchestrators.clear();
         config.legacy_delegation_proxies.clear();
-        
+
         // Add v5 contracts to legacy (swap orchestrator and simulator to create LegacyOrchestrator)
         config.legacy_orchestrators.insert(LegacyOrchestrator {
             orchestrator: self.contracts.orchestrator,
             simulator: self.contracts.simulator,
         });
         config.legacy_delegation_proxies.insert(self.contracts.delegation);
-        
+
         // Set v4 contracts as current
         config.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
         config.simulator = self.contracts.legacy_orchestrator.simulator;
         config.delegation_proxy = self.contracts.legacy_delegation_proxy;
-        
+
         // Update Environment's fields to match
         self.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
         self.delegation = self.contracts.legacy_delegation_proxy;
-        
+
         self.restart_relay(config).await
     }
 
