@@ -71,7 +71,7 @@ use crate::{
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
-            GetKeysParameters, PrepareCallsParameters, PrepareCallsResponse,
+            GetKeysParameters, GetKeysResponse, PrepareCallsParameters, PrepareCallsResponse,
             PrepareCallsResponseCapabilities, PrepareUpgradeAccountParameters,
             SendPreparedCallsParameters, SendPreparedCallsResponse, UpgradeAccountParameters,
             VerifySignatureParameters, VerifySignatureResponse,
@@ -94,8 +94,7 @@ pub trait RelayApi {
 
     /// Get all keys for an account.
     #[method(name = "getKeys")]
-    async fn get_keys(&self, parameters: GetKeysParameters)
-    -> RpcResult<Vec<AuthorizeKeyResponse>>;
+    async fn get_keys(&self, parameters: GetKeysParameters) -> RpcResult<GetKeysResponse>;
 
     /// Get all assets for an account.
     #[method(name = "getAssets")]
@@ -758,20 +757,47 @@ impl Relay {
         Ok(tx)
     }
 
-    /// Get keys from an account.
+    /// Get keys from an account across multiple chains.
     #[instrument(skip_all)]
-    async fn get_keys(
+    async fn get_keys(&self, request: GetKeysParameters) -> Result<GetKeysResponse, RelayError> {
+        // If chains specified, ensure they are supported,
+        // if any are not supported, return an error,
+        // if no chains specified, use all supported chains
+        let chains = if request.chain_ids.is_empty() {
+            self.inner.chains.chain_ids_iter().copied().collect()
+        } else {
+            for &chain_id in &request.chain_ids {
+                self.inner.chains.ensure_chain(chain_id)?;
+            }
+            request.chain_ids.clone()
+        };
+
+        // Query keys from all requested chains in parallel and bubble errors
+        let address = request.address;
+        let pairs = try_join_all(chains.into_iter().map(|chain_id| async move {
+            Ok::<_, RelayError>((chain_id, self.get_keys_for_chain(address, chain_id).await?))
+        }))
+        .await?;
+
+        // Build response from successful results
+        Ok(pairs.into_iter().map(|(chain_id, keys)| (U64::from(chain_id), keys)).collect())
+    }
+
+    /// Get keys from an account on a specific chain.
+    #[instrument(skip_all)]
+    async fn get_keys_for_chain(
         &self,
-        request: GetKeysParameters,
+        address: Address,
+        chain_id: ChainId,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        match self.get_keys_onchain(request.clone()).await {
+        match self.get_keys_onchain_single(address, chain_id).await {
             Ok(keys) => Ok(keys),
             Err(err) => {
                 // We check our storage, since it might have been called after createAccount, but
                 // before its onchain commit.
                 if let RelayError::Auth(auth_err) = &err
                     && auth_err.is_eoa_not_delegated()
-                    && let Some(account) = self.inner.storage.read_account(&request.address).await?
+                    && let Some(account) = self.inner.storage.read_account(&address).await?
                 {
                     return account.authorized_keys();
                 }
@@ -780,18 +806,19 @@ impl Relay {
         }
     }
 
-    /// Get keys from an account onchain.
+    /// Get keys from an account onchain for a specific chain.
     #[instrument(skip_all)]
-    async fn get_keys_onchain(
+    async fn get_keys_onchain_single(
         &self,
-        request: GetKeysParameters,
+        address: Address,
+        chain_id: ChainId,
     ) -> Result<Vec<AuthorizeKeyResponse>, RelayError> {
-        let account = Account::new(request.address, self.provider(request.chain_id)?);
+        let account = Account::new(address, self.provider(chain_id)?);
 
         let (is_delegated, keys) = join!(account.is_delegated(), account.keys());
 
         if !is_delegated? {
-            return Err(AuthError::EoaNotDelegated(request.address).boxed().into());
+            return Err(AuthError::EoaNotDelegated(address).boxed().into());
         }
 
         // Get all keys from account
@@ -856,12 +883,11 @@ impl Relay {
             }
         }
 
-        Ok(self
-            .get_keys(GetKeysParameters { address: from, chain_id })
-            .await?
-            .into_iter()
-            .find(|key| key.hash == key_hash)
-            .map(|k| k.authorize_key.key))
+        // Get keys for the specific chain (treat errors as no keys available)
+        let keys = self.get_keys_for_chain(from, chain_id).await?;
+        let key = keys.iter().find(|k| k.hash == key_hash).map(|k| k.authorize_key.key.clone());
+
+        Ok(key)
     }
 
     /// Generates all calls from a [`PrepareCallsParameters`].
@@ -1819,8 +1845,7 @@ impl RelayApiServer for Relay {
         self.get_capabilities(chains).await
     }
 
-    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<Vec<AuthorizeKeyResponse>> {
-        tracing::Span::current().record("eth.chain_id", request.chain_id);
+    async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
         Ok(self.get_keys(request).await?)
     }
 
@@ -2242,10 +2267,10 @@ impl RelayApiServer for Relay {
 
         let mut init_pre_call = None;
         let mut account = Account::new(address, self.provider(chain_id)?);
-        let signatures: Vec<Signature> = self
-            .get_keys(GetKeysParameters { address, chain_id })
-            .await?
-            .into_iter()
+        // Get keys for the specific chain (treat errors as no keys available)
+        let keys = self.get_keys_for_chain(address, chain_id).await?;
+        let signatures: Vec<Signature> = keys
+            .iter()
             .filter_map(|k| {
                 k.authorize_key.key.isSuperAdmin.then_some(Signature {
                     innerSignature: signature.clone(),
