@@ -2458,7 +2458,11 @@ impl Relay {
         &self,
         address: Address,
     ) -> Option<&VersionedOrchestratorContracts> {
-        self.inner.contracts.legacy_orchestrators.get(&address)
+        self.inner
+            .contracts
+            .legacy_orchestrators
+            .iter()
+            .find(|contracts| contracts.orchestrator.address == address)
     }
 
     /// Previously deployed delegation implementations.

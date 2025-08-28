@@ -1,12 +1,7 @@
 use crate::{
     config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
-use alloy::{
-    primitives::{Address, map::HashMap},
-    providers::Provider,
-    sol,
-    transports::TransportErrorKind,
-};
+use alloy::{primitives::Address, providers::Provider, sol, transports::TransportErrorKind};
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use tokio::try_join;
@@ -75,8 +70,8 @@ pub struct VersionedContracts {
     /// This is directly fetched from the proxy.
     #[serde(rename = "accountImplementation")]
     pub delegation_implementation: VersionedContract,
-    /// Previously deployed orchestrators and simulators, indexed by orchestrator address.
-    pub legacy_orchestrators: HashMap<Address, VersionedOrchestratorContracts>,
+    /// Previously deployed orchestrators and simulators.
+    pub legacy_orchestrators: Vec<VersionedOrchestratorContracts>,
     /// Previously deployed delegation implementations.
     #[serde(rename = "legacyAccountImplementations")]
     pub legacy_delegations: Vec<VersionedContract>,
@@ -96,13 +91,10 @@ impl VersionedContracts {
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
-                Ok::<_, RelayError>((
-                    legacy.orchestrator,
-                    VersionedOrchestratorContracts {
-                        orchestrator: VersionedContract::new(legacy.orchestrator, provider).await,
-                        simulator: VersionedContract::new(legacy.simulator, provider).await,
-                    },
-                ))
+                Ok::<_, RelayError>(VersionedOrchestratorContracts {
+                    orchestrator: VersionedContract::new(legacy.orchestrator, provider).await,
+                    simulator: VersionedContract::new(legacy.simulator, provider).await,
+                })
             }));
 
         let legacy_delegations =
@@ -140,7 +132,7 @@ impl VersionedContracts {
         Ok(Self {
             orchestrator,
             delegation_implementation,
-            legacy_orchestrators: HashMap::from_iter(legacy_orchestrators),
+            legacy_orchestrators,
             legacy_delegations,
             delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
             simulator: VersionedContract::no_version(config.simulator),
