@@ -197,7 +197,7 @@ async fn ensure_prehash_simulation() -> eyre::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn get_keys_multi_chain() -> eyre::Result<()> {
+async fn get_keys_multichain() -> eyre::Result<()> {
     // Use true multi-chain environment
     let env = Environment::setup_multi_chain(2).await?;
 
@@ -292,7 +292,7 @@ async fn get_keys_multi_chain() -> eyre::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn get_keys_non_delegated_account() -> eyre::Result<()> {
+async fn get_keys_multichain_non_delegated_account() -> eyre::Result<()> {
     let env = Environment::setup_multi_chain(2).await?;
 
     // Try to get keys for a non-delegated account on specific chains
@@ -363,7 +363,7 @@ async fn get_keys_non_delegated_account() -> eyre::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn get_keys_three_chains_two_have_session() -> eyre::Result<()> {
+async fn get_keys_multichain_three_chains_two_have_session() -> eyre::Result<()> {
     // 3 chains; we will add a session key on only 2
     let env = Environment::setup_multi_chain(3).await?;
 
