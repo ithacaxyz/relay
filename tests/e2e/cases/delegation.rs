@@ -12,14 +12,9 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use relay::{
-    rpc::RelayApiClient,
-    signers::Eip712PayLoadSigner,
-    types::{
-        Account, Call,
-        IthacaAccount::{self, upgradeProxyAccountCall},
-        KeyType, KeyWith712Signer, Signature, SignedCall,
-        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
-    },
+    config::LegacyOrchestrator, rpc::RelayApiClient, signers::Eip712PayLoadSigner, types::{
+        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters}, Account, Call, IthacaAccount::{self, upgradeProxyAccountCall}, KeyType, KeyWith712Signer, Signature, SignedCall
+    }
 };
 
 /// Ensures unsupported delegation implementations and proxies are caught.
@@ -371,9 +366,12 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
     let mut config = env.config.clone();
     config.legacy_orchestrators.clear();
     config.legacy_delegation_proxies.clear();
-    config.legacy_orchestrators.insert(config.orchestrator);
+    config.legacy_orchestrators.insert(LegacyOrchestrator {
+        orchestrator: config.orchestrator,
+        simulator: config.simulator,
+    });
     config.legacy_delegation_proxies.insert(config.delegation_proxy);
-    config.orchestrator = legacy_orchestrator;
+    config.orchestrator = legacy_orchestrator.orchestrator;
     config.delegation_proxy = legacy_delegation;
     env.restart_relay(config).await?;
 
@@ -382,7 +380,7 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
 
     // The current orchestrator is now in the legacy list
     assert!(
-        chain_capabilities.contracts.orchestrator.address == legacy_orchestrator,
+        chain_capabilities.contracts.orchestrator.address == legacy_orchestrator.orchestrator,
         "Current orchestrator should now be in legacy list"
     );
 
@@ -442,7 +440,7 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
 
     assert_eq!(
         Account::new(env.eoa.address(), env.provider()).get_orchestrator().await?,
-        legacy_orchestrator,
+        legacy_orchestrator.orchestrator,
     );
 
     Ok(())
