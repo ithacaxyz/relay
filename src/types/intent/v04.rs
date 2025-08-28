@@ -249,10 +249,7 @@ mod tests {
 
         // Multichain op
         intent = intent.with_nonce((MULTICHAIN_NONCE_PREFIX << 240) | U256::from(31338));
-        let v04_intent = match &intent {
-            Intent::V04(v) => v,
-            _ => panic!("Expected V04 variant"),
-        };
+        let v04_intent = intent.as_v04().expect("v04 variant");
         assert_eq!(
             v04_intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
