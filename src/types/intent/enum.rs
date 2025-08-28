@@ -1,4 +1,4 @@
-use super::{IntentV04, SignedCall, SignedCalls, Transfer};
+use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
     error::{IntentError, MerkleError},
     signers::Eip712PayLoadSigner,
@@ -8,7 +8,7 @@ use alloy::{
     dyn_abi::TypedData,
     primitives::{Address, B256, Bytes, U256},
     providers::DynProvider,
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolValue},
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Intent {
+    /// Version 0.5 of the Intent struct.
+    V05(IntentV05),
     /// Version 0.4 of the Intent struct.
     V04(IntentV04),
 }
@@ -23,7 +25,7 @@ pub enum Intent {
 impl Intent {
     /// Creates a new Intent using the latest version.
     pub fn latest() -> Self {
-        Self::V04(IntentV04::default())
+        Self::V05(IntentV05::default())
     }
 
     /// Creates a new v04 Intent.
@@ -31,11 +33,17 @@ impl Intent {
         Self::V04(IntentV04::default())
     }
 
+    /// Creates a new v05 Intent.
+    pub fn v05() -> Self {
+        Self::V05(IntentV05::default())
+    }
+
     // Builder pattern setters (with_ prefix)
 
     /// Sets the user's address.
     pub fn with_eoa(mut self, eoa: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.eoa = eoa,
             Intent::V04(intent) => intent.eoa = eoa,
         }
         self
@@ -44,6 +52,7 @@ impl Intent {
     /// Sets the execution data - an encoded array of calls, using ERC7579 batch execution encoding.
     pub fn with_execution_data(mut self, execution_data: Bytes) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.executionData = execution_data,
             Intent::V04(intent) => intent.executionData = execution_data,
         }
         self
@@ -52,6 +61,7 @@ impl Intent {
     /// Sets the nonce per delegated EOA.
     pub fn with_nonce(mut self, nonce: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.nonce = nonce,
             Intent::V04(intent) => intent.nonce = nonce,
         }
         self
@@ -60,6 +70,7 @@ impl Intent {
     /// Sets the account paying the payment token.
     pub fn with_payer(mut self, payer: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.payer = payer,
             Intent::V04(intent) => intent.payer = payer,
         }
         self
@@ -68,6 +79,7 @@ impl Intent {
     /// Sets the ERC20 or native token used to pay for gas.
     pub fn with_payment_token(mut self, payment_token: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentToken = payment_token,
             Intent::V04(intent) => intent.paymentToken = payment_token,
         }
         self
@@ -76,6 +88,7 @@ impl Intent {
     /// Sets the amount of the token to pay, before the call batch is executed.
     pub fn with_pre_payment_max_amount(mut self, amount: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentMaxAmount = amount,
             Intent::V04(intent) => intent.prePaymentMaxAmount = amount,
         }
         self
@@ -84,6 +97,7 @@ impl Intent {
     /// Sets the maximum amount of the token to pay.
     pub fn with_total_payment_max_amount(mut self, amount: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentMaxAmount = amount,
             Intent::V04(intent) => intent.totalPaymentMaxAmount = amount,
         }
         self
@@ -92,6 +106,7 @@ impl Intent {
     /// Sets the combined gas limit for payment, verification, and calling the EOA.
     pub fn with_combined_gas(mut self, gas: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.combinedGas = gas,
             Intent::V04(intent) => intent.combinedGas = gas,
         }
         self
@@ -100,6 +115,7 @@ impl Intent {
     /// Sets the encoded pre-calls array.
     pub fn with_encoded_pre_calls(mut self, pre_calls: Vec<Bytes>) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.encodedPreCalls = pre_calls,
             Intent::V04(intent) => intent.encodedPreCalls = pre_calls,
         }
         self
@@ -108,6 +124,7 @@ impl Intent {
     /// Sets the encoded fund transfers array.
     pub fn with_encoded_fund_transfers(mut self, transfers: Vec<Bytes>) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.encodedFundTransfers = transfers,
             Intent::V04(intent) => intent.encodedFundTransfers = transfers,
         }
         self
@@ -116,6 +133,7 @@ impl Intent {
     /// Sets the settler address.
     pub fn with_settler(mut self, settler: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.settler = settler,
             Intent::V04(intent) => intent.settler = settler,
         }
         self
@@ -124,6 +142,7 @@ impl Intent {
     /// Sets the expiry timestamp for the intent.
     pub fn with_expiry(mut self, expiry: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.expiry = expiry,
             Intent::V04(intent) => intent.expiry = expiry,
         }
         self
@@ -132,6 +151,7 @@ impl Intent {
     /// Sets the intent as interop/multichain.
     pub fn with_interop(mut self) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.isMultichain = true,
             Intent::V04(intent) => intent.isMultichain = true,
         }
         self
@@ -140,6 +160,7 @@ impl Intent {
     /// Sets the funder address.
     pub fn with_funder(mut self, funder: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.funder = funder,
             Intent::V04(intent) => intent.funder = funder,
         }
         self
@@ -148,6 +169,7 @@ impl Intent {
     /// Sets the funder signature.
     pub fn with_funder_signature(mut self, signature: Bytes) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.funderSignature = signature,
             Intent::V04(intent) => intent.funderSignature = signature,
         }
         self
@@ -156,6 +178,7 @@ impl Intent {
     /// Sets the settler context data.
     pub fn with_settler_context(mut self, context: Bytes) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.settlerContext = context,
             Intent::V04(intent) => intent.settlerContext = context,
         }
         self
@@ -164,6 +187,7 @@ impl Intent {
     /// Sets the actual pre payment amount.
     pub fn with_pre_payment_amount(mut self, amount: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentAmount = amount,
             Intent::V04(intent) => intent.prePaymentAmount = amount,
         }
         self
@@ -172,6 +196,7 @@ impl Intent {
     /// Sets the actual total payment amount.
     pub fn with_total_payment_amount(mut self, amount: U256) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentAmount = amount,
             Intent::V04(intent) => intent.totalPaymentAmount = amount,
         }
         self
@@ -180,6 +205,7 @@ impl Intent {
     /// Sets the payment recipient for the ERC20 token.
     pub fn with_payment_recipient(mut self, recipient: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentRecipient = recipient,
             Intent::V04(intent) => intent.paymentRecipient = recipient,
         }
         self
@@ -188,6 +214,7 @@ impl Intent {
     /// Sets the wrapped signature.
     pub fn with_signature(mut self, signature: Bytes) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.signature = signature,
             Intent::V04(intent) => intent.signature = signature,
         }
         self
@@ -196,6 +223,7 @@ impl Intent {
     /// Sets the payment signature.
     pub fn with_payment_signature(mut self, signature: Bytes) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.paymentSignature = signature,
             Intent::V04(intent) => intent.paymentSignature = signature,
         }
         self
@@ -204,6 +232,7 @@ impl Intent {
     /// Sets the supported account implementation.
     pub fn with_supported_account_implementation(mut self, implementation: Address) -> Self {
         match &mut self {
+            Intent::V05(intent) => intent.supportedAccountImplementation = implementation,
             Intent::V04(intent) => intent.supportedAccountImplementation = implementation,
         }
         self
@@ -214,6 +243,7 @@ impl Intent {
     /// Sets the payment recipient.
     pub fn set_payment_recipient(&mut self, recipient: Address) {
         match self {
+            Intent::V05(intent) => intent.paymentRecipient = recipient,
             Intent::V04(intent) => intent.paymentRecipient = recipient,
         }
     }
@@ -223,6 +253,7 @@ impl Intent {
     /// The user's address.
     pub fn eoa(&self) -> &Address {
         match self {
+            Intent::V05(intent) => &intent.eoa,
             Intent::V04(intent) => &intent.eoa,
         }
     }
@@ -234,6 +265,7 @@ impl Intent {
     /// This allows for more efficient safe forwarding to the EOA.
     pub fn execution_data(&self) -> &Bytes {
         match self {
+            Intent::V05(intent) => &intent.executionData,
             Intent::V04(intent) => &intent.executionData,
         }
     }
@@ -269,6 +301,7 @@ impl Intent {
     /// they do care about ordering, they would use the same sequence key.
     pub fn nonce(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.nonce,
             Intent::V04(intent) => intent.nonce,
         }
     }
@@ -278,6 +311,7 @@ impl Intent {
     /// If this is `address(0)`, it defaults to the `eoa`.
     pub fn payer(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.payer,
             Intent::V04(intent) => intent.payer,
         }
     }
@@ -285,6 +319,7 @@ impl Intent {
     /// The ERC20 or native token used to pay for gas.
     pub fn payment_token(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.paymentToken,
             Intent::V04(intent) => intent.paymentToken,
         }
     }
@@ -293,6 +328,7 @@ impl Intent {
     /// This will be required to be less than `totalPaymentMaxAmount`.
     pub fn pre_payment_max_amount(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.paymentMaxAmount,
             Intent::V04(intent) => intent.prePaymentMaxAmount,
         }
     }
@@ -300,6 +336,7 @@ impl Intent {
     /// The maximum amount of the token to pay.
     pub fn total_payment_max_amount(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.paymentMaxAmount,
             Intent::V04(intent) => intent.totalPaymentMaxAmount,
         }
     }
@@ -307,6 +344,7 @@ impl Intent {
     /// The combined gas limit for payment, verification, and calling the EOA.
     pub fn combined_gas(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.combinedGas,
             Intent::V04(intent) => intent.combinedGas,
         }
     }
@@ -324,6 +362,7 @@ impl Intent {
     /// to be enforced on-the-fly even if the nonces are from different sequences.
     pub fn encoded_pre_calls(&self) -> &Vec<Bytes> {
         match self {
+            Intent::V05(intent) => &intent.encodedPreCalls,
             Intent::V04(intent) => &intent.encodedPreCalls,
         }
     }
@@ -331,6 +370,7 @@ impl Intent {
     /// Only relevant for multi chain intents.
     pub fn encoded_fund_transfers(&self) -> &Vec<Bytes> {
         match self {
+            Intent::V05(intent) => &intent.encodedFundTransfers,
             Intent::V04(intent) => &intent.encodedFundTransfers,
         }
     }
@@ -338,6 +378,7 @@ impl Intent {
     /// The settler address.
     pub fn settler(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.settler,
             Intent::V04(intent) => intent.settler,
         }
     }
@@ -346,6 +387,7 @@ impl Intent {
     /// If expiry timestamp is set to 0, then expiry is considered to be infinite.
     pub fn expiry(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.expiry,
             Intent::V04(intent) => intent.expiry,
         }
     }
@@ -353,6 +395,7 @@ impl Intent {
     /// Whether the intent is marked as interop/multichain via the isMultichain field.
     pub fn is_interop(&self) -> bool {
         match self {
+            Intent::V05(intent) => intent.isMultichain,
             Intent::V04(intent) => intent.isMultichain,
         }
     }
@@ -367,6 +410,7 @@ impl Intent {
     /// The funder address.
     pub fn funder(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.funder,
             Intent::V04(intent) => intent.funder,
         }
     }
@@ -374,6 +418,7 @@ impl Intent {
     /// The funder signature.
     pub fn funder_signature(&self) -> &Bytes {
         match self {
+            Intent::V05(intent) => &intent.funderSignature,
             Intent::V04(intent) => &intent.funderSignature,
         }
     }
@@ -384,6 +429,7 @@ impl Intent {
     /// to process the multichain intent (e.g., list of chain IDs).
     pub fn settler_context(&self) -> &Bytes {
         match self {
+            Intent::V05(intent) => &intent.settlerContext,
             Intent::V04(intent) => &intent.settlerContext,
         }
     }
@@ -392,6 +438,7 @@ impl Intent {
     /// `prePaymentMaxAmount`
     pub fn pre_payment_amount(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.paymentAmount,
             Intent::V04(intent) => intent.prePaymentAmount,
         }
     }
@@ -400,6 +447,7 @@ impl Intent {
     /// `totalPaymentMaxAmount`
     pub fn total_payment_amount(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.paymentAmount,
             Intent::V04(intent) => intent.totalPaymentAmount,
         }
     }
@@ -409,6 +457,7 @@ impl Intent {
     /// This enables multiple fillers, allowing for competitive filling, better uptime.
     pub fn payment_recipient(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.paymentRecipient,
             Intent::V04(intent) => intent.paymentRecipient,
         }
     }
@@ -417,6 +466,7 @@ impl Intent {
     /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
     pub fn signature(&self) -> &Bytes {
         match self {
+            Intent::V05(intent) => &intent.signature,
             Intent::V04(intent) => &intent.signature,
         }
     }
@@ -425,6 +475,7 @@ impl Intent {
     /// on the `payer`. This signature is NOT included in the EIP712 signature.
     pub fn payment_signature(&self) -> &Bytes {
         match self {
+            Intent::V05(intent) => &intent.paymentSignature,
             Intent::V04(intent) => &intent.paymentSignature,
         }
     }
@@ -434,6 +485,7 @@ impl Intent {
     /// This field is NOT included in the EIP712 signature.
     pub fn supported_account_implementation(&self) -> Address {
         match self {
+            Intent::V05(intent) => intent.supportedAccountImplementation,
             Intent::V04(intent) => intent.supportedAccountImplementation,
         }
     }
@@ -443,6 +495,10 @@ impl Intent {
     /// Sets the payment amount fields so it has the same behaviour as legacy Intent.
     pub fn set_legacy_payment_amount(&mut self, amount: U256) {
         match self {
+            Intent::V05(intent) => {
+                intent.paymentMaxAmount = amount;
+                intent.paymentAmount = amount;
+            }
             Intent::V04(intent) => intent.set_legacy_payment_amount(amount),
         }
     }
@@ -450,6 +506,7 @@ impl Intent {
     /// Calculate a digest of the [`Intent`], used for checksumming.
     pub fn digest(&self) -> B256 {
         match self {
+            Intent::V05(intent) => intent.digest(),
             Intent::V04(intent) => intent.digest(),
         }
     }
@@ -535,31 +592,42 @@ impl Intent {
 
 impl Default for Intent {
     fn default() -> Self {
-        Self::V04(IntentV04::default())
+        Self::V05(IntentV05::default())
     }
 }
 
 impl SignedCalls for Intent {
     fn execution_data(&self) -> &[u8] {
         match self {
+            Intent::V05(intent) => intent.execution_data(),
             Intent::V04(intent) => intent.execution_data(),
         }
     }
 
     fn nonce(&self) -> U256 {
         match self {
+            Intent::V05(intent) => intent.nonce(),
             Intent::V04(intent) => intent.nonce(),
         }
     }
 
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
+    async fn compute_eip712_data(
+        &self,
+        orchestrator_address: Address,
+        provider: &DynProvider,
+    ) -> eyre::Result<(B256, alloy::dyn_abi::TypedData)>
+    where
+        Self: Sync,
+    {
         match self {
-            Intent::V04(intent) => intent.as_eip712(),
+            Intent::V05(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
+            Intent::V04(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
         }
     }
 
     fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
         match self {
+            Intent::V05(intent) => intent.authorized_keys(),
             Intent::V04(intent) => intent.authorized_keys(),
         }
     }
@@ -570,39 +638,65 @@ impl Intent {
     /// Get the ABI-encoded bytes of the intent.
     pub fn abi_encode(&self) -> Vec<u8> {
         match self {
+            Intent::V05(intent) => intent.abi_encode(),
             Intent::V04(intent) => intent.abi_encode(),
         }
     }
 
     /// Decode Intent from ABI-encoded bytes.
     pub fn abi_decode(data: &[u8]) -> alloy::sol_types::Result<Self> {
+        // Try V05 first as it's the latest version
+        if let Ok(intent) = IntentV05::abi_decode(data) {
+            return Ok(Intent::V05(intent));
+        }
+        // Fall back to V04
         Ok(Intent::V04(IntentV04::abi_decode(data)?))
     }
 
     /// Get the ABI-encoded packed bytes of the intent.
     pub fn abi_encode_packed(&self) -> Vec<u8> {
         match self {
+            Intent::V05(intent) => intent.abi_encode_packed(),
             Intent::V04(intent) => intent.abi_encode_packed(),
         }
     }
 
     /// Get the inner IntentV04 reference.
-    pub fn as_v04(&self) -> &IntentV04 {
+    pub fn as_v04(&self) -> Option<&IntentV04> {
         match self {
-            Intent::V04(intent) => intent,
+            Intent::V04(intent) => Some(intent),
+            _ => None,
+        }
+    }
+
+    /// Get the inner IntentV05 reference.
+    pub fn as_v05(&self) -> Option<&IntentV05> {
+        match self {
+            Intent::V05(intent) => Some(intent),
+            _ => None,
         }
     }
 
     /// Get mutable access to the inner IntentV04.
-    pub fn as_v04_mut(&mut self) -> &mut IntentV04 {
+    pub fn as_v04_mut(&mut self) -> Option<&mut IntentV04> {
         match self {
-            Intent::V04(intent) => intent,
+            Intent::V04(intent) => Some(intent),
+            _ => None,
+        }
+    }
+
+    /// Get mutable access to the inner IntentV05.
+    pub fn as_v05_mut(&mut self) -> Option<&mut IntentV05> {
+        match self {
+            Intent::V05(intent) => Some(intent),
+            _ => None,
         }
     }
 
     /// Get the TypedData representation of the intent with a domain.
     pub fn typed_data(&self, domain: Option<alloy::dyn_abi::Eip712Domain>) -> TypedData {
         match self {
+            Intent::V05(intent) => TypedData::from_struct(intent, domain),
             Intent::V04(intent) => TypedData::from_struct(intent, domain),
         }
     }
