@@ -415,7 +415,6 @@ impl Environment {
     }
 
     /// Restarts the relay with legacy (v4) contracts as current.
-    /// Latest (v5) contracts become the legacy set.
     pub async fn restart_with_v4(&mut self) -> eyre::Result<()> {
         // Clone the current config
         let mut config = self.config.clone();
@@ -423,13 +422,6 @@ impl Environment {
         // Clear legacy sets
         config.legacy_orchestrators.clear();
         config.legacy_delegation_proxies.clear();
-
-        // Add v5 contracts to legacy (swap orchestrator and simulator to create LegacyOrchestrator)
-        config.legacy_orchestrators.insert(LegacyOrchestrator {
-            orchestrator: self.contracts.orchestrator,
-            simulator: self.contracts.simulator,
-        });
-        config.legacy_delegation_proxies.insert(self.contracts.delegation);
 
         // Set v4 contracts as current
         config.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
