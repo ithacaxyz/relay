@@ -50,7 +50,7 @@ async fn test_relay_restart() -> eyre::Result<()> {
         .with_quote_ttl(Duration::from_secs(120))
         .with_fee_recipient(new_fee_recipient)
         .with_port(0); // Use random available port
-    env.restart_rpc(new_config).await?;
+    env.restart_relay(new_config).await?;
 
     // Verify the relay endpoint has changed (new server instance)
     let new_endpoint = env.relay_handle.http_url();
