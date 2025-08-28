@@ -4,9 +4,8 @@ use crate::e2e::{
     environment::{Environment, EnvironmentConfig},
 };
 use alloy::{
-    eips::BlockNumberOrTag,
     primitives::{Address, B256, Bytes, U64, U256, b256},
-    providers::{Provider, ext::AnvilApi},
+    providers::Provider,
     sol_types::SolCall,
     uint,
 };
