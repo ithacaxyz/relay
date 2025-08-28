@@ -2459,7 +2459,7 @@ impl Relay {
 
     /// Previously deployed orchestrators.
     pub fn legacy_orchestrators(&self) -> impl Iterator<Item = &VersionedOrchestratorContracts> {
-        self.inner.contracts.legacy_orchestrators.iter()
+        self.inner.contracts.legacy_orchestrators.values()
     }
 
     /// Previously deployed delegation implementations.
