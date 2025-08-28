@@ -8,6 +8,7 @@ use crate::{
     error::{IntentError, StorageError},
     estimation::{build_simulation_overrides, fees::approx_intrinsic_cost},
     provider::ProviderExt,
+    rpc::ExtraFeeInfo,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -269,7 +270,7 @@ impl Relay {
         auth: Option<SignedAuthorization>,
         fees: &Eip1559Estimation,
         gas_estimate: &GasEstimate,
-    ) -> Result<U256, RelayError> {
+    ) -> Result<ExtraFeeInfo, RelayError> {
         // Include the L1 DA fees if we're on an OP or Arbitrum rollup.
         let fee = if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
@@ -321,7 +322,7 @@ impl Relay {
             U256::ZERO
         };
 
-        Ok(fee)
+        Ok(ExtraFeeInfo::new(fee, chain.is_arbitrum()))
     }
 
     #[instrument(skip_all)]
@@ -539,7 +540,7 @@ impl Relay {
         // Fill combinedGas
         intent_to_sign = intent_to_sign.with_combined_gas(U256::from(gas_estimate.intent));
         // Calculate the real fee
-        let extra_fee_native = self
+        let extra_fee_info = self
             .estimate_extra_fee(
                 &chain,
                 &intent_to_sign,
@@ -548,6 +549,8 @@ impl Relay {
                 &gas_estimate,
             )
             .await?;
+
+        let extra_fee_native = extra_fee_info.extra_fee();
 
         let extra_payment =
             extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / eth_price;

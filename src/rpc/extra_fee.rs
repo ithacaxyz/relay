@@ -31,4 +31,9 @@ impl ExtraFeeInfo {
     pub fn extra_fee(&self) -> U256 {
         self.extra_fee
     }
+
+    /// Returns the fee to be added to the gas limit
+    pub fn additional_gas(&self) -> U256 {
+        self.extra_fee
+    }
 }
