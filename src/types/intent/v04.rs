@@ -235,10 +235,7 @@ mod tests {
         // Single chain op
         intent = intent.with_nonce(U256::from(31338));
         // Get the V04 variant from the enum
-        let v04_intent = match &intent {
-            Intent::V04(v) => v,
-            _ => panic!("Expected V04 variant"),
-        };
+        let v04_intent = intent.as_v04().expect("v04 variant");
         assert_eq!(
             v04_intent.as_eip712().unwrap().eip712_signing_hash(&Eip712Domain::new(
                 Some("Orchestrator".into()),
