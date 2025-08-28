@@ -71,7 +71,7 @@ fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     cmd!(sh, "forge install --no-git --shallow accountv4=ithacaxyz/account@v0.4.6").run()?;
 
     println!("Building v0.4.6 contracts...");
-    let _dir = sh.push_dir("tests/account/lib/accountv4");
+    let _dir = sh.push_dir("lib/accountv4");
     cmd!(sh, "forge build").run()?;
 
     Ok(())
