@@ -272,11 +272,11 @@ impl Relay {
         gas_estimate: &GasEstimate,
     ) -> Result<ExtraFeeInfo, RelayError> {
         // Include the L1 DA fees if we're on an OP or Arbitrum rollup.
-        let fee = if chain.is_optimism() {
+        if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
             let mut buf = Vec::new();
-            if let Some(auth) = auth {
+            if let Some(auth) = auth.clone() {
                 TxEip7702 {
                     chain_id: chain.id(),
                     // we use random nonce as we don't yet know which signer will broadcast the
@@ -305,11 +305,12 @@ impl Relay {
                 .encode(&mut buf);
             }
 
-            chain.provider().estimate_l1_op_fee(buf.into()).await?
+            let l1_fee = chain.provider().estimate_l1_op_fee(buf.into()).await?;
+            Ok(ExtraFeeInfo::Optimism { l1_fee })
         } else if chain.is_arbitrum() {
-            chain
+            let components = chain
                 .provider()
-                .estimate_l1_arb_fee(
+                .estimate_l1_arb_fee_components(
                     chain.id(),
                     self.orchestrator(),
                     gas_estimate.tx,
@@ -317,12 +318,15 @@ impl Relay {
                     auth,
                     intent.encode_execute(),
                 )
-                .await?
-        } else {
-            U256::ZERO
-        };
+                .await?;
 
-        Ok(ExtraFeeInfo::new(fee, chain.is_arbitrum()))
+            Ok(ExtraFeeInfo::Arbitrum {
+                l1_gas_estimate: components.gasEstimateForL1,
+                l1_base_fee_estimate: components.l1BaseFeeEstimate,
+            })
+        } else {
+            Ok(ExtraFeeInfo::None)
+        }
     }
 
     #[instrument(skip_all)]
