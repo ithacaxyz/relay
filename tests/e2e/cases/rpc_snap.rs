@@ -146,8 +146,7 @@ async fn test_prepare_calls() -> eyre::Result<()> {
         })
         .await?;
 
-    let mut value = serde_json::to_value(response)?;
-    sort_json_keys(&mut value);
+    let value = serde_json::to_value(response)?;
     // TODO: fee related redactions can be removed if we make the tip block of Anvil at the moment
     // of this assertion consistent across runs, right now it's either 15 or 16, and this changes
     // the EIP-1559 fee estimations.
@@ -479,19 +478,4 @@ fn reduction_from_str<T: FromStr>(name: &str) -> insta::internals::Redaction {
         assert!(T::from_str(value.as_str().unwrap()).is_ok());
         format!("[{}]", name)
     })
-}
-
-fn sort_json_keys(v: &mut serde_json::Value) {
-    use serde_json::Value;
-    match v {
-        Value::Object(map) => {
-            map.sort_keys();
-        }
-        Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                sort_json_keys(v);
-            }
-        }
-        _ => {}
-    }
 }
