@@ -371,6 +371,8 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     // Now restart with latest (v5) contracts as current
     env.restart_with_latest().await?;
 
+    let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
+
     // Prepare a call - should auto-add upgrade because account has legacy delegation
     let response = env
         .relay_endpoint
