@@ -906,8 +906,18 @@ impl Relay {
 
         // Get the version for the orchestrator
         let version = if self.orchestrator() == address {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?self.inner.contracts.orchestrator.version,
+                "Using current orchestrator"
+            );
             self.inner.contracts.orchestrator.version.clone()
         } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?legacy.orchestrator.version,
+                "Using legacy orchestrator"
+            );
             legacy.orchestrator.version.clone()
         } else {
             return Err(RelayError::UnsupportedOrchestrator(address));

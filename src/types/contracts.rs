@@ -47,8 +47,23 @@ impl VersionedContract {
             .eip712Domain()
             .call()
             .await
-            .map(|domain| domain.version)
+            .map(|domain| {
+                tracing::debug!(
+                    name = %domain.name,
+                    contract = %address,
+                    version = %domain.version,
+                    "Fetched EIP712 domain"
+                );
+                domain.version
+            })
             .ok();
+
+        if version.is_none() {
+            tracing::debug!(
+                contract = %address,
+                "Failed to fetch EIP712 domain"
+            );
+        }
 
         Self { address, version }
     }
@@ -91,10 +106,17 @@ impl VersionedContracts {
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
-                Ok::<_, RelayError>(VersionedOrchestratorContracts {
-                    orchestrator: VersionedContract::new(legacy.orchestrator, provider).await,
-                    simulator: VersionedContract::new(legacy.simulator, provider).await,
-                })
+                tracing::debug!(
+                    orchestrator = %legacy.orchestrator,
+                    "Creating VersionedContract for legacy orchestrator"
+                );
+                let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await;
+                tracing::debug!(
+                    simulator = %legacy.simulator,
+                    "Creating VersionedContract for legacy simulator"
+                );
+                let simulator = VersionedContract::new(legacy.simulator, provider).await;
+                Ok::<_, RelayError>(VersionedOrchestratorContracts { orchestrator, simulator })
             }));
 
         let legacy_delegations =
@@ -108,8 +130,13 @@ impl VersionedContracts {
                 Ok(VersionedContract::new(implementation, provider).await)
             }));
 
-        let orchestrator =
-            async { Ok(VersionedContract::new(config.orchestrator, provider).await) };
+        let orchestrator = async {
+            tracing::debug!(
+                orchestrator = %config.orchestrator,
+                "Creating VersionedContract for current orchestrator"
+            );
+            Ok(VersionedContract::new(config.orchestrator, provider).await)
+        };
 
         let delegation_implementation = async {
             let delegation_implementation =
