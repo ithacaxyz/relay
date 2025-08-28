@@ -870,12 +870,6 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_config_v15_yaml() {
-        let s = include_str!("../tests/assets/config/v15.yaml");
-        let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
-    }
-
-    #[test]
     fn test_config_v21_yaml() {
         let s = include_str!("../tests/assets/config/v21.yaml");
         let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();

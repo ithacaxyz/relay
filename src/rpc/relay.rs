@@ -409,6 +409,7 @@ impl Relay {
             fee_token = ?token,
             ?fee_history,
             ?eth_price,
+            orchestrator_version = ?orchestrator.version(),
             "Got fee parameters"
         );
 
@@ -421,25 +422,27 @@ impl Relay {
             * 10u128.pow(token.decimals as u32) as f64)
             / f64::from(eth_price);
 
-        // fill intent
-        let mut intent_to_sign = Intent::latest()
-            .with_eoa(intent.eoa)
-            .with_execution_data(intent.execution_data.clone())
-            .with_nonce(intent.nonce)
-            .with_payer(intent.payer.unwrap_or_default())
-            .with_payment_token(token.address)
-            .with_payment_recipient(self.inner.fee_recipient)
-            .with_supported_account_implementation(intent.delegation_implementation)
-            .with_encoded_pre_calls(
-                intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
-            )
-            .with_encoded_fund_transfers(
-                intent
-                    .fund_transfers
-                    .into_iter()
-                    .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
-                    .collect(),
-            );
+        // fill intent - use the appropriate version based on orchestrator
+        let mut intent_to_sign = Intent::for_orchestrator(
+            orchestrator.version().expect("orchestrator version should be set"),
+        )
+        .with_eoa(intent.eoa)
+        .with_execution_data(intent.execution_data.clone())
+        .with_nonce(intent.nonce)
+        .with_payer(intent.payer.unwrap_or_default())
+        .with_payment_token(token.address)
+        .with_payment_recipient(self.inner.fee_recipient)
+        .with_supported_account_implementation(intent.delegation_implementation)
+        .with_encoded_pre_calls(
+            intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
+        )
+        .with_encoded_fund_transfers(
+            intent
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
+        );
 
         // For multichain intents, set the interop flag
         if !context.intent_kind.is_single() {
@@ -519,7 +522,7 @@ impl Relay {
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 mock_from,
-                self.simulator(),
+                self.get_simulator_for_orchestrator(*orchestrator.address()),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
@@ -900,11 +903,17 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-        if self.orchestrator() == address || self.get_legacy_orchestrator(address).is_some() {
-            Ok(Orchestrator::new(address, provider))
+
+        // Get the version for the orchestrator
+        let version = if self.orchestrator() == address {
+            self.inner.contracts.orchestrator.version.clone()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
+            legacy.orchestrator.version.clone()
         } else {
-            Err(RelayError::UnsupportedOrchestrator(address))
-        }
+            return Err(RelayError::UnsupportedOrchestrator(address));
+        };
+
+        Ok(Orchestrator::new(address, provider).with_version(version))
     }
 
     /// Checks if a delegation implementation needs upgrading.
@@ -2450,6 +2459,21 @@ impl Relay {
             .legacy_orchestrators
             .iter()
             .find(|contracts| contracts.orchestrator.address == address)
+    }
+
+    /// Get the simulator address for the given orchestrator address.
+    /// Returns the matching simulator for the orchestrator (current or legacy).
+    pub fn get_simulator_for_orchestrator(&self, orchestrator_address: Address) -> Address {
+        if orchestrator_address == self.orchestrator() {
+            // Current orchestrator uses current simulator
+            self.simulator()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(orchestrator_address) {
+            // Legacy orchestrator uses its corresponding simulator
+            legacy.simulator.address
+        } else {
+            // Fallback to current simulator if orchestrator not found
+            self.simulator()
+        }
     }
 
     /// Previously deployed delegation implementations.
