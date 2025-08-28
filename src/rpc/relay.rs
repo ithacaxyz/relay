@@ -17,6 +17,7 @@ use crate::{
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
@@ -408,6 +409,7 @@ impl Relay {
             fee_token = ?token,
             ?fee_history,
             ?eth_price,
+            orchestrator_version = ?orchestrator.version(),
             "Got fee parameters"
         );
 
@@ -420,25 +422,27 @@ impl Relay {
             * 10u128.pow(token.decimals as u32) as f64)
             / f64::from(eth_price);
 
-        // fill intent
-        let mut intent_to_sign = Intent::latest()
-            .with_eoa(intent.eoa)
-            .with_execution_data(intent.execution_data.clone())
-            .with_nonce(intent.nonce)
-            .with_payer(intent.payer.unwrap_or_default())
-            .with_payment_token(token.address)
-            .with_payment_recipient(self.inner.fee_recipient)
-            .with_supported_account_implementation(intent.delegation_implementation)
-            .with_encoded_pre_calls(
-                intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
-            )
-            .with_encoded_fund_transfers(
-                intent
-                    .fund_transfers
-                    .into_iter()
-                    .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
-                    .collect(),
-            );
+        // fill intent - use the appropriate version based on orchestrator
+        let mut intent_to_sign = Intent::for_orchestrator(
+            orchestrator.version().expect("orchestrator version should be set"),
+        )
+        .with_eoa(intent.eoa)
+        .with_execution_data(intent.execution_data.clone())
+        .with_nonce(intent.nonce)
+        .with_payer(intent.payer.unwrap_or_default())
+        .with_payment_token(token.address)
+        .with_payment_recipient(self.inner.fee_recipient)
+        .with_supported_account_implementation(intent.delegation_implementation)
+        .with_encoded_pre_calls(
+            intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
+        )
+        .with_encoded_fund_transfers(
+            intent
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
+        );
 
         // For multichain intents, set the interop flag
         if !context.intent_kind.is_single() {
@@ -469,12 +473,12 @@ impl Relay {
         } else {
             // For single chain intents, sign the intent directly
             let signature = mock_key
-                .sign_typed_data(
-                    &intent_to_sign.as_eip712().map_err(RelayError::from)?,
-                    &orchestrator
-                        .eip712_domain(intent_to_sign.is_nonce_multichain())
+                .sign_payload_hash(
+                    intent_to_sign
+                        .compute_eip712_data(*orchestrator.address(), &provider)
                         .await
-                        .map_err(RelayError::from)?,
+                        .map_err(RelayError::from)?
+                        .0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -513,16 +517,12 @@ impl Relay {
         // which ensures the simulation never reverts. Whether the user can actually really
         // pay for the intent execution or not is determined later and communicated to the
         // client.
-        intent_to_sign = intent_to_sign
-            .with_pre_payment_amount(U256::from(1))
-            .with_pre_payment_max_amount(U256::from(1))
-            .with_total_payment_amount(U256::from(1))
-            .with_total_payment_max_amount(U256::from(1));
+        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 mock_from,
-                self.simulator(),
+                self.get_simulator_for_orchestrator(*orchestrator.address()),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
@@ -577,11 +577,7 @@ impl Relay {
         let payment_amount = context.intent_kind.multi_input_fee().unwrap_or(
             extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
         );
-        intent_to_sign = intent_to_sign
-            .with_pre_payment_amount(payment_amount)
-            .with_pre_payment_max_amount(payment_amount)
-            .with_total_payment_amount(payment_amount)
-            .with_total_payment_max_amount(payment_amount);
+        intent_to_sign.set_payment(payment_amount);
 
         let fee_token_deficit =
             intent_to_sign.total_payment_max_amount().saturating_sub(fee_token_balance);
@@ -694,12 +690,7 @@ impl Relay {
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
         let payment_amount = quote.intent.pre_payment_max_amount();
-        quote.intent = quote
-            .intent
-            .with_pre_payment_amount(payment_amount)
-            .with_pre_payment_max_amount(payment_amount)
-            .with_total_payment_amount(payment_amount)
-            .with_total_payment_max_amount(payment_amount);
+        quote.intent.set_payment(payment_amount);
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
@@ -912,11 +903,27 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-        if self.orchestrator() == address || self.legacy_orchestrators().any(|c| c == address) {
-            Ok(Orchestrator::new(address, provider))
+
+        // Get the version for the orchestrator
+        let version = if self.orchestrator() == address {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?self.inner.contracts.orchestrator.version,
+                "Using current orchestrator"
+            );
+            self.inner.contracts.orchestrator.version.clone()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?legacy.orchestrator.version,
+                "Using legacy orchestrator"
+            );
+            legacy.orchestrator.version.clone()
         } else {
-            Err(RelayError::UnsupportedOrchestrator(address))
-        }
+            return Err(RelayError::UnsupportedOrchestrator(address));
+        };
+
+        Ok(Orchestrator::new(address, provider).with_version(version))
     }
 
     /// Checks if a delegation implementation needs upgrading.
@@ -2452,9 +2459,31 @@ impl Relay {
         self.inner.contracts.orchestrator.address
     }
 
-    /// Previously deployed orchestrators.
-    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = Address> {
-        self.inner.contracts.legacy_orchestrators.iter().map(|c| c.address)
+    /// Get previously deployed orchestrator and simulator by orchestrator address.
+    pub fn get_legacy_orchestrator(
+        &self,
+        address: Address,
+    ) -> Option<&VersionedOrchestratorContracts> {
+        self.inner
+            .contracts
+            .legacy_orchestrators
+            .iter()
+            .find(|contracts| contracts.orchestrator.address == address)
+    }
+
+    /// Get the simulator address for the given orchestrator address.
+    /// Returns the matching simulator for the orchestrator (current or legacy).
+    pub fn get_simulator_for_orchestrator(&self, orchestrator_address: Address) -> Address {
+        if orchestrator_address == self.orchestrator() {
+            // Current orchestrator uses current simulator
+            self.simulator()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(orchestrator_address) {
+            // Legacy orchestrator uses its corresponding simulator
+            legacy.simulator.address
+        } else {
+            // Fallback to current simulator if orchestrator not found
+            self.simulator()
+        }
     }
 
     /// Previously deployed delegation implementations.
