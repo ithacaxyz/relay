@@ -522,7 +522,7 @@ impl Relay {
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 mock_from,
-                self.simulator(),
+                self.get_simulator_for_orchestrator(*orchestrator.address()),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
@@ -2459,6 +2459,21 @@ impl Relay {
             .legacy_orchestrators
             .iter()
             .find(|contracts| contracts.orchestrator.address == address)
+    }
+
+    /// Get the simulator address for the given orchestrator address.
+    /// Returns the matching simulator for the orchestrator (current or legacy).
+    pub fn get_simulator_for_orchestrator(&self, orchestrator_address: Address) -> Address {
+        if orchestrator_address == self.orchestrator() {
+            // Current orchestrator uses current simulator
+            self.simulator()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(orchestrator_address) {
+            // Legacy orchestrator uses its corresponding simulator
+            legacy.simulator.address
+        } else {
+            // Fallback to current simulator if orchestrator not found
+            self.simulator()
+        }
     }
 
     /// Previously deployed delegation implementations.

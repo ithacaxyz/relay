@@ -130,11 +130,21 @@ impl<P: Provider> SimulatorContract<P> {
         mock_from: Address,
         intent_encoded: Vec<u8>,
         gas_validation_offset: U256,
+        orchestrator_version: Option<&semver::Version>,
     ) -> Result<SimulationExecutionResult, RelayError> {
-        let simulate_calldata = self
-            .simulator
+        // whether orchestrator is v4
+        let is_v4 =
+            orchestrator_version.map(|v| *v < semver::Version::new(0, 5, 0)).unwrap_or(false);
+
+        let simulate_calldata = if is_v4 {
+            // Use SimulatorV4 with additional isPrePayment parameter
+            SimulatorV4::SimulatorV4Instance::new(
+                *self.simulator.address(),
+                self.simulator.provider(),
+            )
             .simulateV1Logs(
                 orchestrator_address,
+                true,
                 0,
                 U256::ZERO,
                 U256::from(11_000),
@@ -142,7 +152,20 @@ impl<P: Provider> SimulatorContract<P> {
                 intent_encoded.into(),
             )
             .calldata()
-            .clone();
+            .clone()
+        } else {
+            self.simulator
+                .simulateV1Logs(
+                    orchestrator_address,
+                    0,
+                    U256::ZERO,
+                    U256::from(11_000),
+                    gas_validation_offset,
+                    intent_encoded.into(),
+                )
+                .calldata()
+                .clone()
+        };
 
         // Wrap the simulator call in multicall3's tryBlockAndAggregate to get the block number
         let tx_request =

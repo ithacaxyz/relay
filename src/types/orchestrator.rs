@@ -212,7 +212,13 @@ impl<P: Provider> Orchestrator<P> {
             self.overrides.clone(),
             sim_mode,
         )
-        .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
+        .simulate(
+            *self.address(),
+            mock_from,
+            intent.abi_encode(),
+            gas_validation_offset,
+            self.version.as_ref(),
+        )
         .await;
 
         // If simulation failed, check if orchestrator is paused
