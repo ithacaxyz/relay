@@ -1,5 +1,5 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, await_calls_status,
     cases::{upgrade_account_eagerly, upgrade_account_lazily},
     environment::{Environment, EnvironmentConfig},
 };
@@ -16,10 +16,11 @@ use relay::{
     types::{
         Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
-            GetAssetsParameters, GetAuthorizationParameters, GetKeysParameters, Meta, Permission,
-            PrepareCallsCapabilities, PrepareCallsParameters, PrepareUpgradeAccountParameters,
-            RequiredAsset, SendPreparedCallsParameters, UpgradeAccountCapabilities,
-            UpgradeAccountParameters, UpgradeAccountSignatures,
+            AddFaucetFundsParameters, BundleId, GetAssetsParameters, GetAuthorizationParameters,
+            GetKeysParameters, Meta, Permission, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareUpgradeAccountParameters, RequiredAsset, SendPreparedCallsParameters,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            VerifySignatureParameters,
         },
     },
 };
@@ -254,7 +255,7 @@ async fn test_send_prepared_calls() -> eyre::Result<()> {
         .await?;
 
     insta::assert_json_snapshot!(response, {
-        ".id" => reduction_from_str::<B256>("id"),
+        ".id" => reduction_from_str::<BundleId>("id"),
     });
 
     Ok(())
@@ -350,35 +351,126 @@ async fn test_get_authorization() -> eyre::Result<()> {
     Ok(())
 }
 
-// async fn test_get_calls_status() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+#[tokio::test]
+async fn test_get_calls_status() -> eyre::Result<()> {
+    let config =
+        EnvironmentConfig { num_chains: 2, fee_recipient: Address::ZERO, ..Default::default() };
+    let env = Environment::setup_with_config(config.clone()).await?;
 
-//     let response = env.relay_endpoint.get_calls_status().await?;
+    // Create a key for signing
+    let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
 
-//     insta::assert_json_snapshot!(response);
+    // Account upgrade deployed onchain.
+    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
-//     Ok(())
-// }
+    let balance =
+        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
+            / uint!(2_U256);
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, uint!(1_U256))],
+            chain_id: env.chain_id_for(0),
+            from: Some(env.eoa.address()),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: Default::default(),
+                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+                pre_calls: Default::default(),
+                pre_call: Default::default(),
+                required_funds: vec![RequiredAsset::new(env.erc20, balance)],
+                revoke_keys: Default::default(),
+            },
+            balance_overrides: Default::default(),
+            state_overrides: Default::default(),
+            key: Some(key.to_call_key()),
+        })
+        .await?;
 
-// async fn test_verify_signature() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+    let signature = key.sign_payload_hash(response.digest).await?;
 
-//     let response = env.relay_endpoint.verify_signature().await?;
+    let response = env
+        .relay_endpoint
+        .send_prepared_calls(SendPreparedCallsParameters {
+            capabilities: Default::default(),
+            context: response.context,
+            key: key.to_call_key(),
+            signature,
+        })
+        .await?;
 
-//     insta::assert_json_snapshot!(response);
+    await_calls_status(&env, response.id).await?;
 
-//     Ok(())
-// }
+    let response = env.relay_endpoint.get_calls_status(response.id).await?;
 
-// async fn test_add_faucet_funds() -> eyre::Result<()> {
-//     let env = Environment::setup().await?;
+    // TODO: these redactions are due to the same issue as in `test_prepare_calls`
+    insta::assert_json_snapshot!(response, {
+        ".id" => insta::dynamic_redaction(move |value, _path| {
+            assert_eq!(BundleId::from_str(value.as_str().unwrap()), Ok(response.id));
+            "[id]"
+        }),
+        ".receipts[].logs[].topics[]" => reduction_from_str::<B256>("topic"),
+        ".receipts[].logs[].data" => reduction_from_str::<Bytes>("data"),
+        ".receipts[].logs[].blockHash" => reduction_from_str::<B256>("blockHash"),
+        ".receipts[].logs[].blockNumber" => reduction_from_str::<U64>("blockNumber"),
+        ".receipts[].logs[].blockTimestamp" => reduction_from_str::<U64>("blockTimestamp"),
+        ".receipts[].logs[].transactionHash" => reduction_from_str::<B256>("transactionHash"),
+        ".receipts[].blockHash" => reduction_from_str::<B256>("blockHash"),
+        ".receipts[].blockNumber" => reduction_from_str::<U64>("blockNumber"),
+        ".receipts[].gasUsed" => reduction_from_str::<U64>("gasUsed"),
+        ".receipts[].transactionHash" => reduction_from_str::<B256>("transactionHash"),
+    });
 
-//     let response = env.relay_endpoint.add_faucet_funds().await?;
+    Ok(())
+}
 
-//     insta::assert_json_snapshot!(response);
+#[tokio::test]
+async fn test_verify_signature() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
 
-//     Ok(())
-// }
+    let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
+    upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
+
+    let digest = B256::ZERO;
+    let signature = key.sign_payload_hash(digest).await?;
+
+    let response = env
+        .relay_endpoint
+        .verify_signature(VerifySignatureParameters {
+            address: env.eoa.address(),
+            chain_id: env.chain_id(),
+            digest,
+            signature: signature.clone(),
+        })
+        .await?;
+
+    insta::assert_json_snapshot!(response, {
+        ".proof.initPreCall.nonce" => reduction_from_str::<U256>("nonce"),
+        ".proof.initPreCall.signature" => reduction_from_str::<Bytes>("signature"),
+    });
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_add_faucet_funds() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let response = env
+        .relay_endpoint
+        .add_faucet_funds(AddFaucetFundsParameters {
+            token_address: env.fee_token,
+            address: env.eoa.address(),
+            chain_id: env.chain_id(),
+            value: U256::ONE,
+        })
+        .await?;
+
+    insta::assert_json_snapshot!(response, {
+        ".transactionHash" => reduction_from_str::<B256>("transactionHash")
+    });
+
+    Ok(())
+}
 
 /// Creates a reduction that asserts value can be parsed using [`FromStr`], and replaces
 /// the value with the provided name.
