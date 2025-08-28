@@ -824,7 +824,7 @@ impl Signer {
             if let Some(submitted_at_block) = submitted_at_block {
                 self.metrics
                     .blocks_until_inclusion
-                    .record((included_at_block - submitted_at_block + 1) as f64);
+                    .record((included_at_block.saturating_sub(submitted_at_block + 1)) as f64);
             }
         }
 
