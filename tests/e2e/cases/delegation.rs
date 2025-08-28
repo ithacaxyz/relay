@@ -12,7 +12,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use relay::{
-    config::LegacyOrchestrator, rpc::RelayApiClient, signers::Eip712PayLoadSigner, types::{
+    rpc::RelayApiClient, signers::Eip712PayLoadSigner, types::{
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters}, Account, Call, IthacaAccount::{self, upgradeProxyAccountCall}, KeyType, KeyWith712Signer, Signature, SignedCall
     }
 };
@@ -353,36 +353,19 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
     }
 
     let mut env = Environment::setup().await?;
+    
+    // First restart with legacy (v4) contracts as current
+    env.restart_with_legacy().await?;
+    
     let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
     let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
 
-    // Get the legacy contracts from env (these are pre-deployed during setup)
-    let legacy_orchestrator = env.config.legacy_orchestrators.iter().next().copied().unwrap();
-    let legacy_delegation = env.get_legacy_delegation_proxy();
-
-    // Restart relay with swapped configuration:
-    // - Legacy contracts become current
-    // - Current contracts become legacy
-    let mut config = env.config.clone();
-    config.legacy_orchestrators.clear();
-    config.legacy_delegation_proxies.clear();
-    config.legacy_orchestrators.insert(LegacyOrchestrator {
-        orchestrator: config.orchestrator,
-        simulator: config.simulator,
-    });
-    config.legacy_delegation_proxies.insert(config.delegation_proxy);
-    config.orchestrator = legacy_orchestrator.orchestrator;
-    config.delegation_proxy = legacy_delegation;
-    env.restart_relay(config).await?;
+    // Now restart with latest (v5) contracts as current
+    env.restart_with_latest().await?;
 
     // Get new capabilities after restart
     let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
 
-    // The current orchestrator is now in the legacy list
-    assert!(
-        chain_capabilities.contracts.orchestrator.address == legacy_orchestrator.orchestrator,
-        "Current orchestrator should now be in legacy list"
-    );
 
     // Prepare a call - should auto-add upgrade because account has legacy delegation
     let response = env
@@ -406,8 +389,16 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
         .await?;
 
     // Decode the execution data to Vec<Call>
+    let quote = response.context.quote().unwrap();
+    
+    // Assert that the quote is using v04 Intent (since account was created on v04 orchestrator)
+    let intent = &quote.ty().quotes[0].intent;
+    assert!(
+        intent.as_v04().is_some()
+    );
+    
     let calls = Vec::<Call>::abi_decode(
-        response.context.quote().unwrap().ty().quotes[0].intent.execution_data(),
+        intent.execution_data(),
     )
     .unwrap();
 
@@ -438,10 +429,61 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(!status.status.is_pending(), "Bundle should not be pending");
 
+    // After upgrade, the account should now be using the latest orchestrator
     assert_eq!(
         Account::new(env.eoa.address(), env.provider()).get_orchestrator().await?,
-        legacy_orchestrator.orchestrator,
+        env.orchestrator,  // Should be using the current (v5) orchestrator
     );
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(1))],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    // Decode the execution data to Vec<Call>
+    let quote = response.context.quote().unwrap();
+    
+    // Assert that the quote is using v05 Intent (since we have upgraded it)
+    let intent = &quote.ty().quotes[0].intent;
+    assert!(
+        intent.as_v05().is_some()
+    );
+    
+    let calls = Vec::<Call>::abi_decode(
+        intent.execution_data(),
+    )
+    .unwrap();
+
+    // Should have user call 
+    assert_eq!(calls.len(), 1, "Expected exactly 1 call (user transfer)");
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to complete
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(!status.status.is_pending(), "Bundle should not be pending");
+
 
     Ok(())
 }

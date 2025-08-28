@@ -128,6 +128,8 @@ pub struct Environment {
     pub settlement: SettlementConfig,
     pub deployer: DynSigner,
     pub config: RelayConfig,
+    /// All deployed contract addresses (including legacy)
+    contracts: ContractAddresses,
 }
 
 impl std::fmt::Debug for Environment {
@@ -384,6 +386,61 @@ impl Environment {
         self.config = config;
 
         Ok(())
+    }
+
+    /// Restarts the relay with latest (v5) contracts as current.
+    /// Legacy (v4) contracts become the legacy set.
+    pub async fn restart_with_latest(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+        
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+        
+        // Add v4 contracts to legacy
+        config.legacy_orchestrators.insert(self.contracts.legacy_orchestrator);
+        config.legacy_delegation_proxies.insert(self.contracts.legacy_delegation_proxy);
+        
+        // Set v5 contracts as current
+        config.orchestrator = self.contracts.orchestrator;
+        config.simulator = self.contracts.simulator;
+        config.delegation_proxy = self.contracts.delegation;
+        
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.orchestrator;
+        self.delegation = self.contracts.delegation;
+        
+        self.restart_relay(config).await
+    }
+
+    /// Restarts the relay with legacy (v4) contracts as current.
+    /// Latest (v5) contracts become the legacy set.
+    pub async fn restart_with_legacy(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+        
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+        
+        // Add v5 contracts to legacy (swap orchestrator and simulator to create LegacyOrchestrator)
+        config.legacy_orchestrators.insert(LegacyOrchestrator {
+            orchestrator: self.contracts.orchestrator,
+            simulator: self.contracts.simulator,
+        });
+        config.legacy_delegation_proxies.insert(self.contracts.delegation);
+        
+        // Set v4 contracts as current
+        config.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        config.simulator = self.contracts.legacy_orchestrator.simulator;
+        config.delegation_proxy = self.contracts.legacy_delegation_proxy;
+        
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        self.delegation = self.contracts.legacy_delegation_proxy;
+        
+        self.restart_relay(config).await
     }
 
     /// Get the legacy delegation proxy address from the relay's config.
@@ -666,6 +723,7 @@ impl Environment {
             settlement: SettlementConfig { layerzero: layerzero_config },
             deployer,
             config,
+            contracts,
         })
     }
 
@@ -1029,13 +1087,15 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         multicall_future
     )?;
 
-    // Deploy legacy contracts (depend on earlier deployments for consistent addresses)
+    // Deploy legacy contracts from accountv4
+    // Use the accountv4 contracts path (tests/account/lib/accountv4/out)
+    let accountv4_path = contracts_path.parent().unwrap().join("lib/accountv4/out");
     let legacy_orchestrator = LegacyOrchestrator {
-        orchestrator: deploy_orchestrator(provider, &contracts_path).await?,
-        simulator: deploy_simulator(provider, &contracts_path).await?,
+        orchestrator: deploy_orchestrator(provider, &accountv4_path).await?,
+        simulator: deploy_simulator(provider, &accountv4_path).await?,
     };
     let (_, legacy_delegation_proxy) =
-        deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator.orchestrator)
+        deploy_delegation_contracts(provider, &accountv4_path, legacy_orchestrator.orchestrator)
             .await?;
 
     Ok(ContractAddresses {

@@ -47,8 +47,19 @@ impl VersionedContract {
             .eip712Domain()
             .call()
             .await
-            .map(|domain| domain.version)
+            .map(|domain| {
+                tracing::debug!(
+                    "Fetched version '{}' from eip712Domain for contract {}",
+                    domain.version,
+                    address
+                );
+                domain.version
+            })
             .ok();
+
+        if version.is_none() {
+            tracing::debug!("Failed to fetch version from eip712Domain for contract {}", address);
+        }
 
         Self { address, version }
     }
@@ -91,9 +102,13 @@ impl VersionedContracts {
     pub async fn new<P: Provider>(config: &RelayConfig, provider: &P) -> Result<Self, RelayError> {
         let legacy_orchestrators =
             try_join_all(config.legacy_orchestrators.iter().map(async |&legacy| {
+                tracing::debug!("Creating VersionedContract for legacy orchestrator {}", legacy.orchestrator);
+                let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await;
+                tracing::debug!("Creating VersionedContract for legacy simulator {}", legacy.simulator);
+                let simulator = VersionedContract::new(legacy.simulator, provider).await;
                 Ok::<_, RelayError>(VersionedOrchestratorContracts {
-                    orchestrator: VersionedContract::new(legacy.orchestrator, provider).await,
-                    simulator: VersionedContract::new(legacy.simulator, provider).await,
+                    orchestrator,
+                    simulator,
                 })
             }));
 
@@ -109,7 +124,10 @@ impl VersionedContracts {
             }));
 
         let orchestrator =
-            async { Ok(VersionedContract::new(config.orchestrator, provider).await) };
+            async { 
+                tracing::debug!("Creating VersionedContract for current orchestrator {}", config.orchestrator);
+                Ok(VersionedContract::new(config.orchestrator, provider).await) 
+            };
 
         let delegation_implementation = async {
             let delegation_implementation =
