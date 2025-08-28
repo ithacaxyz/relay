@@ -124,6 +124,20 @@ impl SignedCalls for IntentV05 {
         self.nonce
     }
 
+    /// Returns all keys authorized in the current [`IntentV05`] including `pre_calls` and
+    /// `executionData`.
+    fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
+        let mut all_keys: Vec<Key> = self.authorized_keys_from_execution_data()?.collect();
+
+        // Add keys from pre_calls
+        for encoded_precall in &self.encodedPreCalls {
+            let pre_call = SignedCall::abi_decode(encoded_precall)?;
+            all_keys.extend(pre_call.authorized_keys_from_execution_data()?);
+        }
+
+        Ok(all_keys)
+    }
+
     async fn compute_eip712_data(
         &self,
         orchestrator_address: Address,
@@ -146,20 +160,6 @@ impl SignedCalls for IntentV05 {
         debug_assert_eq!(Ok(digest), typed_data.eip712_signing_hash());
 
         Ok((digest, typed_data))
-    }
-
-    /// Returns all keys authorized in the current [`IntentV05`] including `pre_calls` and
-    /// `executionData`.
-    fn authorized_keys(&self) -> Result<Vec<Key>, alloy::sol_types::Error> {
-        let mut all_keys: Vec<Key> = self.authorized_keys_from_execution_data()?.collect();
-
-        // Add keys from pre_calls
-        for encoded_precall in &self.encodedPreCalls {
-            let pre_call = SignedCall::abi_decode(encoded_precall)?;
-            all_keys.extend(pre_call.authorized_keys_from_execution_data()?);
-        }
-
-        Ok(all_keys)
     }
 }
 
