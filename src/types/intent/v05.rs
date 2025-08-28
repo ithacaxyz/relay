@@ -1,7 +1,9 @@
 use super::{SignedCall, SignedCalls};
-use crate::types::Key;
+use crate::types::{Key, Orchestrator};
 use alloy::{
-    primitives::{B256, Keccak256, U256, keccak256},
+    dyn_abi::TypedData,
+    primitives::{Address, B256, Keccak256, U256, keccak256},
+    providers::DynProvider,
     sol,
     sol_types::SolValue,
 };
@@ -124,15 +126,12 @@ impl SignedCalls for IntentV05 {
 
     async fn compute_eip712_data(
         &self,
-        orchestrator_address: alloy::primitives::Address,
-        provider: &alloy::providers::DynProvider,
-    ) -> eyre::Result<(alloy::primitives::B256, alloy::dyn_abi::TypedData)>
+        orchestrator_address: Address,
+        provider: &DynProvider,
+    ) -> eyre::Result<(B256, alloy::dyn_abi::TypedData)>
     where
         Self: Sync,
     {
-        use crate::types::Orchestrator;
-        use alloy::{dyn_abi::TypedData, sol_types::SolStruct};
-
         // Create the orchestrator instance with the same overrides.
         let orchestrator = Orchestrator::new(orchestrator_address, provider);
 
