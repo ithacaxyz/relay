@@ -1,6 +1,6 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, MockErc20, TxContext, cases::upgrade_account_eagerly,
-    environment::Environment, run_e2e,
+    AuthKind, ExpectedOutcome, MockErc20, TxContext, await_calls_status,
+    cases::upgrade_account_eagerly, environment::Environment, run_e2e,
 };
 use alloy::{
     primitives::{U64, U256},
@@ -19,7 +19,6 @@ use relay::{
         },
     },
 };
-use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_keys() -> eyre::Result<()> {
@@ -414,21 +413,7 @@ async fn get_keys_three_chains_two_have_session() -> eyre::Result<()> {
             .await?;
 
         // Wait for the bundle to finalize to ensure keys are committed on-chain
-        let mut attempts = 0;
-        loop {
-            let status = env.relay_endpoint.get_calls_status(bundle.id).await.ok();
-            if let Some(status) = status
-                && !status.status.is_pending()
-            {
-                break;
-            }
-            attempts += 1;
-            if attempts > 20 {
-                // ~4s max
-                eyre::bail!("bundle status not received within attempts");
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+        let _ = await_calls_status(&env, bundle.id).await?;
     }
 
     // Now query keys across all 3 chains
