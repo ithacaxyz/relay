@@ -12,7 +12,6 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use relay::{
-    config::LegacyOrchestrator,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
