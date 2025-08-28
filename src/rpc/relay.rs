@@ -276,7 +276,7 @@ impl Relay {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
             let mut buf = Vec::new();
-            if let Some(auth) = auth.clone() {
+            if let Some(auth) = auth {
                 TxEip7702 {
                     chain_id: chain.id(),
                     // we use random nonce as we don't yet know which signer will broadcast the
@@ -554,8 +554,11 @@ impl Relay {
             )
             .await?;
 
-        let extra_fee_native = extra_fee_info.extra_fee();
 
+        // this should return zero on all non-arbitrum chains, we add this to the gaslimit
+        let extra_fee_gas = extra_fee_info.extra_l1_gas();
+
+        let extra_fee_native = extra_fee_info.extra_fee();
         let extra_payment =
             extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
 
@@ -588,7 +591,7 @@ impl Relay {
             intent: intent_to_sign,
             extra_payment,
             eth_price,
-            tx_gas: gas_estimate.tx,
+            tx_gas: gas_estimate.tx + extra_fee_gas,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
