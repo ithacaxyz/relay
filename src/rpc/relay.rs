@@ -1360,12 +1360,19 @@ impl Relay {
         let interop_assets =
             self.inner.chains.interop_assets_per_chain(request.chain_id, requested_asset);
 
-        // Fetch EOA assets interoperable with requested asset (needed for source_funds) and
-        // funder's specific asset on destination chain
-        let (assets, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters::for_assets_on_chains(
+        // Create a future for fetching assets interoperable with requested asset (needed for
+        // source_funds). It will be awaited later when we actually need it.
+        let assets = self.get_assets(GetAssetsParameters::for_assets_on_chains(
+            eoa,
+            interop_assets.map(|(chain_id, desc)| (chain_id, desc.address)).collect(),
+        ));
+
+        // Fetch EOA and funder's requested asset on destination chain
+        let (destination_asset, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 eoa,
-                interop_assets.map(|(chain_id, desc)| (chain_id, desc.address)).collect()
+                request.chain_id,
+                requested_asset,
             )),
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
@@ -1374,7 +1381,7 @@ impl Relay {
             ))
         )?;
         let requested_asset_balance_on_dst =
-            assets.balance_on_chain(request.chain_id, requested_asset.into());
+            destination_asset.balance_on_chain(request.chain_id, requested_asset.into());
 
         let funder_balance_on_dst =
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
@@ -1444,6 +1451,9 @@ impl Relay {
         self.inner.chains.interop_asset(request.chain_id, requested_asset).ok_or(
             RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
         )?;
+
+        // Await a future with assets on interoperable chains
+        let assets = assets.await?;
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
