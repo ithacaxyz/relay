@@ -1219,7 +1219,7 @@ impl Relay {
         &self,
         eoa: Address,
         request_key: &CallKey,
-        assets: GetAssetsResponse,
+        assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         requested_asset: AddressOrNative,
         amount: U256,
@@ -1356,12 +1356,26 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
-        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
-        // chain
-        //
-        // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let (assets, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters::eoa(eoa)),
+        // Get interop assets for the requested asset on the source chain.
+        let interop_assets = self
+            .inner
+            .chains
+            .map_interop_assets_per_chain(request.chain_id, requested_asset)
+            .map(|(chain_id, desc)| (chain_id, desc.address))
+            .collect();
+
+        // Create a future for fetching assets interoperable with requested asset (needed for
+        // source_funds). It will be awaited later when we actually need it.
+        let assets =
+            self.get_assets(GetAssetsParameters::for_assets_on_chains(eoa, interop_assets));
+
+        // Fetch EOA and funder's requested asset on destination chain
+        let (destination_asset, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                eoa,
+                request.chain_id,
+                requested_asset,
+            )),
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
                 request.chain_id,
@@ -1369,7 +1383,7 @@ impl Relay {
             ))
         )?;
         let requested_asset_balance_on_dst =
-            assets.balance_on_chain(request.chain_id, requested_asset.into());
+            destination_asset.balance_on_chain(request.chain_id, requested_asset.into());
 
         let funder_balance_on_dst =
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
@@ -1440,6 +1454,9 @@ impl Relay {
             RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
         )?;
 
+        // Await a future with assets on interoperable chains
+        let assets = assets.await?;
+
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
         // the true fees. After this, we do one more pass of finding funds on other chains.
@@ -1473,7 +1490,7 @@ impl Relay {
                 .source_funds(
                     eoa,
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                    assets.clone(),
+                    &assets,
                     request.chain_id,
                     asset,
                     requested_funds
