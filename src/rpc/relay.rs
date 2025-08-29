@@ -1143,14 +1143,18 @@ impl Relay {
 
         // Calculate the digest and check if ERC1271 wrapping is needed in parallel
         let ((mut digest, typed_data), should_wrap_erc1271) = tokio::try_join!(
-            context.compute_signing_digest(
-                delegation_status.as_ref().and_then(|s| s.stored_account()),
-                self.orchestrator(),
-                &provider,
-            ),
+            async {
+                context
+                    .compute_signing_digest(
+                        delegation_status.as_ref().and_then(|s| s.stored_account()),
+                        self.orchestrator(),
+                        &provider,
+                    )
+                    .await
+                    .map_err(RelayError::from)
+            },
             self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
-        )
-        .map_err(RelayError::from)?;
+        )?;
 
         // Wrap digest for ERC1271 validation if needed
         if let Some(key_address) = should_wrap_erc1271 {
@@ -2634,12 +2638,12 @@ impl Relay {
         };
 
         let key_address = Address::from_slice(&key.public_key[12..]);
-        let key_account = Account::new(key_address, provider.clone());
+        let key_account = Account::new(key_address, provider);
 
         let status = key_account.delegation_status(&self.inner.storage).await.ok();
 
         let needs_wrapping = status
-            .map_or(false, |s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+            .is_some_and(|s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
 
         Ok(needs_wrapping.then_some(key_address))
     }
