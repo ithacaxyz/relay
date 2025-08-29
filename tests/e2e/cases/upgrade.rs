@@ -5,11 +5,12 @@ use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::Bytes,
     providers::{Provider, ext::AnvilApi},
+    sol_types::{SolCall, SolValue},
 };
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer, SignedCalls,
+        KeyType, KeyWith712Signer, OrchestratorContract, SignedCalls,
         rpc::{
             AuthorizeKey, GetAuthorizationParameters, PrepareUpgradeAccountParameters,
             UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
@@ -130,7 +131,8 @@ async fn get_authorization() -> eyre::Result<()> {
 
     // Store the expected values before calling upgrade_account
     let authorization = authorization.clone();
-    let init_data = prepare_response.context.pre_call.executionData.clone();
+    let mut stored_pre_call = prepare_response.context.pre_call.clone();
+    stored_pre_call.signature = precall_signature.as_bytes().into();
 
     // Upgrade account
     env.relay_endpoint
@@ -148,8 +150,15 @@ async fn get_authorization() -> eyre::Result<()> {
         .get_authorization(GetAuthorizationParameters { address: env.eoa.address() })
         .await?;
 
+    let expected_data: Bytes = OrchestratorContract::executePreCallsCall {
+        encodedPreCalls: vec![stored_pre_call.abi_encode().into()],
+    }
+    .abi_encode()
+    .into();
+
     assert_eq!(response.authorization, authorization);
-    assert_eq!(response.data, init_data);
+    assert_eq!(response.data, expected_data);
+    assert_eq!(response.to, env.orchestrator);
 
     Ok(())
 }

@@ -117,6 +117,10 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
+        /// @dev DEPRECATION WARNING: This function will be deprecated in the future.
+        /// Allows pre calls to be executed individually, for counterfactual signatures.
+        function executePreCalls(bytes[] calldata encodedPreCalls) public virtual;
+
         /// Returns the EIP712 domain of the orchestrator.
         ///
         /// See: https://eips.ethereum.org/EIPS/eip-5267
