@@ -1357,15 +1357,17 @@ impl Relay {
         };
 
         // Get interop assets for the requested asset on the source chain.
-        let interop_assets =
-            self.inner.chains.interop_assets_per_chain(request.chain_id, requested_asset);
+        let interop_assets = self
+            .inner
+            .chains
+            .interop_assets_per_chain(request.chain_id, requested_asset)
+            .map(|(chain_id, desc)| (chain_id, desc.address))
+            .collect();
 
         // Create a future for fetching assets interoperable with requested asset (needed for
         // source_funds). It will be awaited later when we actually need it.
-        let assets = self.get_assets(GetAssetsParameters::for_assets_on_chains(
-            eoa,
-            interop_assets.map(|(chain_id, desc)| (chain_id, desc.address)).collect(),
-        ));
+        let assets =
+            self.get_assets(GetAssetsParameters::for_assets_on_chains(eoa, interop_assets));
 
         // Fetch EOA and funder's requested asset on destination chain
         let (destination_asset, funder_assets) = try_join!(
