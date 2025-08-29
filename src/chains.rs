@@ -383,6 +383,28 @@ impl Chains {
             .and_then(|dst_chain| dst_chain.assets.get(asset_uid).filter(|desc| desc.interop))
     }
 
+    /// Get the interop assets for the specified origin chain and asset, per chain. Result includes
+    /// the origin chain.
+    pub fn interop_assets_per_chain(
+        &self,
+        chain_id: ChainId,
+        asset: Address,
+    ) -> HashMap<ChainId, &AssetDescriptor> {
+        let Some((asset_uid, _)) = self.interop_asset(chain_id, asset) else {
+            return HashMap::new();
+        };
+
+        self.chains_iter()
+            .filter_map(|chain| {
+                chain
+                    .assets()
+                    .get(asset_uid)
+                    .filter(|desc| desc.interop)
+                    .map(|desc| (chain.id(), desc))
+            })
+            .collect()
+    }
+
     /// Get the interop service handle.
     pub fn interop(&self) -> Option<&InteropServiceHandle> {
         self.interop.as_ref()

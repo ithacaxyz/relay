@@ -1219,7 +1219,7 @@ impl Relay {
         &self,
         eoa: Address,
         request_key: &CallKey,
-        assets: GetAssetsResponse,
+        assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         requested_asset: AddressOrNative,
         amount: U256,
@@ -1356,12 +1356,24 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
-        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
-        // chain
-        //
-        // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let (assets, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters::eoa(eoa)),
+        // Get interop assets for the requested asset on the source chain.
+        let interop_assets =
+            self.inner.chains.interop_assets_per_chain(request.chain_id, requested_asset);
+
+        // Fetch EOA assets interoperable with requested asset (needed for source_funds) and
+        // funder's specific asset on destination chain
+        let (interop_assets, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters {
+                account: eoa,
+                asset_filter: interop_assets
+                    .into_iter()
+                    .map(|(chain_id, desc)| (
+                        chain_id,
+                        vec![AssetFilterItem::fungible(desc.address.into())]
+                    ))
+                    .collect(),
+                ..Default::default()
+            }),
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
                 request.chain_id,
@@ -1369,7 +1381,7 @@ impl Relay {
             ))
         )?;
         let requested_asset_balance_on_dst =
-            assets.balance_on_chain(request.chain_id, requested_asset.into());
+            interop_assets.balance_on_chain(request.chain_id, requested_asset.into());
 
         let funder_balance_on_dst =
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
@@ -1473,7 +1485,7 @@ impl Relay {
                 .source_funds(
                     eoa,
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                    assets.clone(),
+                    &interop_assets,
                     request.chain_id,
                     asset,
                     requested_funds
