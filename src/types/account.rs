@@ -419,6 +419,8 @@ impl<P: Provider> Account<P> {
     }
 
     /// Validates the given signature with ERC1271 replay-safe wrapping.
+    ///
+    /// Returns `Some(key_hash)` if the signature is valid.
     pub async fn validate_signature(
         &self,
         digest: B256,
