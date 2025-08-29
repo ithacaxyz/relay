@@ -19,7 +19,7 @@
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U64, U256, address, keccak256, utils::format_ether},
+    primitives::{Address, B256, ChainId, U64, U256, address, keccak256},
     providers::{
         DynProvider, Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -160,12 +160,9 @@ impl StressAccount {
 
             retries = 5;
 
-            // If we have a fee token deficit then the stress test ends.
-            if let Some(quote) =
-                context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
-                && !quote.fee_token_deficit.is_zero()
-            {
-                warn!(deficit = %format_ether(quote.fee_token_deficit), "Fee token deficit.");
+            // If all quotes have a fee token deficit then the stress test ends.
+            if context.quote().unwrap().ty().quotes.iter().all(|q| !q.fee_token_deficit.is_zero()) {
+                warn!("Fee token deficit on all chains.");
                 return Ok(());
             }
 
@@ -280,10 +277,6 @@ impl StressTester {
         )
         .await?;
         let destination_provider = create_provider(args.dst_rpc.clone(), signer.clone()).await?;
-        let providers = source_providers
-            .iter()
-            .chain(std::iter::once(&destination_provider))
-            .collect::<Vec<_>>();
 
         // Gather chain IDs
         let source_chain_ids =
@@ -353,8 +346,16 @@ impl StressTester {
 
         let disperse_address = CREATE2_DEPLOYER.create2(B256::ZERO, keccak256(&Disperse::BYTECODE));
 
+        let chains_to_fund = if source_chain_ids.is_empty() {
+            // If we only have a single chain, fund it.
+            vec![(&destination_provider, destination_chain_id)]
+        } else {
+            // If we're testing interop, only fund the source chains.
+            source_providers.iter().zip(source_chain_ids).collect()
+        };
+
         // Deploy contracts if needed and fund accounts on all chains
-        try_join_all(providers.iter().zip(chain_ids).map(|(provider, chain_id)| {
+        try_join_all(chains_to_fund.into_iter().map(|(provider, chain_id)| {
             fund_accounts(
                 provider,
                 accounts.clone(),
