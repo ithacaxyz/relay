@@ -429,7 +429,7 @@ impl<P: Provider> Account<P> {
         let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
             .delegation
             .unwrapAndValidateSignature(
-                self.digest_erc1271(digest).await?,
+                self.digest_erc1271(digest),
                 signature.abi_encode_packed().into(),
             )
             .call()
@@ -443,7 +443,7 @@ impl<P: Provider> Account<P> {
     /// Wraps a digest for ERC1271 signature validation.
     ///
     /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
-    pub async fn digest_erc1271(&self, digest: B256) -> TransportResult<B256> {
+    pub fn digest_erc1271(&self, digest: B256) -> B256 {
         let domain = Eip712Domain::new(
             None,
             None,
@@ -452,7 +452,7 @@ impl<P: Provider> Account<P> {
             None,
         );
 
-        Ok(IthacaAccount::ERC1271Sign { digest }.eip712_signing_hash(&domain))
+        IthacaAccount::ERC1271Sign { digest }.eip712_signing_hash(&domain)
     }
 
     /// Get the next nonce for the given EOA.

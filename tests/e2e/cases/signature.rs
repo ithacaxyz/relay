@@ -36,7 +36,7 @@ async fn verify_signature() -> eyre::Result<()> {
             .build(),
     );
     let digest = B256::random();
-    let signature = key.sign_payload_hash(account.digest_erc1271(digest).await?).await?;
+    let signature = key.sign_payload_hash(account.digest_erc1271(digest)).await?;
 
     let verify = |address: Address| {
         env.relay_endpoint.verify_signature(VerifySignatureParameters {
