@@ -3,7 +3,11 @@ use crate::e2e::{
     cases::{upgrade_account_eagerly, upgrade_account_lazily},
     environment::Environment,
 };
-use alloy::{eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR, primitives::{Address, Bytes, B256}, rpc::types::state::{AccountOverride, StateOverridesBuilder}};
+use alloy::{
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
+    primitives::{Address, B256, Bytes},
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
+};
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
@@ -18,19 +22,16 @@ async fn verify_signature() -> eyre::Result<()> {
     let eoa = env.eoa.address();
     upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
-    // Need the state override since the account is not on onchain, and we need to query for the eip712 domain name and version to get a signing digest.
+    // Need the state override since the account is not on onchain, and we need to query for the
+    // eip712 domain name and version to get a signing digest.
     let account = Account::new(eoa, env.provider()).with_overrides(
         StateOverridesBuilder::with_capacity(1)
             .append(
                 eoa,
-                AccountOverride::default()
-                    .with_code(Bytes::from(
-                        [
-                            &EIP7702_DELEGATION_DESIGNATOR,
-                            env.config.delegation_proxy.as_slice(),
-                        ]
+                AccountOverride::default().with_code(Bytes::from(
+                    [&EIP7702_DELEGATION_DESIGNATOR, env.config.delegation_proxy.as_slice()]
                         .concat(),
-                    ))
+                )),
             )
             .build(),
     );
