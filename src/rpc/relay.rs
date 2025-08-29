@@ -11,7 +11,7 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
+        Account, Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
         ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
@@ -69,7 +69,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
+        CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
@@ -1141,15 +1141,21 @@ impl Relay {
             (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
         };
 
-        // Calculate the digest that the user will need to sign.
-        let (digest, typed_data) = context
-            .compute_signing_digest(
+        // Calculate the digest and check if ERC1271 wrapping is needed in parallel
+        let ((mut digest, typed_data), should_wrap_erc1271) = tokio::try_join!(
+            context.compute_signing_digest(
                 delegation_status.as_ref().and_then(|s| s.stored_account()),
                 self.orchestrator(),
                 &provider,
-            )
-            .await
-            .map_err(RelayError::from)?;
+            ),
+            self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
+        )
+        .map_err(RelayError::from)?;
+
+        // Wrap digest for ERC1271 validation if needed
+        if let Some(key_address) = should_wrap_erc1271 {
+            digest = Account::new(key_address, provider.clone()).digest_erc1271(digest);
+        }
 
         let response = PrepareCallsResponse {
             context,
@@ -2606,5 +2612,35 @@ impl Relay {
             balance_overrides: Default::default(),
             key: Some(request_key),
         })
+    }
+
+    /// Determines if a digest should be wrapped for ERC1271 validation.
+    ///
+    /// Wrapping is needed when:
+    /// - The key's address is delegated on-chain, OR
+    /// - The key has stored authorization AND the key's address matches the EOA (signing for
+    ///   itself)
+    ///
+    /// Returns the key address if wrapping is needed, None otherwise.
+    async fn should_erc1271_wrap<P: Provider>(
+        &self,
+        key: Option<&CallKey>,
+        from: Option<Address>,
+        provider: &P,
+    ) -> Result<Option<Address>, RelayError> {
+        let key = match key {
+            Some(k) if k.key_type.is_secp256k1() => k,
+            _ => return Ok(None),
+        };
+
+        let key_address = Address::from_slice(&key.public_key[12..]);
+        let key_account = Account::new(key_address, provider.clone());
+
+        let status = key_account.delegation_status(&self.inner.storage).await.ok();
+
+        let needs_wrapping = status
+            .map_or(false, |s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+
+        Ok(needs_wrapping.then_some(key_address))
     }
 }

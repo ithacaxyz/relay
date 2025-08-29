@@ -444,7 +444,13 @@ impl<P: Provider> Account<P> {
     ///
     /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
     pub fn digest_erc1271(&self, digest: B256) -> B256 {
-        let domain = Eip712Domain::new(None, None, None, Some(*self.delegation.address()), None);
+        let domain = Eip712Domain::new(
+            Some("IthacaAccount".into()),
+            Some("0.5.2".into()),
+            None,
+            Some(*self.delegation.address()),
+            None,
+        );
 
         IthacaAccount::ERC1271Sign { digest }.eip712_signing_hash(&domain)
     }
@@ -504,5 +510,15 @@ impl DelegationStatus {
             DelegationStatus::Stored { account, .. } => Some(account.as_ref()),
             _ => None,
         }
+    }
+
+    /// Returns true if the account is delegated on-chain.
+    pub fn is_delegated(&self) -> bool {
+        matches!(self, DelegationStatus::Delegated { .. })
+    }
+
+    /// Returns true if the account has stored authorization but is not yet delegated on-chain.
+    pub fn is_stored(&self) -> bool {
+        matches!(self, DelegationStatus::Stored { .. })
     }
 }
