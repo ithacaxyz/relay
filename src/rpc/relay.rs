@@ -1360,7 +1360,7 @@ impl Relay {
         let interop_assets = self
             .inner
             .chains
-            .interop_assets_per_chain(request.chain_id, requested_asset)
+            .map_interop_assets_per_chain(request.chain_id, requested_asset)
             .map(|(chain_id, desc)| (chain_id, desc.address))
             .collect();
 

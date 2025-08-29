@@ -383,9 +383,11 @@ impl Chains {
             .and_then(|dst_chain| dst_chain.assets.get(asset_uid).filter(|desc| desc.interop))
     }
 
-    /// Get the interop assets for the specified origin chain and asset, per chain. Result includes
-    /// the origin chain.
-    pub fn interop_assets_per_chain(
+    /// Maps an asset on `chain_id` to equivalent assets on other chains.
+    ///
+    /// Returns an empty iterator if there are no equivalent assets, or if the equivalent assets are
+    /// not enabled for interop.
+    pub fn map_interop_assets_per_chain(
         &self,
         chain_id: ChainId,
         asset: Address,
