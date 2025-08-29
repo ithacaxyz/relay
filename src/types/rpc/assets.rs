@@ -104,6 +104,22 @@ impl GetAssetsParameters {
             ..Default::default()
         }
     }
+
+    /// Generates parameters to get specific assets for an account on specific chains.
+    pub fn for_assets_on_chains(account: Address, assets: HashMap<ChainId, Address>) -> Self {
+        let chain_filter = assets.keys().copied().collect();
+        Self {
+            account,
+            asset_filter: assets
+                .into_iter()
+                .map(|(chain_id, address)| {
+                    (chain_id, vec![AssetFilterItem::fungible(address.into())])
+                })
+                .collect(),
+            chain_filter,
+            ..Default::default()
+        }
+    }
 }
 
 /// Asset as described on ERC7811.

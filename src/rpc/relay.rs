@@ -1362,18 +1362,11 @@ impl Relay {
 
         // Fetch EOA assets interoperable with requested asset (needed for source_funds) and
         // funder's specific asset on destination chain
-        let (interop_assets, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters {
-                account: eoa,
-                asset_filter: interop_assets
-                    .into_iter()
-                    .map(|(chain_id, desc)| (
-                        chain_id,
-                        vec![AssetFilterItem::fungible(desc.address.into())]
-                    ))
-                    .collect(),
-                ..Default::default()
-            }),
+        let (assets, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::for_assets_on_chains(
+                eoa,
+                interop_assets.map(|(chain_id, desc)| (chain_id, desc.address)).collect()
+            )),
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
                 request.chain_id,
@@ -1381,7 +1374,7 @@ impl Relay {
             ))
         )?;
         let requested_asset_balance_on_dst =
-            interop_assets.balance_on_chain(request.chain_id, requested_asset.into());
+            assets.balance_on_chain(request.chain_id, requested_asset.into());
 
         let funder_balance_on_dst =
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
@@ -1485,7 +1478,7 @@ impl Relay {
                 .source_funds(
                     eoa,
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                    &interop_assets,
+                    &assets,
                     request.chain_id,
                     asset,
                     requested_funds

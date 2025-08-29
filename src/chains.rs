@@ -389,20 +389,13 @@ impl Chains {
         &self,
         chain_id: ChainId,
         asset: Address,
-    ) -> HashMap<ChainId, &AssetDescriptor> {
-        let Some((asset_uid, _)) = self.interop_asset(chain_id, asset) else {
-            return HashMap::new();
-        };
+    ) -> impl Iterator<Item = (ChainId, &AssetDescriptor)> {
+        let asset_uid = self.interop_asset(chain_id, asset).map(|(uid, _)| uid);
 
-        self.chains_iter()
-            .filter_map(|chain| {
-                chain
-                    .assets()
-                    .get(asset_uid)
-                    .filter(|desc| desc.interop)
-                    .map(|desc| (chain.id(), desc))
-            })
-            .collect()
+        self.chains_iter().filter_map(move |chain| {
+            let asset_uid = asset_uid.as_ref()?;
+            chain.assets().get(asset_uid).filter(|desc| desc.interop).map(|desc| (chain.id(), desc))
+        })
     }
 
     /// Get the interop service handle.
