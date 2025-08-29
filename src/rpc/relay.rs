@@ -2621,7 +2621,8 @@ impl Relay {
     /// Determines if a digest should be wrapped for ERC1271 validation.
     ///
     /// Wrapping is needed when:
-    /// - The key's address is delegated on-chain, OR
+    /// - It's using a KeyType::Secp256k1
+    /// - The key's address derived from the public key is delegated on-chain, OR
     /// - The key has stored authorization AND the key's address matches the EOA (signing for
     ///   itself)
     ///
