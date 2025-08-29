@@ -47,7 +47,7 @@ async fn test_multichain_refund() -> Result<()> {
 
         // Decode the Vec<Call> from execution data
         let calls: Vec<Call> =
-            Vec::<Call>::abi_decode(&execution_data).expect("Failed to decode calls");
+            Vec::<Call>::abi_decode(execution_data).expect("Failed to decode calls");
 
         // The escrow call is always the last call
         if let Some(last_call) = calls.last() {
