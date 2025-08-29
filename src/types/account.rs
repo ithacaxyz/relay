@@ -444,17 +444,9 @@ impl<P: Provider> Account<P> {
     ///
     /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
     pub async fn digest_erc1271(&self, digest: B256) -> TransportResult<B256> {
-        let domain_data = self
-            .delegation
-            .eip712Domain()
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
         let domain = Eip712Domain::new(
-            Some(domain_data.name.into()),
-            Some(domain_data.version.into()),
+            None,
+            None,
             None,
             Some(*self.delegation.address()),
             None,
