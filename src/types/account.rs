@@ -443,7 +443,7 @@ impl<P: Provider> Account<P> {
     /// Wraps a digest for ERC1271 signature validation.
     ///
     /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
-    async fn digest_erc1271(&self, digest: B256) -> TransportResult<B256> {
+    pub async fn digest_erc1271(&self, digest: B256) -> TransportResult<B256> {
         let domain_data = self
             .delegation
             .eip712Domain()
