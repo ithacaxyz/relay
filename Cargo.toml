@@ -1,14 +1,12 @@
 [package]
 name = "relay"
-version = "22.0.1"
+version = "23.0.0"
 edition = "2024"
 publish = false
 
 [[bin]]
 path = "src/bin/relay.rs"
 name = "relay"
-
-
 
 [dependencies]
 alloy = { version = "1.0.24", features = [
