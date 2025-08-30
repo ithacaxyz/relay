@@ -67,12 +67,19 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
 fn compile_legacy_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     let _dir = sh.push_dir("tests/account");
 
-    println!("Installing account v0.4.6...");
-    cmd!(sh, "forge install --no-git --shallow accountv4=ithacaxyz/account@v0.4.6").run()?;
+    let current_dir = sh.current_dir();
+    let accounts_v4_path = current_dir.join("lib/accountv4");
+    // only install accounts v0.4.6 if the lib/accountv4 path does not exist
+    if !sh.path_exists(&accounts_v4_path) {
+        println!("Installing account v0.4.6...");
+        cmd!(sh, "forge install --no-git --shallow accountv4=ithacaxyz/account@v0.4.6").run()?;
 
-    println!("Building v0.4.6 contracts...");
-    let _dir = sh.push_dir("lib/accountv4");
-    cmd!(sh, "forge build").run()?;
+        println!("Building v0.4.6 contracts...");
+        let _dir = sh.push_dir(accounts_v4_path);
+        cmd!(sh, "forge build").run()?;
+    } else {
+        println!("account v0.4.6 already exists!");
+    }
 
     Ok(())
 }
