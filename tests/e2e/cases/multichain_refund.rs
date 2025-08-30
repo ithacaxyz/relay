@@ -35,20 +35,20 @@ async fn test_multichain_refund() -> Result<()> {
     sleep(Duration::from_secs(1)).await;
 
     let initial_total_balance: U256 = setup.balances.iter().sum();
-    
+
     // Extract actual escrow amounts from the intent execution data
     let quotes = setup.context.quote().expect("should have quotes");
     let mut transfers_from_other_chains = U256::ZERO;
-    
+
     // Decode escrow amounts from input intents (chains 0 and 1)
     for i in 0..2 {
         let intent = &quotes.ty().quotes[i].intent;
         let execution_data = intent.execution_data();
-        
+
         // Decode the Vec<Call> from execution data
-        let calls: Vec<Call> = Vec::<Call>::abi_decode(&execution_data)
-            .expect("Failed to decode calls");
-        
+        let calls: Vec<Call> =
+            Vec::<Call>::abi_decode(execution_data).expect("Failed to decode calls");
+
         // The escrow call is always the last call
         if let Some(last_call) = calls.last() {
             // Decode the escrow call to get the actual escrow amount
@@ -59,7 +59,7 @@ async fn test_multichain_refund() -> Result<()> {
             }
         }
     }
-    
+
     // We deduct the fees for the output intent since it won't be executed.
     let fees = setup.fees.iter().sum::<U256>() - setup.fees[2];
 
