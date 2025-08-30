@@ -505,4 +505,14 @@ impl DelegationStatus {
             _ => None,
         }
     }
+
+    /// Returns true if the account is delegated on-chain.
+    pub fn is_delegated(&self) -> bool {
+        matches!(self, DelegationStatus::Delegated { .. })
+    }
+
+    /// Returns true if the account has stored authorization but is not yet delegated on-chain.
+    pub fn is_stored(&self) -> bool {
+        matches!(self, DelegationStatus::Stored { .. })
+    }
 }
