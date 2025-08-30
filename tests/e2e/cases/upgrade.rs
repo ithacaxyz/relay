@@ -5,7 +5,7 @@ use alloy::{
     eips::eip7702::SignedAuthorization,
     primitives::Bytes,
     providers::{Provider, ext::AnvilApi},
-    sol_types::{SolCall, SolValue},
+    sol_types::SolCall,
 };
 use relay::{
     rpc::RelayApiClient,
@@ -151,7 +151,8 @@ async fn get_authorization() -> eyre::Result<()> {
         .await?;
 
     let expected_data: Bytes = OrchestratorContract::executePreCallsCall {
-        encodedPreCalls: vec![stored_pre_call.abi_encode().into()],
+        parentEOA: env.eoa.address(),
+        preCalls: vec![stored_pre_call],
     }
     .abi_encode()
     .into();
