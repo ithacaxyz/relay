@@ -444,13 +444,7 @@ impl<P: Provider> Account<P> {
     ///
     /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
     pub fn digest_erc1271(&self, digest: B256) -> B256 {
-        let domain = Eip712Domain::new(
-            Some("IthacaAccount".into()),
-            Some("0.5.2".into()),
-            None,
-            Some(*self.delegation.address()),
-            None,
-        );
+        let domain = Eip712Domain::new(None, None, None, Some(*self.delegation.address()), None);
 
         IthacaAccount::ERC1271Sign { digest }.eip712_signing_hash(&domain)
     }
