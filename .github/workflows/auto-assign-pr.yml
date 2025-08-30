@@ -2,26 +2,23 @@ name: Auto Assign PR to Author
 
 on:
   pull_request:
-    types:
-      - opened
-      - reopened
+    types: [opened, reopened]
 
 jobs:
   auto-assign:
     permissions:
+      issues: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Check Membership
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          gh api orgs/ithacaxyz/members/${{ env.PR_AUTHOR }} --silent 2> /dev/null \
-            && echo "IS_ORG_MEMBER=true" >> $GITHUB_ENV || echo "IS_ORG_MEMBER=false" >> $GITHUB_ENV
-
       - name: Auto assign PR to author
-        if: env.IS_ORG_MEMBER == 'true'
+        if: >
+          github.event.pull_request.user.type != 'Bot' &&
+          (
+            github.event.pull_request.author_association == 'MEMBER' ||
+            github.event.pull_request.author_association == 'OWNER'  ||
+            github.event.pull_request.author_association == 'COLLABORATOR'
+          )
         uses: actions/github-script@v7
         with:
           script: |
@@ -31,14 +28,8 @@ jobs:
             console.log(`PR #${pr.number} author: ${prAuthor}`)
             console.log(`Current assignees: ${pr.assignees.map(a => a.login).join(', ') || 'none'}`)
 
-            // Skip if PR already has assignees or author is a bot
-            if (pr.assignees.length > 0) {
+            if (pr.assignees && pr.assignees.length > 0) {
               console.log('PR already has assignees, skipping')
-              return
-            }
-
-            if (pr.user.type.toLowerCase() === 'bot') {
-              console.log('PR author is a bot, skipping')
               return
             }
 
