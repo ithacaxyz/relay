@@ -4,7 +4,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        Orchestrator,
+        Orchestrator, SignedCall,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
             SpendPermission,
@@ -38,29 +38,6 @@ pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
 pub const MULTICHAIN_NONCE_PREFIX_U192: U192 = uint!(0xc1d0_U192);
 
 sol! {
-    /// A struct to hold the fields for a PreCall.
-    /// Like a Intent with a subset of fields.
-    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SignedCall {
-        /// The user's address.
-        ///
-        /// This can be set to `address(0)`, which allows it to be
-        /// coalesced to the parent Intent's EOA.
-        address eoa;
-        /// An encoded array of calls, using ERC7579 batch execution encoding.
-        ///
-        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
-        /// This allows for more efficient safe forwarding to the EOA.
-        bytes executionData;
-        /// Per delegated EOA. Same logic as the `nonce` in Intent.
-        uint256 nonce;
-        /// The wrapped signature.
-        ///
-        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
-        bytes signature;
-    }
-
     /// A struct to fund an account on an output chain from a multi chain intent.
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]

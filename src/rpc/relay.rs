@@ -2167,7 +2167,8 @@ impl RelayApiServer for Relay {
         let authorization = account.signed_authorization.clone();
 
         let data = OrchestratorContract::executePreCallsCall {
-            encodedPreCalls: vec![account.pre_call.abi_encode().into()],
+            parentEOA: address,
+            preCalls: vec![account.pre_call.clone()],
         }
         .abi_encode()
         .into();
