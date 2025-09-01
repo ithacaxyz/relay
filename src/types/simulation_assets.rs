@@ -98,9 +98,9 @@ pub struct FiatValue {
     pub value: f64,
 }
 
-/// Asset deficits per account based on simulated execution logs.
+/// Asset deficits per account based on simulated execution traces.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AssetDeficits(pub Vec<(Address, Vec<AssetDeficit>)>);
+pub struct AssetDeficits(pub HashMap<Address, Vec<AssetDeficit>>);
 
 impl AssetDeficits {
     /// Creates a new builder for asset deficits.

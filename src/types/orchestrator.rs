@@ -195,7 +195,7 @@ impl<P: Provider> Orchestrator<P> {
         gas_validation_offset: U256,
         sim_mode: SimMode,
         calculate_asset_deficits: bool,
-    ) -> Result<(AssetDeficits, AssetDiffs, GasResults), RelayError> {
+    ) -> Result<SimulateExecuteResult, RelayError> {
         let result = SimulatorContract::new(
             simulator,
             self.orchestrator.provider(),
@@ -245,7 +245,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
-        Ok((asset_deficits, asset_diffs, result.gas))
+        Ok(SimulateExecuteResult { asset_deficits, asset_diffs, gas_results: result.gas })
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].
@@ -309,4 +309,15 @@ impl IntentExecuted {
     pub fn has_error(&self) -> bool {
         self.err != ORCHESTRATOR_NO_ERROR
     }
+}
+
+/// Result of [`Orchestrator::simulate_execute`] based on simulated execution.
+#[derive(Debug)]
+pub struct SimulateExecuteResult {
+    /// Asset deficits per account and asset.
+    pub asset_deficits: AssetDeficits,
+    /// Asset differences per account and asset.
+    pub asset_diffs: AssetDiffs,
+    /// Gas usage.
+    pub gas_results: GasResults,
 }

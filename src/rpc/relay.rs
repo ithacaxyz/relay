@@ -16,7 +16,7 @@ use crate::{
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
-        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, SimulateExecuteResult, Transfer, VersionedContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
@@ -528,7 +528,7 @@ impl Relay {
         let calculate_asset_deficits = false;
 
         // Simulate the intent
-        let (_asset_deficits, asset_diffs, sim_result) = orchestrator
+        let SimulateExecuteResult { asset_deficits: _, asset_diffs, gas_results } = orchestrator
             .simulate_execute(
                 mock_from,
                 self.simulator(),
@@ -546,7 +546,7 @@ impl Relay {
         );
 
         let gas_estimate = GasEstimate::from_combined_gas(
-            sim_result.gCombined.to(),
+            gas_results.gCombined.to(),
             intrinsic_gas,
             &self.inner.quote_config,
         );
