@@ -1404,6 +1404,46 @@ impl Relay {
             return Err(QuoteError::InsufficientLiquidity.into());
         }
 
+        // Try to simulate intent as single chain if we have enough assets to cover
+        // `requested_funds`.
+        if requested_asset_balance_on_dst >= requested_funds {
+            let (asset_diff, quotes) =
+                self.build_single_chain_quote(request, delegation_status, nonce, None).await?;
+
+            // It should never happen that we do not have a quote from this simulation, but to avoid
+            // outright crashing we just throw an internal error.
+            let output_quote = quotes.quotes.first().ok_or_else(|| {
+                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
+            })?;
+
+            // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
+            // just do this single chain instead.
+            if requested_asset_balance_on_dst
+                .checked_sub(requested_funds)
+                .and_then(|n| {
+                    n.checked_sub(if source_fee {
+                        output_quote.intent.total_payment_max_amount()
+                    } else {
+                        U256::ZERO
+                    })
+                })
+                .is_some()
+            {
+                debug!(
+                    %eoa,
+                    chain_id = %request.chain_id,
+                    %requested_asset,
+                    %requested_funds,
+                    %requested_asset_balance_on_dst,
+                    %source_fee,
+                    fee = %output_quote.intent.total_payment_max_amount(),
+                    "Falling back to single chain for intent"
+                );
+
+                return Ok((asset_diff, quotes));
+            }
+        }
+
         // Simulate the output intent first to get the fees required to execute it.
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
@@ -1426,35 +1466,6 @@ impl Relay {
             quotes.quotes.into_iter().next().ok_or_else(|| {
                 RelayError::InternalError(eyre::eyre!("no quote after simulation"))
             })?;
-
-        // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
-        // just do this single chain instead.
-        if requested_asset_balance_on_dst
-            .checked_sub(requested_funds)
-            .and_then(|n| {
-                n.checked_sub(if source_fee {
-                    output_quote.intent.total_payment_max_amount()
-                } else {
-                    U256::ZERO
-                })
-            })
-            .is_some()
-        {
-            debug!(
-                %eoa,
-                chain_id = %request.chain_id,
-                %requested_asset,
-                %requested_funds,
-                %requested_asset_balance_on_dst,
-                %source_fee,
-                fee = %output_quote.intent.total_payment_max_amount(),
-                "Falling back to single chain for intent"
-            );
-            return self
-                .build_single_chain_quote(request, delegation_status, nonce, None)
-                .await
-                .map_err(Into::into);
-        }
 
         // ensure interop has been configured, before proceeding
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
