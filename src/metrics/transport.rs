@@ -109,6 +109,7 @@ where
                 span.set_status(Status::error(err.to_string()));
 
                 if let Some(error_resp) = err.as_error_resp() {
+                    span.record("rpc.jsonrpc.error_message", error_resp.message.to_string());
                     span.record("rpc.jsonrpc.error_code", error_resp.code);
                 }
             }
