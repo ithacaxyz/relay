@@ -15,7 +15,7 @@ use crate::{
         ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
-        OrchestratorContract::IntentExecuted,
+        OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
         rpc::{
@@ -2191,10 +2191,18 @@ impl RelayApiServer for Relay {
             .map_err(|e| RelayError::InternalError(e.into()))?
             .ok_or_else(|| StorageError::AccountDoesNotExist(address))?;
 
-        Ok(GetAuthorizationResponse {
-            authorization: account.signed_authorization.clone(),
-            data: account.pre_call.executionData,
-        })
+        let authorization = account.signed_authorization.clone();
+
+        let data = OrchestratorContract::executePreCallsCall {
+            parentEOA: address,
+            preCalls: vec![account.pre_call.clone()],
+        }
+        .abi_encode()
+        .into();
+
+        let to = self.orchestrator();
+
+        Ok(GetAuthorizationResponse { authorization, data, to })
     }
 
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
