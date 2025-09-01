@@ -69,7 +69,7 @@ expression: value
           "extraPayment": "0x0",
           "feeTokenDeficit": "0x0",
           "intent": {
-            "combinedGas": "0x3ad7a",
+            "combinedGas": "0x3a8a1",
             "encodedFundTransfers": [],
             "encodedPreCalls": [
               "[encodedPreCall]"
@@ -82,17 +82,15 @@ expression: value
             "isMultichain": false,
             "nonce": "0x0",
             "payer": "0x0000000000000000000000000000000000000000",
+            "paymentAmount": "0x8ef5fffa9155",
+            "paymentMaxAmount": "0x8ef5fffa9155",
             "paymentRecipient": "0x0000000000000000000000000000000000000000",
             "paymentSignature": "0x",
             "paymentToken": "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
-            "prePaymentAmount": "[prePaymentAmount]",
-            "prePaymentMaxAmount": "[prePaymentMaxAmount]",
             "settler": "0x0000000000000000000000000000000000000000",
             "settlerContext": "0x",
             "signature": "0x",
-            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431",
-            "totalPaymentAmount": "[totalPaymentAmount]",
-            "totalPaymentMaxAmount": "[totalPaymentMaxAmount]"
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
           },
           "nativeFeeEstimate": {
             "maxFeePerGas": "[maxFeePerGas]",
@@ -100,7 +98,7 @@ expression: value
           },
           "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
           "paymentTokenDecimals": 18,
-          "txGas": "0x6de8c"
+          "txGas": "0x6d59f"
         }
       ],
       "r": "[r]",
@@ -121,7 +119,7 @@ expression: value
       "chainId": "0x7a69",
       "name": "Orchestrator",
       "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-      "version": "0.4.6"
+      "version": "0.5.1"
     },
     "message": {
       "calls": [
@@ -131,7 +129,7 @@ expression: value
           "value": "0x0"
         }
       ],
-      "combinedGas": "0x3ad7a",
+      "combinedGas": "0x3a8a1",
       "encodedFundTransfers": [],
       "encodedPreCalls": [
         "[encodedPreCall]"
@@ -141,10 +139,9 @@ expression: value
       "multichain": false,
       "nonce": "0x0",
       "payer": "0x0000000000000000000000000000000000000000",
+      "paymentMaxAmount": "0x8ef5fffa9155",
       "paymentToken": "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
-      "prePaymentMaxAmount": "[prePaymentMaxAmount]",
-      "settler": "0x0000000000000000000000000000000000000000",
-      "totalPaymentMaxAmount": "[totalPaymentMaxAmount]"
+      "settler": "0x0000000000000000000000000000000000000000"
     },
     "primaryType": "Intent",
     "types": {
@@ -206,11 +203,7 @@ expression: value
           "type": "address"
         },
         {
-          "name": "prePaymentMaxAmount",
-          "type": "uint256"
-        },
-        {
-          "name": "totalPaymentMaxAmount",
+          "name": "paymentMaxAmount",
           "type": "uint256"
         },
         {
