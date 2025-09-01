@@ -4,8 +4,10 @@ use crate::e2e::{
     environment::{Environment, EnvironmentConfig},
 };
 use alloy::{
+    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, Bytes, U64, U256, b256},
     providers::Provider,
+    rpc::types::state::{AccountOverride, StateOverridesBuilder},
     sol_types::SolCall,
     uint,
 };
@@ -13,7 +15,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
+        Account, Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddFaucetFundsParameters, BundleId, GetAssetsParameters, GetAuthorizationParameters,
             GetKeysParameters, Meta, Permission, PrepareCallsCapabilities, PrepareCallsParameters,
@@ -428,8 +430,19 @@ async fn test_verify_signature() -> eyre::Result<()> {
     let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, ADMIN_KEY)?.unwrap();
     upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
+    let account = Account::new(env.eoa.address(), env.provider()).with_overrides(
+        StateOverridesBuilder::with_capacity(1)
+            .append(
+                env.eoa.address(),
+                AccountOverride::default().with_code(Bytes::from(
+                    [&EIP7702_DELEGATION_DESIGNATOR, env.config.delegation_proxy.as_slice()]
+                        .concat(),
+                )),
+            )
+            .build(),
+    );
     let digest = B256::ZERO;
-    let signature = key.sign_payload_hash(digest).await?;
+    let signature = key.sign_payload_hash(account.digest_erc1271(digest)).await?;
 
     let response = env
         .relay_endpoint
