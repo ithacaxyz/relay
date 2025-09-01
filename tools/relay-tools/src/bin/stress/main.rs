@@ -523,7 +523,7 @@ struct Args {
     #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
     relay_url: Url,
     /// RPC URLs of the source chains
-    #[arg(long = "src-rpc", value_name = "RPC_URL", required = true)]
+    #[arg(long = "src-rpc", value_name = "RPC_URL", required = false)]
     src_rpc: Vec<Url>,
     /// RPC URL of the destination chain
     #[arg(long = "dst-rpc", value_name = "RPC_URL", required = true)]
