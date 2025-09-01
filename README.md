@@ -289,8 +289,12 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 - Pull `ithacaxyz/account`
 
    ```bash
-   git submodule update --init --recursive
+   git submodule update --init --recursive && 
+   cd tests/account && 
+   forge build &&
+   forge build lib/solady/test/utils/mocks/MockERC20.sol
    ```
+
 
 #### Running
 
