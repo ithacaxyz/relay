@@ -1,7 +1,7 @@
 use crate::{
     config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
-use alloy::{primitives::Address, providers::Provider, sol, transports::TransportErrorKind};
+use alloy::{primitives::Address, providers::Provider, sol, dyn_abi::Eip712Domain, transports::TransportErrorKind};
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use tokio::try_join;
@@ -29,13 +29,14 @@ sol! {
 }
 
 /// Contract address with optional version.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+
 pub struct VersionedContract {
     /// Contract address.
     pub address: Address,
-    /// Contract version.
-    #[serde(default)]
-    pub version: Option<String>,
+    /// Cached EIP712 domain.
+    #[serde(skip)]
+    pub eip712_domain: Option<Eip712Domain>,
 }
 
 impl VersionedContract {
@@ -43,34 +44,44 @@ impl VersionedContract {
     ///
     /// This fetches the contract version by calling `eip712Domain()` on the contract.
     pub async fn new<P: Provider>(address: Address, provider: P) -> Self {
-        let version = Eip712Contract::new(address, provider)
+        let domain = Eip712Contract::new(address, provider)
             .eip712Domain()
             .call()
-            .await
-            .map(|domain| {
+            .await;
+
+        match domain {
+            Ok(domain) => {
                 tracing::debug!(
                     name = %domain.name,
                     contract = %address,
                     version = %domain.version,
                     "Fetched EIP712 domain"
                 );
-                domain.version
-            })
-            .ok();
 
-        if version.is_none() {
-            tracing::debug!(
-                contract = %address,
-                "Failed to fetch EIP712 domain"
-            );
+                let eip712_domain = Eip712Domain {
+                    name: Some(domain.name.into()),
+                    version: Some(domain.version.into()),
+                    chain_id: Some(domain.chainId),
+                    verifying_contract: Some(domain.verifyingContract),
+                    salt: Some(domain.salt),
+                };
+
+                Self { address, eip712_domain: Some(eip712_domain) }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    contract = %address,
+                    error = %e,
+                    "Failed to fetch EIP712 domain"
+                );
+                Self { address, eip712_domain: None }
+            }
         }
-
-        Self { address, version }
     }
 
     /// Creates a [`VersionedContract`] without a version.
-    pub fn no_version(address: Address) -> Self {
-        Self { address, version: None }
+    pub fn no_eip712_domain(address: Address) -> Self {
+        Self { address, eip712_domain: None }
     }
 }
 
@@ -161,10 +172,11 @@ impl VersionedContracts {
             delegation_implementation,
             legacy_orchestrators,
             legacy_delegations,
-            delegation_proxy: VersionedContract::no_version(config.delegation_proxy),
-            simulator: VersionedContract::no_version(config.simulator),
-            funder: VersionedContract::no_version(config.funder),
-            escrow: VersionedContract::no_version(config.escrow),
+            delegation_proxy: VersionedContract::no_eip712_domain(config.delegation_proxy),
+            // TODO: These contracts have domains now
+            simulator: VersionedContract::no_eip712_domain(config.simulator),
+            funder: VersionedContract::no_eip712_domain(config.funder),
+            escrow: VersionedContract::no_eip712_domain(config.escrow),
         })
     }
 }
