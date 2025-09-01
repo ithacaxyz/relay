@@ -11,12 +11,13 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
+        Account, Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
         ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::IntentExecuted,
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
@@ -68,7 +69,7 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus},
     types::{
-        Account, CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
+        CreatableAccount, FeeEstimationContext, Intent, KeyWith712Signer, Orchestrator,
         PartialIntent, Quote, Signature, SignedQuotes,
         rpc::{
             AuthorizeKey, AuthorizeKeyResponse, BundleId, CallsStatus, CallsStatusCapabilities,
@@ -408,6 +409,7 @@ impl Relay {
             fee_token = ?token,
             ?fee_history,
             ?eth_price,
+            orchestrator_version = ?orchestrator.version(),
             "Got fee parameters"
         );
 
@@ -420,25 +422,27 @@ impl Relay {
             * 10u128.pow(token.decimals as u32) as f64)
             / f64::from(eth_price);
 
-        // fill intent
-        let mut intent_to_sign = Intent::latest()
-            .with_eoa(intent.eoa)
-            .with_execution_data(intent.execution_data.clone())
-            .with_nonce(intent.nonce)
-            .with_payer(intent.payer.unwrap_or_default())
-            .with_payment_token(token.address)
-            .with_payment_recipient(self.inner.fee_recipient)
-            .with_supported_account_implementation(intent.delegation_implementation)
-            .with_encoded_pre_calls(
-                intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
-            )
-            .with_encoded_fund_transfers(
-                intent
-                    .fund_transfers
-                    .into_iter()
-                    .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
-                    .collect(),
-            );
+        // fill intent - use the appropriate version based on orchestrator
+        let mut intent_to_sign = Intent::for_orchestrator(
+            orchestrator.version().expect("orchestrator version should be set"),
+        )
+        .with_eoa(intent.eoa)
+        .with_execution_data(intent.execution_data.clone())
+        .with_nonce(intent.nonce)
+        .with_payer(intent.payer.unwrap_or_default())
+        .with_payment_token(token.address)
+        .with_payment_recipient(self.inner.fee_recipient)
+        .with_supported_account_implementation(intent.delegation_implementation)
+        .with_encoded_pre_calls(
+            intent.pre_calls.into_iter().map(|pre_call| pre_call.abi_encode().into()).collect(),
+        )
+        .with_encoded_fund_transfers(
+            intent
+                .fund_transfers
+                .into_iter()
+                .map(|(token, amount)| Transfer { token, amount }.abi_encode().into())
+                .collect(),
+        );
 
         // For multichain intents, set the interop flag
         if !context.intent_kind.is_single() {
@@ -469,12 +473,12 @@ impl Relay {
         } else {
             // For single chain intents, sign the intent directly
             let signature = mock_key
-                .sign_typed_data(
-                    &intent_to_sign.as_eip712().map_err(RelayError::from)?,
-                    &orchestrator
-                        .eip712_domain(intent_to_sign.is_nonce_multichain())
+                .sign_payload_hash(
+                    intent_to_sign
+                        .compute_eip712_data(*orchestrator.address(), &provider)
                         .await
-                        .map_err(RelayError::from)?,
+                        .map_err(RelayError::from)?
+                        .0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -513,16 +517,12 @@ impl Relay {
         // which ensures the simulation never reverts. Whether the user can actually really
         // pay for the intent execution or not is determined later and communicated to the
         // client.
-        intent_to_sign = intent_to_sign
-            .with_pre_payment_amount(U256::from(1))
-            .with_pre_payment_max_amount(U256::from(1))
-            .with_total_payment_amount(U256::from(1))
-            .with_total_payment_max_amount(U256::from(1));
+        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
                 mock_from,
-                self.simulator(),
+                self.get_simulator_for_orchestrator(*orchestrator.address()),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
@@ -577,11 +577,7 @@ impl Relay {
         let payment_amount = context.intent_kind.multi_input_fee().unwrap_or(
             extra_payment + U256::from((payment_per_gas * gas_estimate.tx as f64).ceil()),
         );
-        intent_to_sign = intent_to_sign
-            .with_pre_payment_amount(payment_amount)
-            .with_pre_payment_max_amount(payment_amount)
-            .with_total_payment_amount(payment_amount)
-            .with_total_payment_max_amount(payment_amount);
+        intent_to_sign.set_payment(payment_amount);
 
         let fee_token_deficit =
             intent_to_sign.total_payment_max_amount().saturating_sub(fee_token_balance);
@@ -694,12 +690,7 @@ impl Relay {
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
         let payment_amount = quote.intent.pre_payment_max_amount();
-        quote.intent = quote
-            .intent
-            .with_pre_payment_amount(payment_amount)
-            .with_pre_payment_max_amount(payment_amount)
-            .with_total_payment_amount(payment_amount)
-            .with_total_payment_max_amount(payment_amount);
+        quote.intent.set_payment(payment_amount);
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
@@ -912,11 +903,27 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-        if self.orchestrator() == address || self.legacy_orchestrators().any(|c| c == address) {
-            Ok(Orchestrator::new(address, provider))
+
+        // Get the version for the orchestrator
+        let version = if self.orchestrator() == address {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?self.inner.contracts.orchestrator.version,
+                "Using current orchestrator"
+            );
+            self.inner.contracts.orchestrator.version.clone()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
+            tracing::trace!(
+                orchestrator = %address,
+                version = ?legacy.orchestrator.version,
+                "Using legacy orchestrator"
+            );
+            legacy.orchestrator.version.clone()
         } else {
-            Err(RelayError::UnsupportedOrchestrator(address))
-        }
+            return Err(RelayError::UnsupportedOrchestrator(address));
+        };
+
+        Ok(Orchestrator::new(address, provider).with_version(version))
     }
 
     /// Checks if a delegation implementation needs upgrading.
@@ -1134,15 +1141,25 @@ impl Relay {
             (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
         };
 
-        // Calculate the digest that the user will need to sign.
-        let (digest, typed_data) = context
-            .compute_signing_digest(
-                delegation_status.as_ref().and_then(|s| s.stored_account()),
-                self.orchestrator(),
-                &provider,
-            )
-            .await
-            .map_err(RelayError::from)?;
+        // Calculate the digest and check if ERC1271 wrapping is needed in parallel
+        let ((mut digest, typed_data), should_wrap_erc1271) = tokio::try_join!(
+            async {
+                context
+                    .compute_signing_digest(
+                        delegation_status.as_ref().and_then(|s| s.stored_account()),
+                        self.orchestrator(),
+                        &provider,
+                    )
+                    .await
+                    .map_err(RelayError::from)
+            },
+            self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
+        )?;
+
+        // Wrap digest for ERC1271 validation if needed
+        if let Some(key_address) = should_wrap_erc1271 {
+            digest = Account::new(key_address, provider.clone()).digest_erc1271(digest);
+        }
 
         let response = PrepareCallsResponse {
             context,
@@ -1212,7 +1229,7 @@ impl Relay {
         &self,
         eoa: Address,
         request_key: &CallKey,
-        assets: GetAssetsResponse,
+        assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         requested_asset: AddressOrNative,
         amount: U256,
@@ -1349,12 +1366,26 @@ impl Relay {
             AddressOrNative::Address(requested_asset)
         };
 
-        // Fetch all EOA assets (needed for source_funds) and funder's specific asset on destination
-        // chain
-        //
-        // todo(onbjerg): let's restrict this further to just the tokens we care about
-        let (assets, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters::eoa(eoa)),
+        // Get interop assets for the requested asset on the source chain.
+        let interop_assets = self
+            .inner
+            .chains
+            .map_interop_assets_per_chain(request.chain_id, requested_asset)
+            .map(|(chain_id, desc)| (chain_id, desc.address))
+            .collect();
+
+        // Create a future for fetching assets interoperable with requested asset (needed for
+        // source_funds). It will be awaited later when we actually need it.
+        let assets =
+            self.get_assets(GetAssetsParameters::for_assets_on_chains(eoa, interop_assets));
+
+        // Fetch EOA and funder's requested asset on destination chain
+        let (destination_asset, funder_assets) = try_join!(
+            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                eoa,
+                request.chain_id,
+                requested_asset,
+            )),
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
                 request.chain_id,
@@ -1362,7 +1393,7 @@ impl Relay {
             ))
         )?;
         let requested_asset_balance_on_dst =
-            assets.balance_on_chain(request.chain_id, requested_asset.into());
+            destination_asset.balance_on_chain(request.chain_id, requested_asset.into());
 
         let funder_balance_on_dst =
             funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
@@ -1433,6 +1464,9 @@ impl Relay {
             RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
         )?;
 
+        // Await a future with assets on interoperable chains
+        let assets = assets.await?;
+
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
         // the true fees. After this, we do one more pass of finding funds on other chains.
@@ -1466,7 +1500,7 @@ impl Relay {
                 .source_funds(
                     eoa,
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
-                    assets.clone(),
+                    &assets,
                     request.chain_id,
                     asset,
                     requested_funds
@@ -2452,9 +2486,31 @@ impl Relay {
         self.inner.contracts.orchestrator.address
     }
 
-    /// Previously deployed orchestrators.
-    pub fn legacy_orchestrators(&self) -> impl Iterator<Item = Address> {
-        self.inner.contracts.legacy_orchestrators.iter().map(|c| c.address)
+    /// Get previously deployed orchestrator and simulator by orchestrator address.
+    pub fn get_legacy_orchestrator(
+        &self,
+        address: Address,
+    ) -> Option<&VersionedOrchestratorContracts> {
+        self.inner
+            .contracts
+            .legacy_orchestrators
+            .iter()
+            .find(|contracts| contracts.orchestrator.address == address)
+    }
+
+    /// Get the simulator address for the given orchestrator address.
+    /// Returns the matching simulator for the orchestrator (current or legacy).
+    pub fn get_simulator_for_orchestrator(&self, orchestrator_address: Address) -> Address {
+        if orchestrator_address == self.orchestrator() {
+            // Current orchestrator uses current simulator
+            self.simulator()
+        } else if let Some(legacy) = self.get_legacy_orchestrator(orchestrator_address) {
+            // Legacy orchestrator uses its corresponding simulator
+            legacy.simulator.address
+        } else {
+            // Fallback to current simulator if orchestrator not found
+            self.simulator()
+        }
     }
 
     /// Previously deployed delegation implementations.
@@ -2577,5 +2633,36 @@ impl Relay {
             balance_overrides: Default::default(),
             key: Some(request_key),
         })
+    }
+
+    /// Determines if a digest should be wrapped for ERC1271 validation.
+    ///
+    /// Wrapping is needed when:
+    /// - It's using a KeyType::Secp256k1
+    /// - The key's address derived from the public key is delegated on-chain, OR
+    /// - The key has stored authorization AND the key's address matches the EOA (signing for
+    ///   itself)
+    ///
+    /// Returns the key address if wrapping is needed, None otherwise.
+    async fn should_erc1271_wrap<P: Provider>(
+        &self,
+        key: Option<&CallKey>,
+        from: Option<Address>,
+        provider: &P,
+    ) -> Result<Option<Address>, RelayError> {
+        let key = match key {
+            Some(k) if k.key_type.is_secp256k1() => k,
+            _ => return Ok(None),
+        };
+
+        let key_address = Address::from_slice(&key.public_key[12..]);
+        let key_account = Account::new(key_address, provider);
+
+        let status = key_account.delegation_status(&self.inner.storage).await.ok();
+
+        let needs_wrapping = status
+            .is_some_and(|s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+
+        Ok(needs_wrapping.then_some(key_address))
     }
 }

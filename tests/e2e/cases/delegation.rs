@@ -15,12 +15,13 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Account, Call,
+        Account, Call, IERC20,
         IthacaAccount::{self, upgradeProxyAccountCall},
         KeyType, KeyWith712Signer, Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
+use std::ops::Div;
 
 /// Ensures unsupported delegation implementations and proxies are caught.
 #[tokio::test(flavor = "multi_thread")]
@@ -348,43 +349,30 @@ async fn upgrade_delegation_with_precall() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Test that delegation upgrade happens even with accounts only stored and not onchain.
-#[tokio::test]
-async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> {
-    // Skip this test if DATABASE_URL is not set
-    if std::env::var("DATABASE_URL").is_err() {
-        // We restart the relay, and so we need a persistent storage
-        return Ok(());
+/// Helper function to test delegation upgrade with stored accounts
+async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyre::Result<()> {
+    // Start a brand new environment
+    let mut env = Environment::setup_multi_chain(2).await?;
+
+    // First restart with legacy (v4) contracts as current
+    env.restart_with_v4().await?;
+
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+
+    // Upgrade account either lazily or eagerly based on parameter
+    if use_lazy {
+        let _auth =
+            upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+    } else {
+        let _auth =
+            upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth)
+                .await?;
     }
 
-    let mut env = Environment::setup().await?;
-    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
-    let _auth = upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
+    // Now restart with latest (v5) contracts as current
+    env.restart_with_latest().await?;
 
-    // Get the legacy contracts from env (these are pre-deployed during setup)
-    let legacy_orchestrator = env.config.legacy_orchestrators.iter().next().copied().unwrap();
-    let legacy_delegation = env.get_legacy_delegation_proxy();
-
-    // Restart relay with swapped configuration:
-    // - Legacy contracts become current
-    // - Current contracts become legacy
-    let mut config = env.config.clone();
-    config.legacy_orchestrators.clear();
-    config.legacy_delegation_proxies.clear();
-    config.legacy_orchestrators.insert(config.orchestrator);
-    config.legacy_delegation_proxies.insert(config.delegation_proxy);
-    config.orchestrator = legacy_orchestrator;
-    config.delegation_proxy = legacy_delegation;
-    env.restart_relay(config).await?;
-
-    // Get new capabilities after restart
     let chain_capabilities = &env.relay_endpoint.get_capabilities(None).await?.0[&env.chain_id()];
-
-    // The current orchestrator is now in the legacy list
-    assert!(
-        chain_capabilities.contracts.orchestrator.address == legacy_orchestrator,
-        "Current orchestrator should now be in legacy list"
-    );
 
     // Prepare a call - should auto-add upgrade because account has legacy delegation
     let response = env
@@ -408,10 +396,13 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
         .await?;
 
     // Decode the execution data to Vec<Call>
-    let calls = Vec::<Call>::abi_decode(
-        response.context.quote().unwrap().ty().quotes[0].intent.execution_data(),
-    )
-    .unwrap();
+    let quote = response.context.quote().unwrap();
+
+    // Assert that the quote is using v04 Intent (since account was created on v04 orchestrator)
+    let intent = &quote.ty().quotes[0].intent;
+    assert!(intent.as_v04().is_some());
+
+    let calls = Vec::<Call>::abi_decode(intent.execution_data()).unwrap();
 
     // Should have user call + upgrade call
     assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");
@@ -440,10 +431,138 @@ async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> 
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(!status.status.is_pending(), "Bundle should not be pending");
 
+    // After upgrade, the account should now be using the latest orchestrator
     assert_eq!(
         Account::new(env.eoa.address(), env.provider()).get_orchestrator().await?,
-        legacy_orchestrator,
+        env.orchestrator, // Should be using the current (v5) orchestrator
     );
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(1))],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    // Decode the execution data to Vec<Call>
+    let quote = response.context.quote().unwrap();
+
+    // Assert that the quote is using v05 Intent (since we have upgraded it)
+    let intent = &quote.ty().quotes[0].intent;
+    assert!(intent.as_v05().is_some());
+
+    let calls = Vec::<Call>::abi_decode(intent.execution_data()).unwrap();
+
+    // Should have user call
+    assert_eq!(calls.len(), 1, "Expected exactly 1 call (user transfer)");
+
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for bundle to complete
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(!status.status.is_pending(), "Bundle should not be pending");
+
+    // Now test a multichain transfer where the chain0 account is on v5, but the chain1 account is
+    // not yet deployed but stored in db as v4
+
+    // Check balances on both chains
+    let chain0_balance =
+        IERC20::new(env.erc20, env.provider_for(0)).balanceOf(env.eoa.address()).call().await?;
+    let chain1_balance =
+        IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?;
+
+    // Create a transfer on chain 0 that requires MORE funds than available on chain 0
+    // This will force pulling funds from chain 1
+    let required_amount = chain0_balance + chain1_balance.div(U256::from(2)); // More than what's on chain 0
+
+    let multichain_response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(100))],
+            chain_id: env.chain_id_for(0),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                // Request more funds than available on chain 0 to trigger multichain
+                required_funds: vec![relay::types::rpc::RequiredAsset::new(
+                    env.erc20,
+                    required_amount,
+                )],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    let mc_quote = multichain_response.context.quote().unwrap();
+    assert_eq!(mc_quote.ty().quotes.len(), 2, "Should have exactly 2 quotes for 2-chain transfer");
+
+    // Chain0 (Destination intent) has been upgraded to v05
+    let has_v05 = mc_quote.ty().quotes[1].intent.as_v05().is_some();
+
+    // Chain1 (Escrow intent) is using the stored account, so it needs an upgrade at the end
+    let has_v04 = mc_quote.ty().quotes[0].intent.as_v04().is_some();
+    assert!(has_v04 && has_v05, "Multichain transfer should have one V04 and one V05 Intent");
+
+    let v04_calls =
+        Vec::<Call>::abi_decode(mc_quote.ty().quotes[0].intent.execution_data()).unwrap();
+    // Other two calls are approve and escrow
+    assert!(v04_calls[2].data[..4] == upgradeProxyAccountCall::SELECTOR);
+
+    // Execute the multichain transfer
+    let mc_bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(multichain_response.digest).await?,
+        multichain_response.context,
+    )
+    .await?;
+
+    // Wait for multichain bundle to complete
+    let mc_status = await_calls_status(&env, mc_bundle_id).await?;
+    assert!(mc_status.status.is_confirmed(), "Multichain transfer should be confirmed");
+
+    Ok(())
+}
+
+/// Test that delegation upgrade happens even with accounts only stored and not onchain.
+#[tokio::test]
+async fn test_delegation_auto_upgrade_with_stored_account() -> eyre::Result<()> {
+    // Skip this test if DATABASE_URL is not set
+    if std::env::var("DATABASE_URL").is_err() {
+        // We restart the relay, and so we need a persistent storage
+        return Ok(());
+    }
+
+    // Test upgrade from a stored/offchain account
+    test_delegation_upgrade_with_stored_account_impl(true).await?;
+
+    // Test upgrade from a onchain account
+    test_delegation_upgrade_with_stored_account_impl(false).await?;
 
     Ok(())
 }

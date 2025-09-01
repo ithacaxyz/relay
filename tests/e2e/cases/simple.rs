@@ -24,8 +24,12 @@ use relay::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_erc20_transfer() -> Result<()> {
-    for key_type in [KeyType::WebAuthnP256, KeyType::Secp256k1] {
-        let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
+    for key in [
+        KeyWith712Signer::random_admin(KeyType::WebAuthnP256),
+        KeyWith712Signer::random_admin(KeyType::Secp256k1),
+        KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, EOA_PRIVATE_KEY),
+    ] {
+        let key = key?.unwrap();
 
         // The first TX will bundle the prep/upgrade calls
         run_e2e(|env| {
