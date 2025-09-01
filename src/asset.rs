@@ -3,7 +3,7 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
-        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events, IERC20Instance},
         IERC721::{self, IERC721Events},
     },
@@ -11,7 +11,7 @@ use crate::{
 use alloy::{
     primitives::{Address, ChainId, Log, U256, map::HashMap},
     providers::{
-        MULTICALL3_ADDRESS, Provider,
+        DynProvider, MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
     rpc::types::{TransactionRequest, state::StateOverride, trace::geth::CallFrame},
@@ -255,67 +255,10 @@ impl AssetInfoServiceHandle {
         let mut builder = AssetDeficits::builder();
 
         for call in calls {
-            let Some(callee) = call.to else { continue };
-
-            // Extract sender and amount
-            let (asset, from, to, amount) = if let Ok((from, to, amount)) =
-                // First try to decode as `transferFrom`, as it's
-                // more likely the user is interacting with a
-                // contract that tries to pull funds from their
-                // wallet
-                IERC20::transferFromCall::abi_decode(
-                        &call.input,
-                    )
-                    .map(|transfer| (transfer.from, transfer.to, transfer.amount))
-                    .or_else(|_| {
-                        // Then try to decode as `transfer` in case the user is making a direct
-                        // transfer
-                        IERC20::transferCall::abi_decode(&call.input)
-                            .map(|transfer| (call.from, transfer.to, transfer.amount))
-                    }) {
-                (Asset::Token(callee), from, to, amount)
-            } else {
-                // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
-                // native token transfer either, because tracing of calls with insufficient native
-                // token balance fails with an error.
-                continue;
-            };
-
-            // Check if the call is reverted / errored due to insufficient balance. We check through
-            // several common ERC-20 implementations, including specialized cases such as USDT.
-            if let Some(revert_reason) = call.revert_reason
-                && (
-                    // OpenZeppelin < 5.0.0
-                    revert_reason.contains("transfer amount exceeds balance") ||
-                    // Solmate and other implementations that don't use SafeMath
-                    revert_reason.contains("arithmetic underflow or overflow")
-                )
+            if let Some((from, asset, amount)) = self.asset_deficit_from_call(provider, call).await
             {
+                builder.record_deficit(from, asset, amount);
             }
-            // Check common custom contract errors
-            else if let Some(error) =
-                call.output.and_then(|output| ContractErrorsErrors::abi_decode(&output).ok())
-                && matches!(
-                    error,
-                    ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
-                        | ContractErrorsErrors::InsufficientBalance(_) // Solady
-                        | ContractErrorsErrors::ETHTransferFailed(_) // Solady
-                        | ContractErrorsErrors::TransferFailed(_) // Solady
-                        | ContractErrorsErrors::TransferFromFailed(_) // Solady
-                )
-            {
-            }
-            // USDT transfers just revert on not enough allowance or insufficient funds
-            else if call.error.is_some()
-                && self.get_asset_info_list(provider, vec![asset]).await?[&asset].metadata.symbol.as_deref() == Some("USDT")
-                // Make sure it's not a revert due to insufficient allowance
-                && IERC20Instance::new(asset.address(), provider).allowance(from, to).call().await? > amount
-            {
-            } else {
-                continue;
-            }
-
-            builder.record_deficit(from, asset, amount);
         }
 
         // Fetch assets metadata
@@ -323,6 +266,78 @@ impl AssetInfoServiceHandle {
             self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
 
         Ok(builder.build(metadata))
+    }
+
+    /// Extracts the asset deficit from a [`CallFrame`], if there's any detected.
+    ///
+    /// General algorithm is:
+    /// 1. Try to decode the call as ERC-20 `transferFrom` first, and `transfer` second.
+    /// 2. If decoding succeeded, start checking common ERC-20 ways to fail on insufficient funds.
+    async fn asset_deficit_from_call<P: Provider>(
+        &self,
+        provider: &P,
+        call: CallFrame,
+    ) -> Option<(Address, Asset, U256)> {
+        let callee = call.to?;
+
+        // Extract sender and amount
+        let (asset, from, to, amount) =
+            // First try to decode as `transferFrom`, as it's
+            // more likely the user is interacting with a
+            // contract that tries to pull funds from their
+            // wallet
+            IERC20::transferFromCall::abi_decode(&call.input)
+                    .map(|transfer| (transfer.from, transfer.to, transfer.amount))
+                    .or_else(|_| {
+                        // Then try to decode as `transfer` in case the user is making a direct
+                        // transfer
+                        IERC20::transferCall::abi_decode(&call.input)
+                            .map(|transfer| (call.from, transfer.to, transfer.amount))
+                    }).map(|(from, to, amount)| {
+                        (Asset::Token(callee), from, to, amount)
+                    })
+                    // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
+                    // native token transfer either, because tracing of calls with insufficient native
+                    // token balance fails with an error.
+                    .ok()?;
+
+        // Check if the call is reverted / errored due to insufficient balance. We check through
+        // several common ERC-20 implementations, including specialized cases such as USDT.
+        if let Some(revert_reason) = call.revert_reason
+            && (
+                // OpenZeppelin < 5.0.0
+                revert_reason.contains("transfer amount exceeds balance") ||
+                // Solmate and other implementations that don't use SafeMath
+                revert_reason.contains("arithmetic underflow or overflow")
+            )
+        {
+        }
+        // Check common custom contract errors
+        else if let Some(error) =
+            call.output.and_then(|output| ContractErrorsErrors::abi_decode(&output).ok())
+            && matches!(
+                error,
+                ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
+                    | ContractErrorsErrors::InsufficientBalance(_) // Solady
+                    | ContractErrorsErrors::ETHTransferFailed(_) // Solady
+                    | ContractErrorsErrors::TransferFailed(_) // Solady
+                    | ContractErrorsErrors::TransferFromFailed(_) // Solady
+            )
+        {
+        }
+        // USDT transfers just revert on not enough allowance or insufficient funds
+        else if call.error.is_some()
+            && let Ok(asset_info) = self.get_asset_info_list(provider, vec![asset]).await
+            && asset_info[&asset].metadata.symbol.as_deref() == Some("USDT")
+            // Make sure it's not a revert due to insufficient allowance
+            && let Ok(allowance) = IERC20Instance::new(asset.address(), provider).allowance(from, to).call().await
+            && allowance > amount
+        {
+        } else {
+            return None;
+        }
+
+        Some((from, asset, amount))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
