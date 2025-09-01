@@ -161,7 +161,7 @@ impl InteropTester {
             .relay_client
             .get_keys(GetKeysParameters {
                 address: self.test_account.address(),
-                chain_ids: vec![1], // Use mainnet as default for key checking
+                chain_ids: vec![]
             })
             .await
         {
@@ -590,7 +590,7 @@ impl InteropTester {
             .relay_client
             .get_keys(GetKeysParameters {
                 address: self.test_account.address(),
-                chain_ids: vec![1],
+                chain_ids: vec![],
             })
             .await
             .is_ok();
