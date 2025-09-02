@@ -89,15 +89,11 @@ impl Signatures {
             let Ok(decoded) = func.abi_decode_input(&call.data[4..]) else {
                 return func.signature();
             };
-            
-            let params = decoded
-                .iter()
-                .map(|v| format!("{:?}", v))
-                .collect::<Vec<_>>()
-                .join(", ");
+
+            let params = decoded.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>().join(", ");
             return format!("{}({})", func.name, params);
         }
-        
+
         func.signature()
     }
 }
