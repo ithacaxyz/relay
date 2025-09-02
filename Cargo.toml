@@ -104,7 +104,7 @@ resend-rs = { version = "0.16.0", default-features = false, features = [
 num-traits = "0.2"
 num-bigint = "0.4"
 ruint = { version = "1.16.0", features = ["bigdecimal"] }
-binance-sdk = { version = "12", features = ["wallet"] }
+binance-sdk = { version = "14", features = ["wallet"] }
 rust_decimal = "1"
 strum = "0.27"
 strum_macros = "0.27"
