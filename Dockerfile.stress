@@ -45,5 +45,8 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates &
 # Copy stress over from the build stage
 COPY --from=builder /app/stress /usr/local/bin
 
+# Add nushell
+COPY --from=ghcr.io/nushell/nushell:0.105.1-alpine /usr/bin/nu /usr/bin/nu
+
 EXPOSE 9119
 ENTRYPOINT ["/usr/local/bin/stress"]
