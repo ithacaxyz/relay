@@ -40,13 +40,21 @@ FROM ubuntu AS runtime
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates && update-ca-certificates
+RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates curl git && update-ca-certificates
+
+# Install foundry
+RUN curl -L https://foundry.paradigm.xyz | bash && \
+    . /root/.bashrc && \
+    /root/.foundry/bin/foundryup
 
 # Copy chainwalker over from the build stage
 COPY --from=builder /app/chainwalker /usr/local/bin
 
 # Add nushell
 COPY --from=ghcr.io/nushell/nushell:0.105.1-alpine /usr/bin/nu /usr/bin/nu
+
+# Add foundry binaries to PATH
+ENV PATH="/root/.foundry/bin:${PATH}"
 
 EXPOSE 9119
 ENTRYPOINT ["/usr/local/bin/chainwalker"]
