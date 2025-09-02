@@ -383,6 +383,23 @@ impl Chains {
             .and_then(|dst_chain| dst_chain.assets.get(asset_uid).filter(|desc| desc.interop))
     }
 
+    /// Maps an asset on `chain_id` to equivalent assets on other chains.
+    ///
+    /// Returns an empty iterator if there are no equivalent assets, or if the equivalent assets are
+    /// not enabled for interop.
+    pub fn map_interop_assets_per_chain(
+        &self,
+        chain_id: ChainId,
+        asset: Address,
+    ) -> impl Iterator<Item = (ChainId, &AssetDescriptor)> {
+        let asset_uid = self.interop_asset(chain_id, asset).map(|(uid, _)| uid);
+
+        self.chains_iter().filter_map(move |chain| {
+            let asset_uid = asset_uid.as_ref()?;
+            chain.assets().get(asset_uid).filter(|desc| desc.interop).map(|desc| (chain.id(), desc))
+        })
+    }
+
     /// Get the interop service handle.
     pub fn interop(&self) -> Option<&InteropServiceHandle> {
         self.interop.as_ref()
@@ -415,7 +432,8 @@ async fn try_build_provider(
 ) -> eyre::Result<DynProvider> {
     let (transport, is_local) = create_transport(endpoint).await?;
 
-    let builder = ClientBuilder::default().layer(TraceLayer).layer(RETRY_LAYER.clone());
+    let builder =
+        ClientBuilder::default().layer(TraceLayer::new(chain_id)).layer(RETRY_LAYER.clone());
 
     let client = if let Some(sequencer_url) = sequencer_endpoint {
         let sequencer =

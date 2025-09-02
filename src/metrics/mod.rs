@@ -1,18 +1,23 @@
 //! Types for metrics.
 
-mod periodic;
-use opentelemetry::trace::SpanKind;
+pub mod periodic;
+use futures::{FutureExt, future::BoxFuture};
+use opentelemetry::{propagation::TextMapPropagator, trace::SpanKind};
+use opentelemetry_http::HeaderInjector;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 pub use periodic::spawn_periodic_collectors;
 
 mod transport;
+use tower::Service;
 use tracing::{Level, span};
 use tracing_futures::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 pub use transport::*;
 
 use jsonrpsee::{
     MethodResponse,
-    core::middleware::Batch,
-    server::middleware::rpc::RpcServiceT,
+    core::{BoxError, middleware::Batch},
+    server::{HttpBody, HttpRequest, HttpResponse, middleware::rpc::RpcServiceT},
     types::{Notification, Request},
 };
 use metrics::{counter, histogram};
@@ -21,6 +26,7 @@ use std::{
     borrow::Cow,
     net::SocketAddr,
     sync::Mutex,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -59,12 +65,17 @@ where
                 rpc.system = "jsonrpc",
                 rpc.jsonrpc.request_id = %req.id(),
                 rpc.method = method,
+                // Will be filled in implementation, if possible.
+                eth.chain_id = tracing::field::Empty,
             );
 
             // the span handle is cloned here so we can record more fields later
             let timer = Instant::now();
-            let rp = service.call(req).instrument(span.clone()).await;
+            let mut rp = service.call(req).instrument(span.clone()).await;
             let elapsed = timer.elapsed();
+
+            // Insert the span context for consuming later in `HttpTracingService`.
+            rp.extensions_mut().insert(span.context());
 
             if let Some(error_code) = rp.as_error_code() {
                 span.record("rpc.jsonrpc.error_code", error_code);
@@ -105,6 +116,48 @@ where
         // todo(onbjerg): this is assuming no notifications - we don't have these right now, so
         // that's okay
         self.service.notification(n)
+    }
+}
+
+/// HTTP middleware that records trace context for responses.
+#[derive(Debug, Clone)]
+pub struct HttpTracingService<S> {
+    inner: S,
+}
+
+impl<S> HttpTracingService<S> {
+    /// Create a new HTTP middleware that records trace context for responses.
+    pub fn new(inner: S) -> Self {
+        Self { inner }
+    }
+}
+
+impl<S, B> Service<HttpRequest<B>> for HttpTracingService<S>
+where
+    S: Service<HttpRequest<B>, Response = HttpResponse<HttpBody>>,
+    S::Error: Into<BoxError>,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = BoxError;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, request: HttpRequest<B>) -> Self::Future {
+        let fut = self.inner.call(request);
+        async move {
+            let mut rp = fut.await.map_err(Into::into)?;
+            // We expect the span context to be inserted by the `RpcMetricsService`.
+            if let Some(ctx) = rp.extensions().get::<opentelemetry::Context>().cloned() {
+                TraceContextPropagator::new()
+                    .inject_context(&ctx, &mut HeaderInjector(rp.headers_mut()));
+            }
+            Ok(rp)
+        }
+        .boxed()
     }
 }
 

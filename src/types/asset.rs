@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::Address;
 use derive_more::{Display, FromStr};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 /// A unique ID for an asset.
@@ -69,6 +70,11 @@ impl Assets {
     pub fn fee_token_iter(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
         self.iter().filter(|(_, desc)| desc.fee_token)
     }
+
+    /// Iterate over all assets that are accepted as fee tokens sorted by asset address.
+    pub fn fee_token_iter_sorted(&self) -> impl Iterator<Item = (&AssetUid, &AssetDescriptor)> {
+        self.iter().filter(|(_, desc)| desc.fee_token).sorted_by_key(|(_, desc)| *desc.address)
+    }
 }
 
 /// The description of a configured asset for a chain.
@@ -113,6 +119,42 @@ pub struct AssetMetadata {
     /// Asset decimals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decimals: Option<u8>,
+}
+
+/// Asset price, including the currency the price is denominated in, this is currently always USD.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetPrice {
+    /// The currency
+    pub currency: String,
+    /// The price
+    pub price: f64,
+}
+
+impl AssetPrice {
+    /// Creates a new price, in USD, from the argument.
+    pub fn from_price(price: f64) -> Self {
+        Self { currency: "USD".to_string(), price }
+    }
+}
+
+/// Asset metadata with price information
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetMetadataWithPrice {
+    /// Asset name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Asset symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// TokenURI if it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    /// Asset decimals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u8>,
+    /// Price information
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<AssetPrice>,
 }
 
 /// Asset type.

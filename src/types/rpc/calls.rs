@@ -32,6 +32,7 @@ use alloy::{
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use tracing::instrument;
 
 wrap_fixed_bytes! {
     /// An identifier for a call bundle.
@@ -269,6 +270,7 @@ impl PrepareCallsParameters {
     /// 4. If this is the intent of a non delegated account (`maybe_stored`), return random.
     /// 5. If none of the above match, query for the next account nonce onchain (for
     ///    `DEFAULT_SEQUENCE_KEY`).
+    #[instrument(skip_all)]
     pub async fn get_nonce(
         &self,
         maybe_stored: Option<&CreatableAccount>,
@@ -437,6 +439,7 @@ impl PrepareCallsContext {
     ///
     /// It will be a eip712 signing hash in a single chain intent and a merkle root in a multi chain
     /// intent.
+    #[instrument(skip_all)]
     pub async fn compute_signing_digest(
         &self,
         maybe_stored: Option<&CreatableAccount>,
@@ -447,7 +450,7 @@ impl PrepareCallsContext {
             PrepareCallsContext::Quote(context) => {
                 let output_quote = context.ty().quotes.last().expect("should exist");
                 if let Some(root) = context.ty().multi_chain_root {
-                    Ok((root, TypedData::from_struct(&output_quote.intent, None)))
+                    Ok((root, output_quote.intent.typed_data(None)))
                 } else {
                     output_quote
                         .intent

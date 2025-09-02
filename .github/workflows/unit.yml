@@ -58,10 +58,12 @@ jobs:
       - name: Set fork environment
         if: ${{ matrix.variant == 'base_sepolia' }}
         run: |
-          echo "TEST_FORK_URL=https://base-sepolia.rpc.ithaca.xyz" >> $GITHUB_ENV
-          echo "TEST_ORCHESTRATOR=0xf2d86ffc5462789bd49dff291ca9466055b14328" >> $GITHUB_ENV
-          echo "TEST_PROXY=0x15dd5e7c8fc9dc9aca75f9c662808322dc97300c" >> $GITHUB_ENV
-          echo "TEST_SIMULATOR=0x86b0d32c48634218c08395d384e57948ec025047" >> $GITHUB_ENV
+          # Source the env file and export to GitHub Actions environment
+          source tests/assets/config/base_sepolia.env
+          echo "TEST_FORK_URL=$TEST_FORK_URL" >> $GITHUB_ENV
+          echo "TEST_ORCHESTRATOR=$TEST_ORCHESTRATOR" >> $GITHUB_ENV
+          echo "TEST_PROXY=$TEST_PROXY" >> $GITHUB_ENV
+          echo "TEST_SIMULATOR=$TEST_SIMULATOR" >> $GITHUB_ENV
 
       - name: Set database URL
         if: ${{ matrix.variant == 'pg' }}

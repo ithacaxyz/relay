@@ -6,7 +6,7 @@ use crate::{
     config::RelayConfig,
     constants::ESCROW_REFUND_DURATION_SECS,
     diagnostics::run_diagnostics,
-    metrics::{self, RpcMetricsService},
+    metrics::{self, HttpTracingService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
@@ -129,7 +129,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         }
     }
 
-    metrics::spawn_periodic_collectors(chains.clone()).await?;
+    metrics::spawn_periodic_collectors(&config, storage.clone(), chains.clone()).await?;
 
     // construct quote signer
     let quote_signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::random())?));
@@ -205,7 +205,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         .set_http_middleware(
             ServiceBuilder::new()
                 .layer(cors)
-                .layer(ProxyGetRequestLayer::new([("/health", "health")])?),
+                .layer(ProxyGetRequestLayer::new([("/health", "health")])?)
+                .layer_fn(HttpTracingService::new),
         )
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
         .build((config.server.address, config.server.port))

@@ -8,7 +8,7 @@ use alloy::{
     hex,
     network::{EthereumWallet, TransactionBuilder, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, address, bytes},
+    primitives::{Address, Bytes, TxKind, U64, U256, address, bytes},
     providers::{
         DynProvider, MULTICALL3_ADDRESS, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi,
     },
@@ -23,8 +23,9 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     chains::RETRY_LAYER,
     config::{
-        ChainConfig, InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig,
-        SettlerImplementation, SignerConfig, SimpleSettlerConfig, TransactionServiceConfig,
+        ChainConfig, InteropConfig, LegacyOrchestrator, RebalanceServiceConfig, RelayConfig,
+        SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
+        TransactionServiceConfig,
     },
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
@@ -129,6 +130,8 @@ pub struct Environment {
     pub settlement: SettlementConfig,
     pub deployer: DynSigner,
     pub config: RelayConfig,
+    /// All deployed contract addresses (including legacy)
+    contracts: ContractAddresses,
 }
 
 impl std::fmt::Debug for Environment {
@@ -257,6 +260,8 @@ struct ContractAddresses {
     #[allow(dead_code)]
     delegation_implementation: Address,
     orchestrator: Address,
+    legacy_orchestrator: LegacyOrchestrator,
+    legacy_delegation_proxy: Address,
     funder: Address,
     escrow: Address,
     settler: Address,
@@ -339,9 +344,10 @@ async fn setup_chain<P: Provider + WalletProvider>(
 
     // Additional minting for funder on secondary chains
     if !is_primary {
-        for _ in 0..5 {
-            mint_erc20s(&contracts.erc20s[..2], &[contracts.funder], provider).await?;
-        }
+        let erc20s = &contracts.erc20s[..2];
+        let funder = &[contracts.funder];
+        let minting_iter = (0..5).map(|_| mint_erc20s(erc20s, funder, provider));
+        join_all(minting_iter).await.into_iter().collect::<Result<Vec<_>>>()?;
     }
 
     Ok(contracts)
@@ -353,6 +359,94 @@ impl Environment {
     /// Read [`Self::setup`] for more information on setup.
     pub async fn setup() -> eyre::Result<Self> {
         Self::setup_with_config(EnvironmentConfig::default()).await
+    }
+
+    /// Restarts the relay with an updated configuration.
+    ///
+    /// # Important
+    /// This method does NOT properly stop the previous background services like TransactionService,
+    /// InteropService, RebalanceService, and AssetInfoService.
+    pub async fn restart_relay(&mut self, config: RelayConfig) -> eyre::Result<()> {
+        // Stop the current relay RPC server
+        // NOTE: This only stops the RPC server, not background services
+        self.relay_handle.server.stop()?;
+
+        // Wait a moment for the server to fully shutdown
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Spawn a new relay with the updated config
+        let skip_diagnostics = false;
+        let new_handle = try_spawn(config.clone(), skip_diagnostics).await?;
+
+        // Update the relay endpoint with the new server URL
+        self.relay_endpoint = HttpClientBuilder::default()
+            .build(new_handle.http_url())
+            .wrap_err("Failed to build relay client for restarted relay")?;
+
+        // Update the handle and config
+        self.relay_handle = new_handle;
+        self.config = config;
+
+        Ok(())
+    }
+
+    /// Restarts the relay with latest (v5) contracts as current.
+    /// Legacy (v4) contracts become the legacy set.
+    pub async fn restart_with_latest(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+
+        // Add v4 contracts to legacy
+        config.legacy_orchestrators.insert(self.contracts.legacy_orchestrator);
+        config.legacy_delegation_proxies.insert(self.contracts.legacy_delegation_proxy);
+
+        // Set v5 contracts as current
+        config.orchestrator = self.contracts.orchestrator;
+        config.simulator = self.contracts.simulator;
+        config.delegation_proxy = self.contracts.delegation;
+
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.orchestrator;
+        self.delegation = self.contracts.delegation;
+
+        self.restart_relay(config).await
+    }
+
+    /// Restarts the relay with legacy (v4) contracts as current.
+    pub async fn restart_with_v4(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+
+        // Set v4 contracts as current
+        config.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        config.simulator = self.contracts.legacy_orchestrator.simulator;
+        config.delegation_proxy = self.contracts.legacy_delegation_proxy;
+
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        self.delegation = self.contracts.legacy_delegation_proxy;
+
+        self.restart_relay(config).await
+    }
+
+    /// Get the legacy delegation proxy address from the relay's config.
+    /// This is used for testing upgrade scenarios.
+    pub fn get_legacy_delegation_proxy(&self) -> Address {
+        // The legacy delegation is the first one in the list
+        *self
+            .config
+            .legacy_delegation_proxies
+            .iter()
+            .next()
+            .expect("Legacy delegation should be configured")
     }
 
     /// Sets up a multi-chain test environment with N chains.
@@ -592,7 +686,10 @@ impl Environment {
             .with_transaction_service_config(config.transaction_service_config)
             .with_interop_config(interop_config)
             .with_rebalance_service_config(config.rebalance_service_config)
-            .with_database_url(database_url);
+            .with_database_url(database_url)
+            .with_legacy_orchestrators(&[contracts.legacy_orchestrator])
+            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy]);
+
         let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
 
         let relay_endpoint = HttpClientBuilder::default()
@@ -630,6 +727,7 @@ impl Environment {
             settlement: SettlementConfig { layerzero: layerzero_config },
             deployer,
             config,
+            contracts,
         })
     }
 
@@ -685,13 +783,18 @@ impl Environment {
         &self,
         chain_index: usize,
     ) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
-        Ok(self
+        // Get keys for the specific chain
+        let response = self
             .relay_endpoint
             .get_keys(GetKeysParameters {
                 address: self.eoa.address(),
-                chain_id: self.chain_id_for(chain_index),
+                chain_ids: vec![self.chain_id_for(chain_index)],
             })
-            .await?)
+            .await?;
+
+        // Extract keys for the requested chain
+        let chain_id_key = U64::from(self.chain_id_for(chain_index));
+        Ok(response.get(&chain_id_key).cloned().unwrap_or_default())
     }
 
     /// Gets the on-chain EOA authorized keys for the default chain.
@@ -893,74 +996,120 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
     );
 
-    // Deploy contracts using environment variables if provided, otherwise deploy new ones
+    // Deploy orchestrator first (or use env var)
     let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {
         Address::from_str(&address).wrap_err("Orchestrator address parse failed.")?
     } else {
         deploy_orchestrator(provider, &contracts_path).await?
     };
 
-    let funder = deploy_funder(provider, &contracts_path, orchestrator).await?;
+    // Prepare futures for parallel deployment
+    let funder_future = async { deploy_funder(provider, &contracts_path, orchestrator).await };
 
-    let (delegation_implementation, delegation_proxy) =
+    let delegation_future = async {
         if let Ok(address) = std::env::var("TEST_PROXY") {
             let delegation_implementation =
                 deploy_delegation_implementation(provider, &contracts_path, orchestrator).await?;
-            (
+            Ok::<_, eyre::Error>((
                 delegation_implementation,
                 Address::from_str(&address).wrap_err("Proxy address parse failed.")?,
-            )
+            ))
         } else {
-            deploy_delegation_contracts(provider, &contracts_path, orchestrator).await?
-        };
-
-    let simulator = if let Ok(address) = std::env::var("TEST_SIMULATOR") {
-        Address::from_str(&address).wrap_err("Simulator address parse failed.")?
-    } else {
-        deploy_simulator(provider, &contracts_path).await?
-    };
-
-    // Deploy ERC20 tokens
-    let erc20s = if let Ok(address) = std::env::var("TEST_ERC20") {
-        let mut erc20s = Vec::with_capacity(10);
-        erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
-        // Deploy remaining ERC20s
-        while erc20s.len() < 10 {
-            erc20s.push(deploy_erc20(provider, &contracts_path).await?);
+            deploy_delegation_contracts(provider, &contracts_path, orchestrator).await
         }
-        erc20s
-    } else {
-        deploy_erc20_tokens(provider, &contracts_path, 10).await?
     };
 
-    let erc721 = if let Ok(address) = std::env::var("TEST_ERC721") {
-        Address::from_str(&address).wrap_err("ERC721 address parse failed.")?
-    } else {
-        deploy_erc721(provider, &contracts_path).await?
+    let simulator_future = async {
+        if let Ok(address) = std::env::var("TEST_SIMULATOR") {
+            Ok(Address::from_str(&address).wrap_err("Simulator address parse failed.")?)
+        } else {
+            deploy_simulator(provider, &contracts_path).await
+        }
     };
 
-    let escrow = if let Ok(address) = std::env::var("TEST_ESCROW") {
-        Address::from_str(&address).wrap_err("Escrow address parse failed.")?
-    } else {
-        deploy_escrow(provider, &contracts_path).await?
+    let erc20s_future = async {
+        if let Ok(address) = std::env::var("TEST_ERC20") {
+            let mut erc20s = Vec::with_capacity(10);
+            erc20s.push(Address::from_str(&address).wrap_err("ERC20 address parse failed.")?);
+            // Deploy remaining ERC20s in parallel
+            let remaining = deploy_erc20_tokens(provider, &contracts_path, 9).await?;
+            erc20s.extend(remaining);
+            Ok::<_, eyre::Error>(erc20s)
+        } else {
+            deploy_erc20_tokens(provider, &contracts_path, 10).await
+        }
     };
 
-    let settler = if let Ok(address) = std::env::var("TEST_SETTLER") {
-        Address::from_str(&address).wrap_err("Settler address parse failed.")?
-    } else {
-        deploy_settler(provider, &contracts_path, provider.default_signer_address()).await?
+    let erc721_future = async {
+        if let Ok(address) = std::env::var("TEST_ERC721") {
+            Ok(Address::from_str(&address).wrap_err("ERC721 address parse failed.")?)
+        } else {
+            deploy_erc721(provider, &contracts_path).await
+        }
     };
 
-    // Deploy Multicall3 if needed
-    if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
-        provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
-    }
+    let escrow_future = async {
+        if let Ok(address) = std::env::var("TEST_ESCROW") {
+            Ok(Address::from_str(&address).wrap_err("Escrow address parse failed.")?)
+        } else {
+            deploy_escrow(provider, &contracts_path).await
+        }
+    };
+
+    let settler_future = async {
+        if let Ok(address) = std::env::var("TEST_SETTLER") {
+            Ok(Address::from_str(&address).wrap_err("Settler address parse failed.")?)
+        } else {
+            deploy_settler(provider, &contracts_path, provider.default_signer_address()).await
+        }
+    };
+
+    let multicall_future = async {
+        if provider.get_code_at(MULTICALL3_ADDRESS).await?.is_empty() {
+            provider.anvil_set_code(MULTICALL3_ADDRESS, MULTICALL3_BYTECODE).await?;
+        }
+        Ok::<_, eyre::Error>(())
+    };
+
+    // Execute all independent deployments in parallel
+    let (
+        funder,
+        (delegation_implementation, delegation_proxy),
+        simulator,
+        erc20s,
+        erc721,
+        escrow,
+        settler,
+        _,
+    ) = tokio::try_join!(
+        funder_future,
+        delegation_future,
+        simulator_future,
+        erc20s_future,
+        erc721_future,
+        escrow_future,
+        settler_future,
+        multicall_future
+    )?;
+
+    // Deploy legacy contracts from accountv4
+    // Use the accountv4 contracts path (tests/account/lib/accountv4/out)
+    let accountv4_path = contracts_path.parent().unwrap().join("lib/accountv4/out");
+    let legacy_orchestrator = LegacyOrchestrator {
+        orchestrator: deploy_orchestrator(provider, &accountv4_path).await?,
+        simulator: deploy_simulator(provider, &accountv4_path).await?,
+    };
+    let (_, legacy_delegation_proxy) =
+        deploy_delegation_contracts(provider, &accountv4_path, legacy_orchestrator.orchestrator)
+            .await?;
 
     Ok(ContractAddresses {
         simulator,
         delegation: delegation_proxy,
         delegation_implementation,
         orchestrator,
+        legacy_orchestrator,
+        legacy_delegation_proxy,
         funder,
         escrow,
         settler,
@@ -1061,17 +1210,14 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
     .await
 }
 
-/// Deploy multiple ERC20 tokens
+/// Deploy multiple ERC20 tokens in parallel
 async fn deploy_erc20_tokens<P: Provider>(
     provider: &P,
     contracts_path: &Path,
     count: usize,
 ) -> eyre::Result<Vec<Address>> {
-    let mut erc20s = Vec::with_capacity(count);
-    for _ in 0..count {
-        erc20s.push(deploy_erc20(provider, contracts_path).await?);
-    }
-    Ok(erc20s)
+    let deployment_futures = (0..count).map(|_| deploy_erc20(provider, contracts_path));
+    try_join_all(deployment_futures).await
 }
 
 /// Deploy an ERC721 token

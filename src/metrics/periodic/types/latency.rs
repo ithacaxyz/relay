@@ -16,6 +16,7 @@ pub struct LatencyCollector {
 }
 
 impl LatencyCollector {
+    /// Create a new latency collector.
     pub fn new(chains: Arc<Chains>) -> Self {
         Self { chains }
     }

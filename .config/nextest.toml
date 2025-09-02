@@ -10,6 +10,9 @@ filter = """
     test(test_basic_concurrent) |
     test(resume_paused) |
     test(diverged_nonce) |
+    test(auth_then_two_authorizes_then_erc20_transfer) |
+    test(auth_then_erc20_transfer) |
+    test(native_transfer) |
     test(pause_out_of_funds)
 """
 test-group = "sequential-tests"

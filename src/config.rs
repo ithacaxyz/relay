@@ -12,7 +12,10 @@ use crate::{
 };
 use alloy::{
     eips::eip1559::Eip1559Estimation,
-    primitives::{Address, ChainId, U256, map::HashMap},
+    primitives::{
+        Address, ChainId, U256,
+        map::{HashMap, HashSet},
+    },
     providers::{
         DynProvider,
         utils::{EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE, Eip1559Estimator},
@@ -61,9 +64,12 @@ pub struct RelayConfig {
     pub interop: Option<InteropConfig>,
     /// Orchestrator address.
     pub orchestrator: Address,
-    /// Previously deployed orchestrators.
+    /// Previously deployed orchestrators and simulators.
+    ///
+    /// Orchestrators and simulators should be of the same version to be compatible with each
+    /// other.
     #[serde(default)]
-    pub legacy_orchestrators: BTreeSet<Address>,
+    pub legacy_orchestrators: HashSet<LegacyOrchestrator>,
     /// Previously deployed delegation proxies.
     #[serde(default)]
     pub legacy_delegation_proxies: BTreeSet<Address>,
@@ -186,6 +192,15 @@ impl RelayConfig {
         if let Some(delegation_proxy) = delegation_proxy {
             self.delegation_proxy = delegation_proxy;
         }
+        self
+    }
+
+    /// Sets the legacy orchestrator addresses.
+    pub fn with_legacy_orchestrators(
+        mut self,
+        legacy_orchestrators: &[LegacyOrchestrator],
+    ) -> Self {
+        self.legacy_orchestrators.extend(legacy_orchestrators);
         self
     }
 
@@ -838,18 +853,21 @@ impl Default for TransactionServiceConfig {
     }
 }
 
+/// Legacy orchestrator and simulator contracts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LegacyOrchestrator {
+    /// Legacy orchestrator address.
+    pub orchestrator: Address,
+    /// Legacy simulator address.
+    pub simulator: Address,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::{AssetDescriptor, AssetUid};
     use alloy::primitives::uint;
     use std::collections::HashMap;
-
-    #[test]
-    fn test_config_v15_yaml() {
-        let s = include_str!("../tests/assets/config/v15.yaml");
-        let _config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
-    }
 
     #[test]
     fn test_config_v21_yaml() {

@@ -44,6 +44,10 @@ pub struct TransactionServiceMetrics {
     pub blocks_until_inclusion: Histogram,
     /// How long transactions have spent in queue before being sent.
     pub time_in_queue: Histogram,
+    /// Maximum estimated fee per gas, in wei.
+    pub max_fee_per_gas: Histogram,
+    /// Maximum estimated priority fee per gas, in wei.
+    pub max_priority_fee_per_gas: Histogram,
 }
 
 /// Metrics of an individual signer, should be labeled with the signer address and chain ID.
@@ -66,6 +70,8 @@ pub struct SignerMetrics {
     pub native_spent: Gauge,
     /// Signer nonce.
     pub nonce: Counter,
+    /// Number of transaction simulation retry attempts.
+    pub simulation_retries: Counter,
 }
 
 impl SignerMetrics {
@@ -84,6 +90,7 @@ impl SignerMetrics {
             gas_spent: gauge!("signer.gas_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             native_spent: gauge!("signer.native_spent", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
             nonce: counter!("signer.nonce", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
+            simulation_retries: counter!("signer.simulation_retries", "address" => address.to_string(), "chain_id" => chain_id.to_string()),
         }
     }
 }

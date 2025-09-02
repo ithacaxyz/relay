@@ -1,11 +1,13 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE pull_gas_transactions \n            SET state = $2,\n                updated_at = NOW()\n            WHERE id = $1\n            ",
+  "query": "\n            INSERT INTO pull_gas_transactions\n            (id, signer_address, chain_id, state, transaction_data)\n            VALUES ($1, $2, $3, $4, $5)\n            ",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
         "Bytea",
+        "Bytea",
+        "Int8",
         {
           "Custom": {
             "name": "pull_gas_state",
@@ -17,10 +19,11 @@
               ]
             }
           }
-        }
+        },
+        "Jsonb"
       ]
     },
     "nullable": []
   },
-  "hash": "4853be9c055ebe765a67c55251f42dbfe7e9cd33ba02568783a184f669e27c4c"
+  "hash": "897bfeb578a927a561e619883e66d64756377054d9165317851766952e4a6243"
 }

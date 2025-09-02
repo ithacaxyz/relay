@@ -13,6 +13,7 @@ use alloy::{
         coins_bip39::{English, Mnemonic},
     },
 };
+use futures::stream::FuturesOrdered;
 use futures_util::{
     StreamExt, TryStreamExt,
     future::{JoinAll, TryJoinAll, join_all, try_join_all},
@@ -122,11 +123,15 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
     // setup accounts
     let num_accounts = 100;
     let keys = (&mut rng).random_iter().take(num_accounts).collect::<Vec<B256>>();
-    let accounts =
-        futures_util::stream::iter(keys.into_iter().map(|key| MockAccount::with_key(&env, key)))
-            .buffered(1)
-            .try_collect::<Vec<_>>()
-            .await?;
+    let mut account_stream =
+        keys.into_iter().map(|key| MockAccount::with_key(&env, key)).collect::<FuturesOrdered<_>>();
+
+    let mut accounts = Vec::new();
+    while let Some(account) = account_stream.next().await {
+        let account = account?;
+        accounts.push(account)
+    }
+
     // wait a bit to make sure all tasks see the tx confirmation
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_metrics(num_accounts, num_accounts, 0, &env);
@@ -142,9 +147,8 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .collect::<TryJoinAll<_>>()
         .await
         .unwrap();
-    for handle in handles {
-        assert_confirmed(handle).await;
-    }
+
+    join_all(handles.into_iter().map(assert_confirmed)).await;
     assert_metrics(num_accounts * 2, num_accounts * 2, 0, &env);
 
     // send `num_accounts` more transactions some of which are failing
@@ -161,7 +165,7 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
                 let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind else {
                     unreachable!()
                 };
-                quote.intent.signature = Default::default();
+                quote.intent = quote.intent.clone().with_signature(Default::default());
                 invalid += 1;
             }
 
@@ -170,14 +174,10 @@ async fn test_basic_concurrent() -> eyre::Result<()> {
         .collect::<TryJoinAll<_>>()
         .await?;
 
-    for handle in handles {
-        wait_for_tx(handle).await;
-    }
+    join_all(handles.into_iter().map(wait_for_tx)).await;
 
     assert_metrics(num_accounts * 3, num_accounts * 3 - invalid, invalid, &env);
 
-    // otherwise it will be marked as LEAK.
-    drop(env);
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(())
@@ -568,7 +568,7 @@ async fn diverged_nonce() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn restart_with_pending() -> eyre::Result<()> {
     let mut config = EnvironmentConfig {
-        block_time: Some(1.0),
+        block_time: None, // No auto-mining initially
         transaction_service_config: TransactionServiceConfig {
             max_transactions_per_signer: 3,
             ..Default::default()
@@ -607,17 +607,24 @@ async fn restart_with_pending() -> eyre::Result<()> {
         .collect::<JoinAll<_>>()
         .await;
 
+    // drop one of the transactions
+    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+
+    // Mine a block to include the first batch of transactions
+    provider.anvil_mine(Some(1), None).await.unwrap();
+
     drop(tx_service_handle);
     drop(env.relay_handle);
 
-    // drop one of the transactions
-    provider.anvil_drop_transaction(sent[1]).await.unwrap();
+    // Wait a bit to ensure the service has finished processing queued transactions
+    // We shouldn't really start a new tx service without the old one finishing
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // restart the service
     // increase signers capacity to make sure transactions are getting included quickly
     config.transaction_service_config.max_transactions_per_signer = 10;
     let (service, _handle) = TransactionService::new(
-        provider,
+        provider.clone(),
         None,
         signers,
         storage.clone(),
@@ -628,6 +635,9 @@ async fn restart_with_pending() -> eyre::Result<()> {
     .await
     .unwrap();
     tokio::spawn(service);
+
+    // Enable auto-mining after restarting the service
+    provider.anvil_set_interval_mining(1).await.unwrap();
 
     // ensure that all transactions are getting confirmed after restart
     'outer: loop {
