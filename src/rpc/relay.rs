@@ -2558,9 +2558,9 @@ impl Relay {
     }
 
     /// Get the version for a given delegation implementation address.
+    ///
     /// Returns None if the address is not a known delegation implementation.
     fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
-        // Check if it's the current implementation
         if impl_addr == self.inner.contracts.delegation_implementation.address {
             return self
                 .inner
