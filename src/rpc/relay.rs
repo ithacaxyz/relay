@@ -16,7 +16,7 @@ use crate::{
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
-        Quotes, SignedCall, SignedCalls, SimulateExecuteResult, Transfer, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
@@ -528,7 +528,7 @@ impl Relay {
         let calculate_asset_deficits = false;
 
         // Simulate the intent
-        let SimulateExecuteResult { asset_deficits: _, asset_diffs, gas_results } = orchestrator
+        let (asset_diffs, gas_results) = orchestrator
             .simulate_execute(
                 mock_from,
                 self.get_simulator_for_orchestrator(*orchestrator.address()),

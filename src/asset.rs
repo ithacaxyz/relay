@@ -1,12 +1,11 @@
 //! Asset info service.
 use crate::{
     config::RelayConfig,
-    error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
+    error::{AssetError, RelayError},
     types::{
         Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
-        IERC20::{self, IERC20Events, IERC20Instance},
+        IERC20::{self, IERC20Events},
         IERC721::{self, IERC721Events},
-        rpc::RequiredAsset,
     },
 };
 use alloy::{
@@ -15,8 +14,8 @@ use alloy::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
-    rpc::types::{TransactionRequest, state::StateOverride, trace::geth::CallFrame},
-    sol_types::{SolCall, SolEventInterface, SolInterface},
+    rpc::types::{TransactionRequest, state::StateOverride},
+    sol_types::{SolCall, SolEventInterface},
     transports::TransportErrorKind,
 };
 use schnellru::{ByLength, LruMap};
@@ -243,114 +242,6 @@ impl AssetInfoServiceHandle {
         )?;
 
         Ok(builder.build(metadata, tokens_uris))
-    }
-
-    /// Calculates the asset deficit for each account and asset based on calls.
-    ///
-    /// Supports only ERC-20 tokens.
-    pub async fn calculate_asset_deficit<P: Provider>(
-        &self,
-        calls: impl DoubleEndedIterator<Item = &CallFrame>,
-        eoa: Address,
-        provider: &P,
-    ) -> Result<Option<RequiredAsset>, RelayError> {
-        let mut missing_asset = None;
-        let mut required_funds = U256::ZERO;
-
-        for call in calls.rev() {
-            let Some((from, _, asset, amount, success)) =
-                self.decode_transfer_from_call(provider, call).await
-            else {
-                continue;
-            };
-
-            if from != eoa {
-                continue;
-            }
-
-            if missing_asset.is_none() && !success {
-                missing_asset = Some(asset);
-            } else if Some(asset) != missing_asset {
-                continue;
-            }
-
-            required_funds += amount;
-        }
-
-        Ok(missing_asset
-            .map(|asset| RequiredAsset { address: asset.address(), value: required_funds }))
-    }
-
-    /// Extracts the asset deficit from a [`CallFrame`], if there's any detected.
-    ///
-    /// General algorithm is:
-    /// 1. Try to decode the call as ERC-20 `transferFrom` first, and `transfer` second.
-    /// 2. If decoding succeeded, start checking common ERC-20 ways to fail on insufficient funds.
-    async fn decode_transfer_from_call<P: Provider>(
-        &self,
-        provider: &P,
-        call: &CallFrame,
-    ) -> Option<(Address, Address, Asset, U256, bool)> {
-        let callee = call.to?;
-
-        // Extract sender and amount
-        let (asset, from, to, amount) =
-            // First try to decode as `transferFrom`, as it's
-            // more likely the user is interacting with a
-            // contract that tries to pull funds from their
-            // wallet
-            IERC20::transferFromCall::abi_decode(&call.input)
-                    .map(|transfer| (transfer.from, transfer.to, transfer.amount))
-                    .or_else(|_| {
-                        // Then try to decode as `transfer` in case the user is making a direct
-                        // transfer
-                        IERC20::transferCall::abi_decode(&call.input)
-                            .map(|transfer| (call.from, transfer.to, transfer.amount))
-                    }).map(|(from, to, amount)| {
-                        (Asset::Token(callee), from, to, amount)
-                    })
-                    // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
-                    // native token transfer either, because tracing of calls with insufficient native
-                    // token balance fails with an error.
-                    .ok()?;
-
-        // Check if the call is reverted / errored due to insufficient balance. We check through
-        // several common ERC-20 implementations, including specialized cases such as USDT.
-        if let Some(revert_reason) = &call.revert_reason
-            && (
-                // OpenZeppelin < 5.0.0
-                revert_reason.contains("transfer amount exceeds balance") ||
-                // Solmate and other implementations that don't use SafeMath
-                revert_reason.contains("arithmetic underflow or overflow")
-            )
-        {
-        }
-        // Check common custom contract errors
-        else if let Some(error) =
-            call.output.as_ref().and_then(|output| ContractErrorsErrors::abi_decode(output).ok())
-            && matches!(
-                error,
-                ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
-                    | ContractErrorsErrors::InsufficientBalance(_) // Solady
-                    | ContractErrorsErrors::ETHTransferFailed(_) // Solady
-                    | ContractErrorsErrors::TransferFailed(_) // Solady
-                    | ContractErrorsErrors::TransferFromFailed(_) // Solady
-            )
-        {
-        }
-        // USDT transfers just revert on not enough allowance or insufficient funds
-        else if call.error.is_some()
-            && let Ok(asset_info) = self.get_asset_info_list(provider, vec![asset]).await
-            && asset_info[&asset].metadata.symbol.as_deref() == Some("USDT")
-            // Make sure it's not a revert due to insufficient allowance
-            && let Ok(allowance) = IERC20Instance::new(asset.address(), provider).allowance(from, to).call().await
-            && allowance > amount
-        {
-        } else {
-            return Some((from, to, asset, amount, true));
-        }
-
-        Some((from, to, asset, amount, false))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
