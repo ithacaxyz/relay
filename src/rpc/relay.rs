@@ -1153,12 +1153,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(
-                request.key.as_ref(),
-                request.from,
-                &delegation_status,
-                &provider
-            )
+            self.should_erc1271_wrap(&request, &delegation_status, &provider)
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -2695,12 +2690,11 @@ impl Relay {
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
-        key: Option<&CallKey>,
-        from: Option<Address>,
+        request: &PrepareCallsParameters,
         from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let key = match key {
+        let key = match request.key.as_ref() {
             Some(k) if k.key_type.is_secp256k1() => k,
             _ => return Ok(None),
         };
@@ -2709,7 +2703,7 @@ impl Relay {
 
         // If the key address matches the EOA address AND we have a delegation status, use it
         // Otherwise, fetch the delegation status for the key address
-        let status = if from == Some(key_address) && from_delegation_status.is_some() {
+        let status = if request.from == Some(key_address) && from_delegation_status.is_some() {
             from_delegation_status.clone()
         } else {
             Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
@@ -2717,7 +2711,7 @@ impl Relay {
 
         // Only wrap if it's an IthacaAccount >=0.5
         let needs_wrapping = status.as_ref().is_some_and(|s| {
-            if (s.is_delegated() || (s.is_stored() && from == Some(key_address)))
+            if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
                 return self
