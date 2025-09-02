@@ -1,6 +1,7 @@
 use crate::e2e::{
     AuthKind, await_calls_status,
     cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
+    constants::EOA_PRIVATE_KEY,
     environment::Environment,
     send_prepared_calls,
 };
@@ -357,7 +358,8 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
     // First restart with legacy (v4) contracts as current
     env.restart_with_v4().await?;
 
-    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    let admin_key =
+        KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, EOA_PRIVATE_KEY)?.unwrap();
 
     // Upgrade account either lazily or eagerly based on parameter
     if use_lazy {
@@ -394,6 +396,23 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
             key: Some(admin_key.to_call_key()),
         })
         .await?;
+
+    // Test ERC1271 digest wrapping for v0.4 (should NOT be wrapped)
+    // Calculate what the digest should be from the context (without ERC1271 wrapping)
+    let (computed_digest_v4, _) = response
+        .context
+        .compute_signing_digest(
+            None,
+            response.context.quote().unwrap().ty().quotes[0].orchestrator,
+            env.provider(),
+        )
+        .await?;
+
+    // For v0.4, the digest should NOT be ERC1271 wrapped
+    assert_eq!(
+        response.digest, computed_digest_v4,
+        "V4 digest should equal computed digest (NOT ERC1271 wrapped)"
+    );
 
     // Decode the execution data to Vec<Call>
     let quote = response.context.quote().unwrap();
@@ -456,6 +475,27 @@ async fn test_delegation_upgrade_with_stored_account_impl(use_lazy: bool) -> eyr
             key: Some(admin_key.to_call_key()),
         })
         .await?;
+
+    // Test ERC1271 digest wrapping for v0.5+ (SHOULD be wrapped)
+    // Calculate what the digest should be from the context (without ERC1271 wrapping)
+    let (computed_digest_v5, _) = response
+        .context
+        .compute_signing_digest(
+            None,
+            response.context.quote().unwrap().ty().quotes[0].orchestrator,
+            env.provider(),
+        )
+        .await?;
+
+    // For v0.5+, the digest SHOULD be ERC1271 wrapped when key address == EOA address
+    // Since we're using the EOA's key, compute the expected wrapped digest
+    let expected_wrapped_digest =
+        Account::new(env.eoa.address(), env.provider()).digest_erc1271(computed_digest_v5);
+
+    assert_eq!(
+        response.digest, expected_wrapped_digest,
+        "V5 digest should equal ERC1271-wrapped computed digest"
+    );
 
     // Decode the execution data to Vec<Call>
     let quote = response.context.quote().unwrap();

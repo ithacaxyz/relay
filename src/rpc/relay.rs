@@ -1153,7 +1153,12 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
+            self.should_erc1271_wrap(
+                request.key.as_ref(),
+                request.from,
+                &delegation_status,
+                &provider
+            )
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -2557,6 +2562,30 @@ impl Relay {
         self.inner.contracts.escrow.address
     }
 
+    /// Get the version for a given delegation implementation address.
+    /// Returns None if the address is not a known delegation implementation.
+    fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
+        // Check if it's the current implementation
+        if impl_addr == self.inner.contracts.delegation_implementation.address {
+            return self
+                .inner
+                .contracts
+                .delegation_implementation
+                .version
+                .as_ref()
+                .and_then(|v| semver::Version::parse(v).ok());
+        }
+
+        // Check legacy implementations
+        self.inner
+            .contracts
+            .legacy_delegations
+            .iter()
+            .find(|c| c.address == impl_addr)
+            .and_then(|c| c.version.as_ref())
+            .and_then(|v| semver::Version::parse(v).ok())
+    }
+
     /// Creates an escrow struct for funding intents.
     fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -2661,12 +2690,14 @@ impl Relay {
     /// - The key's address derived from the public key is delegated on-chain, OR
     /// - The key has stored authorization AND the key's address matches the EOA (signing for
     ///   itself)
+    /// - AND the implementation version is >= 0.5.0
     ///
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
         key: Option<&CallKey>,
         from: Option<Address>,
+        from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
         let key = match key {
@@ -2675,12 +2706,27 @@ impl Relay {
         };
 
         let key_address = Address::from_slice(&key.public_key[12..]);
-        let key_account = Account::new(key_address, provider);
 
-        let status = key_account.delegation_status(&self.inner.storage).await.ok();
+        // If the key address matches the EOA address AND we have a delegation status, use it
+        // Otherwise, fetch the delegation status for the key address
+        let status = if from == Some(key_address) && from_delegation_status.is_some() {
+            from_delegation_status.clone()
+        } else {
+            Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
+        };
 
-        let needs_wrapping = status
-            .is_some_and(|s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+        // Only wrap if it's an IthacaAccount >=0.5
+        let needs_wrapping = status.as_ref().is_some_and(|s| {
+            if (s.is_delegated() || (s.is_stored() && from == Some(key_address)))
+                && let Ok(impl_addr) = s.try_implementation()
+            {
+                return self
+                    .get_delegation_implementation_version(impl_addr)
+                    .map(|v| v >= semver::Version::new(0, 5, 0))
+                    .unwrap_or(false);
+            }
+            false
+        });
 
         Ok(needs_wrapping.then_some(key_address))
     }
