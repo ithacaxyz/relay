@@ -475,7 +475,7 @@ impl Relay {
             let signature = mock_key
                 .sign_payload_hash(
                     intent_to_sign
-                        .compute_eip712_data(*orchestrator.address(), &provider)
+                        .compute_eip712_data(&self.inner.contracts.orchestrator,*orchestrator.address(), &provider)
                         .await
                         .map_err(RelayError::from)?
                         .0,
@@ -668,7 +668,7 @@ impl Relay {
         // Compute EIP-712 digest for the intent
         let (eip712_digest, _) = quote
             .intent
-            .compute_eip712_data(quote.orchestrator, &provider)
+            .compute_eip712_data(&self.inner.contracts.orchestrator, quote.orchestrator, &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -908,17 +908,17 @@ impl Relay {
         let version = if self.orchestrator() == address {
             tracing::trace!(
                 orchestrator = %address,
-                version = ?self.inner.contracts.orchestrator.version,
+                version = ?self.inner.contracts.orchestrator.version(),
                 "Using current orchestrator"
             );
-            self.inner.contracts.orchestrator.version.clone()
+            self.inner.contracts.orchestrator.version()
         } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
             tracing::trace!(
                 orchestrator = %address,
-                version = ?legacy.orchestrator.version,
+                version = ?legacy.orchestrator.version(),
                 "Using legacy orchestrator"
             );
-            legacy.orchestrator.version.clone()
+            legacy.orchestrator.version()
         } else {
             return Err(RelayError::UnsupportedOrchestrator(address));
         };
@@ -1564,6 +1564,7 @@ impl Relay {
                 let (output_intent_digest, _) = output_quote
                     .intent
                     .compute_eip712_data(
+                        &self.inner.contracts.orchestrator,
                         output_quote.orchestrator,
                         &self.provider(request.chain_id)?,
                     )
@@ -2012,7 +2013,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) = pre_call
-            .compute_eip712_data(self.orchestrator(), &provider)
+            .compute_eip712_data(&self.inner.contracts.orchestrator, self.orchestrator(), &provider)
             .await
             .map_err(RelayError::from)?;
 
@@ -2113,7 +2114,7 @@ impl RelayApiServer for Relay {
             async {
                 storage_account
                     .pre_call
-                    .compute_eip712_data(self.orchestrator(), &provider)
+                    .compute_eip712_data(&self.inner.contracts.orchestrator, self.orchestrator(), &provider)
                     .await
                     .map_err(RelayError::from)
             },

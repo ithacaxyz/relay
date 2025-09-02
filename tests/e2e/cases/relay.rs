@@ -13,7 +13,7 @@ async fn versioned_contracts() -> eyre::Result<()> {
         env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
 
     Version::parse(
-        capabilities.chain(env.chain_id()).contracts.orchestrator.version.as_ref().unwrap(),
+        capabilities.chain(env.chain_id()).contracts.orchestrator.version().as_ref().unwrap(),
     )
     .unwrap();
     Version::parse(
@@ -21,7 +21,7 @@ async fn versioned_contracts() -> eyre::Result<()> {
             .chain(env.chain_id())
             .contracts
             .delegation_implementation
-            .version
+            .version()
             .as_ref()
             .unwrap(),
     )

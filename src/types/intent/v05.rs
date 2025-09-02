@@ -1,5 +1,5 @@
 use super::{SignedCall, SignedCalls};
-use crate::types::{Key, Orchestrator};
+use crate::types::{Key, Orchestrator, VersionedContract};
 use alloy::{
     dyn_abi::TypedData,
     primitives::{Address, B256, Keccak256, U256, keccak256},
@@ -140,18 +140,24 @@ impl SignedCalls for IntentV05 {
 
     async fn compute_eip712_data(
         &self,
+        orchestrator: &VersionedContract,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, alloy::dyn_abi::TypedData)>
     where
         Self: Sync,
     {
-        // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator_address, provider);
-
         // Prepare the EIP-712 payload and domain
         let payload = self.as_eip712()?;
-        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+        
+        // Use cached domain from VersionedContract if available, otherwise fetch from RPC
+        let domain = if let Some(cached_domain) = &orchestrator.eip712_domain {
+            cached_domain.clone()
+        } else {
+            // Fallback to RPC call if domain not cached
+            let orchestrator_instance = Orchestrator::new(orchestrator_address, provider);
+            orchestrator_instance.eip712_domain(self.is_multichain()).await?
+        };
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

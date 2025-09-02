@@ -2,7 +2,7 @@ use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
     error::{IntentError, MerkleError},
     signers::Eip712PayLoadSigner,
-    types::{IntentKind, Key, LazyMerkleTree, OrchestratorContract, Signature},
+    types::{IntentKind, Key, LazyMerkleTree, OrchestratorContract, Signature, VersionedContract},
 };
 use alloy::{
     dyn_abi::TypedData,
@@ -569,8 +569,9 @@ impl Intent {
         let leaf_info = intent_kind.merkle_leaf_info()?;
 
         // Calculate the leaf hash for the current intent
+        let orchestrator_contract = VersionedContract::no_eip712_domain(orchestrator);
         let (current_leaf_hash, _) = self
-            .compute_eip712_data(orchestrator, provider)
+            .compute_eip712_data(&orchestrator_contract, orchestrator, provider)
             .await
             .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
 
@@ -626,6 +627,7 @@ impl SignedCalls for Intent {
 
     async fn compute_eip712_data(
         &self,
+        orchestrator: &VersionedContract,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, alloy::dyn_abi::TypedData)>
@@ -633,8 +635,8 @@ impl SignedCalls for Intent {
         Self: Sync,
     {
         match self {
-            Intent::V05(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
-            Intent::V04(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
+            Intent::V05(intent) => intent.compute_eip712_data(orchestrator, orchestrator_address, provider).await,
+            Intent::V04(intent) => intent.compute_eip712_data(orchestrator, orchestrator_address, provider).await,
         }
     }
 

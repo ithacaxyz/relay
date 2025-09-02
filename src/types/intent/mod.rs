@@ -2,13 +2,10 @@ use super::{Call, IDelegation::authorizeCall, Key, MerkleLeafInfo};
 use crate::{
     error::{IntentError, MerkleError},
     types::{
-        CallPermission,
-        IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        Orchestrator,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
             SpendPermission,
-        },
+        }, CallPermission, IthacaAccount::{setCanExecuteCall, setSpendLimitCall}, Orchestrator, VersionedContract
     },
 };
 use alloy::{
@@ -223,6 +220,7 @@ pub trait SignedCalls {
     /// Computes the EIP-712 digest that the user must sign.
     fn compute_eip712_data(
         &self,
+        orchestrator: &VersionedContract,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
@@ -241,15 +239,14 @@ impl SignedCalls for SignedCall {
 
     async fn compute_eip712_data(
         &self,
+
+        orchestrator: &VersionedContract,
         orchestrator_address: Address,
         provider: &DynProvider,
     ) -> eyre::Result<(B256, TypedData)>
     where
         Self: Sync,
     {
-        // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator_address, provider);
-
         // Prepare the EIP-712 payload and domain
         let payload = eip712::SignedCall {
             multichain: self.is_multichain(),
@@ -257,7 +254,15 @@ impl SignedCalls for SignedCall {
             calls: self.calls()?,
             nonce: self.nonce,
         };
-        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+        
+        // Use cached domain from VersionedContract if available, otherwise fetch from RPC
+        let domain = if let Some(cached_domain) = &orchestrator.eip712_domain {
+            cached_domain.clone()
+        } else {
+            // Fallback to RPC call if domain not cached
+            let orchestrator_instance = Orchestrator::new(orchestrator_address, provider);
+            orchestrator_instance.eip712_domain(self.is_multichain()).await?
+        };
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

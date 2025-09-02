@@ -3,7 +3,7 @@
 use super::{Intent, SignedCalls};
 use crate::{
     error::{IntentError, MerkleError},
-    types::LazyMerkleTree,
+    types::{LazyMerkleTree, VersionedContract},
 };
 use alloy::{
     primitives::{Address, B256},
@@ -35,9 +35,19 @@ impl Intents {
 
     /// Computes EIP-712 signing hashes for all intents.
     pub async fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
-        Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
-            intent.compute_eip712_data(*orchestrator_address, provider)
-        }))
+        let mut futures = Vec::new();
+        for (intent, provider, orchestrator_address) in &self.intents {
+            let intent = intent.clone();
+            let provider = provider.clone();
+            let orchestrator_address = *orchestrator_address;
+            
+            futures.push(async move {
+                let orchestrator_contract = VersionedContract::no_eip712_domain(orchestrator_address);
+                intent.compute_eip712_data(&orchestrator_contract, orchestrator_address, &provider).await
+            });
+        }
+        
+        Ok(try_join_all(futures)
         .await
         .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?
         .into_iter()

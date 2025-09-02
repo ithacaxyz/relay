@@ -83,6 +83,13 @@ impl VersionedContract {
     pub fn no_eip712_domain(address: Address) -> Self {
         Self { address, eip712_domain: None }
     }
+
+    /// Returns the version from the cached EIP712 domain if available.
+    pub fn version(&self) -> Option<String> {
+        self.eip712_domain
+            .as_ref()
+            .and_then(|domain| domain.version.as_ref().map(|v| v.to_string()))
+    }
 }
 
 /// Relay versioned contracts.

@@ -8,7 +8,7 @@ use crate::{
     storage::BundleStatus,
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
-        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes, VersionedContract,
     },
 };
 use alloy::{
@@ -452,9 +452,10 @@ impl PrepareCallsContext {
                 if let Some(root) = context.ty().multi_chain_root {
                     Ok((root, output_quote.intent.typed_data(None)))
                 } else {
+                    let orchestrator_contract = VersionedContract::no_eip712_domain(output_quote.orchestrator);
                     output_quote
                         .intent
-                        .compute_eip712_data(output_quote.orchestrator, provider)
+                        .compute_eip712_data(&orchestrator_contract, output_quote.orchestrator, provider)
                         .await
                 }
             }
@@ -473,7 +474,8 @@ impl PrepareCallsContext {
                         .map_err(RelayError::from)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator_address, provider).await
+                let orchestrator_contract = VersionedContract::no_eip712_domain(orchestrator_address);
+                pre_call.compute_eip712_data(&orchestrator_contract, orchestrator_address, provider).await
             }
         }
     }
