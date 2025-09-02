@@ -18,7 +18,9 @@ jobs:
             ghcr_repo: ghcr.io/ithacaxyz/relay
           - dockerfile: Dockerfile.stress
             ghcr_repo: ghcr.io/ithacaxyz/relay-stress
-        dockerfile: [Dockerfile, Dockerfile.stress]
+          - dockerfile: Dockerfile.chainwalker
+            ghcr_repo: ghcr.io/ithacaxyz/relay-chainwalker
+        dockerfile: [Dockerfile, Dockerfile.stress, Dockerfile.chainwalker]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
