@@ -5,7 +5,7 @@ use crate::{
     types::IERC20,
 };
 use alloy::{
-    primitives::{Address, B256, BlockNumber, Log, U256},
+    primitives::{Address, B256, BlockNumber, Bytes, Log, U256},
     providers::{
         MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{Call, tryBlockAndAggregateCall},
@@ -217,10 +217,10 @@ impl<P: Provider> SimulatorContract<P> {
             return Err(IntentError::intent_revert(result.return_data).into());
         }
 
-        let (gas, block_number) = decode_aggregate_result(&result.return_data)?;
+        let (simulation_result, block_number) = decode_aggregate_result(&result.return_data)?;
 
         Ok(SimulationExecutionResult {
-            gas,
+            simulation_result,
             calls: Vec::new(),
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
             tx_request,
@@ -253,7 +253,7 @@ impl<P: Provider> SimulatorContract<P> {
             return Err(IntentError::intent_revert(call_frame.output.unwrap_or_default()).into());
         }
 
-        let (gas, block_number) = decode_aggregate_result(
+        let (simulation_result, block_number) = decode_aggregate_result(
             call_frame
                 .output
                 .as_ref()
@@ -261,7 +261,7 @@ impl<P: Provider> SimulatorContract<P> {
         )?;
 
         let (calls, logs) = collect_calls_and_logs_from_frame(call_frame);
-        Ok(SimulationExecutionResult { gas, calls, logs, tx_request, block_number })
+        Ok(SimulationExecutionResult { simulation_result, calls, logs, tx_request, block_number })
     }
 }
 
@@ -269,7 +269,7 @@ impl<P: Provider> SimulatorContract<P> {
 #[derive(Debug)]
 pub struct SimulationExecutionResult {
     /// Gas estimates from the simulation result
-    pub gas: GasResults,
+    pub simulation_result: Result<GasResults, Bytes>,
     /// Calls collected from the simulation. `calls` and `logs` fields of each [`CallFrame`] are
     /// not populated.
     pub calls: Vec<CallFrame>,
@@ -283,8 +283,10 @@ pub struct SimulationExecutionResult {
 }
 
 /// Decodes the tryBlockAndAggregate response to extract gas results and block number.
-fn decode_aggregate_result(output: &[u8]) -> Result<(GasResults, BlockNumber), RelayError> {
-    let decoded = tryBlockAndAggregateCall::abi_decode_returns(output).map_err(|e| {
+fn decode_aggregate_result(
+    output: &[u8],
+) -> Result<(Result<GasResults, Bytes>, BlockNumber), RelayError> {
+    let mut decoded = tryBlockAndAggregateCall::abi_decode_returns(output).map_err(|e| {
         TransportErrorKind::custom_str(&format!(
             "Failed to decode tryBlockAndAggregate result: {e}"
         ))
@@ -292,18 +294,18 @@ fn decode_aggregate_result(output: &[u8]) -> Result<(GasResults, BlockNumber), R
 
     let block_number = decoded.blockNumber.to::<u64>();
 
-    if decoded.returnData.is_empty() {
+    let Some(result) = decoded.returnData.pop() else {
         return Err(TransportErrorKind::custom_str("no return data from simulation").into());
-    }
+    };
 
     // Check if the call was successful
-    if !decoded.returnData[0].success {
-        return Err(IntentError::intent_revert(decoded.returnData[0].returnData.clone()).into());
+    if !result.success {
+        return Ok((Err(result.returnData), block_number));
     }
 
-    let gas = decode_gas_results(&decoded.returnData[0].returnData)?;
+    let gas = decode_gas_results(&result.returnData)?;
 
-    Ok((gas, block_number))
+    Ok((Ok(gas), block_number))
 }
 
 fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
@@ -328,6 +330,7 @@ fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, 
 
     while let Some(mut frame) = stack.pop() {
         if frame.error.is_some() || frame.revert_reason.is_some() {
+            stack.extend(frame.calls.drain(..).rev());
             calls.push(frame);
             continue;
         }

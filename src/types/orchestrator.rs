@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use OrchestratorContract::OrchestratorContractInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
@@ -7,7 +9,6 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
-use futures::future::try_join;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -16,7 +17,11 @@ use crate::{
     asset::AssetInfoServiceHandle,
     config::SimMode,
     error::{IntentError, RelayError},
-    types::{AssetDeficits, AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
+    types::{
+        AssetDeficits, AssetDiffs, AssetType, IERC20, Intent,
+        OrchestratorContract::IntentExecuted,
+        rpc::{BalanceOverride, BalanceOverrides},
+    },
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -237,54 +242,81 @@ impl<P: Provider> Orchestrator<P> {
         sim_mode: SimMode,
         calculate_asset_deficits: bool,
     ) -> Result<SimulateExecuteResult, RelayError> {
-        let result = SimulatorContract::new(
-            simulator,
-            self.orchestrator.provider(),
-            self.overrides.clone(),
-            sim_mode,
-            calculate_asset_deficits,
-        )
-        .simulate(
-            *self.address(),
-            mock_from,
-            intent.abi_encode(),
-            gas_validation_offset,
-            self.version.as_ref(),
-        )
-        .await;
+        let mut overrides = self.overrides.clone();
+
+        let result = loop {
+            let result = SimulatorContract::new(
+                simulator,
+                self.orchestrator.provider(),
+                overrides.clone(),
+                sim_mode,
+                calculate_asset_deficits,
+            )
+            .simulate(
+                *self.address(),
+                mock_from,
+                intent.abi_encode(),
+                gas_validation_offset,
+                self.version.as_ref(),
+            )
+            .await?;
+
+            if result.simulation_result.is_err() {
+                let Some(required_asset) = asset_info_handle
+                    .calculate_asset_deficit(
+                        result.calls.iter(),
+                        *intent.eoa(),
+                        self.orchestrator.provider(),
+                    )
+                    .await?
+                else {
+                    break result;
+                };
+
+                let balance = IERC20::new(required_asset.address, self.orchestrator.provider())
+                    .balanceOf(*intent.eoa())
+                    .call()
+                    .overrides(overrides.clone())
+                    .await?;
+
+                if balance >= required_asset.value {
+                    break result;
+                }
+
+                let mut balance_override = BalanceOverride::new(AssetType::ERC20);
+                balance_override.add_balance(*intent.eoa(), required_asset.value - balance);
+
+                overrides.extend(
+                    BalanceOverrides::new(HashMap::from([(
+                        required_asset.address,
+                        balance_override,
+                    )]))
+                    .into_state_overrides(self.orchestrator.provider())
+                    .await?,
+                )
+            } else {
+                break result;
+            }
+        };
 
         // If simulation failed, check if orchestrator is paused
-        if result.is_err() && self.is_paused().await? {
+        if result.simulation_result.is_err() && self.is_paused().await? {
             return Err(IntentError::PausedOrchestrator.into());
         }
-        let result = result?;
+
+        let gas_results = result.simulation_result.map_err(IntentError::intent_revert)?;
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
 
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
-        let (asset_deficits, mut asset_diffs) = try_join(
-            // calculate asset deficits using the transaction request from simulation
-            async {
-                if calculate_asset_deficits {
-                    asset_info_handle
-                        .calculate_asset_deficit(
-                            result.calls.into_iter(),
-                            self.orchestrator.provider(),
-                        )
-                        .await
-                } else {
-                    Ok(AssetDeficits::default())
-                }
-            },
-            // calculate asset diffs using the transaction request from simulation
-            asset_info_handle.calculate_asset_diff(
+        let mut asset_diffs = asset_info_handle
+            .calculate_asset_diff(
                 &result.tx_request,
                 self.overrides.clone(),
                 result.logs.into_iter(),
                 self.orchestrator.provider(),
-            ),
-        )
-        .await?;
+            )
+            .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
@@ -292,7 +324,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
-        Ok(SimulateExecuteResult { asset_deficits, asset_diffs, gas_results: result.gas })
+        Ok(SimulateExecuteResult { asset_deficits: Default::default(), asset_diffs, gas_results })
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].

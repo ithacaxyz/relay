@@ -3,9 +3,10 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
-        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events, IERC20Instance},
         IERC721::{self, IERC721Events},
+        rpc::RequiredAsset,
     },
 };
 use alloy::{
@@ -249,23 +250,35 @@ impl AssetInfoServiceHandle {
     /// Supports only ERC-20 tokens.
     pub async fn calculate_asset_deficit<P: Provider>(
         &self,
-        calls: impl Iterator<Item = CallFrame>,
+        calls: impl DoubleEndedIterator<Item = &CallFrame>,
+        eoa: Address,
         provider: &P,
-    ) -> Result<AssetDeficits, RelayError> {
-        let mut builder = AssetDeficits::builder();
+    ) -> Result<Option<RequiredAsset>, RelayError> {
+        let mut missing_asset = None;
+        let mut required_funds = U256::ZERO;
 
-        for call in calls {
-            if let Some((from, asset, amount)) = self.asset_deficit_from_call(provider, call).await
-            {
-                builder.record_deficit(from, asset, amount);
+        for call in calls.rev() {
+            let Some((from, _, asset, amount, success)) =
+                self.decode_transfer_from_call(provider, call).await
+            else {
+                continue;
+            };
+
+            if from != eoa {
+                continue;
             }
+
+            if missing_asset.is_none() && !success {
+                missing_asset = Some(asset);
+            } else if Some(asset) != missing_asset {
+                continue;
+            }
+
+            required_funds += amount;
         }
 
-        // Fetch assets metadata
-        let metadata =
-            self.get_asset_info_list(provider, builder.seen_assets().copied().collect()).await?;
-
-        Ok(builder.build(metadata))
+        Ok(missing_asset
+            .map(|asset| RequiredAsset { address: asset.address(), value: required_funds }))
     }
 
     /// Extracts the asset deficit from a [`CallFrame`], if there's any detected.
@@ -273,11 +286,11 @@ impl AssetInfoServiceHandle {
     /// General algorithm is:
     /// 1. Try to decode the call as ERC-20 `transferFrom` first, and `transfer` second.
     /// 2. If decoding succeeded, start checking common ERC-20 ways to fail on insufficient funds.
-    async fn asset_deficit_from_call<P: Provider>(
+    async fn decode_transfer_from_call<P: Provider>(
         &self,
         provider: &P,
-        call: CallFrame,
-    ) -> Option<(Address, Asset, U256)> {
+        call: &CallFrame,
+    ) -> Option<(Address, Address, Asset, U256, bool)> {
         let callee = call.to?;
 
         // Extract sender and amount
@@ -303,7 +316,7 @@ impl AssetInfoServiceHandle {
 
         // Check if the call is reverted / errored due to insufficient balance. We check through
         // several common ERC-20 implementations, including specialized cases such as USDT.
-        if let Some(revert_reason) = call.revert_reason
+        if let Some(revert_reason) = &call.revert_reason
             && (
                 // OpenZeppelin < 5.0.0
                 revert_reason.contains("transfer amount exceeds balance") ||
@@ -314,7 +327,7 @@ impl AssetInfoServiceHandle {
         }
         // Check common custom contract errors
         else if let Some(error) =
-            call.output.and_then(|output| ContractErrorsErrors::abi_decode(&output).ok())
+            call.output.as_ref().and_then(|output| ContractErrorsErrors::abi_decode(output).ok())
             && matches!(
                 error,
                 ContractErrorsErrors::ERC20InsufficientBalance(_) // OpenZeppelin >= 5.0.0
@@ -334,10 +347,10 @@ impl AssetInfoServiceHandle {
             && allowance > amount
         {
         } else {
-            return None;
+            return Some((from, to, asset, amount, true));
         }
 
-        Some((from, asset, amount))
+        Some((from, to, asset, amount, false))
     }
 }
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
