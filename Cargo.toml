@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "22.0.1"
+version = "23.0.0"
 edition = "2024"
 publish = false
 
@@ -8,10 +8,8 @@ publish = false
 path = "src/bin/relay.rs"
 name = "relay"
 
-
-
 [dependencies]
-alloy = { version = "1.0.24", features = [
+alloy = { version = "1.0.27", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -69,6 +67,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 schnellru = "0.2.4"
+semver = "1.0.26"
 serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
@@ -80,7 +79,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.0"
 tracing-futures = { version = "0.2.5", features = ["std-future"] }
 tracing-opentelemetry = "0.31.0"
-tracing-subscriber = { version = "0.3.19", features = [
+tracing-subscriber = { version = "0.3.20", features = [
     "fmt",
     "std",
     "env-filter",
@@ -111,7 +110,7 @@ strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.23", features = [
+alloy = { version = "1.0.27", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
@@ -120,7 +119,6 @@ derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
-semver = "1.0.26"
 tempfile = "3.21"
 
 [build-dependencies]

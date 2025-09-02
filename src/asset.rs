@@ -3,7 +3,7 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, ContractErrors::ContractErrorsErrors, RelayError},
     types::{
-        Asset, AssetDeficit, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
+        Asset, AssetDeficits, AssetDiffs, AssetMetadata, AssetWithInfo,
         IERC20::{self, IERC20Events, IERC20Instance},
         IERC721::{self, IERC721Events},
     },
@@ -11,7 +11,7 @@ use crate::{
 use alloy::{
     primitives::{Address, ChainId, Log, U256, map::HashMap},
     providers::{
-        DynProvider, MULTICALL3_ADDRESS, Provider,
+        MULTICALL3_ADDRESS, Provider,
         bindings::IMulticall3::{self, Call3, aggregate3Call},
     },
     rpc::types::{TransactionRequest, state::StateOverride, trace::geth::CallFrame},

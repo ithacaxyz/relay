@@ -8,6 +8,7 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
 };
 use futures::future::try_join;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
@@ -118,6 +119,10 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
+        /// @dev DEPRECATION WARNING: This function will be deprecated in the future.
+        /// Allows pre calls to be executed individually, for counterfactual signatures.
+        function executePreCalls(address parentEOA, SignedCall[] calldata preCalls) public virtual;
+
         /// Returns the EIP712 domain of the orchestrator.
         ///
         /// See: https://eips.ethereum.org/EIPS/eip-5267
@@ -151,6 +156,29 @@ sol! {
         /// Returns the pause authority and the last pause timestamp.
         function getPauseConfig() public view virtual returns (address, uint40);
     }
+
+    /// A struct to hold the fields for a PreCall.
+    /// Like a Intent with a subset of fields.
+    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SignedCall {
+        /// The user's address.
+        ///
+        /// This can be set to `address(0)`, which allows it to be
+        /// coalesced to the parent Intent's EOA.
+        address eoa;
+        /// An encoded array of calls, using ERC7579 batch execution encoding.
+        ///
+        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
+        /// This allows for more efficient safe forwarding to the EOA.
+        bytes executionData;
+        /// Per delegated EOA. Same logic as the `nonce` in Intent.
+        uint256 nonce;
+        /// The wrapped signature.
+        ///
+        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        bytes signature;
+    }
 }
 
 /// The orchestrator.
@@ -158,6 +186,7 @@ sol! {
 pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
+    version: Option<semver::Version>,
 }
 
 impl<P: Provider> Orchestrator<P> {
@@ -166,12 +195,24 @@ impl<P: Provider> Orchestrator<P> {
         Self {
             orchestrator: OrchestratorContractInstance::new(address, provider),
             overrides: StateOverride::default(),
+            version: None,
         }
     }
 
     /// Get the address of the orchestrator.
     pub fn address(&self) -> &Address {
         self.orchestrator.address()
+    }
+
+    /// Get the version of the orchestrator.
+    pub fn version(&self) -> Option<&semver::Version> {
+        self.version.as_ref()
+    }
+
+    /// Sets the version of the orchestrator.
+    pub fn with_version(mut self, version: Option<String>) -> Self {
+        self.version = version.and_then(|v| semver::Version::parse(&v).ok());
+        self
     }
 
     /// Sets overrides for all calls on this orchestrator.
@@ -203,7 +244,13 @@ impl<P: Provider> Orchestrator<P> {
             sim_mode,
             calculate_asset_deficits,
         )
-        .simulate(*self.address(), mock_from, intent.abi_encode(), gas_validation_offset)
+        .simulate(
+            *self.address(),
+            mock_from,
+            intent.abi_encode(),
+            gas_validation_offset,
+            self.version.as_ref(),
+        )
         .await;
 
         // If simulation failed, check if orchestrator is paused

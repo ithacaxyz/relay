@@ -4,7 +4,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        Orchestrator,
+        Orchestrator, SignedCall,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
             SpendPermission,
@@ -25,9 +25,11 @@ use std::future::Future;
 
 mod r#enum;
 mod v04;
+mod v05;
 
 pub use r#enum::Intent;
 pub use v04::IntentV04;
+pub use v05::IntentV05;
 
 /// Nonce prefix to signal that the payload is to be signed with EIP-712 without the chain ID.
 pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
@@ -36,29 +38,6 @@ pub const MULTICHAIN_NONCE_PREFIX: U256 = uint!(0xc1d0_U256);
 pub const MULTICHAIN_NONCE_PREFIX_U192: U192 = uint!(0xc1d0_U192);
 
 sol! {
-    /// A struct to hold the fields for a PreCall.
-    /// Like a Intent with a subset of fields.
-    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SignedCall {
-        /// The user's address.
-        ///
-        /// This can be set to `address(0)`, which allows it to be
-        /// coalesced to the parent Intent's EOA.
-        address eoa;
-        /// An encoded array of calls, using ERC7579 batch execution encoding.
-        ///
-        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
-        /// This allows for more efficient safe forwarding to the EOA.
-        bytes executionData;
-        /// Per delegated EOA. Same logic as the `nonce` in Intent.
-        uint256 nonce;
-        /// The wrapped signature.
-        ///
-        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
-        bytes signature;
-    }
-
     /// A struct to fund an account on an output chain from a multi chain intent.
     #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -218,9 +197,6 @@ pub trait SignedCalls {
         self.nonce() >> 240 == MULTICHAIN_NONCE_PREFIX
     }
 
-    /// Get the EIP712 encoding of the intent.
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error>;
-
     /// Computes the EIP-712 digest that the user must sign.
     fn compute_eip712_data(
         &self,
@@ -228,25 +204,7 @@ pub trait SignedCalls {
         provider: &DynProvider,
     ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
     where
-        Self: Sync,
-    {
-        async move {
-            // Create the orchestrator instance with the same overrides.
-            let orchestrator = Orchestrator::new(orchestrator_address, provider);
-
-            // Prepare the EIP-712 payload and domain
-            let payload = self.as_eip712()?;
-            let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
-
-            // Return the computed signing hash (digest).
-            let digest = payload.eip712_signing_hash(&domain);
-            let typed_data = TypedData::from_struct(&payload, Some(domain));
-
-            debug_assert_eq!(Ok(digest), typed_data.eip712_signing_hash());
-
-            Ok((digest, typed_data))
-        }
-    }
+        Self: Sync;
 }
 
 impl SignedCalls for SignedCall {
@@ -258,13 +216,33 @@ impl SignedCalls for SignedCall {
         self.nonce
     }
 
-    fn as_eip712(&self) -> Result<impl SolStruct + Serialize + Send, alloy::sol_types::Error> {
-        Ok(eip712::SignedCall {
+    async fn compute_eip712_data(
+        &self,
+        orchestrator_address: Address,
+        provider: &DynProvider,
+    ) -> eyre::Result<(B256, TypedData)>
+    where
+        Self: Sync,
+    {
+        // Create the orchestrator instance with the same overrides.
+        let orchestrator = Orchestrator::new(orchestrator_address, provider);
+
+        // Prepare the EIP-712 payload and domain
+        let payload = eip712::SignedCall {
             multichain: self.is_multichain(),
             eoa: self.eoa,
             calls: self.calls()?,
             nonce: self.nonce,
-        })
+        };
+        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+
+        // Return the computed signing hash (digest).
+        let digest = payload.eip712_signing_hash(&domain);
+        let typed_data = TypedData::from_struct(&payload, Some(domain));
+
+        debug_assert_eq!(Ok(digest), typed_data.eip712_signing_hash());
+
+        Ok((digest, typed_data))
     }
 }
 

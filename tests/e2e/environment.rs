@@ -8,7 +8,7 @@ use alloy::{
     hex,
     network::{EthereumWallet, TransactionBuilder, TxSignerSync},
     node_bindings::{Anvil, AnvilInstance},
-    primitives::{Address, Bytes, TxKind, U256, address, bytes},
+    primitives::{Address, Bytes, TxKind, U64, U256, address, bytes},
     providers::{
         DynProvider, MULTICALL3_ADDRESS, Provider, ProviderBuilder, WalletProvider, ext::AnvilApi,
     },
@@ -23,8 +23,9 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
     chains::RETRY_LAYER,
     config::{
-        ChainConfig, InteropConfig, RebalanceServiceConfig, RelayConfig, SettlerConfig,
-        SettlerImplementation, SignerConfig, SimpleSettlerConfig, TransactionServiceConfig,
+        ChainConfig, InteropConfig, LegacyOrchestrator, RebalanceServiceConfig, RelayConfig,
+        SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
+        TransactionServiceConfig,
     },
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
@@ -127,6 +128,8 @@ pub struct Environment {
     pub settlement: SettlementConfig,
     pub deployer: DynSigner,
     pub config: RelayConfig,
+    /// All deployed contract addresses (including legacy)
+    contracts: ContractAddresses,
 }
 
 impl std::fmt::Debug for Environment {
@@ -255,7 +258,7 @@ struct ContractAddresses {
     #[allow(dead_code)]
     delegation_implementation: Address,
     orchestrator: Address,
-    legacy_orchestrator: Address,
+    legacy_orchestrator: LegacyOrchestrator,
     legacy_delegation_proxy: Address,
     funder: Address,
     escrow: Address,
@@ -354,6 +357,82 @@ impl Environment {
     /// Read [`Self::setup`] for more information on setup.
     pub async fn setup() -> eyre::Result<Self> {
         Self::setup_with_config(EnvironmentConfig::default()).await
+    }
+
+    /// Restarts the relay with an updated configuration.
+    ///
+    /// # Important
+    /// This method does NOT properly stop the previous background services like TransactionService,
+    /// InteropService, RebalanceService, and AssetInfoService.
+    pub async fn restart_relay(&mut self, config: RelayConfig) -> eyre::Result<()> {
+        // Stop the current relay RPC server
+        // NOTE: This only stops the RPC server, not background services
+        self.relay_handle.server.stop()?;
+
+        // Wait a moment for the server to fully shutdown
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Spawn a new relay with the updated config
+        let skip_diagnostics = false;
+        let new_handle = try_spawn(config.clone(), skip_diagnostics).await?;
+
+        // Update the relay endpoint with the new server URL
+        self.relay_endpoint = HttpClientBuilder::default()
+            .build(new_handle.http_url())
+            .wrap_err("Failed to build relay client for restarted relay")?;
+
+        // Update the handle and config
+        self.relay_handle = new_handle;
+        self.config = config;
+
+        Ok(())
+    }
+
+    /// Restarts the relay with latest (v5) contracts as current.
+    /// Legacy (v4) contracts become the legacy set.
+    pub async fn restart_with_latest(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+
+        // Add v4 contracts to legacy
+        config.legacy_orchestrators.insert(self.contracts.legacy_orchestrator);
+        config.legacy_delegation_proxies.insert(self.contracts.legacy_delegation_proxy);
+
+        // Set v5 contracts as current
+        config.orchestrator = self.contracts.orchestrator;
+        config.simulator = self.contracts.simulator;
+        config.delegation_proxy = self.contracts.delegation;
+
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.orchestrator;
+        self.delegation = self.contracts.delegation;
+
+        self.restart_relay(config).await
+    }
+
+    /// Restarts the relay with legacy (v4) contracts as current.
+    pub async fn restart_with_v4(&mut self) -> eyre::Result<()> {
+        // Clone the current config
+        let mut config = self.config.clone();
+
+        // Clear legacy sets
+        config.legacy_orchestrators.clear();
+        config.legacy_delegation_proxies.clear();
+
+        // Set v4 contracts as current
+        config.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        config.simulator = self.contracts.legacy_orchestrator.simulator;
+        config.delegation_proxy = self.contracts.legacy_delegation_proxy;
+
+        // Update Environment's fields to match
+        self.orchestrator = self.contracts.legacy_orchestrator.orchestrator;
+        self.delegation = self.contracts.legacy_delegation_proxy;
+
+        self.restart_relay(config).await
     }
 
     /// Get the legacy delegation proxy address from the relay's config.
@@ -636,6 +715,7 @@ impl Environment {
             settlement: SettlementConfig { layerzero: layerzero_config },
             deployer,
             config,
+            contracts,
         })
     }
 
@@ -691,13 +771,18 @@ impl Environment {
         &self,
         chain_index: usize,
     ) -> eyre::Result<Vec<AuthorizeKeyResponse>> {
-        Ok(self
+        // Get keys for the specific chain
+        let response = self
             .relay_endpoint
             .get_keys(GetKeysParameters {
                 address: self.eoa.address(),
-                chain_id: self.chain_id_for(chain_index),
+                chain_ids: vec![self.chain_id_for(chain_index)],
             })
-            .await?)
+            .await?;
+
+        // Extract keys for the requested chain
+        let chain_id_key = U64::from(self.chain_id_for(chain_index));
+        Ok(response.get(&chain_id_key).cloned().unwrap_or_default())
     }
 
     /// Gets the on-chain EOA authorized keys for the default chain.
@@ -994,10 +1079,16 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
         multicall_future
     )?;
 
-    // Deploy legacy contracts (depend on earlier deployments for consistent addresses)
-    let legacy_orchestrator = deploy_orchestrator(provider, &contracts_path).await?;
+    // Deploy legacy contracts from accountv4
+    // Use the accountv4 contracts path (tests/account/lib/accountv4/out)
+    let accountv4_path = contracts_path.parent().unwrap().join("lib/accountv4/out");
+    let legacy_orchestrator = LegacyOrchestrator {
+        orchestrator: deploy_orchestrator(provider, &accountv4_path).await?,
+        simulator: deploy_simulator(provider, &accountv4_path).await?,
+    };
     let (_, legacy_delegation_proxy) =
-        deploy_delegation_contracts(provider, &contracts_path, legacy_orchestrator).await?;
+        deploy_delegation_contracts(provider, &accountv4_path, legacy_orchestrator.orchestrator)
+            .await?;
 
     Ok(ContractAddresses {
         simulator,
