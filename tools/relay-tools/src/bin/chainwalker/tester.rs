@@ -1,7 +1,4 @@
-use super::{
-    report::*,
-    utils::{find_eulerian_path_indices, format_chain, format_units_safe, normalize_amount},
-};
+use super::{report::*, utils::find_eulerian_path_indices};
 use alloy::primitives::{Address, ChainId, U256};
 use eyre::{Result, eyre};
 use jsonrpsee::http_client::HttpClient;
@@ -10,7 +7,7 @@ use relay::{
     signers::{DynSigner, Eip712PayLoadSigner},
     storage::BundleStatus,
     types::{
-        AssetUid, Call, KeyWith712Signer,
+        AssetUid, Call, KeyWith712Signer, Quotes, Signed,
         rpc::{
             Asset7811, BundleId, CallStatusCode, GetAssetsParameters, GetKeysParameters, Meta,
             PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
@@ -19,6 +16,9 @@ use relay::{
             UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
+};
+use relay_tools::common::{
+    format_chain, format_prepare_debug, format_units_safe, normalize_amount,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -796,29 +796,32 @@ impl InteropTester {
             Call::transfer(conn.to_token_address, self.test_account.address(), total_transfer)
         };
 
-        let prepare_result = self
-            .relay_client
-            .prepare_calls(PrepareCallsParameters {
-                calls: vec![call],
-                chain_id: conn.to_chain, // Execute on destination chain
-                from: Some(self.test_account.address()),
-                capabilities: PrepareCallsCapabilities {
-                    authorize_keys: vec![],
-                    revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: conn.to_token_address, nonce: None },
-                    pre_calls: vec![],
-                    pre_call: false,
-                    // Required funds specifies what we need on destination chain
-                    required_funds: vec![RequiredAsset::new(conn.to_token_address, total_transfer)],
-                },
-                state_overrides: Default::default(),
-                balance_overrides: Default::default(),
-                key: Some(key.to_call_key()),
-            })
-            .await;
+        let prepare_params = PrepareCallsParameters {
+            calls: vec![call],
+            chain_id: conn.to_chain, // Execute on destination chain
+            from: Some(self.test_account.address()),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token: conn.to_token_address, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                // Required funds specifies what we need on destination chain
+                required_funds: vec![RequiredAsset::new(conn.to_token_address, total_transfer)],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(key.to_call_key()),
+        };
+
+        let prepare_result = self.relay_client.prepare_calls(prepare_params.clone()).await;
 
         let Ok(PrepareCallsResponse { context, digest, .. }) = prepare_result else {
             let e = prepare_result.unwrap_err();
+            eprint!(
+                "{}",
+                format_prepare_debug(&prepare_params, None, Some("See error details above"))
+            );
             error!(?e, "Failed to prepare calls");
             return failed_transfer_result(
                 conn,
@@ -944,7 +947,7 @@ impl InteropTester {
 
     fn calculate_total_fee(
         &self,
-        quotes: &relay::types::Signed<relay::types::Quotes>,
+        quotes: &Signed<Quotes>,
         conn: &InteropConnection,
     ) -> Result<(U256, String)> {
         // Find the token with the highest decimals among the fee tokens
