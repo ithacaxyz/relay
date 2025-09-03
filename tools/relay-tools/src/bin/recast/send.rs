@@ -107,12 +107,10 @@ pub async fn execute(args: Args) -> Result<()> {
         "Transaction details"
     );
 
-    let call = create_transfer_call(&token, args.to, amount);
-
     let prepare_response = prepare_transaction(
         &relay_client,
         &args,
-        vec![call],
+        vec![token.transfer(args.to, amount)],
         eoa.address(),
         fee_token,
         &account_key,
@@ -227,14 +225,14 @@ impl ResolvedToken {
             is_native,
         })
     }
-}
 
-/// Create a transfer call
-fn create_transfer_call(token: &ResolvedToken, to: Address, amount: U256) -> Call {
-    if token.is_native {
-        Call { to, value: amount, data: Default::default() }
-    } else {
-        Call::transfer(token.address, to, amount)
+    /// Create a transfer call
+    fn transfer(&self, to: Address, amount: U256) -> Call {
+        if self.is_native {
+            Call { to, value: amount, data: Default::default() }
+        } else {
+            Call::transfer(self.address, to, amount)
+        }
     }
 }
 

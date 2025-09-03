@@ -1,12 +1,11 @@
 use alloy::{dyn_abi::JsonAbiExt, hex, json_abi::Function, primitives::U256};
-use once_cell::sync::Lazy;
 use relay::types::Call;
 use serde_json;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, sync::LazyLock};
 use tracing::warn;
 
 /// Global instance of signatures, loaded once on first access
-pub static SIGNATURES: Lazy<Signatures> = Lazy::new(Signatures::load_from_file);
+pub static SIGNATURES: LazyLock<Signatures> = LazyLock::new(Signatures::load_from_file);
 
 /// Function signature database loaded from Foundry cache
 pub struct Signatures {
