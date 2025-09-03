@@ -28,7 +28,7 @@ use alloy::{
     sol_types::{SolCall, SolEvent, SolInterface, SolValue},
     transports::TransportErrorKind,
 };
-use futures::future::{JoinAll, TryJoinAll};
+use futures::future::JoinAll;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
