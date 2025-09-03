@@ -1,9 +1,12 @@
+use std::time::Instant;
+
 use alloy::{
     primitives::ChainId,
     rpc::json_rpc::{RequestPacket, ResponsePacket},
     transports::{TransportError, TransportFut},
 };
 use futures_util::FutureExt;
+use metrics::histogram;
 use opentelemetry::trace::SpanKind;
 use tower::{Layer, Service};
 use tracing::{Level, field, span};
@@ -62,6 +65,7 @@ where
     }
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
+        let chain_id = self.chain_id;
         let span = span!(
             Level::INFO,
             "call",
@@ -71,18 +75,37 @@ where
             rpc.system = "jsonrpc",
             rpc.jsonrpc.request_id = field::Empty,
             rpc.method = field::Empty,
-            eth.chain_id = self.chain_id,
+            eth.chain_id = chain_id,
         );
+
+        let mut method = None;
 
         // todo: what do we do with batches
         if let RequestPacket::Single(ref req) = request {
             span.record("otel.name", format!("alloy.transport/{}", req.method()));
             span.record("rpc.method", req.method());
             span.record("rpc.jsonrpc.request_id", req.id().to_string());
+
+            method = Some(req.method().to_string());
         }
+
+        let fut = self.inner.call(request);
 
         // todo: set `rpc.jsonrpc.error_code` and span status. this requires helpers in alloy to get
         // jsonrpc error codes from responses
-        self.inner.call(request).instrument(span).boxed()
+        async move {
+            let instant = Instant::now();
+            let result = fut.await;
+            let elapsed = instant.elapsed().as_millis() as f64;
+
+            if let Some(method) = method {
+                histogram!("node_latency", "chain_id" => chain_id.to_string(), "method" => method)
+                    .record(elapsed);
+            }
+
+            result
+        }
+        .instrument(span)
+        .boxed()
     }
 }

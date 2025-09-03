@@ -49,8 +49,7 @@ pub fn normalize_amount(amount: U256, from_decimals: u8, to_decimals: u8) -> U25
 
 /// Parse amount string to wei - from stress
 pub fn parse_amount_to_wei(amount: &str, decimals: u8) -> Result<U256> {
-    let u = parse_units(amount, decimals).map_err(|e| eyre!("Failed to parse amount: {}", e))?;
-    U256::try_from(u).map_err(|e| eyre!("Amount too large: {}", e))
+    Ok(parse_units(amount, decimals).map_err(|e| eyre!("Failed to parse amount: {}", e))?.into())
 }
 
 /// Create a passkey for signing - from stress

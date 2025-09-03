@@ -68,7 +68,7 @@ pub fn format_prepare_debug(
 
                         let execution_data = quote.intent.execution_data();
                         if !execution_data.is_empty() {
-                            if let Ok(calls) = Vec::<Call>::abi_decode(&execution_data) {
+                            if let Ok(calls) = Vec::<Call>::abi_decode(execution_data) {
                                 output.push_str(&format!(
                                     "    Intent execution calls ({}):\n",
                                     calls.len()
@@ -85,7 +85,7 @@ pub fn format_prepare_debug(
                             } else {
                                 output.push_str(&format!(
                                     "    Intent execution: 0x{}\n",
-                                    hex::encode(&execution_data)
+                                    hex::encode(execution_data)
                                 ));
                             }
                         }
