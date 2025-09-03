@@ -15,7 +15,7 @@ use crate::{
         ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
         Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
         MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
-        OrchestratorContract::IntentExecuted,
+        OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
         rpc::{
@@ -1153,7 +1153,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
+            self.should_erc1271_wrap(&request, &delegation_status, &provider)
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -1404,6 +1404,46 @@ impl Relay {
             return Err(QuoteError::InsufficientLiquidity.into());
         }
 
+        // Try to simulate intent as single chain if we have enough assets to cover
+        // `requested_funds`.
+        if requested_asset_balance_on_dst >= requested_funds {
+            let (asset_diff, quotes) =
+                self.build_single_chain_quote(request, delegation_status, nonce, None).await?;
+
+            // It should never happen that we do not have a quote from this simulation, but to avoid
+            // outright crashing we just throw an internal error.
+            let output_quote = quotes.quotes.first().ok_or_else(|| {
+                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
+            })?;
+
+            // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
+            // just do this single chain instead.
+            if requested_asset_balance_on_dst
+                .checked_sub(requested_funds)
+                .and_then(|n| {
+                    n.checked_sub(if source_fee {
+                        output_quote.intent.total_payment_max_amount()
+                    } else {
+                        U256::ZERO
+                    })
+                })
+                .is_some()
+            {
+                debug!(
+                    %eoa,
+                    chain_id = %request.chain_id,
+                    %requested_asset,
+                    %requested_funds,
+                    %requested_asset_balance_on_dst,
+                    %source_fee,
+                    fee = %output_quote.intent.total_payment_max_amount(),
+                    "Falling back to single chain for intent"
+                );
+
+                return Ok((asset_diff, quotes));
+            }
+        }
+
         // Simulate the output intent first to get the fees required to execute it.
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
@@ -1426,35 +1466,6 @@ impl Relay {
             quotes.quotes.into_iter().next().ok_or_else(|| {
                 RelayError::InternalError(eyre::eyre!("no quote after simulation"))
             })?;
-
-        // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
-        // just do this single chain instead.
-        if requested_asset_balance_on_dst
-            .checked_sub(requested_funds)
-            .and_then(|n| {
-                n.checked_sub(if source_fee {
-                    output_quote.intent.total_payment_max_amount()
-                } else {
-                    U256::ZERO
-                })
-            })
-            .is_some()
-        {
-            debug!(
-                %eoa,
-                chain_id = %request.chain_id,
-                %requested_asset,
-                %requested_funds,
-                %requested_asset_balance_on_dst,
-                %source_fee,
-                fee = %output_quote.intent.total_payment_max_amount(),
-                "Falling back to single chain for intent"
-            );
-            return self
-                .build_single_chain_quote(request, delegation_status, nonce, None)
-                .await
-                .map_err(Into::into);
-        }
 
         // ensure interop has been configured, before proceeding
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -2191,10 +2202,18 @@ impl RelayApiServer for Relay {
             .map_err(|e| RelayError::InternalError(e.into()))?
             .ok_or_else(|| StorageError::AccountDoesNotExist(address))?;
 
-        Ok(GetAuthorizationResponse {
-            authorization: account.signed_authorization.clone(),
-            data: account.pre_call.executionData,
-        })
+        let authorization = account.signed_authorization.clone();
+
+        let data = OrchestratorContract::executePreCallsCall {
+            parentEOA: address,
+            preCalls: vec![account.pre_call.clone()],
+        }
+        .abi_encode()
+        .into();
+
+        let to = self.orchestrator();
+
+        Ok(GetAuthorizationResponse { authorization, data, to })
     }
 
     async fn get_calls_status(&self, id: BundleId) -> RpcResult<CallsStatus> {
@@ -2538,6 +2557,30 @@ impl Relay {
         self.inner.contracts.escrow.address
     }
 
+    /// Get the version for a given delegation implementation address.
+    ///
+    /// Returns None if the address is not a known delegation implementation.
+    fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
+        if impl_addr == self.inner.contracts.delegation_implementation.address {
+            return self
+                .inner
+                .contracts
+                .delegation_implementation
+                .version
+                .as_ref()
+                .and_then(|v| semver::Version::parse(v).ok());
+        }
+
+        // Check legacy implementations
+        self.inner
+            .contracts
+            .legacy_delegations
+            .iter()
+            .find(|c| c.address == impl_addr)
+            .and_then(|c| c.version.as_ref())
+            .and_then(|v| semver::Version::parse(v).ok())
+    }
+
     /// Creates an escrow struct for funding intents.
     fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -2642,26 +2685,42 @@ impl Relay {
     /// - The key's address derived from the public key is delegated on-chain, OR
     /// - The key has stored authorization AND the key's address matches the EOA (signing for
     ///   itself)
+    /// - AND the implementation version is >= 0.5.0
     ///
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
-        key: Option<&CallKey>,
-        from: Option<Address>,
+        request: &PrepareCallsParameters,
+        from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let key = match key {
+        let key = match request.key.as_ref() {
             Some(k) if k.key_type.is_secp256k1() => k,
             _ => return Ok(None),
         };
 
         let key_address = Address::from_slice(&key.public_key[12..]);
-        let key_account = Account::new(key_address, provider);
 
-        let status = key_account.delegation_status(&self.inner.storage).await.ok();
+        // If the key address matches the EOA address AND we have a delegation status, use it
+        // Otherwise, fetch the delegation status for the key address
+        let status = if request.from == Some(key_address) && from_delegation_status.is_some() {
+            from_delegation_status.clone()
+        } else {
+            Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
+        };
 
-        let needs_wrapping = status
-            .is_some_and(|s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+        // Only wrap if it's an IthacaAccount >=0.5
+        let needs_wrapping = status.as_ref().is_some_and(|s| {
+            if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
+                && let Ok(impl_addr) = s.try_implementation()
+            {
+                return self
+                    .get_delegation_implementation_version(impl_addr)
+                    .map(|v| v >= semver::Version::new(0, 5, 0))
+                    .unwrap_or(false);
+            }
+            false
+        });
 
         Ok(needs_wrapping.then_some(key_address))
     }

@@ -159,10 +159,7 @@ impl InteropTester {
     async fn verify_fresh_account(&self, force: bool) -> Result<()> {
         match self
             .relay_client
-            .get_keys(GetKeysParameters {
-                address: self.test_account.address(),
-                chain_ids: vec![1], // Use mainnet as default for key checking
-            })
+            .get_keys(GetKeysParameters { address: self.test_account.address(), chain_ids: vec![] })
             .await
         {
             Ok(keys) => {
@@ -588,10 +585,7 @@ impl InteropTester {
         // Check if account is already delegated/initialized
         let mut account_initialized = self
             .relay_client
-            .get_keys(GetKeysParameters {
-                address: self.test_account.address(),
-                chain_ids: vec![1],
-            })
+            .get_keys(GetKeysParameters { address: self.test_account.address(), chain_ids: vec![] })
             .await
             .is_ok();
 

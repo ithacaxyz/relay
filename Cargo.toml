@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "23.0.0"
+version = "23.0.1"
 edition = "2024"
 publish = false
 
@@ -9,7 +9,7 @@ path = "src/bin/relay.rs"
 name = "relay"
 
 [dependencies]
-alloy = { version = "1.0.24", features = [
+alloy = { version = "1.0.27", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -38,7 +38,7 @@ alloy = { version = "1.0.24", features = [
     "signer-aws",
     "rand",
 ], default-features = false }
-alloy-chains = "0.2.8"
+alloy-chains = "0.2.9"
 async-trait = "0.1"
 aws-config = "1.8"
 aws-sdk-kms = { version = "1", default-features = false }
@@ -104,13 +104,13 @@ resend-rs = { version = "0.16.0", default-features = false, features = [
 num-traits = "0.2"
 num-bigint = "0.4"
 ruint = { version = "1.16.0", features = ["bigdecimal"] }
-binance-sdk = { version = "12", features = ["wallet"] }
+binance-sdk = { version = "14", features = ["wallet"] }
 rust_decimal = "1"
 strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.23", features = [
+alloy = { version = "1.0.27", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",

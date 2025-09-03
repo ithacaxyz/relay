@@ -7,6 +7,7 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
@@ -117,6 +118,10 @@ sol! {
             nonReentrant
             returns (bytes4 err);
 
+        /// @dev DEPRECATION WARNING: This function will be deprecated in the future.
+        /// Allows pre calls to be executed individually, for counterfactual signatures.
+        function executePreCalls(address parentEOA, SignedCall[] calldata preCalls) public virtual;
+
         /// Returns the EIP712 domain of the orchestrator.
         ///
         /// See: https://eips.ethereum.org/EIPS/eip-5267
@@ -149,6 +154,29 @@ sol! {
 
         /// Returns the pause authority and the last pause timestamp.
         function getPauseConfig() public view virtual returns (address, uint40);
+    }
+
+    /// A struct to hold the fields for a PreCall.
+    /// Like a Intent with a subset of fields.
+    #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SignedCall {
+        /// The user's address.
+        ///
+        /// This can be set to `address(0)`, which allows it to be
+        /// coalesced to the parent Intent's EOA.
+        address eoa;
+        /// An encoded array of calls, using ERC7579 batch execution encoding.
+        ///
+        /// `abi.encode(calls)`, where `calls` is of type `Call[]`.
+        /// This allows for more efficient safe forwarding to the EOA.
+        bytes executionData;
+        /// Per delegated EOA. Same logic as the `nonce` in Intent.
+        uint256 nonce;
+        /// The wrapped signature.
+        ///
+        /// `abi.encodePacked(innerSignature, keyHash, prehash)`.
+        bytes signature;
     }
 }
 
