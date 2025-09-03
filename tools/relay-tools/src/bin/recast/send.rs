@@ -61,6 +61,90 @@ pub struct Args {
 }
 
 impl Args {
+    /// Execute the send command
+    pub async fn execute(self) -> Result<()> {
+        init_logging();
+
+        let relay_client = HttpClientBuilder::new().build(&self.relay_url)?;
+
+        let eoa = DynSigner::from_signing_key(&self.private_key).await?;
+        let account_key = create_passkey(&self.private_key)?;
+        info!("Fetching capabilities and assets...");
+        let (capabilities, user_assets) = try_join!(
+            relay_client.get_capabilities(None), // Get all capabilities, we'll filter later
+            relay_client.get_assets(GetAssetsParameters::eoa(eoa.address()))
+        )?;
+
+        let token = ResolvedToken::new(&capabilities, &self.uid, self.chain, &user_assets)?;
+
+        let fee_token = if let Some(fee_uid) = &self.fee_uid {
+            let fee_token_info =
+                ResolvedToken::new(&capabilities, fee_uid, self.chain, &user_assets)?;
+            fee_token_info.address
+        } else {
+            token.address
+        };
+
+        let amount = parse_amount_to_wei(&self.amount, token.decimals)?;
+
+        info!(amount_wei = %amount, "Parsed amount");
+
+        if amount > token.balance {
+            return Err(eyre!(
+                "Insufficient balance! Required: {} {}, Available: {} {}",
+                self.amount,
+                token.name.split(" (").next().unwrap_or(&token.name),
+                format_units_safe(token.balance, token.decimals),
+                token.name.split(" (").next().unwrap_or(&token.name)
+            ));
+        }
+
+        info!(
+            sender = %eoa.address(),
+            recipient = %self.to,
+            token = %token.name,
+            amount = %self.amount,
+            symbol = %token.symbol,
+            chain_id = %self.chain,
+            "Transaction details"
+        );
+
+        let prepare_response = self
+            .prepare_transaction(
+                &relay_client,
+                vec![token.transfer(self.to, amount)],
+                eoa.address(),
+                fee_token,
+                &account_key,
+            )
+            .await?;
+
+        info!("Transaction prepared successfully");
+
+        let bundle_id = send_transaction(&relay_client, prepare_response, &account_key).await?;
+        info!("Waiting for transaction completion...");
+        let status = wait_for_calls_status(&relay_client, bundle_id).await?;
+
+        info!(status = ?status.status, "✅ Transaction completed");
+
+        if !status.receipts.is_empty() {
+            for receipt in &status.receipts {
+                info!(
+                    tx_hash = %receipt.transaction_hash,
+                    block = ?receipt.block_number,
+                    gas_used = %receipt.gas_used,
+                    "Transaction receipt"
+                );
+            }
+        }
+
+        if !status.status.is_confirmed() {
+            return Err(eyre!("❌ Transaction failed with status: {:?}", status.status));
+        }
+
+        Ok(())
+    }
+
     /// Prepare the transaction
     async fn prepare_transaction(
         &self,
@@ -108,89 +192,6 @@ impl Args {
 
         Ok(response)
     }
-}
-
-/// Main entry point for the send command
-pub async fn execute(args: Args) -> Result<()> {
-    init_logging();
-
-    let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-
-    let eoa = DynSigner::from_signing_key(&args.private_key).await?;
-    let account_key = create_passkey(&args.private_key)?;
-    info!("Fetching capabilities and assets...");
-    let (capabilities, user_assets) = try_join!(
-        relay_client.get_capabilities(None), // Get all capabilities, we'll filter later
-        relay_client.get_assets(GetAssetsParameters::eoa(eoa.address()))
-    )?;
-
-    let token = ResolvedToken::new(&capabilities, &args.uid, args.chain, &user_assets)?;
-
-    let fee_token = if let Some(fee_uid) = &args.fee_uid {
-        let fee_token_info = ResolvedToken::new(&capabilities, fee_uid, args.chain, &user_assets)?;
-        fee_token_info.address
-    } else {
-        token.address
-    };
-
-    let amount = parse_amount_to_wei(&args.amount, token.decimals)?;
-
-    info!(amount_wei = %amount, "Parsed amount");
-
-    if amount > token.balance {
-        return Err(eyre!(
-            "Insufficient balance! Required: {} {}, Available: {} {}",
-            args.amount,
-            token.name.split(" (").next().unwrap_or(&token.name),
-            format_units_safe(token.balance, token.decimals),
-            token.name.split(" (").next().unwrap_or(&token.name)
-        ));
-    }
-
-    info!(
-        sender = %eoa.address(),
-        recipient = %args.to,
-        token = %token.name,
-        amount = %args.amount,
-        symbol = %token.symbol,
-        chain_id = %args.chain,
-        "Transaction details"
-    );
-
-    let prepare_response = args
-        .prepare_transaction(
-            &relay_client,
-            vec![token.transfer(args.to, amount)],
-            eoa.address(),
-            fee_token,
-            &account_key,
-        )
-        .await?;
-
-    info!("Transaction prepared successfully");
-
-    let bundle_id = send_transaction(&relay_client, prepare_response, &account_key).await?;
-    info!("Waiting for transaction completion...");
-    let status = wait_for_calls_status(&relay_client, bundle_id).await?;
-
-    info!(status = ?status.status, "✅ Transaction completed");
-
-    if !status.receipts.is_empty() {
-        for receipt in &status.receipts {
-            info!(
-                tx_hash = %receipt.transaction_hash,
-                block = ?receipt.block_number,
-                gas_used = %receipt.gas_used,
-                "Transaction receipt"
-            );
-        }
-    }
-
-    if !status.status.is_confirmed() {
-        return Err(eyre!("❌ Transaction failed with status: {:?}", status.status));
-    }
-
-    Ok(())
 }
 
 /// Token information resolved from UID

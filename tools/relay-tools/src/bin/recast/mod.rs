@@ -24,6 +24,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send(args) => send::execute(args).await,
+        Commands::Send(args) => args.execute().await,
     }
 }
