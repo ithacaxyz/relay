@@ -528,7 +528,7 @@ impl Relay {
         let calculate_asset_deficits = false;
 
         // Simulate the intent
-        let (asset_diffs, gas_results) = orchestrator
+        let (asset_diffs, asset_deficits, gas_results) = orchestrator
             .simulate_execute(
                 mock_from,
                 self.get_simulator_for_orchestrator(*orchestrator.address()),
@@ -602,6 +602,7 @@ impl Relay {
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
+            asset_deficits,
         };
 
         // Create ChainAssetDiffs with populated fiat values including fee

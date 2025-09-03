@@ -7,7 +7,9 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
+use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
+use tokio::try_join;
 use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
@@ -15,7 +17,12 @@ use crate::{
     asset::AssetInfoServiceHandle,
     config::SimMode,
     error::{IntentError, RelayError},
-    types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
+    types::{
+        Asset, AssetDeficit, AssetDeficits, AssetDiffs,
+        IERC20::{self, balanceOfCall},
+        Intent,
+        OrchestratorContract::IntentExecuted,
+    },
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -235,7 +242,7 @@ impl<P: Provider> Orchestrator<P> {
         gas_validation_offset: U256,
         sim_mode: SimMode,
         calculate_asset_deficits: bool,
-    ) -> Result<(AssetDiffs, GasResults), RelayError> {
+    ) -> Result<(AssetDiffs, AssetDeficits, GasResults), RelayError> {
         let result = SimulatorContract::new(
             simulator,
             self.orchestrator.provider(),
@@ -256,14 +263,57 @@ impl<P: Provider> Orchestrator<P> {
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
         // calculate asset diffs using the transaction request from simulation
-        let mut asset_diffs = asset_info_handle
-            .calculate_asset_diff(
+        let (asset_deficits, mut asset_diffs) = try_join!(
+            async {
+                let mut balances = self
+                    .orchestrator
+                    .provider()
+                    .multicall()
+                    .block(result.block_number.into())
+                    .dynamic::<balanceOfCall>();
+
+                for asset in result.asset_deficits.keys() {
+                    balances = balances.add_dynamic(
+                        IERC20::new(*asset, self.orchestrator.provider()).balanceOf(*intent.eoa()),
+                    );
+                }
+
+                let (mut metadata, balances) = try_join!(
+                    asset_info_handle.get_asset_info_list(
+                        self.orchestrator.provider(),
+                        result
+                            .asset_deficits
+                            .keys()
+                            .map(|address| Asset::Token(*address))
+                            .collect(),
+                    ),
+                    balances.aggregate().map_err(RelayError::from)
+                )?;
+
+                let mut deficits = Vec::with_capacity(result.asset_deficits.len());
+                for ((asset, required), balance) in result.asset_deficits.into_iter().zip(balances)
+                {
+                    let Some(info) = metadata.remove(&Asset::Token(asset)) else {
+                        continue;
+                    };
+                    deficits.push(AssetDeficit {
+                        address: Some(asset),
+                        metadata: info.metadata,
+                        required,
+                        deficit: required.saturating_sub(balance),
+                        fiat: None,
+                    });
+                }
+
+                Ok(AssetDeficits(deficits))
+            },
+            asset_info_handle.calculate_asset_diff(
                 &result.tx_request,
                 self.overrides.clone(),
                 result.logs.into_iter(),
                 self.orchestrator.provider(),
             )
-            .await?;
+        )?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
@@ -271,7 +321,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
-        Ok((asset_diffs, result.gas))
+        Ok((asset_diffs, asset_deficits, result.gas))
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].

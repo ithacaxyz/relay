@@ -234,7 +234,7 @@ impl<P: Provider> SimulatorContract<P> {
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
             tx_request,
             block_number,
-            required_funds: None,
+            asset_deficits: HashMap::new(),
         })
     }
 
@@ -244,7 +244,7 @@ impl<P: Provider> SimulatorContract<P> {
         intent: &Intent,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let mut overrides = self.overrides.clone();
-        let mut required_funds: Option<RequiredAsset> = None;
+        let mut asset_deficits: HashMap<Address, U256> = HashMap::new();
 
         loop {
             let trace_options = GethDebugTracingCallOptions {
@@ -292,7 +292,7 @@ impl<P: Provider> SimulatorContract<P> {
                         logs,
                         tx_request,
                         block_number,
-                        required_funds,
+                        asset_deficits,
                     });
                 }
                 // If intent failed but we are not asked to calculate asset deficits, return the
@@ -309,25 +309,14 @@ impl<P: Provider> SimulatorContract<P> {
                 return Err(IntentError::intent_revert(output).into());
             };
 
-            if required_funds.is_some_and(|existing| existing.address != asset.address) {
-                // If we already have a deficit detected for a different asset, return the error
+            if asset_deficits.get(&asset.address).is_some_and(|value| *value >= asset.value) {
+                // If we've already applied this deficit, return the error
                 return Err(IntentError::intent_revert(output).into());
             }
 
-            let balance = IERC20::new(asset.address, self.simulator.provider())
-                .balanceOf(*intent.eoa())
-                .call()
-                .overrides(overrides.clone())
-                .await?;
-
-            if balance >= asset.value {
-                // If we already have enough balance likely our deficit detection failed
-                return Err(IntentError::intent_revert(output).into());
-            }
-
-            // Add the balance override to the overrides
+            // Add the balance to the overrides
             let mut balance_override = BalanceOverride::new(AssetType::ERC20);
-            balance_override.add_balance(*intent.eoa(), asset.value - balance);
+            balance_override.add_balance(*intent.eoa(), asset.value);
 
             overrides.extend(
                 BalanceOverrides::new(HashMap::from([(asset.address, balance_override)]))
@@ -335,7 +324,7 @@ impl<P: Provider> SimulatorContract<P> {
                     .await?,
             );
 
-            required_funds = Some(asset);
+            asset_deficits.insert(asset.address, asset.value);
         }
     }
 
@@ -350,6 +339,11 @@ impl<P: Provider> SimulatorContract<P> {
         let mut missing_asset = None;
         let mut required_funds = U256::ZERO;
 
+        // We iterate over all frames in reverse order and find first transfer that failed,
+        // assumption is that this transfer is the one causing entire intent to fail.
+        //
+        // Once the transfer is found, we find all other transfers of the same asset and sum up the
+        // amounts to get the minimum required balance for the intent to succeed.
         for call in calls.iter().rev() {
             let Some((from, _, asset, amount, success)) =
                 self.decode_transfer_from_call(call).await
@@ -460,7 +454,10 @@ pub struct SimulationExecutionResult {
     /// Block number the simulation was executed against
     pub block_number: u64,
     /// Required funds for the intent to succeed.
-    pub required_funds: Option<RequiredAsset>,
+    ///
+    /// This is a mapping from asset address to the minimum required balance for the intent to
+    /// succeed.
+    pub asset_deficits: HashMap<Address, U256>,
 }
 
 /// Decodes the tryBlockAndAggregate response to extract gas results and block number.
