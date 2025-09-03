@@ -60,6 +60,53 @@ pub struct Args {
     debug: bool,
 }
 
+impl Args {
+    /// Prepare the transaction
+    async fn prepare_transaction(
+        &self,
+        relay_client: &HttpClient,
+        calls: Vec<Call>,
+        sender: Address,
+        fee_token: Address,
+        account_key: &KeyWith712Signer,
+    ) -> Result<PrepareCallsResponse> {
+        info!("Preparing transaction...");
+
+        let prepare_params = PrepareCallsParameters {
+            calls: calls.clone(),
+            chain_id: self.chain,
+            from: Some(sender),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                revoke_keys: vec![],
+                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(account_key.to_call_key()),
+        };
+
+        if self.debug {
+            print!("{}", format_prepare_debug(&prepare_params, None, None));
+        }
+
+        let response = relay_client.prepare_calls(prepare_params.clone()).await.map_err(|e| {
+            // On error, always show debug info
+            eprint!("{}", format_prepare_debug(&prepare_params, None, Some("See error details above")));
+            eyre!("Failed to prepare calls: {}", e)
+        })?;
+
+        if self.debug {
+            print!("{}", format_prepare_debug(&prepare_params, Some(&response), None));
+        }
+
+        Ok(response)
+    }
+}
+
 /// Main entry point for the send command
 pub async fn execute(args: Args) -> Result<()> {
     init_logging();
@@ -107,15 +154,15 @@ pub async fn execute(args: Args) -> Result<()> {
         "Transaction details"
     );
 
-    let prepare_response = prepare_transaction(
-        &relay_client,
-        &args,
-        vec![token.transfer(args.to, amount)],
-        eoa.address(),
-        fee_token,
-        &account_key,
-    )
-    .await?;
+    let prepare_response = args
+        .prepare_transaction(
+            &relay_client,
+            vec![token.transfer(args.to, amount)],
+            eoa.address(),
+            fee_token,
+            &account_key,
+        )
+        .await?;
 
     info!("Transaction prepared successfully");
 
@@ -236,50 +283,6 @@ impl ResolvedToken {
     }
 }
 
-/// Prepare the transaction
-async fn prepare_transaction(
-    relay_client: &HttpClient,
-    args: &Args,
-    calls: Vec<Call>,
-    sender: Address,
-    fee_token: Address,
-    account_key: &KeyWith712Signer,
-) -> Result<PrepareCallsResponse> {
-    info!("Preparing transaction...");
-
-    let prepare_params = PrepareCallsParameters {
-        calls: calls.clone(),
-        chain_id: args.chain,
-        from: Some(sender),
-        capabilities: PrepareCallsCapabilities {
-            authorize_keys: vec![],
-            revoke_keys: vec![],
-            meta: Meta { fee_payer: None, fee_token, nonce: None },
-            pre_calls: vec![],
-            pre_call: false,
-            required_funds: vec![],
-        },
-        state_overrides: Default::default(),
-        balance_overrides: Default::default(),
-        key: Some(account_key.to_call_key()),
-    };
-
-    if args.debug {
-        print!("{}", format_prepare_debug(&prepare_params, None, None));
-    }
-
-    let response = relay_client.prepare_calls(prepare_params.clone()).await.map_err(|e| {
-        // On error, always show debug info
-        eprint!("{}", format_prepare_debug(&prepare_params, None, Some("See error details above")));
-        eyre!("Failed to prepare calls: {}", e)
-    })?;
-
-    if args.debug {
-        print!("{}", format_prepare_debug(&prepare_params, Some(&response), None));
-    }
-
-    Ok(response)
-}
 
 /// Sign and send the prepared transaction
 async fn send_transaction(
