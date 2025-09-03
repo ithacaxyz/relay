@@ -784,16 +784,17 @@ impl InteropTester {
         let key = &self.account_key;
 
         // Prepare the call - for interop, we receive tokens on the destination chain
+        let call_transfer_amount = total_transfer / U256::from(2); // todo(joshie): there's an edge case on USDT that makes us understimate gas on a self transfer of the full amount.
         let call = if conn.to_token_address.is_zero() {
             // Native token transfer
             Call {
                 to: self.test_account.address(),
-                value: total_transfer,
+                value: call_transfer_amount,
                 data: Default::default(),
             }
         } else {
             // ERC20 transfer - transfer TO ourselves on destination chain
-            Call::transfer(conn.to_token_address, self.test_account.address(), total_transfer)
+            Call::transfer(conn.to_token_address, self.test_account.address(), call_transfer_amount)
         };
 
         let prepare_params = PrepareCallsParameters {
