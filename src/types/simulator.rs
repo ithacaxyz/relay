@@ -28,6 +28,7 @@ use alloy::{
     sol_types::{SolCall, SolEvent, SolInterface, SolValue},
     transports::TransportErrorKind,
 };
+use futures::future::{JoinAll, TryJoinAll};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
@@ -339,18 +340,18 @@ impl<P: Provider> SimulatorContract<P> {
         let mut missing_asset = None;
         let mut required_funds = U256::ZERO;
 
+        let transfers = calls
+            .iter()
+            .map(|call| self.decode_transfer_from_call(call))
+            .collect::<JoinAll<_>>()
+            .await;
+
         // We iterate over all frames in reverse order and find first transfer that failed,
         // assumption is that this transfer is the one causing entire intent to fail.
         //
         // Once the transfer is found, we find all other transfers of the same asset and sum up the
         // amounts to get the minimum required balance for the intent to succeed.
-        for call in calls.iter().rev() {
-            let Some((from, _, asset, amount, success)) =
-                self.decode_transfer_from_call(call).await
-            else {
-                continue;
-            };
-
+        for (from, _, asset, amount, success) in transfers.into_iter().flatten().rev() {
             if from != eoa {
                 continue;
             }

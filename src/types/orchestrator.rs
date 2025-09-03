@@ -22,6 +22,7 @@ use crate::{
         IERC20::{self, balanceOfCall},
         Intent,
         OrchestratorContract::IntentExecuted,
+        SimulationExecutionResult,
     },
 };
 
@@ -263,57 +264,78 @@ impl<P: Provider> Orchestrator<P> {
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
         // calculate asset diffs using the transaction request from simulation
-        let (asset_deficits, mut asset_diffs) = try_join!(
-            async {
-                let mut balances = self
-                    .orchestrator
-                    .provider()
-                    .multicall()
-                    .block(result.block_number.into())
-                    .dynamic::<balanceOfCall>();
+        let (asset_deficits, asset_diffs) = try_join!(
+            self.build_asset_deficits(&result, intent, &asset_info_handle),
+            self.build_asset_diffs(&result, intent, &asset_info_handle),
+        )?;
 
-                for asset in result.asset_deficits.keys() {
-                    balances = balances.add_dynamic(
-                        IERC20::new(*asset, self.orchestrator.provider()).balanceOf(*intent.eoa()),
-                    );
-                }
+        Ok((asset_diffs, asset_deficits, result.gas))
+    }
 
-                let (mut metadata, balances) = try_join!(
-                    asset_info_handle.get_asset_info_list(
-                        self.orchestrator.provider(),
-                        result
-                            .asset_deficits
-                            .keys()
-                            .map(|address| Asset::Token(*address))
-                            .collect(),
-                    ),
-                    balances.aggregate().map_err(RelayError::from)
-                )?;
+    /// Builds [`AssetDeficits`] from a [`SimulationExecutionResult`].
+    async fn build_asset_deficits(
+        &self,
+        result: &SimulationExecutionResult,
+        intent: &Intent,
+        asset_info_handle: &AssetInfoServiceHandle,
+    ) -> Result<AssetDeficits, RelayError> {
+        if result.asset_deficits.is_empty() {
+            return Ok(AssetDeficits::default());
+        }
 
-                let mut deficits = Vec::with_capacity(result.asset_deficits.len());
-                for ((asset, required), balance) in result.asset_deficits.into_iter().zip(balances)
-                {
-                    let Some(info) = metadata.remove(&Asset::Token(asset)) else {
-                        continue;
-                    };
-                    deficits.push(AssetDeficit {
-                        address: Some(asset),
-                        metadata: info.metadata,
-                        required,
-                        deficit: required.saturating_sub(balance),
-                        fiat: None,
-                    });
-                }
+        let mut balances = self
+            .orchestrator
+            .provider()
+            .multicall()
+            .block(result.block_number.into())
+            .dynamic::<balanceOfCall>();
 
-                Ok(AssetDeficits(deficits))
-            },
-            asset_info_handle.calculate_asset_diff(
+        for asset in result.asset_deficits.keys() {
+            balances = balances.add_dynamic(
+                IERC20::new(*asset, self.orchestrator.provider()).balanceOf(*intent.eoa()),
+            );
+        }
+
+        let (mut metadata, balances) = try_join!(
+            asset_info_handle.get_asset_info_list(
+                self.orchestrator.provider(),
+                result.asset_deficits.keys().map(|address| Asset::Token(*address)).collect(),
+            ),
+            balances.aggregate().map_err(RelayError::from)
+        )?;
+
+        let mut deficits = Vec::with_capacity(result.asset_deficits.len());
+        for ((&asset, &required), balance) in result.asset_deficits.iter().zip(balances) {
+            let Some(info) = metadata.remove(&Asset::Token(asset)) else {
+                continue;
+            };
+            deficits.push(AssetDeficit {
+                address: Some(asset),
+                metadata: info.metadata,
+                required,
+                deficit: required.saturating_sub(balance),
+                fiat: None,
+            });
+        }
+
+        Ok(AssetDeficits(deficits))
+    }
+
+    /// Builds [`AssetDiffs`] from a [`SimulationExecutionResult`].
+    async fn build_asset_diffs(
+        &self,
+        result: &SimulationExecutionResult,
+        intent: &Intent,
+        asset_info_handle: &AssetInfoServiceHandle,
+    ) -> Result<AssetDiffs, RelayError> {
+        let mut asset_diffs = asset_info_handle
+            .calculate_asset_diff(
                 &result.tx_request,
                 self.overrides.clone(),
-                result.logs.into_iter(),
+                &result.logs,
                 self.orchestrator.provider(),
             )
-        )?;
+            .await?;
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
@@ -321,7 +343,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
-        Ok((asset_diffs, asset_deficits, result.gas))
+        Ok(asset_diffs)
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].
