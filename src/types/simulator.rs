@@ -24,7 +24,7 @@ use alloy::{
     transports::TransportErrorKind,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 sol! {
 
@@ -189,7 +189,7 @@ impl<P: Provider> SimulatorContract<P> {
         };
 
         // log the cast call command for potential debugging
-        trace!(cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
+        trace!(?result, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
 
         result
     }
