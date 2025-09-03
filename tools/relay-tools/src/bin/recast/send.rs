@@ -95,7 +95,10 @@ impl Args {
 
         let response = relay_client.prepare_calls(prepare_params.clone()).await.map_err(|e| {
             // On error, always show debug info
-            eprint!("{}", format_prepare_debug(&prepare_params, None, Some("See error details above")));
+            eprint!(
+                "{}",
+                format_prepare_debug(&prepare_params, None, Some("See error details above"))
+            );
             eyre!("Failed to prepare calls: {}", e)
         })?;
 
@@ -282,7 +285,6 @@ impl ResolvedToken {
         }
     }
 }
-
 
 /// Sign and send the prepared transaction
 async fn send_transaction(
