@@ -73,6 +73,9 @@ pub use funder::*;
 mod multicall;
 pub use multicall::*;
 
+mod cast_debug;
+pub use cast_debug::*;
+
 /// A 40 bit integer.
 pub type U40 = Uint<40, 1>;
 
