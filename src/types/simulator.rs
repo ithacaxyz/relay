@@ -188,10 +188,8 @@ impl<P: Provider> SimulatorContract<P> {
             self.with_debug_trace(&tx_request).await
         };
 
-        // If simulation failed, log the cast call command for debugging
-        if let Err(ref e) = result {
-            error!(error = ?e, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepareCalls simulation failed");
-        }
+        // log the cast call command for potential debugging
+        trace!(cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
 
         result
     }
