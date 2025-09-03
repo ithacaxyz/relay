@@ -17,8 +17,8 @@ pub fn generate_cast_call_command(
 ) -> String {
     let mut cmd = String::new();
 
-    // Basic cast call command
-    write!(&mut cmd, "cast call").unwrap();
+    // Wrap in parentheses for easy copying
+    write!(&mut cmd, "(cast call").unwrap();
 
     // Add the 'to' address
     if let Some(to) = tx_request.to {
@@ -46,9 +46,6 @@ pub fn generate_cast_call_command(
             write!(&mut cmd, " --auth 0x{}", hex::encode(auth_bytes)).unwrap();
         }
     }
-
-    // Add RPC URL placeholder
-    write!(&mut cmd, " -r <RPC_URL>").unwrap();
 
     // Add other optional parameters
     if let Some(from) = tx_request.from {
@@ -87,6 +84,5 @@ pub fn generate_cast_call_command(
             }
         }
     }
-
     cmd
 }
