@@ -18,7 +18,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Asset, AssetType, Call, KeyType, KeyWith712Signer,
+        Asset, AssetType, Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddressOrNative, AssetFilterItem, GetAssetsParameters, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse,
@@ -439,6 +439,47 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
 
     // check that there is only one native asset and one erc20 with the zero address
     assert!(chain_user_assets.iter().filter(|asset| asset.address.is_native()).count() == 1);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn asset_deficits() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    // Prepare account
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    mint_erc20s(&[env.erc20s[5]], &[env.eoa.address()], &env.provider()).await?;
+    let balance =
+        IERC20::new(env.erc20s[5], env.provider()).balanceOf(env.eoa.address()).call().await?;
+    let amount = balance * U256::from(2);
+
+    // create prepare_call request
+    let params = PrepareCallsParameters {
+        from: Some(env.eoa.address()),
+        calls: vec![Call::transfer(env.erc20s[5], Address::with_last_byte(1), amount)],
+        chain_id: env.chain_id(),
+        capabilities: PrepareCallsCapabilities {
+            meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+            authorize_keys: vec![],
+            revoke_keys: vec![],
+            pre_calls: vec![],
+            pre_call: false,
+            required_funds: vec![],
+        },
+        state_overrides: Default::default(),
+        balance_overrides: Default::default(),
+        key: Some(admin_key.to_call_key()),
+    };
+
+    let output = env.relay_endpoint.prepare_calls(params).await?;
+    let deficit = &output.context.quote().unwrap().ty().quotes[0].asset_deficits.0[0];
+
+    assert_eq!(deficit.address, Some(env.erc20s[5]));
+    assert_eq!(deficit.deficit, amount - balance);
+    assert_eq!(deficit.required, amount);
 
     Ok(())
 }

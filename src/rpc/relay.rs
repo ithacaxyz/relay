@@ -519,14 +519,6 @@ impl Relay {
         // client.
         intent_to_sign.set_payment(U256::from(1));
 
-        // If the user didn't provide any fund transfers OR the previous simulation failed due to
-        // insufficient funds, we need to calculate the asset deficits. They will be used for two
-        // things:
-        // 1. Next simulation, to continue the quotes building.
-        // 2. Return to the user.
-        // TODO: set the actual value
-        let calculate_asset_deficits = false;
-
         // Simulate the intent
         let (asset_diffs, asset_deficits, gas_results) = orchestrator
             .simulate_execute(
@@ -536,7 +528,7 @@ impl Relay {
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
                 chain.sim_mode(),
-                calculate_asset_deficits,
+                context.calculate_asset_deficits,
             )
             .await?;
 
@@ -609,8 +601,6 @@ impl Relay {
         let chain_asset_diffs =
             ChainAssetDiffs::new(asset_diffs, &quote, &self.inner.chains, &self.inner.price_oracle)
                 .await?;
-
-        // TODO: calculate `ChainAssetDeficits` to add fiat values
 
         Ok((chain_asset_diffs, quote))
     }
@@ -1006,6 +996,7 @@ impl Relay {
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
+                calculate_asset_deficits: false,
             },
         )
         .await?;
@@ -1021,6 +1012,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
+        calculate_asset_deficits: bool,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
         let Some(request_key) = &request.key else {
@@ -1076,6 +1068,7 @@ impl Relay {
                     intent_kind,
                     state_overrides,
                     balance_overrides,
+                    calculate_asset_deficits,
                 },
             )
             .await
@@ -1222,7 +1215,7 @@ impl Relay {
             )
             .await
         } else {
-            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind)
+            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind, true)
                 .await
                 .map_err(Into::into)
         }
@@ -1420,8 +1413,9 @@ impl Relay {
         // Try to simulate intent as single chain if we have enough assets to cover
         // `requested_funds`.
         if requested_asset_balance_on_dst >= requested_funds {
-            let (asset_diff, quotes) =
-                self.build_single_chain_quote(request, delegation_status, nonce, None).await?;
+            let (asset_diff, quotes) = self
+                .build_single_chain_quote(request, delegation_status, nonce, None, false)
+                .await?;
 
             // It should never happen that we do not have a quote from this simulation, but to avoid
             // outright crashing we just throw an internal error.
@@ -1461,24 +1455,19 @@ impl Relay {
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
-        let (_, quotes) = self
-            .build_single_chain_quote(
+        let (_, mut output_quote) = self
+            .build_intent(
                 request,
                 delegation_status,
                 nonce,
-                Some(IntentKind::MultiOutput {
+                IntentKind::MultiOutput {
                     leaf_index: 1,
                     fund_transfers: vec![(requested_asset, needed_funds)],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
-                }),
+                },
+                false,
             )
             .await?;
-        // It should never happen that we do not have a quote from this simulation, but to avoid
-        // outright crashing we just throw an internal error.
-        let mut output_quote =
-            quotes.quotes.into_iter().next().ok_or_else(|| {
-                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
-            })?;
 
         // ensure interop has been configured, before proceeding
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -1547,7 +1536,7 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(request, delegation_status, nonce, None)
+                    .build_single_chain_quote(request, delegation_status, nonce, None, true)
                     .await
                     .map_err(Into::into);
             };
@@ -1588,6 +1577,7 @@ impl Relay {
                         fund_transfers: vec![(requested_asset, sourced_funds)],
                         settler_context,
                     },
+                    false,
                 )
                 .await?;
             output_quote = new_quote;
@@ -1725,6 +1715,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
+        calculate_asset_deficits: bool,
     ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
             .build_intent(
@@ -1732,6 +1723,7 @@ impl Relay {
                 delegation_status,
                 nonce,
                 intent_kind.unwrap_or(IntentKind::Single),
+                calculate_asset_deficits,
             )
             .await?;
 
