@@ -1,10 +1,9 @@
 //! Debugging utilities for cast call commands
 
 use alloy::{
-    primitives::{TxKind, hex},
+    primitives::{hex, TxKind},
     rpc::types::{TransactionRequest, state::StateOverride},
 };
-use std::fmt::Write;
 
 /// Generates a cast call command string from a transaction request.
 ///
@@ -15,72 +14,69 @@ pub fn generate_cast_call_command(
     tx_request: &TransactionRequest,
     overrides: &StateOverride,
 ) -> String {
-    let mut cmd = String::new();
-
-    // Wrap in parentheses for easy copying
-    write!(&mut cmd, "(cast call").unwrap();
+    let mut cmd = String::from("(cast call");
 
     // Add the 'to' address
     if let Some(to) = tx_request.to {
         match to {
-            TxKind::Call(addr) => write!(&mut cmd, " {}", addr).unwrap(),
-            TxKind::Create => write!(&mut cmd, " --create").unwrap(),
+            TxKind::Call(addr) => cmd.push_str(&format!(" {}", addr)),
+            TxKind::Create => cmd.push_str(" --create"),
         }
     }
 
     // Add the call data if present
-    if let Some(data) = tx_request.input.input()
-        && !data.is_empty()
-    {
-        write!(&mut cmd, " 0x{}", hex::encode(data)).unwrap();
+    if let Some(data) = tx_request.input.input() {
+        if !data.is_empty() {
+            cmd.push_str(&format!(" {}", data));
+        }
     }
 
     // Add trace flag for better debugging
-    write!(&mut cmd, " --trace").unwrap();
+    cmd.push_str(" --trace");
 
     // Add authorization list if present (EIP-7702 delegations)
     if let Some(auth_list) = &tx_request.authorization_list {
         for auth in auth_list {
             // RLP encode the authorization for cast
             let auth_bytes = alloy::rlp::encode(auth);
-            write!(&mut cmd, " --auth 0x{}", hex::encode(auth_bytes)).unwrap();
+            cmd.push_str(&format!(" --auth 0x{}", hex::encode(auth_bytes)));
         }
     }
 
     // Add other optional parameters
     if let Some(from) = tx_request.from {
-        write!(&mut cmd, " --from {}", from).unwrap();
+        cmd.push_str(&format!(" --from {}", from));
     }
 
-    if let Some(value) = tx_request.value
-        && !value.is_zero()
-    {
-        write!(&mut cmd, " --value {}", value).unwrap();
+    if let Some(value) = tx_request.value {
+        if !value.is_zero() {
+            cmd.push_str(&format!(" --value {}", value));
+        }
     }
 
     if let Some(gas) = tx_request.gas {
-        write!(&mut cmd, " --gas-limit {}", gas).unwrap();
+        cmd.push_str(&format!(" --gas-limit {}", gas));
     }
 
     // Add state overrides
     for (addr, override_) in overrides {
         if let Some(balance) = &override_.balance {
-            write!(&mut cmd, " --override-balance {}:{}", addr, balance).unwrap();
+            cmd.push_str(&format!(" --override-balance {}:{}", addr, balance));
         }
         if let Some(nonce) = &override_.nonce {
-            write!(&mut cmd, " --override-nonce {}:{}", addr, nonce).unwrap();
+            cmd.push_str(&format!(" --override-nonce {}:{}", addr, nonce));
         }
         if let Some(code) = &override_.code {
-            write!(&mut cmd, " --override-code {}:0x{}", addr, hex::encode(code)).unwrap();
+            cmd.push_str(&format!(" --override-code {}:{}", addr, code));
         }
         if let Some(state) = &override_.state {
             for (slot, value) in state {
-                write!(&mut cmd, " --override-state {}:{}:{}", addr, slot, value).unwrap();
+                cmd.push_str(&format!(" --override-state {}:{}:{}", addr, slot, value));
             }
         }
         if let Some(state_diff) = &override_.state_diff {
             for (slot, value) in state_diff {
-                write!(&mut cmd, " --override-state-diff {}:{}:{}", addr, slot, value).unwrap();
+                cmd.push_str(&format!(" --override-state-diff {}:{}:{}", addr, slot, value));
             }
         }
     }
