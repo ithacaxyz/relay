@@ -1,7 +1,7 @@
 //! Debugging utilities for cast call commands
 
 use alloy::{
-    primitives::{hex, TxKind},
+    primitives::{TxKind, hex},
     rpc::types::{TransactionRequest, state::StateOverride},
 };
 
@@ -25,10 +25,10 @@ pub fn generate_cast_call_command(
     }
 
     // Add the call data if present
-    if let Some(data) = tx_request.input.input() {
-        if !data.is_empty() {
-            cmd.push_str(&format!(" {}", data));
-        }
+    if let Some(data) = tx_request.input.input()
+        && !data.is_empty()
+    {
+        cmd.push_str(&format!(" {}", data));
     }
 
     // Add trace flag for better debugging
@@ -48,10 +48,10 @@ pub fn generate_cast_call_command(
         cmd.push_str(&format!(" --from {}", from));
     }
 
-    if let Some(value) = tx_request.value {
-        if !value.is_zero() {
-            cmd.push_str(&format!(" --value {}", value));
-        }
+    if let Some(value) = tx_request.value
+        && !value.is_zero()
+    {
+        cmd.push_str(&format!(" --value {}", value));
     }
 
     if let Some(gas) = tx_request.gas {

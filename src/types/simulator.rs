@@ -190,8 +190,7 @@ impl<P: Provider> SimulatorContract<P> {
 
         // If simulation failed, log the cast call command for debugging
         if let Err(ref e) = result {
-            let chain_id = self.simulator.provider().get_chain_id().await.ok();
-            error!(error = ?e, ?chain_id, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepareCalls simulation failed");
+            error!(error = ?e, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepareCalls simulation failed");
         }
 
         result
