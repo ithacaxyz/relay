@@ -69,7 +69,7 @@ expression: value
           "extraPayment": "0x0",
           "feeTokenDeficit": "0x0",
           "intent": {
-            "combinedGas": "0x3a8a1",
+            "combinedGas": "[combinedGas]",
             "encodedFundTransfers": [],
             "encodedPreCalls": [
               "[encodedPreCall]"
@@ -98,7 +98,7 @@ expression: value
           },
           "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
           "paymentTokenDecimals": 18,
-          "txGas": "0x6d59f"
+          "txGas": "[txGas]"
         }
       ],
       "r": "[r]",
@@ -119,7 +119,7 @@ expression: value
       "chainId": "0x7a69",
       "name": "Orchestrator",
       "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-      "version": "0.5.1"
+      "version": "0.5.2"
     },
     "message": {
       "calls": [
@@ -129,7 +129,7 @@ expression: value
           "value": "0x0"
         }
       ],
-      "combinedGas": "0x3a8a1",
+      "combinedGas": "[combinedGas]",
       "encodedFundTransfers": [],
       "encodedPreCalls": [
         "[encodedPreCall]"

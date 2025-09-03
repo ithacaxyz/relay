@@ -154,16 +154,22 @@ async fn test_prepare_calls() -> eyre::Result<()> {
         ".capabilities.assetDiffs.*" => insta::sorted_redaction(),
         ".capabilities.feeTotals.*.value" => reduction_from_str::<f64>("value"),
         ".context.quote.hash" => reduction_from_str::<B256>("hash"),
+        ".context.quote.quotes[].intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
         ".context.quote.quotes[].intent.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
         ".context.quote.quotes[].intent.paymentAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
         ".context.quote.quotes[].intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
         ".context.quote.quotes[].nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.quotes[].txGas" => reduction_from_str::<U256>("txGas"),
         ".context.quote.r" => reduction_from_str::<U256>("r"),
         ".context.quote.s" => reduction_from_str::<U256>("s"),
-        ".context.quote.ttl" => reduction_from_str::<u64>("ttl"),
+        ".context.quote.ttl" => insta::dynamic_redaction(move |value, _path| {
+            assert!(value.as_u64().is_some());
+            "[ttl]"
+        }),
         ".context.quote.v" => reduction_from_str::<U64>("v"),
         ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
         ".digest" => reduction_from_str::<B256>("digest"),
+        ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
         ".typedData.message.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
         ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
     });
@@ -473,7 +479,14 @@ async fn test_add_faucet_funds() -> eyre::Result<()> {
 fn reduction_from_str<T: FromStr>(name: &str) -> insta::internals::Redaction {
     let name = name.to_string();
     insta::dynamic_redaction(move |value, _path| {
-        assert!(T::from_str(value.as_str().unwrap()).is_ok());
+        assert!(
+            T::from_str(value.as_str().unwrap_or_else(|| panic!(
+                "cannot parse {:?} as string for field {}",
+                std::any::type_name::<T>(),
+                name
+            )))
+            .is_ok()
+        );
         format!("[{}]", name)
     })
 }
