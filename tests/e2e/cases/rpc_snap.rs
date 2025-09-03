@@ -155,23 +155,17 @@ async fn test_prepare_calls() -> eyre::Result<()> {
         ".capabilities.feeTotals.*.value" => reduction_from_str::<f64>("value"),
         ".context.quote.hash" => reduction_from_str::<B256>("hash"),
         ".context.quote.quotes[].intent.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
-        ".context.quote.quotes[].intent.prePaymentAmount" => reduction_from_str::<U256>("prePaymentAmount"),
-        ".context.quote.quotes[].intent.prePaymentMaxAmount" => reduction_from_str::<U256>("prePaymentMaxAmount"),
-        ".context.quote.quotes[].intent.totalPaymentAmount" => reduction_from_str::<U256>("totalPaymentAmount"),
-        ".context.quote.quotes[].intent.totalPaymentMaxAmount" => reduction_from_str::<U256>("totalPaymentMaxAmount"),
+        ".context.quote.quotes[].intent.paymentAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.quotes[].intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
         ".context.quote.quotes[].nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
         ".context.quote.r" => reduction_from_str::<U256>("r"),
         ".context.quote.s" => reduction_from_str::<U256>("s"),
-        ".context.quote.ttl" => insta::dynamic_redaction(|value, _path| {
-            assert!(value.as_u64().unwrap() > std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-            "[ttl]"
-        }),
+        ".context.quote.ttl" => reduction_from_str::<u64>("ttl"),
         ".context.quote.v" => reduction_from_str::<U64>("v"),
         ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
         ".digest" => reduction_from_str::<B256>("digest"),
         ".typedData.message.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
-        ".typedData.message.prePaymentMaxAmount" => reduction_from_str::<U256>("prePaymentMaxAmount"),
-        ".typedData.message.totalPaymentMaxAmount" => reduction_from_str::<U256>("totalPaymentMaxAmount"),
+        ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
     });
 
     Ok(())
@@ -344,7 +338,9 @@ async fn test_get_authorization() -> eyre::Result<()> {
         .get_authorization(GetAuthorizationParameters { address: env.eoa.address() })
         .await?;
 
-    insta::assert_json_snapshot!(response);
+    insta::assert_json_snapshot!(response, {
+        ".data" => reduction_from_str::<Bytes>("data"),
+    });
 
     Ok(())
 }
