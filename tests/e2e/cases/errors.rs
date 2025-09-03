@@ -9,7 +9,7 @@ use relay::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn decode_insufficient_balance() -> eyre::Result<()> {
+async fn decode_insufficient_allowance() -> eyre::Result<()> {
     let env = Environment::setup().await?;
     let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
@@ -19,7 +19,12 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
-            calls: vec![Call::transfer(env.erc20s[4], Address::ZERO, U256::from(10000000u64))],
+            calls: vec![Call::transfer_from(
+                env.erc20s[4],
+                Address::ZERO,
+                env.eoa.address(),
+                U256::from(10000000u64),
+            )],
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
@@ -35,7 +40,7 @@ async fn decode_insufficient_balance() -> eyre::Result<()> {
         })
         .await;
 
-    assert!(response.is_err_and(|err| err.to_string().contains("InsufficientBalance")));
+    assert!(response.is_err_and(|err| err.to_string().contains("InsufficientAllowance")));
 
     Ok(())
 }

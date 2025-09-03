@@ -504,11 +504,11 @@ fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
 fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, Vec<Log>) {
     let mut calls = Vec::with_capacity(1);
     let mut logs = Vec::with_capacity(32);
-    let mut stack = vec![root_frame];
+    let mut stack = vec![(root_frame, false)];
 
-    while let Some(mut frame) = stack.pop() {
-        if frame.error.is_some() || frame.revert_reason.is_some() {
-            stack.extend(frame.calls.drain(..).rev());
+    while let Some((mut frame, parent_failed)) = stack.pop() {
+        if frame.error.is_some() || frame.revert_reason.is_some() || parent_failed {
+            stack.extend(frame.calls.drain(..).rev().map(|f| (f, true)));
             calls.push(frame);
             continue;
         }
@@ -535,7 +535,7 @@ fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, 
             };
         }
 
-        stack.extend(frame.calls.drain(..).rev());
+        stack.extend(frame.calls.drain(..).rev().map(|f| (f, false)));
         calls.push(frame);
     }
 
