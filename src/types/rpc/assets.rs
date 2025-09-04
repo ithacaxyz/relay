@@ -177,6 +177,8 @@ impl GetAssetsResponse {
                     let usd_value = match &asset.metadata {
                         Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
                             let decimals = meta.decimals.unwrap_or(18);
+                            // SAFETY: unwrap() is safe here because the if guard above ensures
+                            // meta.price is Some and is_usd() returned true
                             calculate_usd_value(
                                 asset.balance,
                                 meta.price.as_ref().unwrap().price,
