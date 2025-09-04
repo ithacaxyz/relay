@@ -122,6 +122,11 @@ impl GetAssetsParameters {
             ..Default::default()
         }
     }
+
+    /// Generates parameters to get all assets for an account on a single chain.
+    pub fn for_chain(account: Address, chain_id: ChainId) -> Self {
+        Self { account, chain_filter: vec![chain_id], ..Default::default() }
+    }
 }
 
 /// Asset as described on ERC7811.

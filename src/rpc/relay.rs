@@ -1091,22 +1091,27 @@ impl Relay {
 
         // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            let status =
-                Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?;
+            let account = Account::new(from, provider.clone());
 
-            // Ensure fee_token is set for non-pre_call requests
+            // Fetch account assets and status in parallel if we need to auto-select fee token
             if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
                 let chain = self.inner.chains.ensure_chain(request.chain_id)?;
-                let assets = self
-                    .get_assets(GetAssetsParameters::eoa(from))
-                    .await
-                    .map_err(RelayError::internal)?;
-                let best_fee_token =
-                    assets.find_best_fee_token(&chain, &self.inner.price_oracle).await;
-                request.capabilities.meta.fee_token = Some(best_fee_token);
-            }
 
-            Some(status)
+                let (status, _) =
+                    tokio::try_join!(account.delegation_status(&self.inner.storage), async {
+                        let assets = self
+                            .get_assets(GetAssetsParameters::for_chain(from, request.chain_id))
+                            .await
+                            .map_err(RelayError::internal)?;
+                        request.capabilities.meta.fee_token = Some(
+                            assets.find_best_fee_token(&chain, &self.inner.price_oracle).await,
+                        );
+                        Ok(())
+                    })?;
+                Some(status)
+            } else {
+                Some(account.delegation_status(&self.inner.storage).await?)
+            }
         } else {
             None
         };
