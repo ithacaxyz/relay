@@ -1,10 +1,7 @@
 //! Relay configuration.
 use crate::{
     constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
-    interop::{
-        LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SimpleSettler,
-        settler::layerzero::EndpointId,
-    },
+    interop::{LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SimpleSettler},
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
     storage::RelayStorage,
     transactions::{MIN_SIGNER_GAS, TOP_UP_MULTIPLIER},
@@ -786,11 +783,6 @@ impl SimpleSettlerConfig {
 /// LayerZero configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayerZeroConfig {
-    /// Mapping of chain ID to LayerZero endpoint ID.
-    /// Format: { chain_id: endpoint_id }
-    /// Example: { 1: 30101, 10: 30110 } means Ethereum mainnet (1) -> LayerZero EID 30101
-    #[serde(with = "crate::serde::hash_map")]
-    pub endpoint_ids: HashMap<ChainId, EndpointId>,
     /// Mapping of chain ID to LayerZero endpoint address.
     #[serde(with = "crate::serde::hash_map")]
     pub endpoint_addresses: HashMap<ChainId, Address>,
@@ -805,7 +797,6 @@ impl LayerZeroConfig {
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroSettler, SettlementError> {
         LayerZeroSettler::new(
-            self.endpoint_ids.clone(),
             self.endpoint_addresses.clone(),
             providers,
             storage,
@@ -940,7 +931,6 @@ mod tests {
             && let SettlerImplementation::LayerZero(lz_config) = &interop.settler.implementation
         {
             // This would fail to compile if settler_address field existed
-            let _ = &lz_config.endpoint_ids;
             let _ = &lz_config.endpoint_addresses;
         }
 

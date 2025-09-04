@@ -28,6 +28,7 @@ use alloy::{
     sol_types::{SolCall, SolEvent, SolValue},
 };
 use async_trait::async_trait;
+use futures::future::TryJoinAll;
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
 use std::time::Duration;
@@ -86,12 +87,28 @@ pub struct LayerZeroSettler {
 impl LayerZeroSettler {
     /// Creates a new LayerZero settler instance with batch processing.
     pub async fn new(
-        endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
         storage: RelayStorage,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<Self, SettlementError> {
+        let endpoint_ids: HashMap<ChainId, EndpointId> = endpoint_addresses
+            .iter()
+            .map(|(chain_id, address)| async {
+                let Some(provider) = providers.get(chain_id) else {
+                    return Ok::<_, SettlementError>(None);
+                };
+
+                let eid = ILayerZeroEndpointV2::new(*address, provider).eid().call().await?;
+
+                Ok(Some((*chain_id, eid)))
+            })
+            .collect::<TryJoinAll<_>>()
+            .await?
+            .into_iter()
+            .flatten()
+            .collect();
+
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
         let chain_metrics = endpoint_ids

@@ -118,6 +118,17 @@ async fn check_connection_direction(
         return Ok(ConnectionCheckResult { warnings, errors });
     };
 
+    // Get provider for destination chain
+    let Some(dst_provider) = chains.get(dst_chain_id).map(|chain| chain.provider().clone()) else {
+        errors.push(format!("No provider available for chain {dst_chain_id}"));
+        return Ok(ConnectionCheckResult { warnings, errors });
+    };
+
+    let dst_eid = ILayerZeroEndpointV2::new(chain_config.dst_endpoint_address, dst_provider)
+        .eid()
+        .call()
+        .await?;
+
     info!(
         src_chain = %src_chain_id,
         dst_chain = %dst_chain_id,
@@ -130,7 +141,7 @@ async fn check_connection_direction(
         src_provider: &src_provider,
         src_chain_id,
         dst_chain_id,
-        dst_eid: chain_config.dst_eid,
+        dst_eid,
         settler_address: chain_config.settler_address,
     };
 
@@ -152,25 +163,18 @@ fn validate_chain_configs(
     // Check source chain endpoint address
     let src_endpoint_address = lz_config.endpoint_addresses.get(&src_chain_id)
         .ok_or_else(|| format!(
-            "Chain {src_chain_id} should be connected to chain {dst_chain_id} but has no LayerZero endpoint address configured"
+            "Chain {src_chain_id} should be connected to chain {dst_chain_id} but has no LayerZero endpoint configured"
         ))?;
 
-    // Check source chain endpoint ID
-    lz_config.endpoint_ids.get(&src_chain_id).ok_or_else(|| {
-        format!(
-            "Chain {src_chain_id} should be connected to chain {dst_chain_id} but has no LayerZero endpoint ID configured"
-        )
-    })?;
-
     // Check destination chain endpoint ID
-    let dst_eid = lz_config.endpoint_ids.get(&dst_chain_id)
+    let dst_endpoint_address = lz_config.endpoint_addresses.get(&dst_chain_id)
         .ok_or_else(|| format!(
-            "Chain {src_chain_id} should be connected to chain {dst_chain_id} but chain {dst_chain_id} has no LayerZero endpoint ID configured"
+            "Chain {src_chain_id} should be connected to chain {dst_chain_id} but chain {dst_chain_id} has no LayerZero endpoint configured"
         ))?;
 
     Ok(ChainConnectionConfig {
         src_endpoint_address: *src_endpoint_address,
-        dst_eid: *dst_eid,
+        dst_endpoint_address: *dst_endpoint_address,
         settler_address: chains.settler_address(src_chain_id).map_err(|e| e.to_string())?,
     })
 }
@@ -201,7 +205,7 @@ struct MulticallResults {
 /// Configuration data for a chain connection.
 struct ChainConnectionConfig {
     src_endpoint_address: Address,
-    dst_eid: u32,
+    dst_endpoint_address: Address,
     settler_address: Address,
 }
 
