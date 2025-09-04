@@ -1102,7 +1102,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::internal)?;
                 let best_fee_token = assets
-                    .find_best_fee_token(request.chain_id, &chain, &self.inner.price_oracle)
+                    .find_best_fee_token(&chain, &self.inner.price_oracle)
                     .await;
                 request.capabilities.meta.fee_token = Some(best_fee_token);
             }

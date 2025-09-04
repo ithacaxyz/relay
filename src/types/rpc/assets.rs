@@ -163,11 +163,10 @@ impl GetAssetsResponse {
     /// Finds the fee token with the highest USD value on the specified chain.
     pub async fn find_best_fee_token(
         &self,
-        chain_id: ChainId,
         chain: &Chain,
         price_oracle: &PriceOracle,
     ) -> Address {
-        let Some(assets) = self.0.get(&chain_id) else {
+        let Some(assets) = self.0.get(&chain.id()) else {
             return Address::ZERO;
         };
 
