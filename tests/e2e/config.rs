@@ -1,4 +1,5 @@
 use super::{AuthKind, TxContext, cases::upgrade_account_lazily, environment::Environment};
+use crate::e2e::environment::EnvironmentConfig;
 use strum::EnumIter;
 
 /// Test configuration that will prepare the desired [`Environment`] before a run.
@@ -10,12 +11,12 @@ pub struct TestConfig {
 
 impl TestConfig {
     /// Runs the test for a specific configuration.
-    pub async fn run<'a, F>(&self, build_txs: F) -> eyre::Result<()>
+    pub async fn run<'a, F>(&self, build_txs: F, env_config: EnvironmentConfig) -> eyre::Result<()>
     where
         F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync,
     {
         // Setup the initial environment.
-        let mut env = Environment::setup().await?;
+        let mut env = Environment::setup_with_config(env_config).await?;
 
         // Apply native or ERC20 payment method
         env = self.payment.apply(env);
