@@ -7,10 +7,11 @@ use alloy::{
 };
 use futures_util::FutureExt;
 use metrics::histogram;
-use opentelemetry::trace::SpanKind;
+use opentelemetry::trace::{SpanKind, Status};
 use tower::{Layer, Service};
 use tracing::{Level, field, span};
 use tracing_futures::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// A layer that wraps requests in spans with OpenTelemetry attributes.
 ///
@@ -91,11 +92,10 @@ where
 
         let fut = self.inner.call(request);
 
-        // todo: set `rpc.jsonrpc.error_code` and span status. this requires helpers in alloy to get
-        // jsonrpc error codes from responses
         async move {
             let instant = Instant::now();
-            let result = fut.await;
+            // the span handle is cloned here so we can record more fields later
+            let result = fut.instrument(span.clone()).await;
             let elapsed = instant.elapsed().as_millis() as f64;
 
             if let Some(method) = method {
@@ -103,9 +103,17 @@ where
                     .record(elapsed);
             }
 
+            if let Some(err) = result.as_ref().err() {
+                span.set_status(Status::error(err.to_string()));
+
+                if let Some(error_resp) = err.as_error_resp() {
+                    span.record("rpc.jsonrpc.error_message", error_resp.message.to_string());
+                    span.record("rpc.jsonrpc.error_code", error_resp.code);
+                }
+            }
+
             result
         }
-        .instrument(span)
         .boxed()
     }
 }
