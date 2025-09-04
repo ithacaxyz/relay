@@ -33,7 +33,10 @@ pub fn format_prepare_debug(
     if let Some(from) = params.from {
         output.push_str(&format!("From: {}\n", from));
     }
-    output.push_str(&format!("Fee token: {}\n", params.capabilities.meta.fee_token));
+    output.push_str(&format!(
+        "Fee token: {}\n",
+        params.capabilities.meta.fee_token.map_or("None".to_string(), |addr| addr.to_string())
+    ));
     if let Some(ref key) = params.key {
         output.push_str(&format!("Key: {:?}\n", key));
     }

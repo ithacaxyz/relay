@@ -71,7 +71,7 @@ async fn asset_diff_no_fee() -> eyre::Result<()> {
             calls: vec![], // fill in per test
             chain_id: env.chain_id(),
             capabilities: PrepareCallsCapabilities {
-                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(fee_token), nonce: None },
                 authorize_keys: vec![],
                 revoke_keys: vec![],
                 pre_calls: vec![],
@@ -110,7 +110,7 @@ async fn asset_diff() -> eyre::Result<()> {
         calls: vec![], // fill in per test
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
-            meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+            meta: Meta { fee_payer: None, fee_token: Some(Address::ZERO), nonce: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_calls: vec![],
@@ -240,7 +240,7 @@ async fn asset_diff_has_uri() -> eyre::Result<()> {
         },
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
-            meta: Meta { fee_token: Address::ZERO, nonce: None, fee_payer: None },
+            meta: Meta { fee_token: Some(Address::ZERO), nonce: None, fee_payer: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_calls: vec![],

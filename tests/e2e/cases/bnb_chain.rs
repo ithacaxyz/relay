@@ -38,7 +38,7 @@ async fn test_bnb_asset_diff_symbols() -> eyre::Result<()> {
         capabilities: PrepareCallsCapabilities {
             meta: Meta {
                 fee_payer: None,
-                fee_token: Address::ZERO, // Native BNB
+                fee_token: Some(Address::ZERO), // Native BNB
                 nonce: None,
             },
             authorize_keys: vec![],

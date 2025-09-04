@@ -48,7 +48,11 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
                 from: Some(eoa.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_payer: Some(paymaster.address), fee_token, nonce: None },
+                    meta: Meta {
+                        fee_payer: Some(paymaster.address),
+                        fee_token: Some(fee_token),
+                        nonce: None,
+                    },
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],

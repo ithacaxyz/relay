@@ -140,7 +140,7 @@ async fn test_multichain_usdt_transfer_empty_destination() -> Result<()> {
             from: Some(env.eoa.address()),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: Default::default(),
-                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: None },
+                meta: Meta { fee_token: Some(env.erc20), fee_payer: None, nonce: None },
                 pre_calls: Default::default(),
                 pre_call: Default::default(),
                 required_funds: vec![RequiredAsset::new(env.erc20, balance)],
@@ -247,7 +247,7 @@ impl MultichainTransferSetup {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(env.erc20), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     required_funds: vec![RequiredAsset::new(env.erc20, total_transfer_amount)],

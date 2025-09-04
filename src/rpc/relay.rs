@@ -1054,7 +1054,9 @@ impl Relay {
                 request.chain_id,
                 request_key.prehash,
                 FeeEstimationContext {
-                    fee_token: request.capabilities.meta.fee_token,
+                    // fee_token should have been set in the beginning of prepare_calls_inner if it
+                    // was not provided by the user
+                    fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1087,9 +1089,29 @@ impl Relay {
 
         let provider = self.provider(request.chain_id)?;
 
-        // Get delegation status if there's a sender
+        // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            Some(Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?)
+            let account = Account::new(from, provider.clone());
+
+            // Fetch account assets and status in parallel if we need to auto-select fee token
+            if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
+                let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+
+                let (status, _) =
+                    tokio::try_join!(account.delegation_status(&self.inner.storage), async {
+                        let assets = self
+                            .get_assets(GetAssetsParameters::for_chain(from, request.chain_id))
+                            .await
+                            .map_err(RelayError::internal)?;
+                        request.capabilities.meta.fee_token = Some(
+                            assets.find_best_fee_token(&chain, &self.inner.price_oracle).await,
+                        );
+                        Ok(())
+                    })?;
+                Some(status)
+            } else {
+                Some(account.delegation_status(&self.inner.storage).await?)
+            }
         } else {
             None
         };
@@ -1357,7 +1379,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
-        let source_fee = request.capabilities.meta.fee_token == requested_asset;
+        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1845,7 +1867,7 @@ impl Relay {
     /// price fetch is successful
     async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
-        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+        self.inner.price_oracle.usd_conversion_rate(uid.clone()).await.map(AssetPrice::from_price)
     }
 }
 
@@ -2666,7 +2688,7 @@ impl Relay {
             from: Some(context.eoa),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(context.fee_token), nonce: None },
                 revoke_keys: vec![],
                 pre_calls: vec![],
                 pre_call: false,

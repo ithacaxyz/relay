@@ -29,7 +29,7 @@ async fn pause() -> eyre::Result<()> {
         capabilities: PrepareCallsCapabilities {
             authorize_keys: vec![],
             revoke_keys: vec![],
-            meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+            meta: Meta { fee_payer: None, fee_token: Some(Address::ZERO), nonce: None },
             pre_calls: vec![],
             pre_call: false,
             required_funds: vec![],
