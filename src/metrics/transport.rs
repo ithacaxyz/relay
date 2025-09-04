@@ -92,8 +92,6 @@ where
 
         let fut = self.inner.call(request);
 
-        // todo: set `rpc.jsonrpc.error_code` and span status. this requires helpers in alloy to get
-        // jsonrpc error codes from responses
         async move {
             let instant = Instant::now();
             // the span handle is cloned here so we can record more fields later
