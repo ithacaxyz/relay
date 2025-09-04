@@ -392,7 +392,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
                 required_funds: vec![],
@@ -471,7 +471,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
                 required_funds: vec![],
@@ -555,7 +555,7 @@ async fn test_delegation_upgrade_with_stored_account_impl(
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
                     revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(env.erc20), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     // Request more funds than available on chain 0 to trigger multichain

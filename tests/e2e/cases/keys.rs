@@ -390,7 +390,7 @@ async fn get_keys_multichain_three_chains_two_have_session() -> eyre::Result<()>
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![session_key.to_authorized()],
                     revoke_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     required_funds: vec![],

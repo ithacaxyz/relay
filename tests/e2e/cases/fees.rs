@@ -158,7 +158,7 @@ async fn auto_select_fee_token() -> eyre::Result<()> {
     // balance)
     let quote = response.context.quote().expect("Should have quote context");
     assert_eq!(
-        quote.ty().quotes[0].intent.paymentToken,
+        quote.ty().quotes[0].intent.payment_token(),
         env.fee_token,
         "Should have selected the fee token with highest USD value"
     );

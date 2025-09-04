@@ -163,7 +163,7 @@ impl Args {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
                 required_funds: vec![],
