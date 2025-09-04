@@ -461,17 +461,6 @@ impl Relay {
             intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
         }
 
-        let gas_validation_offset =
-            // Account for gas variation in P256 sig verification.
-            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
-                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
-                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
-                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
-                    COLD_SSTORE_GAS_BUFFER
-                } else {
-                    U256::ZERO
-                };
-
         // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
         // should be enough to simulate the gas cost of paying for the intent for most (if not all)
         // ERC20s.
@@ -518,6 +507,17 @@ impl Relay {
                 .into(),
             );
         }
+
+        let gas_validation_offset =
+            // Account for gas variation in P256 sig verification.
+            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
+                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
+                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
+                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
+                    COLD_SSTORE_GAS_BUFFER
+                } else {
+                    U256::ZERO
+                };
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
