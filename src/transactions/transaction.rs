@@ -247,18 +247,15 @@ impl RelayTransaction {
             // Get the chain ID from the transaction
             let chain_id = self.chain_id();
 
-            // Look for escrow call in the intent's calls - escrow calls are always last
-            if let Ok(calls) = quote.intent.calls()
-                && let Some(call) = calls.last()
-            {
-                // Try to decode as an escrow call
-                if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
-                    // We found an escrow call! Extract the first escrow
-                    if let Some(escrow) = escrow_call._escrows.into_iter().next() {
-                        // Create EscrowDetails from the escrow
-                        return Some(EscrowDetails::new(
-                            escrow, chain_id, call.to, // The escrow contract address
-                        ));
+            // Look for escrow call in the intent's calls - check all calls, but most likely it's
+            // the first one.
+            if let Ok(calls) = quote.intent.calls() {
+                for call in calls {
+                    if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
+                        // We found an escrow call! Extract the first escrow
+                        if let Some(escrow) = escrow_call._escrows.into_iter().next() {
+                            return Some(EscrowDetails::new(escrow, chain_id, call.to));
+                        }
                     }
                 }
             }
