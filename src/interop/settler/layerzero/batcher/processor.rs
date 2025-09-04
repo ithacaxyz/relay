@@ -1,8 +1,8 @@
 use super::{LayerZeroBatchMessage, LayerZeroPoolHandle, types::SettlementPathKey};
 use crate::{
-    interop::settler::{SettlementError, layerzero::contracts::ILayerZeroEndpointV2},
+    interop::settler::{layerzero::contracts::ILayerZeroEndpointV2, SettlementError},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus, TxId},
-    types::{Call3, LZChainConfigs, TransactionServiceHandles, aggregate3Call},
+    types::{aggregate3Call, generate_cast_call_command, Call3, LZChainConfigs, TransactionServiceHandles},
 };
 use alloy::{
     primitives::{B256, ChainId},
@@ -270,7 +270,10 @@ impl LayerZeroBatchProcessor {
             .input(multicall_calldata.clone().into());
 
         let gas_limit =
-            config.provider.estimate_gas(tx_request).await.map_err(SettlementError::RpcError)?;
+            config.provider.estimate_gas(tx_request.clone()).await.map_err(|err| {
+                error!(?err, cast_call = %generate_cast_call_command(&tx_request, &Default::default()), "batch transaction failed");
+                SettlementError::RpcError(err)
+            })?;
 
         // Add buffer for batch processing
         let gas_limit = gas_limit.saturating_mul(130).saturating_div(100);
