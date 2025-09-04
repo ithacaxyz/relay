@@ -128,10 +128,7 @@ impl MessagingParams {
 mod tests {
     use super::*;
     use crate::interop::settler::layerzero::ULN_CONFIG_TYPE;
-    use alloy::{
-        primitives::address,
-        providers::{Provider, ProviderBuilder},
-    };
+    use alloy::{primitives::address, providers::ProviderBuilder};
 
     #[tokio::test]
     async fn test_layerzero_diagnostics_ethereum_mainnet() {
