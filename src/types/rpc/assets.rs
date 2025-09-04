@@ -166,10 +166,17 @@ impl GetAssetsResponse {
             return Address::ZERO;
         };
 
-        let values = join_all(assets.iter().filter_map(|asset| {
-            let address = asset.address.address();
-            chain.assets().fee_token_iter().find(|(_, desc)| desc.address == address).map(
-                |(uid, desc)| async move {
+        let values = join_all(
+            assets
+                .iter()
+                .filter_map(|asset| {
+                    chain
+                        .assets()
+                        .fee_token_iter()
+                        .find(|(_, desc)| desc.address == asset.address.address())
+                        .map(|(uid, desc)| (asset, uid, desc))
+                })
+                .map(|(asset, uid, desc)| async move {
                     let usd_value = match &asset.metadata {
                         Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
                             let decimals = meta.decimals.unwrap_or(18);
@@ -183,10 +190,9 @@ impl GetAssetsResponse {
                         }
                         _ => price_oracle.usd_value(asset.balance, uid, desc).await.unwrap_or(0.0),
                     };
-                    (address, usd_value)
-                },
-            )
-        }))
+                    (asset.address.address(), usd_value)
+                }),
+        )
         .await;
 
         values
