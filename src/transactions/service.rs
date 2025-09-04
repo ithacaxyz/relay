@@ -630,7 +630,7 @@ mod tests {
             },
             authorization_address: Default::default(),
             orchestrator: Default::default(),
-            intent: Intent { eoa: sender, nonce: U256::random(), ..Default::default() },
+            intent: Intent::latest().with_eoa(sender).with_nonce(U256::random()),
             fee_token_deficit: Default::default(),
         };
         RelayTransaction::new(quote, None, B256::random())

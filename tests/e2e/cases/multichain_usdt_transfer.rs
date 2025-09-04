@@ -263,14 +263,18 @@ impl MultichainTransferSetup {
         // todo(joshie): this is wrong. it works for now, since we ignore the output fees in the
         // refund test, but we're essentially collecting fees for different tokens. (eg. the refund
         // test fee token on the output is native, while the fees on the input chains are env.erc20)
-        let fees =
-            quotes.ty().quotes.iter().map(|quote| quote.intent.totalPaymentMaxAmount).collect();
+        let fees = quotes
+            .ty()
+            .quotes
+            .iter()
+            .map(|quote| quote.intent.total_payment_max_amount())
+            .collect();
 
         // Verify that the output intent has settler configured
         let quotes = context.quote().expect("should have quotes");
         let output_quote = quotes.ty().quotes.last().expect("should have output quote");
         assert_ne!(
-            output_quote.intent.settler,
+            output_quote.intent.settler(),
             Address::ZERO,
             "Output intent should have settler configured"
         );

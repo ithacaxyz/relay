@@ -240,4 +240,6 @@ pub struct GetAuthorizationResponse {
     pub authorization: SignedAuthorization,
     /// The initialization data.
     pub data: Bytes,
+    /// The address of the initializer.
+    pub to: Address,
 }

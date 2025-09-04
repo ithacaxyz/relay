@@ -389,8 +389,8 @@ impl ChainAssetDiffs {
         price_oracle: &PriceOracle,
     ) -> Result<Self, RelayError> {
         let chain_id = quote.chain_id;
-        let fee_token = quote.intent.paymentToken;
-        let fee_amount = quote.intent.totalPaymentAmount;
+        let fee_token = quote.intent.payment_token();
+        let fee_amount = quote.intent.total_payment_amount();
 
         // Calculate fee USD value
         let (token_uid, token) = chains

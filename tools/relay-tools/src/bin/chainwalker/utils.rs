@@ -1,32 +1,4 @@
-use alloy::primitives::{ChainId, U256, utils::format_units};
 use std::collections::HashSet;
-
-/// Format a chain ID with its name if known
-pub fn format_chain(chain_id: ChainId) -> String {
-    let chain = alloy_chains::Chain::from(chain_id);
-    let Some(named) = chain.named() else {
-        return format!("{{{chain_id}}}");
-    };
-    format!("{{ {named}|{chain_id} }}")
-}
-
-/// Format units with proper error handling, returning the raw value as string on error
-pub fn format_units_safe(value: U256, decimals: u8) -> String {
-    format_units(value, decimals).unwrap_or_else(|_| value.to_string())
-}
-
-/// Normalize an amount from one decimal precision to another
-pub fn normalize_amount(amount: U256, from_decimals: u8, to_decimals: u8) -> U256 {
-    if from_decimals == to_decimals {
-        amount
-    } else if from_decimals > to_decimals {
-        // Source has more decimals, divide to reduce precision
-        amount / U256::from(10).pow(U256::from(from_decimals - to_decimals))
-    } else {
-        // Source has fewer decimals, multiply to increase precision
-        amount * U256::from(10).pow(U256::from(to_decimals - from_decimals))
-    }
-}
 
 /// Find an Eulerian path in a complete directed graph.
 /// Returns a sequence of edges (from_idx, to_idx) that visits every edge exactly once.

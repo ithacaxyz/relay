@@ -1,6 +1,6 @@
 //! RPC key-related request and response types.
 
-use alloy::primitives::{Address, B256, Bytes, ChainId};
+use alloy::primitives::{Address, B256, Bytes, ChainId, U64};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
 };
 
 use super::Permission;
+use std::collections::HashMap;
 
 /// Request parameters for `wallet_getKeys`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,10 +17,16 @@ use super::Permission;
 pub struct GetKeysParameters {
     /// Address of the account to get the keys for.
     pub address: Address,
-    /// Target chain ID.
-    #[serde(with = "alloy::serde::quantity")]
-    pub chain_id: ChainId,
+    /// Target chain IDs. If not provided, returns keys for all supported chains.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(with = "alloy::serde::quantity::vec")]
+    pub chain_ids: Vec<ChainId>,
 }
+
+/// Response for wallet_getKeys with multi-chain support.
+/// Maps chain ID (as QUANTITY hex string per JSON-RPC spec) to array of authorized keys for that
+/// chain. Chains where the account is not delegated or where errors occurred are omitted.
+pub type GetKeysResponse = HashMap<U64, Vec<AuthorizeKeyResponse>>;
 
 /// Represents a key authorization request.
 ///
@@ -279,14 +286,30 @@ mod tests {
 
     #[test]
     fn test_get_keys_parameters_roundtrip() {
-        let raw = r#"{"address":"0x0000000000000000000000000000000000000000","chainId":"0x1"}"#;
-        let params = super::GetKeysParameters { address: Address::ZERO, chain_id: 1 };
+        // Test with chain_ids specified
+        let raw =
+            r#"{"address":"0x0000000000000000000000000000000000000000","chainIds":["0x1","0xa"]}"#;
+        let params =
+            super::GetKeysParameters { address: Address::ZERO, chain_ids: vec![1u64, 10u64] };
 
         let json = serde_json::to_string(&params).unwrap();
         assert_eq!(json, raw);
         let deserialized: super::GetKeysParameters = serde_json::from_str(&json).unwrap();
 
         assert_eq!(params.address, deserialized.address);
-        assert_eq!(params.chain_id, deserialized.chain_id);
+        assert_eq!(params.chain_ids, deserialized.chain_ids);
+
+        // Test with empty chain_ids (should omit field in JSON)
+        let params_no_chains =
+            super::GetKeysParameters { address: Address::ZERO, chain_ids: vec![] };
+
+        let json_no_chains = serde_json::to_string(&params_no_chains).unwrap();
+        assert_eq!(json_no_chains, r#"{"address":"0x0000000000000000000000000000000000000000"}"#);
+
+        // Test deserialization with missing chain_ids (should default to empty vec)
+        let deserialized_no_chains: super::GetKeysParameters =
+            serde_json::from_str(r#"{"address":"0x0000000000000000000000000000000000000000"}"#)
+                .unwrap();
+        assert_eq!(deserialized_no_chains.chain_ids.len(), 0);
     }
 }

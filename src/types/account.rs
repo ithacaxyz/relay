@@ -11,6 +11,7 @@ use IthacaAccount::{
     IthacaAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
 };
 use alloy::{
+    dyn_abi::Eip712Domain,
     eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, Bytes, FixedBytes, U256, aliases::U192, map::HashMap},
     providers::Provider,
@@ -19,7 +20,7 @@ use alloy::{
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol,
-    sol_types::{SolCall, SolValue},
+    sol_types::{SolCall, SolStruct, SolValue},
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -162,6 +163,27 @@ sol! {
 
         /// Upgrades the implementation.
         function upgradeProxyAccount(address newImplementation);
+
+        /// ERC1271 replay-safe signature struct
+        struct ERC1271Sign {
+            bytes32 digest;
+        }
+
+        /// Returns the EIP712 domain separator information
+        /// See: https://eips.ethereum.org/EIPS/eip-5267
+        function eip712Domain()
+            public
+            view
+            virtual
+            returns (
+                bytes1 fields,
+                string memory name,
+                string memory version,
+                uint256 chainId,
+                address verifyingContract,
+                bytes32 salt,
+                uint256[] memory extensions
+            );
     }
 }
 
@@ -396,7 +418,9 @@ impl<P: Provider> Account<P> {
             .map_err(TransportErrorKind::custom)
     }
 
-    /// Validates the given signature, returns `Some(key_hash)` if the signature is valid.
+    /// Validates the given signature with ERC1271 replay-safe wrapping.
+    ///
+    /// Returns `Some(key_hash)` if the signature is valid.
     pub async fn validate_signature(
         &self,
         digest: B256,
@@ -404,13 +428,25 @@ impl<P: Provider> Account<P> {
     ) -> TransportResult<Option<KeyHash>> {
         let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
             .delegation
-            .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into())
+            .unwrapAndValidateSignature(
+                self.digest_erc1271(digest),
+                signature.abi_encode_packed().into(),
+            )
             .call()
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)?;
 
         Ok(isValid.then_some(keyHash))
+    }
+
+    /// Wraps a digest for ERC1271 signature validation.
+    ///
+    /// This implements the same logic as IthacaAccount.sol's isValidSignature function.
+    pub fn digest_erc1271(&self, digest: B256) -> B256 {
+        let domain = Eip712Domain::new(None, None, None, Some(*self.delegation.address()), None);
+
+        IthacaAccount::ERC1271Sign { digest }.eip712_signing_hash(&domain)
     }
 
     /// Get the next nonce for the given EOA.
@@ -468,5 +504,15 @@ impl DelegationStatus {
             DelegationStatus::Stored { account, .. } => Some(account.as_ref()),
             _ => None,
         }
+    }
+
+    /// Returns true if the account is delegated on-chain.
+    pub fn is_delegated(&self) -> bool {
+        matches!(self, DelegationStatus::Delegated { .. })
+    }
+
+    /// Returns true if the account has stored authorization but is not yet delegated on-chain.
+    pub fn is_stored(&self) -> bool {
+        matches!(self, DelegationStatus::Stored { .. })
     }
 }

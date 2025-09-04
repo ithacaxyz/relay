@@ -19,7 +19,7 @@
 use alloy::{
     consensus::constants::ETH_TO_WEI,
     network::EthereumWallet,
-    primitives::{Address, B256, ChainId, U64, U256, address, keccak256, utils::format_ether},
+    primitives::{Address, B256, ChainId, U64, U256, address, keccak256},
     providers::{
         DynProvider, Provider, ProviderBuilder,
         fillers::{CachedNonceManager, ChainIdFiller, GasFiller, NonceFiller},
@@ -44,11 +44,12 @@ use relay::{
         rpc::{
             BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
             PrepareCallsResponse, PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
-            RelayCapabilities, RequiredAsset, UpgradeAccountCapabilities, UpgradeAccountParameters,
-            UpgradeAccountSignatures,
+            RelayCapabilities, RequiredAsset, SendPreparedCallsParameters,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
+use relay_tools::common::{format_prepare_debug, init_logging, wait_for_calls_status};
 use std::{
     collections::HashMap,
     sync::{
@@ -58,8 +59,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::mpsc, time::Instant};
-use tracing::{debug, error, info, instrument, level_filters::LevelFilter, trace, warn};
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
 alloy::sol! {
@@ -120,52 +120,56 @@ impl StressAccount {
             } else {
                 Call { to: recipient, value: transfer_amount, data: Default::default() }
             };
-            let PrepareCallsResponse { context, digest, .. } = match relay_client
-                .prepare_calls(PrepareCallsParameters {
-                    calls: vec![call],
-                    chain_id,
-                    from: Some(self.address),
-                    capabilities: PrepareCallsCapabilities {
-                        authorize_keys: vec![],
-                        meta: Meta { fee_payer: None, fee_token: Some(fee_token), nonce: None },
-                        revoke_keys: vec![],
-                        pre_calls: vec![],
-                        pre_call: false,
-                        required_funds: vec![RequiredAsset::new(fee_token, transfer_amount)],
-                    },
-                    state_overrides: Default::default(),
-                    balance_overrides: Default::default(),
-                    key: Some(self.key.to_call_key()),
-                })
-                .await
-            {
-                Ok(response) => response,
-                Err(err) => {
-                    warn!(
-                        account = %self.address,
-                        total_elapsed = ?prepare_start.elapsed(),
-                        retries,
-                        ?err,
-                        "Prepare calls failed",
-                    );
-                    retries -= 1;
-                    if retries == 0 {
-                        return Err(err).context("prepare calls failed");
-                    } else {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                }
+            let prepare_params = PrepareCallsParameters {
+                calls: vec![call],
+                chain_id,
+                from: Some(self.address),
+                capabilities: PrepareCallsCapabilities {
+                    authorize_keys: vec![],
+                    meta: Meta { fee_payer: None, fee_token, nonce: None },
+                    revoke_keys: vec![],
+                    pre_calls: vec![],
+                    pre_call: false,
+                    required_funds: vec![RequiredAsset::new(fee_token, transfer_amount)],
+                },
+                state_overrides: Default::default(),
+                balance_overrides: Default::default(),
+                key: Some(self.key.to_call_key()),
             };
+            let PrepareCallsResponse { context, digest, .. } =
+                match relay_client.prepare_calls(prepare_params.clone()).await {
+                    Ok(response) => response,
+                    Err(err) => {
+                        eprint!(
+                            "{}",
+                            format_prepare_debug(
+                                &prepare_params,
+                                None,
+                                Some("See error details above")
+                            )
+                        );
+                        warn!(
+                            account = %self.address,
+                            total_elapsed = ?prepare_start.elapsed(),
+                            retries,
+                            ?err,
+                            "Prepare calls failed",
+                        );
+                        retries -= 1;
+                        if retries == 0 {
+                            return Err(err).context("prepare calls failed");
+                        } else {
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                    }
+                };
 
             retries = 5;
 
-            // If we have a fee token deficit then the stress test ends.
-            if let Some(quote) =
-                context.quote().unwrap().ty().quotes.iter().find(|q| q.chain_id == chain_id)
-                && !quote.fee_token_deficit.is_zero()
-            {
-                warn!(deficit = %format_ether(quote.fee_token_deficit), "Fee token deficit.");
+            // If all quotes have a fee token deficit then the stress test ends.
+            if context.quote().unwrap().ty().quotes.iter().all(|q| !q.fee_token_deficit.is_zero()) {
+                warn!("Fee token deficit on all chains.");
                 return Ok(());
             }
 
@@ -189,7 +193,7 @@ impl StressAccount {
             );
             let send_start = Instant::now();
             let bundle_id = relay_client
-                .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
+                .send_prepared_calls(SendPreparedCallsParameters {
                     capabilities: Default::default(),
                     context,
                     key: self.key.to_call_key(),
@@ -206,16 +210,7 @@ impl StressAccount {
                 "Sent bundle ({} -> {})",
                 inputs, chain_id
             );
-            let status = loop {
-                let status = relay_client.get_calls_status(bundle_id.id).await;
-                trace!("got bundle status: {:?}", status);
-                if status.as_ref().is_ok_and(|status| {
-                    status.status.is_final() && !status.status.is_preconfirmed()
-                }) {
-                    break status.unwrap();
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            };
+            let status = wait_for_calls_status(&relay_client, bundle_id.id).await.unwrap();
 
             if chain_ids.len() > 1 {
                 check_settlement_status(
@@ -280,10 +275,6 @@ impl StressTester {
         )
         .await?;
         let destination_provider = create_provider(args.dst_rpc.clone(), signer.clone()).await?;
-        let providers = source_providers
-            .iter()
-            .chain(std::iter::once(&destination_provider))
-            .collect::<Vec<_>>();
 
         // Gather chain IDs
         let source_chain_ids =
@@ -353,8 +344,16 @@ impl StressTester {
 
         let disperse_address = CREATE2_DEPLOYER.create2(B256::ZERO, keccak256(&Disperse::BYTECODE));
 
+        let chains_to_fund = if source_chain_ids.is_empty() {
+            // If we only have a single chain, fund it.
+            vec![(&destination_provider, destination_chain_id)]
+        } else {
+            // If we're testing interop, only fund the source chains.
+            source_providers.iter().zip(source_chain_ids).collect()
+        };
+
         // Deploy contracts if needed and fund accounts on all chains
-        try_join_all(providers.iter().zip(chain_ids).map(|(provider, chain_id)| {
+        try_join_all(chains_to_fund.into_iter().map(|(provider, chain_id)| {
             fund_accounts(
                 provider,
                 accounts.clone(),
@@ -522,7 +521,7 @@ struct Args {
     #[arg(long = "relay-url", value_name = "RELAY_URL", required = true)]
     relay_url: Url,
     /// RPC URLs of the source chains
-    #[arg(long = "src-rpc", value_name = "RPC_URL", required = true)]
+    #[arg(long = "src-rpc", value_name = "RPC_URL", required = false)]
     src_rpc: Vec<Url>,
     /// RPC URL of the destination chain
     #[arg(long = "dst-rpc", value_name = "RPC_URL", required = true)]
@@ -557,12 +556,7 @@ impl Args {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
-        )
-        .init();
+    init_logging();
 
     let args = Args::parse();
     if let Err(err) = args.run().await {

@@ -105,7 +105,20 @@ impl GetAssetsParameters {
         Self {
             account,
             asset_filter: [(chain_id, vec![AssetFilterItem::fungible(asset.into())])].into(),
-            chain_filter: vec![chain_id],
+            ..Default::default()
+        }
+    }
+
+    /// Generates parameters to get specific assets for an account on specific chains.
+    pub fn for_assets_on_chains(account: Address, assets: HashMap<ChainId, Address>) -> Self {
+        Self {
+            account,
+            asset_filter: assets
+                .into_iter()
+                .map(|(chain_id, address)| {
+                    (chain_id, vec![AssetFilterItem::fungible(address.into())])
+                })
+                .collect(),
             ..Default::default()
         }
     }

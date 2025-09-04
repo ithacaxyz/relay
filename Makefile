@@ -175,6 +175,27 @@ lint:
 test:
 	cargo test
 
+# Run base sepolia e2e tests
+# Usage: make test-base-sepolia [TEST=test_name]
+# Example: make test-base-sepolia TEST=auth_then_two
+test-base-sepolia: ## Run e2e tests against Base Sepolia fork. Use TEST=name to run specific test.
+	@echo "Loading Base Sepolia test configuration..."
+	@export $$(grep -v '^#' tests/assets/config/base_sepolia.env | xargs) && \
+	if [ -n "$(TEST)" ]; then \
+		echo "Running tests matching: $(TEST)"; \
+		cargo e2e -- \
+			--locked \
+			--workspace \
+			-E "test(~$(TEST))"; \
+	else \
+		export TEST_FILTER="(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not (test(~multichain) or test(~multi_chain))" && \
+		cargo e2e -- \
+			--locked \
+			--workspace \
+			-E "$$TEST_FILTER" \
+			--no-fail-fast; \
+	fi
+
 pr:
 	make lint && make test
 

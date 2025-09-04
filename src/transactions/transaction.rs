@@ -143,10 +143,11 @@ impl RelayTransaction {
                         * U256::from(fees.max_fee_per_gas)
                         * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
                     .div_ceil(quote.eth_price))
-                .min(intent.totalPaymentMaxAmount);
+                .min(intent.total_payment_max_amount());
 
-                intent.prePaymentAmount = payment_amount;
-                intent.totalPaymentAmount = payment_amount;
+                intent = intent
+                    .with_pre_payment_amount(payment_amount)
+                    .with_total_payment_amount(payment_amount);
 
                 let input = intent.encode_execute();
 
@@ -213,7 +214,7 @@ impl RelayTransaction {
     /// Returns the EOA of the intent.
     pub fn eoa(&self) -> Option<&Address> {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
-            Some(&quote.intent.eoa)
+            Some(quote.intent.eoa())
         } else {
             None
         }

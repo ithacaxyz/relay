@@ -16,6 +16,7 @@ use crate::{
     types::{
         IFunder, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
+        generate_cast_call_command,
     },
 };
 use alloy::{
@@ -346,9 +347,8 @@ impl Signer {
     ) -> Result<(), SignerError> {
         if let RelayTransactionKind::Intent { quote, .. } = &mut tx.kind {
             // Set payment recipient to us if it hasn't been set
-            let payment_recipient = &mut quote.intent.paymentRecipient;
-            if payment_recipient.is_zero() {
-                *payment_recipient = self.address();
+            if quote.intent.payment_recipient().is_zero() {
+                quote.intent.set_payment_recipient(self.address());
             }
         }
 
@@ -384,7 +384,7 @@ impl Signer {
                 debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             } else {
-                trace!(?result, ?request, "transaction simulation failed");
+                error!(?result, ?request, cast_call = %generate_cast_call_command(&request, &Default::default()), "transaction simulation failed");
                 result?;
             }
         }
@@ -825,7 +825,7 @@ impl Signer {
             if let Some(submitted_at_block) = submitted_at_block {
                 self.metrics
                     .blocks_until_inclusion
-                    .record((included_at_block - submitted_at_block + 1) as f64);
+                    .record((included_at_block.saturating_sub(submitted_at_block + 1)) as f64);
             }
         }
 

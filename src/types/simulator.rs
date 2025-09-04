@@ -2,7 +2,7 @@ use crate::{
     config::{QuoteConfig, SimMode},
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{IntentError, RelayError},
-    types::IERC20,
+    types::{IERC20, generate_cast_call_command},
 };
 use alloy::{
     primitives::{Address, B256, BlockNumber, Log, U256},
@@ -42,6 +42,20 @@ sol! {
     #[derive(Debug)]
     #[allow(clippy::too_many_arguments)]
     contract Simulator {
+        function simulateV1Logs(
+            address ep,
+            uint8 paymentPerGasPrecision,
+            uint256 paymentPerGas,
+            uint256 combinedGasIncrement,
+            uint256 combinedGasVerificationOffset,
+            bytes calldata encodedIntent
+        ) public payable virtual returns (uint256 gasUsed, uint256 combinedGas);
+    }
+
+    #[sol(rpc)]
+    #[derive(Debug)]
+    #[allow(clippy::too_many_arguments)]
+    contract SimulatorV4 {
         function simulateV1Logs(
             address ep,
             bool isPrePayment,
@@ -116,9 +130,18 @@ impl<P: Provider> SimulatorContract<P> {
         mock_from: Address,
         intent_encoded: Vec<u8>,
         gas_validation_offset: U256,
+        orchestrator_version: Option<&semver::Version>,
     ) -> Result<SimulationExecutionResult, RelayError> {
-        let simulate_calldata = self
-            .simulator
+        // whether orchestrator is v4
+        let is_v4 =
+            orchestrator_version.map(|v| *v < semver::Version::new(0, 5, 0)).unwrap_or(false);
+
+        let simulate_calldata = if is_v4 {
+            // Use SimulatorV4 with additional isPrePayment parameter
+            SimulatorV4::SimulatorV4Instance::new(
+                *self.simulator.address(),
+                self.simulator.provider(),
+            )
             .simulateV1Logs(
                 orchestrator_address,
                 true,
@@ -129,7 +152,20 @@ impl<P: Provider> SimulatorContract<P> {
                 intent_encoded.into(),
             )
             .calldata()
-            .clone();
+            .clone()
+        } else {
+            self.simulator
+                .simulateV1Logs(
+                    orchestrator_address,
+                    0,
+                    U256::ZERO,
+                    U256::from(11_000),
+                    gas_validation_offset,
+                    intent_encoded.into(),
+                )
+                .calldata()
+                .clone()
+        };
 
         // Wrap the simulator call in multicall3's tryBlockAndAggregate to get the block number
         let tx_request =
@@ -146,16 +182,21 @@ impl<P: Provider> SimulatorContract<P> {
             );
 
         // check how to simulate
-        if self.sim_mode.is_simulate_v1() {
-            self.with_simulate_v1(tx_request).await
+        let result = if self.sim_mode.is_simulate_v1() {
+            self.with_simulate_v1(&tx_request).await
         } else {
-            self.with_debug_trace(tx_request).await
-        }
+            self.with_debug_trace(&tx_request).await
+        };
+
+        // log the cast call command for potential debugging
+        trace!(?result, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
+
+        result
     }
 
     async fn with_simulate_v1(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let simulate_block = SimBlock::default()
             .call(tx_request.clone())
@@ -182,14 +223,14 @@ impl<P: Provider> SimulatorContract<P> {
         Ok(SimulationExecutionResult {
             gas,
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
-            tx_request,
+            tx_request: tx_request.clone(),
             block_number,
         })
     }
 
     async fn with_debug_trace(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let trace_options = GethDebugTracingCallOptions {
             block_overrides: None,
@@ -222,7 +263,7 @@ impl<P: Provider> SimulatorContract<P> {
         Ok(SimulationExecutionResult {
             gas,
             logs: collect_logs_from_frame(call_frame),
-            tx_request,
+            tx_request: tx_request.clone(),
             block_number,
         })
     }

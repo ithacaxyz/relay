@@ -67,7 +67,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
 
         // Ensure the payer on Intent is as expected
         // todo(onbjerg): this assumes a single intent
-        assert_eq!(context.quote_mut().unwrap().ty().quotes[0].intent.payer, paymaster.address);
+        assert_eq!(context.quote_mut().unwrap().ty().quotes[0].intent.payer(), paymaster.address);
 
         let bundle_id = env
             .relay_endpoint
