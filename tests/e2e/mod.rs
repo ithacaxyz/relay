@@ -66,9 +66,25 @@ pub async fn run_configs<'a, F>(
 where
     F: Fn(&Environment) -> Vec<TxContext<'a>> + Send + Sync + Copy,
 {
-    let test_cases = configs.into_iter().map(async |config| {
+    let is_forking = std::env::var("TEST_FORK_URL").is_ok();
+    let env_configs = if is_forking {
+        vec![EnvironmentConfig::default()]
+    } else {
+        // If we're not forking, also run with P256 precompile disabled
+        vec![
+            EnvironmentConfig::default(),
+            EnvironmentConfig { with_p256: false, ..Default::default() },
+        ]
+    };
+
+    let test_cases = itertools::izip!(configs, env_configs).map(async |(config, env_config)| {
         let config: TestConfig = config.into();
-        config.run(build_txs).await.with_context(|| format!("Error in config {config:?}"))
+        config
+            .run(build_txs, env_config)
+            .await
+            .with_context(|| format!("Error in config {config:?}"))?;
+
+        eyre::Ok(())
     });
 
     try_join_all(test_cases).await?;

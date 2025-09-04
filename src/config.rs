@@ -3,6 +3,7 @@ use crate::{
     constants::{DEFAULT_MAX_TRANSACTIONS, DEFAULT_NUM_SIGNERS, INTENT_GAS_BUFFER, TX_GAS_BUFFER},
     interop::{LayerZeroSettler, SettlementError, SettlementProcessor, Settler, SimpleSettler},
     liquidity::bridge::{BinanceBridgeConfig, SimpleBridgeConfig},
+    signers::DynSigner,
     storage::RelayStorage,
     transactions::{MIN_SIGNER_GAS, TOP_UP_MULTIPLIER},
     types::{AssetUid, Assets, TransactionServiceHandles},
@@ -34,7 +35,7 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 // todo(onbjerg): We should consider merging the contract addresses into a `ContractConfig` struct,
 // which would 1) make the config more readable and 2) simplify things like fetching
@@ -786,6 +787,10 @@ pub struct LayerZeroConfig {
     /// Mapping of chain ID to LayerZero endpoint address.
     #[serde(with = "crate::serde::hash_map")]
     pub endpoint_addresses: HashMap<ChainId, Address>,
+    /// LayerZero settler signer key (hex private key or KMS ARN)
+    /// Can be set via environment variable ${RELAY_SETTLER_SIGNER_KEY} or in the config file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settler_signer_key: Option<String>,
 }
 
 impl LayerZeroConfig {
@@ -796,11 +801,24 @@ impl LayerZeroConfig {
         storage: RelayStorage,
         tx_service_handles: TransactionServiceHandles,
     ) -> Result<LayerZeroSettler, SettlementError> {
+        let key = self.settler_signer_key.clone()
+            .or_else(|| std::env::var("RELAY_SETTLER_SIGNER_KEY").ok())
+            .ok_or_else(|| SettlementError::InternalError(
+                "LayerZero settler signer key required (config or RELAY_SETTLER_SIGNER_KEY env)".to_string()
+            ))?;
+
+        let settler_signer = DynSigner::from_raw(&key).await.map_err(|e| {
+            SettlementError::InternalError(format!("Failed to parse L0 settler signer: {}", e))
+        })?;
+
+        info!(address = ?settler_signer.address(), "LayerZero settler signer configured.");
+
         LayerZeroSettler::new(
             self.endpoint_addresses.clone(),
             providers,
             storage,
             tx_service_handles,
+            settler_signer,
         )
         .await
     }

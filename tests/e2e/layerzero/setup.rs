@@ -4,6 +4,7 @@
 //! including multi-chain deployment, endpoint configuration, and relayer integration.
 
 use super::{
+    interfaces::IOApp,
     relayer::{ChainEndpoint, LayerZeroRelayer},
     utils::configure_uln_for_endpoint,
     wire_oapps,
@@ -177,12 +178,14 @@ async fn deploy_layerzero_contracts<P: Provider>(
     .await
     .wrap_err("Failed to deploy MockEscrow")?;
 
-    // Deploy LayerZero settler with the endpoint address and owner
+    // Deploy LayerZero settler with owner and L0SettlerSigner
+    //
+    // Constructor: constructor(address _owner, address _l0SettlerSigner)
+    let l0_settler_signer = LAYERZERO_DEPLOYER_ADDRESS; // Use deployer as signer for tests
     let settler = deploy_contract(
         provider,
-        &test_contracts_path
-            .join("../lib/accountv4/out/LayerZeroSettler.sol/LayerZeroSettler.json"),
-        Some(SolValue::abi_encode(&(endpoint, LAYERZERO_DEPLOYER_ADDRESS)).into()),
+        &test_contracts_path.join("LayerZeroSettler.sol/LayerZeroSettler.json"),
+        Some(SolValue::abi_encode(&(LAYERZERO_DEPLOYER_ADDRESS, l0_settler_signer)).into()),
     )
     .await
     .wrap_err("Failed to deploy LayerZeroSettler")?;
@@ -299,12 +302,19 @@ pub async fn deploy_layerzero_infrastructure(
         }))
         .await?;
 
-    // Configure all endpoint libraries
+    // Configure all endpoint and their libraries
     try_join_all(layerzero_deployments.iter().enumerate().map(|(i, deployment)| {
         let eid = eids[i];
         let all_eids = eids.clone();
         let providers = lz_providers.clone();
         async move {
+            let _ = IOApp::new(deployment.settler, &providers[i])
+                .setEndpoint(deployment.endpoint)
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+
             configure_endpoint_libraries_for_all_chains(
                 &providers[i],
                 deployment.endpoint,
@@ -368,7 +378,10 @@ pub async fn deploy_layerzero_infrastructure(
         endpoint_addresses.insert(chain_id, deployment.endpoint);
     }
 
-    let relay_config = relay::config::LayerZeroConfig { endpoint_addresses };
+    let relay_config = relay::config::LayerZeroConfig {
+        endpoint_addresses,
+        settler_signer_key: Some(LAYERZERO_DEPLOYER_PRIVATE_KEY.to_string()),
+    };
 
     let test_config = LayerZeroTestConfig { endpoints, escrows, eids };
 

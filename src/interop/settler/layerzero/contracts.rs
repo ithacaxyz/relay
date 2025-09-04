@@ -9,15 +9,38 @@ use alloy::{
 };
 
 sol! {
+    /// EIP-712 struct for executeSend signature verification.
+    #[derive(Debug)]
+    struct ExecuteSend {
+        address sender;
+        bytes32 settlementId;
+        bytes settlerContext;
+    }
+
     /// LayerZero settler interface
     #[derive(Debug)]
     #[sol(rpc)]
     interface ILayerZeroSettler {
         function send(bytes32 settlementId, bytes calldata settlerContext) external payable;
-        function executeSend(address sender, bytes32 settlementId, bytes calldata settlerContext)
-            external
-            payable;
+        function executeSend(
+            address sender,
+            bytes32 settlementId,
+            bytes calldata settlerContext,
+            bytes calldata signature
+        ) external payable;
         function peers(uint32 _eid) external view returns (bytes32 peer);
+        function eip712Domain()
+            external
+            view
+            returns (
+                bytes1 fields,
+                string memory name,
+                string memory version,
+                uint256 chainId,
+                address verifyingContract,
+                bytes32 salt,
+                uint256[] memory extensions
+            );
     }
 
     /// ULN configuration structure
@@ -105,67 +128,8 @@ impl MessagingParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interop::settler::layerzero::{
-        ULN_CONFIG_TYPE,
-        contracts::ILayerZeroSettler::{executeSendCall, sendCall},
-    };
-    use alloy::{
-        primitives::{Bytes, address},
-        providers::{CallItem, MULTICALL3_ADDRESS, Provider, ProviderBuilder},
-    };
-
-    #[tokio::test]
-    async fn test_layerzero_quote_ethereum_mainnet() {
-        // Test configuration for Ethereum mainnet
-        let ethereum_mainnet_url = "https://reth-ethereum.ithaca.xyz/rpc";
-        let ethereum_mainnet_endpoint = address!("0x1a44076050125825900e736c501f859c50fE728c");
-        let optimism_eid: u32 = 30111; // Optimism mainnet EID
-        let settler_address = address!("0xF387a549986cC804e19Ef23c2D55b9a5eF053944");
-        let ethereum_provider =
-            ProviderBuilder::new().connect_http(ethereum_mainnet_url.parse().unwrap());
-        let endpoint = ILayerZeroEndpointV2::new(ethereum_mainnet_endpoint, &ethereum_provider);
-        let settlement_id = B256::random();
-
-        let params = MessagingParams::new(
-            1, // Ethereum mainnet chain ID
-            optimism_eid,
-            settler_address,
-            settlement_id,
-        );
-
-        let quote = endpoint.quote(params, settler_address).call().await.unwrap();
-        println!(
-            "Quote: nativeFee = {} wei, lzTokenFee = {} wei",
-            quote.nativeFee, quote.lzTokenFee
-        );
-
-        // Test send + executeSend with multicall
-        let settler_contract = ILayerZeroSettler::new(settler_address, &ethereum_provider);
-        let settler_context: Bytes = vec![optimism_eid].abi_encode().into(); // ABI-encoded remote EID
-
-        // Build multicall: first send(), then executeSend()
-        let (send, execute_send) = ethereum_provider
-            .multicall()
-            .add_call::<sendCall>(
-                CallItem::from(settler_contract.send(settlement_id, settler_context.clone()))
-                    .allow_failure(true),
-            )
-            .add_call::<executeSendCall>(
-                CallItem::from(settler_contract.executeSend(
-                    MULTICALL3_ADDRESS,
-                    settlement_id,
-                    settler_context,
-                ))
-                .value(quote.nativeFee)
-                .allow_failure(true),
-            )
-            .aggregate3_value()
-            .await
-            .unwrap();
-
-        send.unwrap();
-        execute_send.unwrap();
-    }
+    use crate::interop::settler::layerzero::ULN_CONFIG_TYPE;
+    use alloy::{primitives::address, providers::ProviderBuilder};
 
     #[tokio::test]
     async fn test_layerzero_diagnostics_ethereum_mainnet() {
