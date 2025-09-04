@@ -457,6 +457,31 @@ impl Relay {
                 .with_settler_context(settler_context.clone());
         }
 
+        if !intent_to_sign.encoded_fund_transfers().is_empty() {
+            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
+        }
+
+        let gas_validation_offset =
+            // Account for gas variation in P256 sig verification.
+            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
+                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
+                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
+                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
+                    COLD_SSTORE_GAS_BUFFER
+                } else {
+                    U256::ZERO
+                };
+
+        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
+        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
+        // ERC20s.
+        //
+        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
+        // which ensures the simulation never reverts. Whether the user can actually really
+        // pay for the intent execution or not is determined later and communicated to the
+        // client.
+        intent_to_sign.set_payment(U256::from(1));
+
         if intent_to_sign.is_interop() {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
@@ -493,31 +518,6 @@ impl Relay {
                 .into(),
             );
         }
-
-        if !intent_to_sign.encoded_fund_transfers().is_empty() {
-            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
-        }
-
-        let gas_validation_offset =
-            // Account for gas variation in P256 sig verification.
-            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
-                // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
-                // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
-                + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
-                    COLD_SSTORE_GAS_BUFFER
-                } else {
-                    U256::ZERO
-                };
-
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
