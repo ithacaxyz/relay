@@ -98,6 +98,7 @@ sol! {
 
         event PacketVerified(Origin origin, address receiver, bytes32 payloadHash);
 
+        function eid() external view returns (uint32);
         function quote(MessagingParams calldata _params, address _sender) external view returns (MessagingFee memory);
         function inboundNonce(address _receiver, uint32 _srcEid, bytes32 _sender) external view returns (uint64);
         function inboundPayloadHash(address _receiver, uint32 _srcEid, bytes32 _sender, uint64 _nonce) external view returns (bytes32 payloadHash);

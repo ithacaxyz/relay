@@ -371,17 +371,14 @@ pub async fn deploy_layerzero_infrastructure(
     }
 
     // Create endpoint ID and address mappings for relay config
-    let mut endpoint_ids = alloy::primitives::map::HashMap::default();
     let mut endpoint_addresses = alloy::primitives::map::HashMap::default();
 
     for (i, deployment) in layerzero_deployments.iter().enumerate() {
         let chain_id = chain_ids[i];
-        endpoint_ids.insert(chain_id, eids[i]);
         endpoint_addresses.insert(chain_id, deployment.endpoint);
     }
 
     let relay_config = relay::config::LayerZeroConfig {
-        endpoint_ids,
         endpoint_addresses,
         settler_signer_key: Some(LAYERZERO_DEPLOYER_PRIVATE_KEY.to_string()),
     };
