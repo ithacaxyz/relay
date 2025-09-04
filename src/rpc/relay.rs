@@ -1101,9 +1101,8 @@ impl Relay {
                     .get_assets(GetAssetsParameters::eoa(from))
                     .await
                     .map_err(RelayError::internal)?;
-                let best_fee_token = assets
-                    .find_best_fee_token(&chain, &self.inner.price_oracle)
-                    .await;
+                let best_fee_token =
+                    assets.find_best_fee_token(&chain, &self.inner.price_oracle).await;
                 request.capabilities.meta.fee_token = Some(best_fee_token);
             }
 
