@@ -1235,19 +1235,26 @@ impl Relay {
         amount: U256,
         total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing = assets.asset_on_chain(destination_chain_id, requested_asset);
-        let existing_balance = existing.map(|asset| asset.balance).unwrap_or_default();
+        let existing_balance = assets
+            .asset_on_chain(destination_chain_id, requested_asset)
+            .map(|asset| asset.balance)
+            .unwrap_or_default();
         let mut remaining = amount.saturating_sub(existing_balance);
         if remaining.is_zero() {
             return Ok(Some(vec![]));
         }
 
-        let existing_decimals = existing
-            .and_then(|asset| asset.metadata.as_ref())
-            .and_then(|metadata| metadata.decimals);
+        let dst_decimals = self
+            .inner
+            .chains
+            .asset(destination_chain_id, requested_asset.address())
+            .map(|asset| asset.1.decimals)
+            .ok_or(RelayError::UnsupportedAsset {
+                asset: requested_asset.address(),
+                chain: destination_chain_id,
+            })?;
 
-        // collect (chain, balance, adjusted balance) for all other chains that have >0 balance
-        // adjusted balance is the balance converted to the destination chain decimals
+        // collect (chain, balance) for all other chains that have >0 balance
         let mut sources: Vec<_> = assets
             .0
             .iter()
@@ -1262,25 +1269,20 @@ impl Relay {
                     requested_asset.address(),
                 )?;
 
-                let mut balance = assets
+                let balance = assets
                     .iter()
                     .find(|a| a.address.address() == mapped.address)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
-                // If the asset decimals on another chain do not match the asset decimals on the
-                // destination chain, adjust the balance accordingly
-                if let Some(existing_decimals) = existing_decimals {
-                    balance =
-                        adjust_balance_for_decimals(balance, mapped.decimals, existing_decimals);
-                };
-
                 if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
             })
             .collect();
 
-        // highest balances first
-        sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        // sort balances by value on destination chain
+        sources.sort_unstable_by_key(|(_, asset, balance)| {
+            adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals)
+        });
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
@@ -1331,19 +1333,18 @@ impl Relay {
                 break;
             }
 
-            let escrow_cost_destination = if let Some(existing_decimals) = existing_decimals {
-                adjust_balance_for_decimals(escrow_cost, asset.decimals, existing_decimals)
-            } else {
-                escrow_cost
-            };
-            let take = remaining.min(balance.saturating_sub(escrow_cost_destination));
+            // Calculate the maximum amount we can bridge to destination
+            let max_take = adjust_balance_for_decimals(
+                balance.saturating_sub(escrow_cost),
+                asset.decimals,
+                dst_decimals,
+            );
+
+            let take = remaining.min(max_take);
 
             // Convert the amount back to the source chain asset decimals
-            let amount_source = if let Some(existing_decimals) = existing_decimals {
-                adjust_balance_for_decimals(take, existing_decimals, asset.decimals)
-            } else {
-                take
-            };
+            let amount_source = adjust_balance_for_decimals(take, dst_decimals, asset.decimals);
+
             plan.push(FundSource {
                 chain_id: chain,
                 amount_source,
