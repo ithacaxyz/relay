@@ -1308,7 +1308,7 @@ impl Relay {
                     // costs will differ a lot.
                     output_intent_digest: B256::with_last_byte(1),
                     output_chain_id: destination_chain_id,
-                    output_orchestrator: destination_orchestrator 
+                    output_orchestrator: destination_orchestrator,
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
@@ -1643,7 +1643,7 @@ impl Relay {
                             source,
                             output_intent_digest,
                             request.chain_id,
-                            output_quote.orchestrator
+                            output_quote.orchestrator,
                         )
                         .await
                     },
@@ -1706,7 +1706,7 @@ impl Relay {
         source: &FundSource,
         output_intent_digest: B256,
         output_chain_id: ChainId,
-        output_orchestrator: Address
+        output_orchestrator: Address,
     ) -> RpcResult<PrepareCallsResponse> {
         let funding_context = FundingIntentContext {
             eoa,
@@ -1716,7 +1716,7 @@ impl Relay {
             fee_token: source.address,
             output_intent_digest,
             output_chain_id,
-            output_orchestrator
+            output_orchestrator,
         };
 
         self.prepare_calls_inner(
