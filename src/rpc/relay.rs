@@ -1637,13 +1637,19 @@ impl Relay {
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
-                            eoa,
+                            FundingIntentContext {
+                                eoa,
+                                chain_id: source.chain_id,
+                                asset: source.address.into(),
+                                amount: source.amount,
+                                fee_token: source.address,
+                                output_intent_digest,
+                                output_chain_id: request.chain_id,
+                                output_orchestrator: output_quote.orchestrator,
+                            },
                             request_key.clone(),
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
-                            output_intent_digest,
-                            request.chain_id,
-                            output_quote.orchestrator,
                         )
                         .await
                     },
@@ -1700,25 +1706,11 @@ impl Relay {
     #[instrument(skip_all)]
     async fn simulate_funding_intent(
         &self,
-        eoa: Address,
+        funding_context: FundingIntentContext,
         request_key: CallKey,
         leaf_info: MerkleLeafInfo,
         source: &FundSource,
-        output_intent_digest: B256,
-        output_chain_id: ChainId,
-        output_orchestrator: Address,
     ) -> RpcResult<PrepareCallsResponse> {
-        let funding_context = FundingIntentContext {
-            eoa,
-            chain_id: source.chain_id,
-            asset: source.address.into(),
-            amount: source.amount,
-            fee_token: source.address,
-            output_intent_digest,
-            output_chain_id,
-            output_orchestrator,
-        };
-
         self.prepare_calls_inner(
             self.build_funding_intent(funding_context, request_key)?,
             Some(IntentKind::MultiInput {
