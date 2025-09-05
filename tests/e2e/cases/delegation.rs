@@ -601,6 +601,10 @@ async fn test_delegation_upgrade_with_stored_account_impl(
         // Wait for multichain bundle to complete
         let mc_status = await_calls_status(&env, mc_bundle_id).await?;
         assert!(mc_status.status.is_confirmed(), "Multichain transfer should be confirmed");
+        assert!(
+            mc_status.capabilities.unwrap().interop_status.unwrap().is_done(),
+            "Multichain bundle should be on Done state."
+        );
     }
 
     Ok(())
