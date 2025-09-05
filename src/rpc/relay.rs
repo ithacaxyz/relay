@@ -1253,6 +1253,7 @@ impl Relay {
         request_key: &CallKey,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
+        destination_orchestrator: Address,
         requested_asset: AddressOrNative,
         amount: U256,
         total_leaves: usize,
@@ -1307,6 +1308,7 @@ impl Relay {
                     // costs will differ a lot.
                     output_intent_digest: B256::with_last_byte(1),
                     output_chain_id: destination_chain_id,
+                    output_orchestrator: destination_orchestrator 
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
@@ -1535,6 +1537,7 @@ impl Relay {
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
                     &assets,
                     request.chain_id,
+                    output_quote.orchestrator,
                     asset,
                     requested_funds
                         + if source_fee {
@@ -1640,6 +1643,7 @@ impl Relay {
                             source,
                             output_intent_digest,
                             request.chain_id,
+                            output_quote.orchestrator
                         )
                         .await
                     },
@@ -1702,6 +1706,7 @@ impl Relay {
         source: &FundSource,
         output_intent_digest: B256,
         output_chain_id: ChainId,
+        output_orchestrator: Address
     ) -> RpcResult<PrepareCallsResponse> {
         let funding_context = FundingIntentContext {
             eoa,
@@ -1711,6 +1716,7 @@ impl Relay {
             fee_token: source.address,
             output_intent_digest,
             output_chain_id,
+            output_orchestrator
         };
 
         self.prepare_calls_inner(
@@ -2624,7 +2630,7 @@ impl Relay {
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
             settler: self.inner.chains.settler_address(context.chain_id)?,
-            sender: self.orchestrator(),
+            sender: context.output_orchestrator,
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),
             escrowAmount: context.amount,
