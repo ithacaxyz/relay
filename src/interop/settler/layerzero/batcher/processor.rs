@@ -264,12 +264,11 @@ impl LayerZeroBatchProcessor {
 
         let multicall_calldata = aggregate3Call { calls: all_calls }.abi_encode();
 
-        // Estimate gas for the batch
         let tx_request = TransactionRequest::default()
             .to(MULTICALL3_ADDRESS)
             .input(multicall_calldata.clone().into());
 
-        // Estimate gas for the batch
+        // Estimate gas for the batch and see if all settle calls will succeed or not.
         let (call_result, gas_limit) = tokio::try_join!(
             config.provider.call(tx_request.clone()),
             config.provider.estimate_gas(tx_request)
