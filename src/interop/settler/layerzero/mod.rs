@@ -586,6 +586,10 @@ fn build_multicall_calls(
     // 1. commitVerification
     // 2. lzReceive
     // 3. settle
+    //
+    // We allow failure on the settle function, because if it fails, we don't want to bottleneck the
+    // LZ messaging queue that requires us to call commitVerification sequentially for all their
+    // nonces.
     let calls = vec![
         Call3 {
             target: packet.receive_lib_address,
@@ -597,7 +601,7 @@ fn build_multicall_calls(
             allowFailure: false,
             callData: lz_receive_calldata.into(),
         },
-        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
+        Call3 { target: escrow_address, allowFailure: true, callData: settle_calldata.into() },
     ];
 
     Ok(calls)
