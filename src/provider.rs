@@ -1,8 +1,11 @@
 //! Alloy provider extensions.
 
-use crate::estimation::{
-    arb::{ARB_NODE_INTERFACE_ADDRESS, ArbNodeInterface},
-    op::{OP_GAS_PRICE_ORACLE_ADDRESS, OpGasPriceOracle},
+use crate::{
+    estimation::{
+        arb::{ARB_NODE_INTERFACE_ADDRESS, ArbNodeInterface},
+        op::{OP_GAS_PRICE_ORACLE_ADDRESS, OpGasPriceOracle},
+    },
+    types::IERC20,
 };
 use alloy::{
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
@@ -76,6 +79,17 @@ pub trait ProviderExt: Provider {
                 })
                 .map_err(TransportErrorKind::custom)
         }
+    }
+
+    /// Gets the decimals of a token.
+    fn get_token_decimals(
+        &self,
+        address: Address,
+    ) -> impl Future<Output = Result<u8, alloy::contract::Error>> + Send
+    where
+        Self: Sized,
+    {
+        async move { IERC20::new(address, self).decimals().call().await }
     }
 }
 

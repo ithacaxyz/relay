@@ -20,7 +20,9 @@ use alloy::{
     primitives::{Address, U256, address, uint},
 };
 use eyre::Result;
+use futures::future::TryJoinAll;
 use relay::{
+    provider::ProviderExt,
     rpc::RelayApiClient,
     types::{
         Call, IERC20, KeyType, KeyWith712Signer,
@@ -129,6 +131,11 @@ async fn test_multichain_usdt_transfer_empty_destination() -> Result<()> {
             .is_zero()
     );
 
+    let decimals_0 =
+        U256::from(10u128.pow(env.provider_for(0).get_token_decimals(env.erc20).await? as u32));
+    let decimals_1 =
+        U256::from(10u128.pow(env.provider_for(1).get_token_decimals(env.erc20).await? as u32));
+
     let balance =
         IERC20::new(env.erc20, env.provider_for(1)).balanceOf(env.eoa.address()).call().await?
             / uint!(2_U256);
@@ -143,7 +150,10 @@ async fn test_multichain_usdt_transfer_empty_destination() -> Result<()> {
                 meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: None },
                 pre_calls: Default::default(),
                 pre_call: Default::default(),
-                required_funds: vec![RequiredAsset::new(env.erc20, balance)],
+                required_funds: vec![RequiredAsset::new(
+                    env.erc20,
+                    balance * decimals_0 / decimals_1,
+                )],
                 revoke_keys: Default::default(),
             },
             balance_overrides: Default::default(),
@@ -171,6 +181,7 @@ pub struct MultichainTransferSetup {
     pub signature: alloy::primitives::Bytes,
     pub total_transfer_amount: U256,
     pub fees: Vec<U256>,
+    pub decimals: Vec<U256>,
 }
 
 impl MultichainTransferSetup {
@@ -223,19 +234,23 @@ impl MultichainTransferSetup {
         // Account upgrade deployed onchain.
         upgrade_account_eagerly(&env, &[key.to_authorized()], &key, AuthKind::Auth).await?;
 
-        let destination_decimals =
-            IERC20::new(env.erc20, env.provider_for(2)).decimals().call().await?;
+        let decimals = env
+            .providers
+            .iter()
+            .map(async |provider| {
+                eyre::Ok(U256::from(
+                    10u128.pow(provider.get_token_decimals(env.erc20).await? as u32),
+                ))
+            })
+            .collect::<TryJoinAll<_>>()
+            .await?;
 
         // Get initial balances on all chains
         let mut balances = Vec::with_capacity(num_chains);
         for i in 0..num_chains {
             let balance =
                 IERC20::new(env.erc20, env.provider_for(i)).balanceOf(wallet).call().await?;
-            let decimals = IERC20::new(env.erc20, env.provider_for(i)).decimals().call().await?;
-            balances.push(
-                balance * U256::from(10u128.pow(destination_decimals as u32))
-                    / U256::from(10u128.pow(decimals as u32)),
-            );
+            balances.push(balance * decimals[2] / decimals[i]);
         }
 
         // Calculate the total balance
@@ -274,7 +289,10 @@ impl MultichainTransferSetup {
             .ty()
             .quotes
             .iter()
-            .map(|quote| quote.intent.total_payment_max_amount())
+            .map(|quote| {
+                let idx = env.chain_ids.iter().position(|id| *id == quote.chain_id).unwrap();
+                quote.intent.total_payment_max_amount() * decimals[2] / decimals[idx]
+            })
             .collect();
 
         // Verify that the output intent has settler configured
@@ -302,6 +320,7 @@ impl MultichainTransferSetup {
             signature,
             total_transfer_amount,
             fees,
+            decimals,
         })
     }
 }

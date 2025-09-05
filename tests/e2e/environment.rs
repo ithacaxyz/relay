@@ -27,11 +27,12 @@ use relay::{
         SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
         TransactionServiceConfig,
     },
+    provider::ProviderExt,
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
     types::{
         AssetDescriptor, AssetUid, Assets,
-        IERC20::{self, IERC20Instance},
+        IERC20::{self},
         IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
@@ -584,10 +585,7 @@ impl Environment {
                                 AssetUid::new(idx.to_string()),
                                 AssetDescriptor {
                                     address: *contract,
-                                    decimals: IERC20Instance::new(*contract, provider)
-                                        .decimals()
-                                        .call()
-                                        .await?,
+                                    decimals: provider.get_token_decimals(*contract).await?,
                                     fee_token: true,
                                     interop: idx == 0,
                                 },

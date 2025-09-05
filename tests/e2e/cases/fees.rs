@@ -10,6 +10,7 @@ use alloy::{
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use relay::{
+    provider::ProviderExt,
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
@@ -34,7 +35,7 @@ async fn ensure_valid_fees() -> eyre::Result<()> {
 
     upgrade_account_lazily(&env, &[admin_key.to_authorized()], AuthKind::Auth).await?;
 
-    let fee_token_decimals = IERC20::new(env.fee_token, env.provider()).decimals().call().await?;
+    let fee_token_decimals = env.provider().get_token_decimals(env.fee_token).await?;
 
     let fee_recipient_balance_before =
         IERC20::new(env.fee_token, env.provider()).balanceOf(fee_recipient).call().await?;

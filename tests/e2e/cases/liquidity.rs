@@ -7,11 +7,12 @@ use relay::{
     config::RebalanceServiceConfig,
     liquidity::bridge::SimpleBridgeConfig,
     metrics::periodic::{LiquidityCollector, MetricCollector, format_units_f64},
+    provider::ProviderExt,
     types::{Call, IERC20, KeyType, rpc::RequiredAsset},
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_multi_chain_liquidity_management() -> Result<()> {
+async fn test_multichain_liquidity_management() -> Result<()> {
     let env = Environment::setup_with_config(EnvironmentConfig {
         num_chains: 2,
         rebalance_service_config: Some(RebalanceServiceConfig {
@@ -29,6 +30,9 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
     let token = env.erc20;
     let provider_0 = env.provider_for(0);
     let provider_1 = env.provider_for(1);
+
+    let decimals_0 = U256::from(10u128.pow(provider_0.get_token_decimals(token).await? as u32));
+    let decimals_1 = U256::from(10u128.pow(provider_1.get_token_decimals(token).await? as u32));
 
     // Fund EOA on chain 0 and bridge on chain 1
     for _ in 0..10 {
@@ -50,7 +54,11 @@ async fn test_multi_chain_liquidity_management() -> Result<()> {
     let PrepareCallsResponse { context, digest, .. } = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
-            calls: vec![Call::transfer(env.erc20, env.eoa.address(), funder_balance_0)],
+            calls: vec![Call::transfer(
+                env.erc20,
+                env.eoa.address(),
+                funder_balance_0 * decimals_1 / decimals_0,
+            )],
             chain_id: env.chain_id_for(1),
             from: Some(env.eoa.address()),
             capabilities: PrepareCallsCapabilities {

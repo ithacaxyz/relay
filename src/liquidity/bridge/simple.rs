@@ -3,6 +3,7 @@ use crate::{
         bridge::{Bridge, BridgeEvent, BridgeTransfer, BridgeTransferState, SupportedDirection},
         tracker::ChainAddress,
     },
+    provider::ProviderExt,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
@@ -250,12 +251,18 @@ impl SimpleBridgeInner {
             Some(tx) => tx,
             None => {
                 let tx = if !transfer.to.1.is_zero() {
+                    let src_decimals = self.providers[&transfer.from.0]
+                        .get_token_decimals(transfer.from.1)
+                        .await?;
+                    let dst_decimals =
+                        self.providers[&transfer.to.0].get_token_decimals(transfer.to.1).await?;
+
+                    let amount = transfer.amount * U256::from(10u128.pow(dst_decimals as u32))
+                        / U256::from(10u128.pow(src_decimals as u32));
                     self.build_tx(
                         transfer.to.0,
                         transfer.to.1,
-                        transferCall { to: self.funder_address, amount: transfer.amount }
-                            .abi_encode()
-                            .into(),
+                        transferCall { to: self.funder_address, amount }.abi_encode().into(),
                         U256::ZERO,
                     )
                     .await?
