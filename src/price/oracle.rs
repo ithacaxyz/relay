@@ -1,8 +1,8 @@
 use super::CoinGecko;
 use crate::{
     config::RelayConfig,
-    price::{fetchers::PriceFetcher, metrics::CoinPairMetrics},
-    types::AssetUid,
+    price::{calculate_usd_value, fetchers::PriceFetcher, metrics::CoinPairMetrics},
+    types::{AssetDescriptor, AssetUid},
 };
 use alloy::primitives::U256;
 use std::{
@@ -166,11 +166,23 @@ impl PriceOracle {
     }
 
     /// Returns the conversion rate from a coin to USD.
-    pub async fn usd_price(&self, uid: AssetUid) -> Option<f64> {
+    pub async fn usd_conversion_rate(&self, uid: AssetUid) -> Option<f64> {
         let (req_tx, req_rx) = oneshot::channel();
 
         let _ = self.tx.send(PriceOracleMessage::LookupUsd { uid, tx: req_tx });
         req_rx.await.ok().flatten().or(self.constant_rate)
+    }
+
+    /// Calculate the USD value of a token_amount (in its smallest unit, eg. wei) given the asset
+    /// UID and descriptor
+    pub async fn usd_value(
+        &self,
+        token_amount: U256,
+        uid: &AssetUid,
+        descriptor: &AssetDescriptor,
+    ) -> Option<f64> {
+        let conversion_rate = self.usd_conversion_rate(uid.clone()).await?;
+        Some(calculate_usd_value(token_amount, conversion_rate, descriptor.decimals))
     }
 }
 

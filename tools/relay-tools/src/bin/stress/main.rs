@@ -44,11 +44,12 @@ use relay::{
         rpc::{
             BundleId, CallsStatus, Meta, PrepareCallsCapabilities, PrepareCallsParameters,
             PrepareCallsResponse, PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
-            RelayCapabilities, RequiredAsset, UpgradeAccountCapabilities, UpgradeAccountParameters,
-            UpgradeAccountSignatures,
+            RelayCapabilities, RequiredAsset, SendPreparedCallsParameters,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
+use relay_tools::common::{format_prepare_debug, init_logging, wait_for_calls_status};
 use std::{
     collections::HashMap,
     sync::{
@@ -58,8 +59,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::mpsc, time::Instant};
-use tracing::{debug, error, info, instrument, level_filters::LevelFilter, trace, warn};
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
 alloy::sol! {
@@ -120,43 +120,50 @@ impl StressAccount {
             } else {
                 Call { to: recipient, value: transfer_amount, data: Default::default() }
             };
-            let PrepareCallsResponse { context, digest, .. } = match relay_client
-                .prepare_calls(PrepareCallsParameters {
-                    calls: vec![call],
-                    chain_id,
-                    from: Some(self.address),
-                    capabilities: PrepareCallsCapabilities {
-                        authorize_keys: vec![],
-                        meta: Meta { fee_payer: None, fee_token, nonce: None },
-                        revoke_keys: vec![],
-                        pre_calls: vec![],
-                        pre_call: false,
-                        required_funds: vec![RequiredAsset::new(fee_token, transfer_amount)],
-                    },
-                    state_overrides: Default::default(),
-                    balance_overrides: Default::default(),
-                    key: Some(self.key.to_call_key()),
-                })
-                .await
-            {
-                Ok(response) => response,
-                Err(err) => {
-                    warn!(
-                        account = %self.address,
-                        total_elapsed = ?prepare_start.elapsed(),
-                        retries,
-                        ?err,
-                        "Prepare calls failed",
-                    );
-                    retries -= 1;
-                    if retries == 0 {
-                        return Err(err).context("prepare calls failed");
-                    } else {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                }
+            let prepare_params = PrepareCallsParameters {
+                calls: vec![call],
+                chain_id,
+                from: Some(self.address),
+                capabilities: PrepareCallsCapabilities {
+                    authorize_keys: vec![],
+                    meta: Meta { fee_payer: None, fee_token: Some(fee_token), nonce: None },
+                    revoke_keys: vec![],
+                    pre_calls: vec![],
+                    pre_call: false,
+                    required_funds: vec![RequiredAsset::new(fee_token, transfer_amount)],
+                },
+                state_overrides: Default::default(),
+                balance_overrides: Default::default(),
+                key: Some(self.key.to_call_key()),
             };
+            let PrepareCallsResponse { context, digest, .. } =
+                match relay_client.prepare_calls(prepare_params.clone()).await {
+                    Ok(response) => response,
+                    Err(err) => {
+                        eprint!(
+                            "{}",
+                            format_prepare_debug(
+                                &prepare_params,
+                                None,
+                                Some("See error details above")
+                            )
+                        );
+                        warn!(
+                            account = %self.address,
+                            total_elapsed = ?prepare_start.elapsed(),
+                            retries,
+                            ?err,
+                            "Prepare calls failed",
+                        );
+                        retries -= 1;
+                        if retries == 0 {
+                            return Err(err).context("prepare calls failed");
+                        } else {
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                    }
+                };
 
             retries = 5;
 
@@ -186,7 +193,7 @@ impl StressAccount {
             );
             let send_start = Instant::now();
             let bundle_id = relay_client
-                .send_prepared_calls(relay::types::rpc::SendPreparedCallsParameters {
+                .send_prepared_calls(SendPreparedCallsParameters {
                     capabilities: Default::default(),
                     context,
                     key: self.key.to_call_key(),
@@ -203,16 +210,7 @@ impl StressAccount {
                 "Sent bundle ({} -> {})",
                 inputs, chain_id
             );
-            let status = loop {
-                let status = relay_client.get_calls_status(bundle_id.id).await;
-                trace!("got bundle status: {:?}", status);
-                if status.as_ref().is_ok_and(|status| {
-                    status.status.is_final() && !status.status.is_preconfirmed()
-                }) {
-                    break status.unwrap();
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            };
+            let status = wait_for_calls_status(&relay_client, bundle_id.id).await.unwrap();
 
             if chain_ids.len() > 1 {
                 check_settlement_status(
@@ -558,12 +556,7 @@ impl Args {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
-        )
-        .init();
+    init_logging();
 
     let args = Args::parse();
     if let Err(err) = args.run().await {

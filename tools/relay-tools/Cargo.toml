@@ -13,6 +13,10 @@ path = "src/bin/chainwalker/main.rs"
 name = "stress"
 path = "src/bin/stress/main.rs"
 
+[[bin]]
+name = "recast"
+path = "src/bin/recast/mod.rs"
+
 [dependencies]
 alloy = { version = "1.0.27", features = [
     "std",
@@ -42,8 +46,9 @@ alloy = { version = "1.0.27", features = [
     "signer-aws",
     "rand",
 ], default-features = false }
-alloy-chains = "0.2.8"
+alloy-chains = "0.2.9"
 clap = { version = "4.5", features = ["derive", "env"] }
+dirs = "5.0"
 eyre = "0.6"
 futures = "0.3"
 futures-util = "0.3"

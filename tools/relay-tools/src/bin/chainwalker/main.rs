@@ -5,18 +5,14 @@ mod report;
 mod tester;
 mod utils;
 
-use alloy::primitives::{B256, ChainId};
+use alloy::primitives::ChainId;
 use clap::Parser;
-use eyre::{Result, eyre};
+use eyre::Result;
 use jsonrpsee::http_client::HttpClientBuilder;
-use relay::{
-    signers::DynSigner,
-    types::{KeyType, KeyWith712Signer},
-};
-use std::str::FromStr;
+use relay::signers::DynSigner;
+use relay_tools::common::{create_passkey, init_logging};
 use tester::InteropTester;
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::info;
 use url::Url;
 
 /// Command line arguments for Chainwalker
@@ -63,28 +59,14 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
-        )
-        .init();
+    init_logging();
 
     let args = Args::parse();
 
     // Create InteropTester
     let test_account = DynSigner::from_signing_key(&args.private_key).await?;
     let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-
-    // Parse the private key to B256 for the mock key
-    let private_key_bytes =
-        if args.private_key.starts_with("0x") { &args.private_key[2..] } else { &args.private_key };
-    let mock_key = B256::from_str(private_key_bytes)
-        .map_err(|e| eyre!("Invalid private key format: {}", e))?;
-
-    // Create the account key using Secp256k1 with the same private key
-    let account_key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, mock_key)?
-        .ok_or_else(|| eyre!("Failed to create account key"))?;
+    let account_key = create_passkey(&args.private_key)?;
 
     info!("Initialized Chainwalker for address: {}", test_account.address());
 

@@ -457,6 +457,20 @@ impl Relay {
                 .with_settler_context(settler_context.clone());
         }
 
+        if !intent_to_sign.encoded_fund_transfers().is_empty() {
+            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
+        }
+
+        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
+        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
+        // ERC20s.
+        //
+        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
+        // which ensures the simulation never reverts. Whether the user can actually really
+        // pay for the intent execution or not is determined later and communicated to the
+        // client.
+        intent_to_sign.set_payment(U256::from(1));
+
         if intent_to_sign.is_interop() {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
@@ -494,10 +508,6 @@ impl Relay {
             );
         }
 
-        if !intent_to_sign.encoded_fund_transfers().is_empty() {
-            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
-        }
-
         let gas_validation_offset =
             // Account for gas variation in P256 sig verification.
             if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
@@ -508,16 +518,6 @@ impl Relay {
                 } else {
                     U256::ZERO
                 };
-
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
@@ -1054,7 +1054,9 @@ impl Relay {
                 request.chain_id,
                 request_key.prehash,
                 FeeEstimationContext {
-                    fee_token: request.capabilities.meta.fee_token,
+                    // fee_token should have been set in the beginning of prepare_calls_inner if it
+                    // was not provided by the user
+                    fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1087,9 +1089,29 @@ impl Relay {
 
         let provider = self.provider(request.chain_id)?;
 
-        // Get delegation status if there's a sender
+        // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            Some(Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?)
+            let account = Account::new(from, provider.clone());
+
+            // Fetch account assets and status in parallel if we need to auto-select fee token
+            if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
+                let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+
+                let (status, _) =
+                    tokio::try_join!(account.delegation_status(&self.inner.storage), async {
+                        let assets = self
+                            .get_assets(GetAssetsParameters::for_chain(from, request.chain_id))
+                            .await
+                            .map_err(RelayError::internal)?;
+                        request.capabilities.meta.fee_token = Some(
+                            assets.find_best_fee_token(&chain, &self.inner.price_oracle).await,
+                        );
+                        Ok(())
+                    })?;
+                Some(status)
+            } else {
+                Some(account.delegation_status(&self.inner.storage).await?)
+            }
         } else {
             None
         };
@@ -1153,7 +1175,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(request.key.as_ref(), request.from, &provider)
+            self.should_erc1271_wrap(&request, &delegation_status, &provider)
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -1384,7 +1406,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
-        let source_fee = request.capabilities.meta.fee_token == requested_asset;
+        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1874,7 +1896,7 @@ impl Relay {
     /// price fetch is successful
     async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
-        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+        self.inner.price_oracle.usd_conversion_rate(uid.clone()).await.map(AssetPrice::from_price)
     }
 }
 
@@ -2586,6 +2608,30 @@ impl Relay {
         self.inner.contracts.escrow.address
     }
 
+    /// Get the version for a given delegation implementation address.
+    ///
+    /// Returns None if the address is not a known delegation implementation.
+    fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
+        if impl_addr == self.inner.contracts.delegation_implementation.address {
+            return self
+                .inner
+                .contracts
+                .delegation_implementation
+                .version
+                .as_ref()
+                .and_then(|v| semver::Version::parse(v).ok());
+        }
+
+        // Check legacy implementations
+        self.inner
+            .contracts
+            .legacy_delegations
+            .iter()
+            .find(|c| c.address == impl_addr)
+            .and_then(|c| c.version.as_ref())
+            .and_then(|v| semver::Version::parse(v).ok())
+    }
+
     /// Creates an escrow struct for funding intents.
     fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -2671,7 +2717,7 @@ impl Relay {
             from: Some(context.eoa),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(context.fee_token), nonce: None },
                 revoke_keys: vec![],
                 pre_calls: vec![],
                 pre_call: false,
@@ -2690,26 +2736,42 @@ impl Relay {
     /// - The key's address derived from the public key is delegated on-chain, OR
     /// - The key has stored authorization AND the key's address matches the EOA (signing for
     ///   itself)
+    /// - AND the implementation version is >= 0.5.0
     ///
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
-        key: Option<&CallKey>,
-        from: Option<Address>,
+        request: &PrepareCallsParameters,
+        from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let key = match key {
+        let key = match request.key.as_ref() {
             Some(k) if k.key_type.is_secp256k1() => k,
             _ => return Ok(None),
         };
 
         let key_address = Address::from_slice(&key.public_key[12..]);
-        let key_account = Account::new(key_address, provider);
 
-        let status = key_account.delegation_status(&self.inner.storage).await.ok();
+        // If the key address matches the EOA address AND we have a delegation status, use it
+        // Otherwise, fetch the delegation status for the key address
+        let status = if request.from == Some(key_address) && from_delegation_status.is_some() {
+            from_delegation_status.clone()
+        } else {
+            Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
+        };
 
-        let needs_wrapping = status
-            .is_some_and(|s| s.is_delegated() || (s.is_stored() && from == Some(key_address)));
+        // Only wrap if it's an IthacaAccount >=0.5
+        let needs_wrapping = status.as_ref().is_some_and(|s| {
+            if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
+                && let Ok(impl_addr) = s.try_implementation()
+            {
+                return self
+                    .get_delegation_implementation_version(impl_addr)
+                    .map(|v| v >= semver::Version::new(0, 5, 0))
+                    .unwrap_or(false);
+            }
+            false
+        });
 
         Ok(needs_wrapping.then_some(key_address))
     }

@@ -23,7 +23,7 @@ use alloy::{
     },
     providers::{DynProvider, Provider},
     rpc::types::{
-        Log,
+        Log, TransactionRequest,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::SolEvent,
@@ -120,6 +120,18 @@ impl BalanceOverrides {
 
                     async move {
                         let slot = StorageSlotFinder::balance_of(provider, token_address, account)
+                            // There's an issue with the `eth_createAccesslist` endpoint on at least polygon and BSC
+                            // where a regular request fails with
+                            //
+                            // > failed to apply transaction:
+                            // > 0x87321d84b5a1d6d4edfa02c729ba5784c8ea88a4fd3a0bb7de4441054c9c61c3 err:
+                            // > insufficient funds for gas * price + value: address
+                            // > 0x0000000000000000000000000000000000000000 have 99214501874407965562016 want
+                            // > 922337203685477580700000000
+                            //
+                            // A workaround for this is setting the gas limit field, a `balanceOf` call usually
+                            // consumes ~31k gas, so 100k should always be sufficient
+                            .with_request(TransactionRequest::default().gas_limit(100_000))
                             .find_slot()
                             .await?;
 

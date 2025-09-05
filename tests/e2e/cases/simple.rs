@@ -403,7 +403,7 @@ async fn fee_token_deficit() -> eyre::Result<()> {
                 revoke_keys: vec![],
                 meta: Meta {
                     fee_payer: None,
-                    fee_token: env.erc20s[2], // this token has 0 balance
+                    fee_token: Some(env.erc20s[2]), // this token has 0 balance
                     nonce: None,
                 },
                 pre_calls: vec![],
@@ -438,7 +438,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: true,
                 required_funds: vec![],
@@ -467,7 +467,7 @@ async fn empty_request_nonce() -> eyre::Result<()> {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![precall],
                 pre_call: false,
                 required_funds: vec![],
@@ -518,7 +518,7 @@ async fn single_sign_up_popup() -> eyre::Result<()> {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
                 required_funds: vec![],

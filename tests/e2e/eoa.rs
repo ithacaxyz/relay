@@ -75,7 +75,7 @@ impl MockAccount {
                 from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: Address::ZERO, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(Address::ZERO), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],
@@ -111,7 +111,7 @@ impl MockAccount {
                 from: Some(self.address),
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: vec![],
-                    meta: Meta { fee_payer: None, fee_token: env.erc20, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(env.erc20), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
                     revoke_keys: vec![],

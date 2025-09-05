@@ -55,7 +55,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                 capabilities: PrepareCallsCapabilities {
                     authorize_keys: Vec::new(), // todo: add test authorize "inline"
                     revoke_keys: Vec::new(),
-                    meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                    meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                     pre_calls: Vec::new(),
                     pre_call: false,
                     required_funds: vec![],
