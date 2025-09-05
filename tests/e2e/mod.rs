@@ -104,10 +104,16 @@ async fn await_calls_status(
     loop {
         let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
 
-        if let Some(status) = status
-            && !status.status.is_pending()
-        {
-            return Ok(status);
+        if let Some(status) = status {
+            if let Some(capabilities) = &status.capabilities
+                && let Some(interop_status) = &capabilities.interop_status
+            {
+                if interop_status.is_done() || interop_status.is_failed() {
+                    return Ok(status);
+                }
+            } else if !status.status.is_pending() {
+                return Ok(status);
+            }
         }
 
         attempts += 1;

@@ -305,6 +305,11 @@ impl BundleStatus {
         matches!(self, Self::Done)
     }
 
+    /// Whether status is [`Self::Done`].
+    pub fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed)
+    }
+
     /// Whether status is [`Self::DestinationConfirmed`].
     pub fn is_destination_confirmed(&self) -> bool {
         matches!(self, Self::DestinationConfirmed)

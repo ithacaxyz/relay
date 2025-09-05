@@ -343,6 +343,9 @@ pub struct FundingIntentContext {
     pub output_intent_digest: B256,
     /// The destination chain ID where funds will be used
     pub output_chain_id: ChainId,
+    /// The destination orchestrator where the settlement will be sent from. This is important for
+    /// the settlement system when unlocking funds.
+    pub output_orchestrator: Address,
 }
 
 /// A funding source.
