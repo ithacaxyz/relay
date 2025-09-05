@@ -146,9 +146,6 @@ sol! {
         /// This function is provided as a public helper for easier integration.
         function accountImplementationOf(address eoa) public view virtual returns (address result);
 
-        /// The pause flag.
-        function pauseFlag() public returns (uint256);
-
         /// Can be used to pause/unpause the contract, in case of emergencies.
         function pause(bool isPause) public;
 
@@ -247,13 +244,8 @@ impl<P: Provider> Orchestrator<P> {
             gas_validation_offset,
             self.version.as_ref(),
         )
-        .await;
+        .await?;
 
-        // If simulation failed, check if orchestrator is paused
-        if result.is_err() && self.is_paused().await? {
-            return Err(IntentError::PausedOrchestrator.into());
-        }
-        let result = result?;
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
 
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
@@ -313,18 +305,6 @@ impl<P: Provider> Orchestrator<P> {
             Some(domain.verifyingContract),
             None,
         ))
-    }
-
-    /// Whether the orchestrator has been paused.
-    pub async fn is_paused(&self) -> TransportResult<bool> {
-        Ok(self
-            .orchestrator
-            .pauseFlag()
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?
-            == U256::ONE)
     }
 }
 
