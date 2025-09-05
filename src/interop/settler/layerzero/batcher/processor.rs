@@ -269,8 +269,33 @@ impl LayerZeroBatchProcessor {
             .to(MULTICALL3_ADDRESS)
             .input(multicall_calldata.clone().into());
 
-        let gas_limit =
-            config.provider.estimate_gas(tx_request).await.map_err(SettlementError::RpcError)?;
+        // Estimate gas for the batch
+        let (call_result, gas_limit) = tokio::try_join!(
+            config.provider.call(tx_request.clone()),
+            config.provider.estimate_gas(tx_request)
+        )
+        .map_err(SettlementError::RpcError)?;
+
+        // Decode the multicall results to check for failed settle calls, which are the only ones
+        // allowed to fail.
+        if let Ok(results) = aggregate3Call::abi_decode_returns(&call_result) {
+            // Each message has 3 calls: commitVerification, lzReceive, settle
+            // Check every 3rd call starting from index 2 (settle calls)
+            for (msg_index, message) in batch.iter().enumerate() {
+                let settle_index = msg_index * 3 + 2;
+                if let Some(result) = results.get(settle_index)
+                    && !result.success
+                {
+                    error!(
+                        chain_id = chain_id,
+                        settler_address = %message.settler_address,
+                        src_eid = message.src_eid,
+                        lz_nonce = message.nonce,
+                        "Settle call will fail in multicall batch, but proceeding to process LZ messages"
+                    );
+                }
+            }
+        }
 
         // Add buffer for batch processing
         let gas_limit = gas_limit.saturating_mul(130).saturating_div(100);
