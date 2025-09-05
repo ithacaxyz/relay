@@ -815,7 +815,18 @@ impl InteropTester {
             key: Some(key.to_call_key()),
         };
 
-        let prepare_result = self.relay_client.prepare_calls(prepare_params.clone()).await;
+        let prepare_result = loop {
+            match self.relay_client.prepare_calls(prepare_params.clone()).await {
+                Ok(resp) => break Ok(resp),
+                Err(e) if e.to_string().contains("exhausted max attempts") => {
+                    // we get it from time to time but we should be good to go if we keep trying.
+                    // don't stop walking
+                    warn!("Retrying prepare_calls due to exhausted max attempts...");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => break Err(e),
+            }
+        };
 
         let Ok(PrepareCallsResponse { context, digest, .. }) = prepare_result else {
             let e = prepare_result.unwrap_err();
