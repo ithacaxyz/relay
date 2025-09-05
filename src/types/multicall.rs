@@ -14,6 +14,15 @@ sol! {
         bytes callData;
     }
 
+    /// Result of a single call in aggregate3
+    #[derive(Debug)]
+    struct Result {
+        /// Whether the call was successful
+        bool success;
+        /// The return data from the call
+        bytes returnData;
+    }
+
     /// Execute multiple calls in a single transaction
-    function aggregate3(Call3[] calldata calls) external payable returns (bytes[] memory returnData);
+    function aggregate3(Call3[] calldata calls) public payable returns (Result[] memory returnData);
 }

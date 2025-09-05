@@ -1253,6 +1253,7 @@ impl Relay {
         request_key: &CallKey,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
+        destination_orchestrator: Address,
         requested_asset: AddressOrNative,
         amount: U256,
         total_leaves: usize,
@@ -1322,6 +1323,7 @@ impl Relay {
                     // costs will differ a lot.
                     output_intent_digest: B256::with_last_byte(1),
                     output_chain_id: destination_chain_id,
+                    output_orchestrator: destination_orchestrator,
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
@@ -1562,6 +1564,7 @@ impl Relay {
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
                     &assets,
                     request.chain_id,
+                    output_quote.orchestrator,
                     asset,
                     requested_funds
                         + if source_fee {
@@ -1663,12 +1666,19 @@ impl Relay {
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
-                            eoa,
+                            FundingIntentContext {
+                                eoa,
+                                chain_id: source.chain_id,
+                                asset: source.address.into(),
+                                amount: source.amount_source,
+                                fee_token: source.address,
+                                output_intent_digest,
+                                output_chain_id: request.chain_id,
+                                output_orchestrator: output_quote.orchestrator,
+                            },
                             request_key.clone(),
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
-                            output_intent_digest,
-                            request.chain_id,
                         )
                         .await
                     },
@@ -1725,23 +1735,11 @@ impl Relay {
     #[instrument(skip_all)]
     async fn simulate_funding_intent(
         &self,
-        eoa: Address,
+        funding_context: FundingIntentContext,
         request_key: CallKey,
         leaf_info: MerkleLeafInfo,
         source: &FundSource,
-        output_intent_digest: B256,
-        output_chain_id: ChainId,
     ) -> RpcResult<PrepareCallsResponse> {
-        let funding_context = FundingIntentContext {
-            eoa,
-            chain_id: source.chain_id,
-            asset: source.address.into(),
-            amount: source.amount_source,
-            fee_token: source.address,
-            output_intent_digest,
-            output_chain_id,
-        };
-
         self.prepare_calls_inner(
             self.build_funding_intent(funding_context, request_key)?,
             Some(IntentKind::MultiInput {
@@ -2653,7 +2651,7 @@ impl Relay {
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
             settler: self.inner.chains.settler_address(context.chain_id)?,
-            sender: self.orchestrator(),
+            sender: context.output_orchestrator,
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),
             escrowAmount: context.amount,
