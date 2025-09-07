@@ -91,6 +91,13 @@ pub struct FeeEstimationContext {
     pub balance_overrides: BalanceOverrides,
 }
 
+impl FeeEstimationContext {
+    /// Returns the address of the stored [`SignedAuthorization`].
+    pub fn stored_auth_address(&self) -> Option<Address> {
+        self.stored_authorization.as_ref().map(|auth| auth.address)
+    }
+}
+
 mod eip712 {
     use crate::types::Call;
     use alloy::sol;
