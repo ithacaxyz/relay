@@ -4,6 +4,7 @@ use crate::{
         tracker::ChainAddress,
     },
     provider::ProviderExt,
+    rpc::adjust_balance_for_decimals,
     signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionServiceHandle, TransactionStatus},
@@ -257,8 +258,8 @@ impl SimpleBridgeInner {
                     let dst_decimals =
                         self.providers[&transfer.to.0].get_token_decimals(transfer.to.1).await?;
 
-                    let amount = transfer.amount * U256::from(10u128.pow(dst_decimals as u32))
-                        / U256::from(10u128.pow(src_decimals as u32));
+                    let amount =
+                        adjust_balance_for_decimals(transfer.amount, src_decimals, dst_decimals);
                     self.build_tx(
                         transfer.to.0,
                         transfer.to.1,

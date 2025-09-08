@@ -2781,7 +2781,7 @@ impl Relay {
 /// - USDC on chain A has 6 decimals, balance = 1_000_000 (represents 1 USDC)
 /// - USDC on chain B has 18 decimals
 /// - Result: 1_000_000_000_000_000_000 (represents 1 USDC with 18 decimals)
-fn adjust_balance_for_decimals(balance: U256, from_decimals: u8, to_decimals: u8) -> U256 {
+pub fn adjust_balance_for_decimals(balance: U256, from_decimals: u8, to_decimals: u8) -> U256 {
     let diff = (from_decimals as i32) - (to_decimals as i32);
     let factor = U256::from(10).pow(U256::from(diff.unsigned_abs()));
 
