@@ -256,9 +256,9 @@ impl<P: Provider> Orchestrator<P> {
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
         // calculate asset diffs using the transaction request from simulation
-        let (asset_deficits, asset_diffs) = try_join!(
-            self.build_asset_deficits(&result, intent, &asset_info_handle),
+        let (asset_diffs, asset_deficits) = try_join!(
             self.build_asset_diffs(&result, intent, &asset_info_handle),
+            self.build_asset_deficits(&result, intent, &asset_info_handle),
         )?;
 
         Ok((asset_diffs, asset_deficits, result.gas))
