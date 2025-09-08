@@ -1,10 +1,10 @@
 //! RPC calls-related request and response types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
-    error::{IntentError, RelayError},
+    error::{IntentError, KeysError, RelayError},
     signers::DynSigner,
     storage::BundleStatus,
     types::{
@@ -310,7 +310,29 @@ impl PrepareCallsParameters {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
         } else if self.capabilities.pre_call {
-            Ok(random_nonce)
+            // Decode all key hashes involved.
+            let mut key_hashes = self
+                .calls
+                .iter()
+                .filter_map(|call| call.decode_precall_key_hash())
+                .collect::<BTreeSet<_>>();
+
+            // If precall is trying to modify multiple keys, return an error.
+            if key_hashes.len() > 1 {
+                return Err(KeysError::PrecallConflictingKeys.into());
+            } else if key_hashes.len() == 1 {
+                let key_hash = key_hashes.pop_first().unwrap();
+
+                // Convert the key hash to a sequence key and fetch the nonce for it.
+                let seq_key = U192::from(U256::from_be_bytes(key_hash.into()) >> 64);
+                if let Some(eoa) = self.from {
+                    Ok(Account::new(eoa, &provider).get_nonce_for_sequence(seq_key).await?)
+                } else {
+                    Ok(U256::ZERO)
+                }
+            } else {
+                Ok(random_nonce)
+            }
         } else if let Some(precall) = self
             .capabilities
             .pre_calls

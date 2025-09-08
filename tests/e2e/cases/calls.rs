@@ -34,7 +34,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
     .into_iter()
     .collect::<(Vec<_>, Vec<_>)>();
 
-    upgrade_account_eagerly(&env, &keys, &signers[0], AuthKind::Auth).await?;
+    upgrade_account_eagerly(&env, &keys[..1], &signers[0], AuthKind::Auth).await?;
 
     // Every key will sign a ERC20 transfer
     let erc20_transfer = Call {
@@ -53,7 +53,7 @@ async fn calls_with_upgraded_account() -> eyre::Result<()> {
                 chain_id: env.chain_id(),
                 from: Some(env.eoa.address()),
                 capabilities: PrepareCallsCapabilities {
-                    authorize_keys: Vec::new(), // todo: add test authorize "inline"
+                    authorize_keys: keys[1..].to_vec(), // todo: add test authorize "inline"
                     revoke_keys: Vec::new(),
                     meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                     pre_calls: Vec::new(),

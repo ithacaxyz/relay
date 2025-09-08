@@ -11,6 +11,15 @@ pub enum KeysError {
     /// Missing at least one admin authorization key.
     #[error("should have at least one admin authorization key")]
     MissingAdminKey,
+    /// Too many admin authorization keys.
+    #[error("maximum of one admin authorization key allowed")]
+    TooManyAdminKeys,
+    /// Too many keys.
+    #[error("maximum of two authorization keys allowed")]
+    TooManyKeys,
+    /// Precalls are only allowed to modify one key to ensure correct ordering.
+    #[error("precall can't modify multiple keys")]
+    PrecallConflictingKeys,
     /// Should only have admin authorization keys.
     #[error("should only have admin authorization keys")]
     OnlyAdminKeyAllowed,
@@ -27,6 +36,9 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
         match err {
             KeysError::UnsupportedKeyType
             | KeysError::MissingAdminKey
+            | KeysError::TooManyAdminKeys
+            | KeysError::TooManyKeys
+            | KeysError::PrecallConflictingKeys
             | KeysError::OnlyAdminKeyAllowed
             | KeysError::InvalidSignature
             | KeysError::UnknownKeyHash { .. } => invalid_params(err.to_string()),
