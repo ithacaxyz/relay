@@ -11,8 +11,7 @@ use crate::{
     types::{FeeEstimationContext, PartialIntent},
 };
 use alloy::{
-    eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, U256},
     providers::Provider,
     rpc::types::state::{AccountOverride, StateOverridesBuilder},
 };
@@ -52,11 +51,7 @@ pub async fn build_simulation_overrides<P: Provider>(
                     Default::default()
                 })
                 // we manually etch the 7702 designator since we do not have a signed auth item
-                .with_code_opt(context.stored_authorization.as_ref().map(|auth| {
-                    Bytes::from(
-                        [&EIP7702_DELEGATION_DESIGNATOR, auth.address().as_slice()].concat(),
-                    )
-                })),
+                .with_7702_delegation_designator_opt(context.stored_auth_address()),
         )
         .extend(context.state_overrides.clone());
 
@@ -76,17 +71,4 @@ pub async fn build_simulation_overrides<P: Provider>(
     }
 
     Ok(overrides)
-}
-
-/// Build state overrides for account delegation.
-///
-/// Creates the necessary state overrides to simulate an account with EIP-7702 delegation.
-pub fn build_delegation_override(
-    address: Address,
-    delegation_address: Address,
-) -> StateOverridesBuilder {
-    StateOverridesBuilder::default().with_code(
-        address,
-        Bytes::from([&EIP7702_DELEGATION_DESIGNATOR, delegation_address.as_slice()].concat()),
-    )
 }

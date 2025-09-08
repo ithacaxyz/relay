@@ -15,7 +15,6 @@ mod metrics;
 mod multi_chain;
 mod multichain_refund;
 pub mod multichain_usdt_transfer;
-mod pause;
 mod paymaster;
 mod porto;
 mod relay;

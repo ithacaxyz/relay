@@ -8,7 +8,7 @@
 pub mod fees;
 pub mod simulator;
 
-pub use simulator::{build_delegation_override, build_simulation_overrides};
+pub use simulator::build_simulation_overrides;
 
 pub mod arb;
 pub mod op;

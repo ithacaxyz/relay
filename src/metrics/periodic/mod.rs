@@ -46,10 +46,5 @@ pub async fn spawn_periodic_collectors(
         tokio::time::interval(Duration::from_secs(30)),
     );
 
-    PeriodicJob::launch_task(
-        LatencyCollector::new(chains),
-        tokio::time::interval(Duration::from_secs(30)),
-    );
-
     Ok(())
 }

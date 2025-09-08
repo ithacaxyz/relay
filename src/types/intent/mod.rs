@@ -91,6 +91,13 @@ pub struct FeeEstimationContext {
     pub balance_overrides: BalanceOverrides,
 }
 
+impl FeeEstimationContext {
+    /// Returns the address of the stored [`SignedAuthorization`].
+    pub fn stored_auth_address(&self) -> Option<Address> {
+        self.stored_authorization.as_ref().map(|auth| auth.address)
+    }
+}
+
 mod eip712 {
     use crate::types::Call;
     use alloy::sol;
@@ -343,6 +350,9 @@ pub struct FundingIntentContext {
     pub output_intent_digest: B256,
     /// The destination chain ID where funds will be used
     pub output_chain_id: ChainId,
+    /// The destination orchestrator where the settlement will be sent from. This is important for
+    /// the settlement system when unlocking funds.
+    pub output_orchestrator: Address,
 }
 
 /// A funding source.

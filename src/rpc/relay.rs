@@ -358,37 +358,28 @@ impl Relay {
         // create a mock transaction signer
         let mock_from = Address::random();
 
-        // Parallelize fetching of assets, fee history, and eth price as they are independent
+        // Prepare futures for concurrent execution
+        let user_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
+            intent.eoa,
+            chain_id,
+            context.fee_token,
+        ));
+
+        let priority_fee_percentiles = [chain.fee_config().priority_fee_percentile];
+        let fee_history_fut = provider.get_fee_history(
+            EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+            Default::default(),
+            &priority_fee_percentiles,
+        );
+
+        let native_price_fut =
+            self.inner.price_oracle.native_conversion_rate(token_uid.clone(), native_uid.clone());
+
+        // Execute all futures in parallel and handle errors
         let (assets_response, fee_history, eth_price) = try_join!(
-            // Fetch the user's balance for the fee token
-            async {
-                self.get_assets(GetAssetsParameters::for_asset_on_chain(
-                    intent.eoa,
-                    chain_id,
-                    context.fee_token,
-                ))
-                .await
-                .map_err(RelayError::internal)
-            },
-            // Fetch chain fee history
-            async {
-                provider
-                    .get_fee_history(
-                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                        Default::default(),
-                        &[chain.fee_config().priority_fee_percentile],
-                    )
-                    .await
-                    .map_err(RelayError::from)
-            },
-            // Fetch native asset price
-            async {
-                Ok(self
-                    .inner
-                    .price_oracle
-                    .native_conversion_rate(token_uid.clone(), native_uid.clone())
-                    .await)
-            }
+            async { user_balance_fut.await.map_err(RelayError::internal) },
+            async { fee_history_fut.await.map_err(RelayError::from) },
+            async { Ok(native_price_fut.await) }
         )?;
 
         let fee_token_balance =
@@ -457,6 +448,20 @@ impl Relay {
                 .with_settler_context(settler_context.clone());
         }
 
+        if !intent_to_sign.encoded_fund_transfers().is_empty() {
+            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
+        }
+
+        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
+        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
+        // ERC20s.
+        //
+        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
+        // which ensures the simulation never reverts. Whether the user can actually really
+        // pay for the intent execution or not is determined later and communicated to the
+        // client.
+        intent_to_sign.set_payment(U256::from(1));
+
         if intent_to_sign.is_interop() {
             // For multichain intents, add a mocked merkle signature
             intent_to_sign = intent_to_sign
@@ -494,10 +499,6 @@ impl Relay {
             );
         }
 
-        if !intent_to_sign.encoded_fund_transfers().is_empty() {
-            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
-        }
-
         let gas_validation_offset =
             // Account for gas variation in P256 sig verification.
             if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
@@ -508,16 +509,6 @@ impl Relay {
                 } else {
                     U256::ZERO
                 };
-
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_payment(U256::from(1));
 
         let (asset_diffs, sim_result) = orchestrator
             .simulate_execute(
@@ -1054,7 +1045,9 @@ impl Relay {
                 request.chain_id,
                 request_key.prehash,
                 FeeEstimationContext {
-                    fee_token: request.capabilities.meta.fee_token,
+                    // fee_token should have been set in the beginning of prepare_calls_inner if it
+                    // was not provided by the user
+                    fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1087,9 +1080,29 @@ impl Relay {
 
         let provider = self.provider(request.chain_id)?;
 
-        // Get delegation status if there's a sender
+        // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            Some(Account::new(from, provider.clone()).delegation_status(&self.inner.storage).await?)
+            let account = Account::new(from, provider.clone());
+
+            // Fetch account assets and status in parallel if we need to auto-select fee token
+            if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
+                let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+
+                let (status, _) =
+                    tokio::try_join!(account.delegation_status(&self.inner.storage), async {
+                        let assets = self
+                            .get_assets(GetAssetsParameters::for_chain(from, request.chain_id))
+                            .await
+                            .map_err(RelayError::internal)?;
+                        request.capabilities.meta.fee_token = Some(
+                            assets.find_best_fee_token(&chain, &self.inner.price_oracle).await,
+                        );
+                        Ok(())
+                    })?;
+                Some(status)
+            } else {
+                Some(account.delegation_status(&self.inner.storage).await?)
+            }
         } else {
             None
         };
@@ -1231,6 +1244,7 @@ impl Relay {
         request_key: &CallKey,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
+        destination_orchestrator: Address,
         requested_asset: AddressOrNative,
         amount: U256,
         total_leaves: usize,
@@ -1285,6 +1299,7 @@ impl Relay {
                     // costs will differ a lot.
                     output_intent_digest: B256::with_last_byte(1),
                     output_chain_id: destination_chain_id,
+                    output_orchestrator: destination_orchestrator,
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
@@ -1357,7 +1372,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         let eoa = request.from.ok_or(IntentError::MissingSender)?;
-        let source_fee = request.capabilities.meta.fee_token == requested_asset;
+        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
         let asset = if requested_asset.is_zero() {
@@ -1513,6 +1528,7 @@ impl Relay {
                     request.key.as_ref().ok_or(IntentError::MissingKey)?,
                     &assets,
                     request.chain_id,
+                    output_quote.orchestrator,
                     asset,
                     requested_funds
                         + if source_fee {
@@ -1612,12 +1628,19 @@ impl Relay {
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
-                            eoa,
+                            FundingIntentContext {
+                                eoa,
+                                chain_id: source.chain_id,
+                                asset: source.address.into(),
+                                amount: source.amount,
+                                fee_token: source.address,
+                                output_intent_digest,
+                                output_chain_id: request.chain_id,
+                                output_orchestrator: output_quote.orchestrator,
+                            },
                             request_key.clone(),
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
-                            output_intent_digest,
-                            request.chain_id,
                         )
                         .await
                     },
@@ -1674,23 +1697,11 @@ impl Relay {
     #[instrument(skip_all)]
     async fn simulate_funding_intent(
         &self,
-        eoa: Address,
+        funding_context: FundingIntentContext,
         request_key: CallKey,
         leaf_info: MerkleLeafInfo,
         source: &FundSource,
-        output_intent_digest: B256,
-        output_chain_id: ChainId,
     ) -> RpcResult<PrepareCallsResponse> {
-        let funding_context = FundingIntentContext {
-            eoa,
-            chain_id: source.chain_id,
-            asset: source.address.into(),
-            amount: source.amount,
-            fee_token: source.address,
-            output_intent_digest,
-            output_chain_id,
-        };
-
         self.prepare_calls_inner(
             self.build_funding_intent(funding_context, request_key)?,
             Some(IntentKind::MultiInput {
@@ -1845,7 +1856,7 @@ impl Relay {
     /// price fetch is successful
     async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
-        self.inner.price_oracle.usd_price(uid.clone()).await.map(AssetPrice::from_price)
+        self.inner.price_oracle.usd_conversion_rate(uid.clone()).await.map(AssetPrice::from_price)
     }
 }
 
@@ -2602,7 +2613,7 @@ impl Relay {
             recipient: self.inner.contracts.funder.address,
             token: context.asset.address(),
             settler: self.inner.chains.settler_address(context.chain_id)?,
-            sender: self.orchestrator(),
+            sender: context.output_orchestrator,
             settlementId: context.output_intent_digest,
             senderChainId: U256::from(context.output_chain_id),
             escrowAmount: context.amount,
@@ -2666,7 +2677,7 @@ impl Relay {
             from: Some(context.eoa),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: context.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(context.fee_token), nonce: None },
                 revoke_keys: vec![],
                 pre_calls: vec![],
                 pre_call: false,

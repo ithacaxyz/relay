@@ -16,6 +16,7 @@ use crate::{
     types::{
         IFunder, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
+        generate_cast_call_command,
     },
 };
 use alloy::{
@@ -383,7 +384,7 @@ impl Signer {
                 debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             } else {
-                trace!(?result, ?request, "transaction simulation failed");
+                error!(?result, ?request, cast_call = %generate_cast_call_command(&request, &Default::default()), "transaction simulation failed");
                 result?;
             }
         }

@@ -2,7 +2,7 @@ use crate::{
     config::{QuoteConfig, SimMode},
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{IntentError, RelayError},
-    types::IERC20,
+    types::{IERC20, generate_cast_call_command},
 };
 use alloy::{
     primitives::{Address, B256, BlockNumber, Log, U256},
@@ -182,16 +182,21 @@ impl<P: Provider> SimulatorContract<P> {
             );
 
         // check how to simulate
-        if self.sim_mode.is_simulate_v1() {
-            self.with_simulate_v1(tx_request).await
+        let result = if self.sim_mode.is_simulate_v1() {
+            self.with_simulate_v1(&tx_request).await
         } else {
-            self.with_debug_trace(tx_request).await
-        }
+            self.with_debug_trace(&tx_request).await
+        };
+
+        // log the cast call command for potential debugging
+        trace!(?result, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
+
+        result
     }
 
     async fn with_simulate_v1(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let simulate_block = SimBlock::default()
             .call(tx_request.clone())
@@ -218,14 +223,14 @@ impl<P: Provider> SimulatorContract<P> {
         Ok(SimulationExecutionResult {
             gas,
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
-            tx_request,
+            tx_request: tx_request.clone(),
             block_number,
         })
     }
 
     async fn with_debug_trace(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let trace_options = GethDebugTracingCallOptions {
             block_overrides: None,
@@ -258,7 +263,7 @@ impl<P: Provider> SimulatorContract<P> {
         Ok(SimulationExecutionResult {
             gas,
             logs: collect_logs_from_frame(call_frame),
-            tx_request,
+            tx_request: tx_request.clone(),
             block_number,
         })
     }

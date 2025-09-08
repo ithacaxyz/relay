@@ -2,9 +2,6 @@ mod balance;
 use alloy::primitives::{U256, utils::format_units};
 pub use balance::*;
 
-mod latency;
-pub use latency::*;
-
 mod liquidity;
 pub use liquidity::*;
 

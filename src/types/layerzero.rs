@@ -32,6 +32,7 @@ impl LZChainConfigs {
                 Some((
                     *chain_id,
                     LZChainConfig {
+                        chain_id: *chain_id,
                         endpoint_id: *endpoint_id,
                         endpoint_address: *endpoint_address,
                         provider: provider.clone(),

@@ -1,10 +1,15 @@
 //! RPC account-related request and response types.
 
 use alloy::primitives::{Address, ChainId, U256};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{Asset, AssetMetadataWithPrice, AssetType};
+use crate::{
+    chains::Chain,
+    price::{PriceOracle, calculate_usd_value},
+    types::{Asset, AssetMetadataWithPrice, AssetType},
+};
 
 /// Address-based asset or native.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -117,6 +122,11 @@ impl GetAssetsParameters {
             ..Default::default()
         }
     }
+
+    /// Generates parameters to get all assets for an account on a single chain.
+    pub fn for_chain(account: Address, chain_id: ChainId) -> Self {
+        Self { account, chain_filter: vec![chain_id], ..Default::default() }
+    }
 }
 
 /// Asset as described on ERC7811.
@@ -153,6 +163,48 @@ impl GetAssetsResponse {
                     .map(|asset| asset.balance)
             })
             .unwrap_or_default()
+    }
+
+    /// Finds the fee token with the highest USD value on the specified chain.
+    pub async fn find_best_fee_token(&self, chain: &Chain, price_oracle: &PriceOracle) -> Address {
+        let Some(assets) = self.0.get(&chain.id()) else {
+            return Address::ZERO;
+        };
+
+        let values = join_all(
+            assets
+                .iter()
+                .filter_map(|asset| {
+                    chain
+                        .assets()
+                        .fee_token_iter()
+                        .find(|(_, desc)| desc.address == asset.address.address())
+                        .map(|(uid, desc)| (asset, uid, desc))
+                })
+                .map(|(asset, uid, desc)| async move {
+                    let usd_value = match &asset.metadata {
+                        Some(meta) if meta.price.as_ref().is_some_and(|p| p.is_usd()) => {
+                            let decimals = meta.decimals.unwrap_or(18);
+                            // SAFETY: unwrap() is safe here because the if guard above ensures
+                            // meta.price is Some and is_usd() returned true
+                            calculate_usd_value(
+                                asset.balance,
+                                meta.price.as_ref().unwrap().price,
+                                decimals,
+                            )
+                        }
+                        _ => price_oracle.usd_value(asset.balance, uid, desc).await.unwrap_or(0.0),
+                    };
+                    (asset.address.address(), usd_value)
+                }),
+        )
+        .await;
+
+        values
+            .into_iter()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(token, _)| token)
+            .unwrap_or(Address::ZERO)
     }
 }
 
