@@ -358,37 +358,28 @@ impl Relay {
         // create a mock transaction signer
         let mock_from = Address::random();
 
-        // Parallelize fetching of assets, fee history, and eth price as they are independent
+        // Prepare futures for concurrent execution
+        let user_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
+            intent.eoa,
+            chain_id,
+            context.fee_token,
+        ));
+
+        let priority_fee_percentiles = [chain.fee_config().priority_fee_percentile];
+        let fee_history_fut = provider.get_fee_history(
+            EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+            Default::default(),
+            &priority_fee_percentiles,
+        );
+
+        let native_price_fut =
+            self.inner.price_oracle.native_conversion_rate(token_uid.clone(), native_uid.clone());
+
+        // Execute all futures in parallel and handle errors
         let (assets_response, fee_history, eth_price) = try_join!(
-            // Fetch the user's balance for the fee token
-            async {
-                self.get_assets(GetAssetsParameters::for_asset_on_chain(
-                    intent.eoa,
-                    chain_id,
-                    context.fee_token,
-                ))
-                .await
-                .map_err(RelayError::internal)
-            },
-            // Fetch chain fee history
-            async {
-                provider
-                    .get_fee_history(
-                        EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
-                        Default::default(),
-                        &[chain.fee_config().priority_fee_percentile],
-                    )
-                    .await
-                    .map_err(RelayError::from)
-            },
-            // Fetch native asset price
-            async {
-                Ok(self
-                    .inner
-                    .price_oracle
-                    .native_conversion_rate(token_uid.clone(), native_uid.clone())
-                    .await)
-            }
+            async { user_balance_fut.await.map_err(RelayError::internal) },
+            async { fee_history_fut.await.map_err(RelayError::from) },
+            async { Ok(native_price_fut.await) }
         )?;
 
         let fee_token_balance =
