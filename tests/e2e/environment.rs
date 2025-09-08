@@ -687,6 +687,7 @@ impl Environment {
                                 native_symbol: None,
                                 sequencer: None,
                                 flashblocks: None,
+                                eth_send_raw_delegates: vec![],
                                 sim_mode: Default::default(),
                                 fees: Default::default(),
                                 signers: SignerConfig { num_signers: config.num_signers },
