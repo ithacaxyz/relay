@@ -2,11 +2,11 @@ use crate::{
     chains::Chains,
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
-    price::PriceOracle,
+    price::{PriceOracle, calculate_usd_value},
     types::{AssetMetadata, AssetType, IERC20, IERC721, Quote},
 };
 use alloy::primitives::{
-    Address, ChainId, U256, U512,
+    Address, ChainId, U256,
     map::{HashMap, HashSet},
 };
 use futures_util::future::join_all;
@@ -421,7 +421,7 @@ impl ChainAssetDiffs {
             .fee_token(chain_id, fee_token)
             .ok_or_else(|| RelayError::Asset(AssetError::UnknownFeeToken(fee_token)))?;
         let usd_price = price_oracle
-            .usd_price(token_uid.clone())
+            .usd_conversion_rate(token_uid.clone())
             .await
             .ok_or_else(|| RelayError::Asset(AssetError::PriceUnavailable(token_uid.clone())))?;
 
@@ -436,7 +436,8 @@ impl ChainAssetDiffs {
                     else {
                         return;
                     };
-                    let Some(usd_price) = price_oracle.usd_price(token_uid.clone()).await else {
+                    let Some(usd_price) = price_oracle.usd_conversion_rate(token_uid.clone()).await
+                    else {
                         return;
                     };
 
@@ -522,13 +523,6 @@ impl AssetDiffResponse {
 
         self.fee_totals.insert(0, FiatValue { currency: "usd".to_string(), value: total });
     }
-}
-
-/// Helper function to calculate USD value from token amount and price.
-pub fn calculate_usd_value(amount: U256, usd_price: f64, decimals: u8) -> f64 {
-    let result = U512::from(amount).saturating_mul(U512::from(usd_price * 1e18))
-        / U512::from(10u128.pow(decimals as u32));
-    result.to::<u128>() as f64 / 1e18
 }
 
 #[cfg(test)]

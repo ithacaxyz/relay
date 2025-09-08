@@ -5,7 +5,7 @@ use crate::{
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{ContractErrors::ContractErrorsErrors, IntentError, RelayError},
     types::{
-        Asset, AssetType, IERC20, Intent,
+        Asset, AssetType, IERC20, Intent, generate_cast_call_command,
         rpc::{BalanceOverride, BalanceOverrides, RequiredAsset},
     },
 };
@@ -192,16 +192,21 @@ impl<P: Provider> SimulatorContract<P> {
 
         // Use `eth_simulateV1` if `sim_mode` allows it and we don't need to calculate asset
         // deficits
-        if self.sim_mode.is_simulate_v1() && !self.calculate_asset_deficits {
-            self.with_simulate_v1(tx_request).await
+        let result = if self.sim_mode.is_simulate_v1() && !self.calculate_asset_deficits {
+            self.with_simulate_v1(&tx_request).await
         } else {
-            self.with_debug_trace(tx_request, intent).await
-        }
+            self.with_debug_trace(&tx_request, intent).await
+        };
+
+        // log the cast call command for potential debugging
+        trace!(?result, cast_call = %generate_cast_call_command(&tx_request, &self.overrides), "prepare_calls simulation");
+
+        result
     }
 
     async fn with_simulate_v1(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let simulate_block = SimBlock::default()
             .call(tx_request.clone())
@@ -233,7 +238,7 @@ impl<P: Provider> SimulatorContract<P> {
             gas,
             calls: Vec::new(),
             logs: result.logs.into_iter().map(|l| l.into_inner()).collect(),
-            tx_request,
+            tx_request: tx_request.clone(),
             block_number,
             asset_deficits: HashMap::new(),
         })
@@ -241,7 +246,7 @@ impl<P: Provider> SimulatorContract<P> {
 
     async fn with_debug_trace(
         &self,
-        tx_request: TransactionRequest,
+        tx_request: &TransactionRequest,
         intent: &Intent,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let mut overrides = self.overrides.clone();
@@ -291,7 +296,7 @@ impl<P: Provider> SimulatorContract<P> {
                         gas,
                         calls,
                         logs,
-                        tx_request,
+                        tx_request: tx_request.clone(),
                         block_number,
                         asset_deficits,
                     });

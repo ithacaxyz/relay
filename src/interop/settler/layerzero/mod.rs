@@ -12,11 +12,13 @@ use super::{SettlementError, Settler, SettlerId};
 use crate::{
     interop::settler::layerzero::{
         contracts::{
+            ExecuteSend,
             ILayerZeroEndpointV2::{self, PacketSent},
             ILayerZeroSettler, IReceiveUln302, MessagingParams,
         },
         types::{LayerZeroPacketInfo, LayerZeroPacketV1},
     },
+    signers::DynSigner,
     storage::{RelayStorage, StorageApi},
     transactions::{RelayTransaction, TransactionStatus, interop::InteropBundle},
     types::{Call3, IEscrow, LZChainConfigs, TransactionServiceHandles},
@@ -25,12 +27,14 @@ use alloy::{
     primitives::{Address, B256, Bytes, ChainId, U256, map::HashMap},
     providers::{DynProvider, Provider},
     rpc::types::{TransactionReceipt, TransactionRequest, state::AccountOverride},
-    sol_types::{SolCall, SolEvent, SolValue},
+    sol_types::{Eip712Domain, SolCall, SolEvent, SolStruct, SolValue},
 };
 use async_trait::async_trait;
+use futures::future::TryJoinAll;
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
 /// LayerZero contract interfaces.
@@ -53,9 +57,14 @@ use batcher::{LayerZeroBatchPool, LayerZeroPoolHandle};
 /// ULN config type constant
 pub const ULN_CONFIG_TYPE: u32 = 2;
 
+/// Type alias for the EIP-712 domain cache
+type DomainCache = Arc<RwLock<HashMap<Address, Eip712Domain>>>;
+
 /// Layerzero configuration for a specific chain.
 #[derive(Debug, Clone)]
 pub struct LZChainConfig {
+    /// Chain ID for this chain.
+    pub chain_id: ChainId,
     /// LayerZero endpoint ID for this chain.
     pub endpoint_id: EndpointId,
     /// LayerZero endpoint address for this chain.
@@ -81,17 +90,38 @@ pub struct LayerZeroSettler {
     verification_monitor: LayerZeroVerificationMonitor,
     /// Layerzero settler metrics for each chain
     chain_metrics: HashMap<ChainId, LayerZeroChainMetrics>,
+    /// Signer for LayerZero executeSend operations.
+    settler_signer: DynSigner,
+    /// Cache of EIP-712 domains per settler address.
+    eip712_domain_cache: DomainCache,
 }
 
 impl LayerZeroSettler {
     /// Creates a new LayerZero settler instance with batch processing.
     pub async fn new(
-        endpoint_ids: HashMap<ChainId, EndpointId>,
         endpoint_addresses: HashMap<ChainId, Address>,
         providers: HashMap<ChainId, DynProvider>,
         storage: RelayStorage,
         tx_service_handles: TransactionServiceHandles,
+        settler_signer: DynSigner,
     ) -> Result<Self, SettlementError> {
+        let endpoint_ids: HashMap<ChainId, EndpointId> = endpoint_addresses
+            .iter()
+            .map(|(chain_id, address)| async {
+                let Some(provider) = providers.get(chain_id) else {
+                    return Ok::<_, SettlementError>(None);
+                };
+
+                let eid = ILayerZeroEndpointV2::new(*address, provider).eid().call().await?;
+
+                Ok(Some((*chain_id, eid)))
+            })
+            .collect::<TryJoinAll<_>>()
+            .await?
+            .into_iter()
+            .flatten()
+            .collect();
+
         // Build the reverse mapping for O(1) endpoint ID to chain ID lookups
         let eid_to_chain = endpoint_ids.iter().map(|(chain_id, eid)| (*eid, *chain_id)).collect();
         let chain_metrics = endpoint_ids
@@ -121,6 +151,8 @@ impl LayerZeroSettler {
             settlement_pool,
             verification_monitor,
             chain_metrics,
+            settler_signer,
+            eip712_domain_cache: DomainCache::default(),
         })
     }
 
@@ -239,6 +271,57 @@ impl LayerZeroSettler {
 
         Ok(packet_infos)
     }
+
+    /// Generates an EIP-712 signature for the LayerZero settler executeSend call.
+    ///
+    /// Caches EIP-712 domain fields (except chainId) per settler address.
+    async fn generate_settler_signature(
+        &self,
+        settler_address: Address,
+        call: &ILayerZeroSettler::executeSendCall,
+        config: &LZChainConfig,
+    ) -> Result<Bytes, SettlementError> {
+        let cached_domain = self.eip712_domain_cache.read().await.get(&settler_address).cloned();
+
+        let mut domain = if let Some(cached) = cached_domain {
+            cached
+        } else {
+            let contract = ILayerZeroSettler::new(settler_address, &config.provider);
+            let domain = contract.eip712Domain().call().await.map_err(|e| {
+                SettlementError::InternalError(format!("Failed to get EIP-712 domain: {e}"))
+            })?;
+
+            let domain = Eip712Domain::new(
+                Some(domain.name.into()),
+                Some(domain.version.into()),
+                None, // Don't cache chainId
+                Some(domain.verifyingContract),
+                None,
+            );
+            self.eip712_domain_cache.write().await.insert(settler_address, domain.clone());
+            domain
+        };
+        domain.chain_id = Some(U256::from(config.chain_id));
+
+        // Create the typed data for signing
+        let execute_send = ExecuteSend {
+            sender: call.sender,
+            settlementId: call.settlementId,
+            settlerContext: call.settlerContext.clone(),
+        };
+
+        // Sign the typed data hash
+        let signing_hash = execute_send.eip712_signing_hash(&domain);
+        let signature = self
+            .settler_signer
+            .sign_hash(&signing_hash)
+            .await
+            .map_err(|e| SettlementError::InternalError(format!("Failed to sign typed data: {e}")))?
+            .as_bytes()
+            .into();
+
+        Ok(signature)
+    }
 }
 
 #[async_trait]
@@ -298,12 +381,16 @@ impl Settler for LayerZeroSettler {
 
         tracing::debug!(?settlement_id, ?native_lz_fee, "Total LayerZero fee");
 
-        let calldata = ILayerZeroSettler::executeSendCall {
+        let mut call = ILayerZeroSettler::executeSendCall {
             sender: orchestrator,
             settlementId: settlement_id,
             settlerContext: settler_context,
-        }
-        .abi_encode();
+            signature: Bytes::new(),
+        };
+        call.signature =
+            self.generate_settler_signature(intent_settler, &call, current_config).await?;
+
+        let calldata = call.abi_encode();
 
         // Create a transaction for the settlement with the calculated gas with native_lz_fee
         let from = Address::random();
@@ -499,6 +586,10 @@ fn build_multicall_calls(
     // 1. commitVerification
     // 2. lzReceive
     // 3. settle
+    //
+    // We allow failure on the settle function, because if it fails, we don't want to bottleneck the
+    // LZ messaging queue that requires us to call commitVerification sequentially for all their
+    // nonces.
     let calls = vec![
         Call3 {
             target: packet.receive_lib_address,
@@ -510,7 +601,7 @@ fn build_multicall_calls(
             allowFailure: false,
             callData: lz_receive_calldata.into(),
         },
-        Call3 { target: escrow_address, allowFailure: false, callData: settle_calldata.into() },
+        Call3 { target: escrow_address, allowFailure: true, callData: settle_calldata.into() },
     ];
 
     Ok(calls)

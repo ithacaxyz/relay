@@ -51,6 +51,7 @@ sol! {
     #[sol(rpc)]
     interface IOApp {
         function setPeer(uint32 eid, bytes32 peer) external;
+        function setEndpoint(address _endpoint) external;
     }
 
     /// IReceiveUlnE2 interface for LayerZero ULN verification

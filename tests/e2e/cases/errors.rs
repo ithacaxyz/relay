@@ -29,7 +29,7 @@ async fn decode_insufficient_allowance() -> eyre::Result<()> {
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: vec![],
                 revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: env.fee_token, nonce: None },
+                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
                 pre_calls: vec![],
                 pre_call: false,
                 required_funds: vec![],

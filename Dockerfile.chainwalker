@@ -29,24 +29,32 @@ RUN cargo chef cook --profile $BUILD_PROFILE --recipe-path recipe.json
 COPY . .
 
 # Build application
-RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked -p relay-tools --bin stress
+RUN cargo build --profile $BUILD_PROFILE --features "$FEATURES" --locked -p relay-tools --bin chainwalker
 
 # ARG is not resolved in COPY so we have to hack around it by copying the
 # binary to a temporary location
-RUN cp /app/target/$BUILD_PROFILE/stress /app/stress
+RUN cp /app/target/$BUILD_PROFILE/chainwalker /app/chainwalker
 
 # Use Ubuntu as the release image
 FROM ubuntu AS runtime
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates && update-ca-certificates
+RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates curl git && update-ca-certificates
 
-# Copy stress over from the build stage
-COPY --from=builder /app/stress /usr/local/bin
+# Install foundry
+RUN curl -L https://foundry.paradigm.xyz | bash && \
+    . /root/.bashrc && \
+    /root/.foundry/bin/foundryup
+
+# Copy chainwalker over from the build stage
+COPY --from=builder /app/chainwalker /usr/local/bin
 
 # Add nushell
 COPY --from=ghcr.io/nushell/nushell:0.105.1-alpine /usr/bin/nu /usr/bin/nu
 
+# Add foundry binaries to PATH
+ENV PATH="/root/.foundry/bin:${PATH}"
+
 EXPOSE 9119
-ENTRYPOINT ["/usr/local/bin/stress"]
+ENTRYPOINT ["/usr/local/bin/chainwalker"]

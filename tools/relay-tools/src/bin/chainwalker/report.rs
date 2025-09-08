@@ -1,9 +1,9 @@
-use super::utils::{format_chain, format_units_safe};
 use alloy::primitives::{Address, ChainId, U256};
 use relay::types::{
     AssetUid, Quote,
     rpc::{Asset7811, BundleId},
 };
+use relay_tools::common::{format_chain, format_units_safe};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
