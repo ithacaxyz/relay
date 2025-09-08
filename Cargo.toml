@@ -3,6 +3,8 @@ name = "relay"
 version = "24.0.2"
 edition = "2024"
 publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ithacaxyz/relay"
 
 [[bin]]
 path = "src/bin/relay.rs"
