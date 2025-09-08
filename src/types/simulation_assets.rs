@@ -67,7 +67,6 @@ impl AssetDiffs {
 }
 
 /// Asset with metadata and value diff.
-#[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDiff {
     /// Asset address. `None` represents the native token.
@@ -110,7 +109,6 @@ impl AssetDeficits {
 }
 
 /// Asset with metadata and deficit value.
-#[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDeficit {
     /// Asset address. `None` represents the native token.

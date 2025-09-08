@@ -334,7 +334,7 @@ impl<P: Provider> SimulatorContract<P> {
         }
     }
 
-    /// Calculates the asset deficit for each account and asset based on calls.
+    /// Calculates the asset deficit of given EOA for all assets based on calls.
     ///
     /// Supports only ERC-20 tokens.
     async fn find_asset_deficit(
@@ -379,6 +379,8 @@ impl<P: Provider> SimulatorContract<P> {
     /// General algorithm is:
     /// 1. Try to decode the call as ERC-20 `transferFrom` first, and `transfer` second.
     /// 2. If decoding succeeded, start checking common ERC-20 ways to fail on insufficient funds.
+    /// 
+    /// Output is (from, to, asset, amount, is_success).
     async fn decode_transfer_from_call(
         &self,
         call: &CallFrame,

@@ -510,16 +510,6 @@ impl Relay {
                     U256::ZERO
                 };
 
-        // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
-        // should be enough to simulate the gas cost of paying for the intent for most (if not all)
-        // ERC20s.
-        //
-        // Additionally, we included a balance override of `balance + 1` unit of the fee token,
-        // which ensures the simulation never reverts. Whether the user can actually really
-        // pay for the intent execution or not is determined later and communicated to the
-        // client.
-        intent_to_sign.set_payment(U256::from(1));
-
         // Simulate the intent
         let (asset_diffs, asset_deficits, gas_results) = orchestrator
             .simulate_execute(
