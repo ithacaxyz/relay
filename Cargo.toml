@@ -120,6 +120,7 @@ dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
 tempfile = "3.21"
+insta = { version = "1.39.0", features = ["json", "redactions"] }
 
 [build-dependencies]
 vergen = { version = "9.0", features = ["build", "cargo", "emit_and_set"] }

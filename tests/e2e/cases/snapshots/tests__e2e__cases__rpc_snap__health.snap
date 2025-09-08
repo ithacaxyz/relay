@@ -1,0 +1,8 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "status": "[status]",
+  "version": "[version]"
+}

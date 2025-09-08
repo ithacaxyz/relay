@@ -18,6 +18,7 @@ pub mod multichain_usdt_transfer;
 mod paymaster;
 mod porto;
 mod relay;
+mod rpc_snap;
 mod signature;
 mod simple;
 mod simple_settlement;

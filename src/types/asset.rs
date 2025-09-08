@@ -9,7 +9,19 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_FIAT_CURRENCY: &str = "USD";
 
 /// A unique ID for an asset.
-#[derive(Debug, Display, Clone, Eq, PartialEq, FromStr, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Display,
+    Clone,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    FromStr,
+    Hash,
+    Serialize,
+    Deserialize
+)]
 pub struct AssetUid(String);
 
 impl AssetUid {

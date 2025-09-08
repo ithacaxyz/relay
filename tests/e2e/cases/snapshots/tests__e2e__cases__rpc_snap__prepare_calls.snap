@@ -1,0 +1,232 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: value
+---
+{
+  "capabilities": {
+    "assetDiffs": {
+      "0x7a69": [
+        [
+          "0x0000000000000000000000000000000000000000",
+          [
+            {
+              "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+              "decimals": 18,
+              "direction": "incoming",
+              "fiat": {
+                "currency": "usd",
+                "value": "0.000000000000000002"
+              },
+              "name": "mockName",
+              "symbol": "mockSymbol",
+              "type": "erc20",
+              "value": "0x2"
+            }
+          ]
+        ],
+        [
+          "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
+          [
+            {
+              "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+              "decimals": 18,
+              "direction": "outgoing",
+              "fiat": {
+                "currency": "usd",
+                "value": "0.000000000000000001"
+              },
+              "name": "mockName",
+              "symbol": "mockSymbol",
+              "type": "erc20",
+              "value": "0x1"
+            }
+          ]
+        ]
+      ]
+    },
+    "authorizeKeys": [],
+    "feeTotals": {
+      "0x0": {
+        "currency": "usd",
+        "value": "[value]"
+      },
+      "0x7a69": {
+        "currency": "usd",
+        "value": "[value]"
+      }
+    },
+    "revokeKeys": []
+  },
+  "context": {
+    "quote": {
+      "hash": "[hash]",
+      "multiChainRoot": null,
+      "quotes": [
+        {
+          "authorizationAddress": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
+          "chainId": "0x7a69",
+          "ethPrice": "0xde0b6b3a7640000",
+          "extraPayment": "0x0",
+          "feeTokenDeficit": "0x0",
+          "intent": {
+            "combinedGas": "[combinedGas]",
+            "encodedFundTransfers": [],
+            "encodedPreCalls": [
+              "[encodedPreCall]"
+            ],
+            "eoa": "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
+            "executionData": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000ed1db453c3156ff3155a97ad217b3087d5dc5f6e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044a9059cbb0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000",
+            "expiry": "0x0",
+            "funder": "0x0000000000000000000000000000000000000000",
+            "funderSignature": "0x",
+            "isMultichain": false,
+            "nonce": "0x0",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentAmount": "[paymentMaxAmount]",
+            "paymentMaxAmount": "[paymentMaxAmount]",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "paymentSignature": "0x",
+            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "settler": "0x0000000000000000000000000000000000000000",
+            "settlerContext": "0x",
+            "signature": "0x",
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          },
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "[maxFeePerGas]",
+            "maxPriorityFeePerGas": "0x1"
+          },
+          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "paymentTokenDecimals": 18,
+          "txGas": "[txGas]"
+        }
+      ],
+      "r": "[r]",
+      "s": "[s]",
+      "ttl": "[ttl]",
+      "v": "[v]",
+      "yParity": "[yParity]"
+    }
+  },
+  "digest": "[digest]",
+  "key": {
+    "prehash": false,
+    "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
+    "type": "secp256k1"
+  },
+  "typedData": {
+    "domain": {
+      "chainId": "0x7a69",
+      "name": "Orchestrator",
+      "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+      "version": "0.5.3"
+    },
+    "message": {
+      "calls": [
+        {
+          "data": "0xa9059cbb00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+          "to": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "value": "0x0"
+        }
+      ],
+      "combinedGas": "[combinedGas]",
+      "encodedFundTransfers": [],
+      "encodedPreCalls": [
+        "[encodedPreCall]"
+      ],
+      "eoa": "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
+      "expiry": "0x0",
+      "multichain": false,
+      "nonce": "0x0",
+      "payer": "0x0000000000000000000000000000000000000000",
+      "paymentMaxAmount": "[paymentMaxAmount]",
+      "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+      "settler": "0x0000000000000000000000000000000000000000"
+    },
+    "primaryType": "Intent",
+    "types": {
+      "Call": [
+        {
+          "name": "to",
+          "type": "address"
+        },
+        {
+          "name": "value",
+          "type": "uint256"
+        },
+        {
+          "name": "data",
+          "type": "bytes"
+        }
+      ],
+      "EIP712Domain": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "chainId",
+          "type": "uint256"
+        },
+        {
+          "name": "verifyingContract",
+          "type": "address"
+        }
+      ],
+      "Intent": [
+        {
+          "name": "multichain",
+          "type": "bool"
+        },
+        {
+          "name": "eoa",
+          "type": "address"
+        },
+        {
+          "name": "calls",
+          "type": "Call[]"
+        },
+        {
+          "name": "nonce",
+          "type": "uint256"
+        },
+        {
+          "name": "payer",
+          "type": "address"
+        },
+        {
+          "name": "paymentToken",
+          "type": "address"
+        },
+        {
+          "name": "paymentMaxAmount",
+          "type": "uint256"
+        },
+        {
+          "name": "combinedGas",
+          "type": "uint256"
+        },
+        {
+          "name": "encodedPreCalls",
+          "type": "bytes[]"
+        },
+        {
+          "name": "encodedFundTransfers",
+          "type": "bytes[]"
+        },
+        {
+          "name": "settler",
+          "type": "address"
+        },
+        {
+          "name": "expiry",
+          "type": "uint256"
+        }
+      ]
+    }
+  }
+}
