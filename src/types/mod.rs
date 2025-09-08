@@ -7,8 +7,8 @@ pub use account::*;
 mod asset;
 pub use asset::*;
 
-mod asset_diff;
-pub use asset_diff::*;
+mod simulation_assets;
+pub use simulation_assets::*;
 
 mod contracts;
 pub use contracts::*;
