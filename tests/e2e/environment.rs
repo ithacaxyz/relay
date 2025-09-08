@@ -21,7 +21,6 @@ use eyre::{self, ContextCompat, WrapErr};
 use futures_util::future::{join_all, try_join_all};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use relay::{
-    chains::RETRY_LAYER,
     config::{
         ChainConfig, InteropConfig, LegacyOrchestrator, RebalanceServiceConfig, RelayConfig,
         SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
@@ -30,6 +29,7 @@ use relay::{
     provider::ProviderExt,
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
+    transport::RETRY_LAYER,
     types::{
         AssetDescriptor, AssetUid, Assets,
         IERC20::{self},
