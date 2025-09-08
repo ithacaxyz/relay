@@ -49,7 +49,7 @@ use alloy::{
 };
 use alloy_chains::NamedChain;
 use futures::{StreamExt, stream::FuturesOrdered};
-use futures_util::{future::try_join_all, join};
+use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -760,13 +760,16 @@ impl Relay {
 
         // Query keys from all requested chains in parallel and bubble errors
         let address = request.address;
-        let pairs = try_join_all(chains.into_iter().map(|chain_id| async move {
-            Ok::<_, RelayError>((chain_id, self.get_keys_for_chain(address, chain_id).await?))
-        }))
-        .await?;
-
-        // Build response from successful results
-        Ok(pairs.into_iter().map(|(chain_id, keys)| (U64::from(chain_id), keys)).collect())
+        chains
+            .into_iter()
+            .map(|chain_id| async move {
+                self.get_keys_for_chain(address, chain_id)
+                    .await
+                    .map(|keys| (U64::from(chain_id), keys))
+            })
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .await
     }
 
     /// Get keys from an account on a specific chain.
@@ -1937,7 +1940,7 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
-        Ok(self.get_keys(request).await?)
+        Ok(Self::get_keys(self, request).await?)
     }
 
     #[instrument(skip_all)]
