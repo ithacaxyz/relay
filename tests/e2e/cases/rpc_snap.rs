@@ -134,7 +134,7 @@ async fn test_prepare_calls() -> eyre::Result<()> {
             from: Some(env.eoa.address()),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: Default::default(),
-                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+                meta: Meta { fee_token: Some(env.erc20), fee_payer: None, nonce: Some(U256::ZERO) },
                 pre_calls: Default::default(),
                 pre_call: Default::default(),
                 required_funds: vec![RequiredAsset::new(env.erc20, balance)],
@@ -228,7 +228,7 @@ async fn test_send_prepared_calls() -> eyre::Result<()> {
             from: Some(env.eoa.address()),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: Default::default(),
-                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+                meta: Meta { fee_token: Some(env.erc20), fee_payer: None, nonce: Some(U256::ZERO) },
                 pre_calls: Default::default(),
                 pre_call: Default::default(),
                 required_funds: vec![RequiredAsset::new(env.erc20, balance)],
@@ -374,7 +374,7 @@ async fn test_get_calls_status() -> eyre::Result<()> {
             from: Some(env.eoa.address()),
             capabilities: PrepareCallsCapabilities {
                 authorize_keys: Default::default(),
-                meta: Meta { fee_token: env.erc20, fee_payer: None, nonce: Some(U256::ZERO) },
+                meta: Meta { fee_token: Some(env.erc20), fee_payer: None, nonce: Some(U256::ZERO) },
                 pre_calls: Default::default(),
                 pre_call: Default::default(),
                 required_funds: vec![RequiredAsset::new(env.erc20, balance)],
