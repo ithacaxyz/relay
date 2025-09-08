@@ -379,7 +379,7 @@ impl<P: Provider> SimulatorContract<P> {
     /// General algorithm is:
     /// 1. Try to decode the call as ERC-20 `transferFrom` first, and `transfer` second.
     /// 2. If decoding succeeded, start checking common ERC-20 ways to fail on insufficient funds.
-    /// 
+    ///
     /// Output is (from, to, asset, amount, is_success).
     async fn decode_transfer_from_call(
         &self,
