@@ -10,11 +10,10 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use url::Url;
 
 use crate::{
-    chains::RETRY_LAYER,
     config::TransactionServiceConfig,
     constants::DEFAULT_POLL_INTERVAL,
     transactions::flashblocks::{FlashblocksWatcher, FlashblocksWatcherHandle},
-    transport::create_transport,
+    transport::{RETRY_LAYER, create_transport},
 };
 
 use super::metrics::TransactionServiceMetrics;
