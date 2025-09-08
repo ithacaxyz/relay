@@ -8,7 +8,7 @@ use alloy::{
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::task::{Context, Poll, ready};
 use tower::{Layer, Service};
-use tracing::warn;
+use tracing::error;
 
 /// A [`tower::Layer`] responsible for delegating `eth_sendRawTransaction` requests.
 #[derive(Debug, Clone)]
@@ -94,7 +94,7 @@ where
                 if res.is_err()
                     && let Some((mut fallback, req)) = fallback
                 {
-                    warn!("All eth_sendRawTransaction delegates failed, falling back to regular");
+                    error!("All eth_sendRawTransaction delegates failed, falling back to regular");
                     res = fallback.call(req).await;
                 }
                 res
@@ -149,11 +149,12 @@ where
 
         Box::pin(async move {
             // obtain the first result
-            let mut res = futs.next().await.expect("Fanout has at least one service");
+            let mut res = futs.next().await.expect("has at least one service");
 
             // we still want to deliver to all endpoints
             while let Some(next) = futs.next().await {
-                // here we want to filter for the success case
+                // here we want to filter for the success case, both transport and actual rpc
+                // response
                 if res.is_err() || res.as_ref().is_ok_and(|resp| resp.is_error()) {
                     res = next;
                 }
