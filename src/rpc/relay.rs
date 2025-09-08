@@ -196,61 +196,62 @@ impl Relay {
 
     /// Returns the [`RelayCapabilities`] for the given chain ids.
     pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
-        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
-            // Relay needs a chain endpoint to support a chain.
-            let chain = self.inner.chains.get(chain_id)?;
-            let provider = chain.provider().clone();
-            let native_uid = chain.assets().native()?.0.clone();
-            let fee_tokens = chain.assets().fee_tokens();
+        let capabilities: FuturesUnordered<_> = chains
+            .into_iter()
+            .filter_map(|chain_id| {
+                // Relay needs a chain endpoint to support a chain.
+                let chain = self.inner.chains.get(chain_id)?;
+                let provider = chain.provider().clone();
+                let native_uid = chain.assets().native()?.0.clone();
+                let fee_tokens = chain.assets().fee_tokens();
 
-            Some(async move {
-                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
-                    let provider = provider.clone();
-                    let native_uid = native_uid.clone();
-                    async move {
-                        let rate = self
-                            .inner
-                            .price_oracle
-                            .native_conversion_rate(token_uid.clone(), native_uid)
-                            .await
-                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        let symbol = self
-                            .inner
-                            .asset_info
-                            .get_asset_info_list(
-                                &provider,
-                                vec![Asset::infer_from_address(token.address)],
-                            )
-                            .await
-                            .ok()
-                            .and_then(|map| {
-                                map.iter()
-                                    .next()
-                                    .and_then(|(_, asset)| asset.metadata.symbol.clone())
-                            });
-                        Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
-                    }
-                }))
-                .await?;
+                Some(async move {
+                    let fee_tokens =
+                        try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                            let provider = provider.clone();
+                            let native_uid = native_uid.clone();
+                            async move {
+                                let rate = self
+                                    .inner
+                                    .price_oracle
+                                    .native_conversion_rate(token_uid.clone(), native_uid)
+                                    .await
+                                    .ok_or(QuoteError::UnavailablePrice(token.address))?;
+                                let symbol = self
+                                    .inner
+                                    .asset_info
+                                    .get_asset_info_list(
+                                        &provider,
+                                        vec![Asset::infer_from_address(token.address)],
+                                    )
+                                    .await
+                                    .ok()
+                                    .and_then(|map| {
+                                        map.iter()
+                                            .next()
+                                            .and_then(|(_, asset)| asset.metadata.symbol.clone())
+                                    });
+                                Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
+                            }
+                        }))
+                        .await?;
 
-                Ok::<_, QuoteError>((
-                    chain_id,
-                    ChainCapabilities {
-                        contracts: self.inner.contracts.clone(),
-                        fees: ChainFees {
-                            recipient: self.inner.fee_recipient,
-                            quote_config: self.inner.quote_config.clone(),
-                            tokens: fee_tokens,
+                    Ok::<_, QuoteError>((
+                        chain_id,
+                        ChainCapabilities {
+                            contracts: self.inner.contracts.clone(),
+                            fees: ChainFees {
+                                recipient: self.inner.fee_recipient,
+                                quote_config: self.inner.quote_config.clone(),
+                                tokens: fee_tokens,
+                            },
                         },
-                    },
-                ))
+                    ))
+                })
             })
-        }))
-        .await?
-        .into_iter()
-        .collect();
+            .collect();
 
-        Ok(RelayCapabilities(capabilities))
+        Ok(RelayCapabilities(capabilities.try_collect().await?))
     }
 
     /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
