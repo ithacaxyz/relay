@@ -96,13 +96,10 @@ where
     }
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        // TODO: simplify after <https://github.com/alloy-rs/alloy/pull/2304>
-        if let RequestPacket::Single(r) = &req
-            && r.method() == ETH_SEND_RAW_TRANSACTION
-        {
+        if req.as_single().is_some_and(|r| r.method() == ETH_SEND_RAW_TRANSACTION) {
             // This is raw transaction submission that we want to also route to the sequencer
             let mut futures = FuturesUnordered::new();
-            futures.push(self.sequencer.call(r.clone().into()));
+            futures.push(self.sequencer.call(req.clone()));
             futures.push(self.inner.call(req));
             return Box::pin(async move {
                 let mut first_error = None;
