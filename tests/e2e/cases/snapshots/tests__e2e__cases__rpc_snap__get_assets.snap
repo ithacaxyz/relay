@@ -31,20 +31,6 @@ expression: response
       }
     },
     {
-      "address": "0x0c8e79f3534b00d9a3d4a856b665bf4ebc22f2ba",
-      "balance": "0x0",
-      "type": "erc20",
-      "metadata": {
-        "name": "mockName",
-        "symbol": "mockSymbol",
-        "decimals": 18,
-        "price": {
-          "currency": "USD",
-          "price": 1.0
-        }
-      }
-    },
-    {
       "address": "0x12975173b87f7595ee45dffb2ab812ece596bf84",
       "balance": "0x0",
       "type": "erc20",
@@ -60,6 +46,20 @@ expression: response
     },
     {
       "address": "0x196dbcbb54b8ec4958c959d8949ebfe87ac2aaaf",
+      "balance": "0x0",
+      "type": "erc20",
+      "metadata": {
+        "name": "mockName",
+        "symbol": "mockSymbol",
+        "decimals": 18,
+        "price": {
+          "currency": "USD",
+          "price": 1.0
+        }
+      }
+    },
+    {
+      "address": "0x2a264f26859166c5bf3868a54593ee716aebc848",
       "balance": "0x0",
       "type": "erc20",
       "metadata": {
@@ -101,8 +101,8 @@ expression: response
       }
     },
     {
-      "address": "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
-      "balance": "0x56bc75e2d63100000",
+      "address": "0xc6b8fbf96cf7bbe45576417ec2163acecfa88ecc",
+      "balance": "0x0",
       "type": "erc20",
       "metadata": {
         "name": "mockName",
@@ -115,8 +115,8 @@ expression: response
       }
     },
     {
-      "address": "0xe1da8919f262ee86f9be05059c9280142cf23f48",
-      "balance": "0x56bc75e2d63100000",
+      "address": "0xd04ff4a75edd737a73e92b2f2274cb887d96e110",
+      "balance": "0x0",
       "type": "erc20",
       "metadata": {
         "name": "mockName",
@@ -130,7 +130,7 @@ expression: response
     },
     {
       "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
-      "balance": "0x0",
+      "balance": "0x56bc75e2d63100000",
       "type": "erc20",
       "metadata": {
         "name": "mockName",
@@ -144,7 +144,7 @@ expression: response
     },
     {
       "address": "0xf7cd8fa9b94db2aa972023b379c7f72c65e4de9d",
-      "balance": "0x0",
+      "balance": "0x56bc75e2d63100000",
       "type": "erc20",
       "metadata": {
         "name": "mockName",
