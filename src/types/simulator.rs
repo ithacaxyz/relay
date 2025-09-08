@@ -252,6 +252,9 @@ impl<P: Provider> SimulatorContract<P> {
         let mut overrides = self.overrides.clone();
         let mut asset_deficits: HashMap<Address, U256> = HashMap::new();
 
+        // We limit the number of iterations to 3 to prevent too long simulation time.
+        let mut iterations = 3;
+
         loop {
             let trace_options = GethDebugTracingCallOptions {
                 block_overrides: None,
@@ -289,6 +292,8 @@ impl<P: Provider> SimulatorContract<P> {
 
             let (calls, logs) = collect_calls_and_logs_from_frame(call_frame);
 
+            iterations -= 1;
+
             let output = match simulation_result {
                 // If intent succeeds as is, just return the result
                 Ok(gas) => {
@@ -301,9 +306,9 @@ impl<P: Provider> SimulatorContract<P> {
                         asset_deficits,
                     });
                 }
-                // If intent failed but we are not asked to calculate asset deficits, return the
-                // error
-                Err(err) if !self.calculate_asset_deficits => {
+                // If intent failed but we are not asked to calculate asset deficits or we've
+                // reached the maximum number of iterations, return the error
+                Err(err) if !self.calculate_asset_deficits || iterations == 0 => {
                     return Err(IntentError::intent_revert(err).into());
                 }
                 // Otherwise prodceed to figuring out the asset deficit
