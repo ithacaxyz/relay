@@ -7,6 +7,7 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -206,8 +207,8 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Sets the version of the orchestrator.
-    pub fn with_version(mut self, version: Option<String>) -> Self {
-        self.version = version.and_then(|v| semver::Version::parse(&v).ok());
+    pub fn with_version(mut self, version: Option<Version>) -> Self {
+        self.version = version;
         self
     }
 

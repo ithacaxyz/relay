@@ -2573,13 +2573,7 @@ impl Relay {
     /// Returns None if the address is not a known delegation implementation.
     fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
         if impl_addr == self.inner.contracts.delegation_implementation.address {
-            return self
-                .inner
-                .contracts
-                .delegation_implementation
-                .version
-                .as_ref()
-                .and_then(|v| semver::Version::parse(v).ok());
+            return self.inner.contracts.delegation_implementation.version.clone();
         }
 
         // Check legacy implementations
@@ -2587,9 +2581,8 @@ impl Relay {
             .contracts
             .legacy_delegations
             .iter()
-            .find(|c| c.address == impl_addr)
-            .and_then(|c| c.version.as_ref())
-            .and_then(|v| semver::Version::parse(v).ok())
+            .find_map(|c| (c.address == impl_addr).then_some(c.version.clone()))
+            .flatten()
     }
 
     /// Creates an escrow struct for funding intents.

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::e2e::environment::Environment;
-use alloy::primitives::U64;
-use relay::rpc::RelayApiClient;
+use alloy::{primitives::U64, providers::Provider};
+use relay::{rpc::RelayApiClient, types::Eip712Contract::Eip712ContractInstance};
 use semver::{self, Version};
 
 #[tokio::test]
@@ -12,20 +12,41 @@ async fn versioned_contracts() -> eyre::Result<()> {
     let capabilities =
         env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
 
-    Version::parse(
-        capabilities.chain(env.chain_id()).contracts.orchestrator.version.as_ref().unwrap(),
-    )
-    .unwrap();
-    Version::parse(
-        capabilities
-            .chain(env.chain_id())
-            .contracts
-            .delegation_implementation
-            .version
-            .as_ref()
-            .unwrap(),
-    )
-    .unwrap();
+    for provider in &env.providers {
+        let chain_id = provider.get_chain_id().await?;
+
+        let get_version = |address| async move {
+            eyre::Ok(
+                Version::parse(
+                    &Eip712ContractInstance::new(address, provider.clone())
+                        .eip712Domain()
+                        .call()
+                        .await?
+                        .version,
+                )
+                .ok(),
+            )
+        };
+
+        assert_eq!(
+            get_version(env.config.orchestrator).await?,
+            capabilities.chain(chain_id).contracts.orchestrator.version
+        );
+
+        for legacy in &env.config.legacy_orchestrators {
+            let orchestrator = get_version(legacy.orchestrator).await?;
+            let simulator = get_version(legacy.simulator).await?;
+            assert!(
+                capabilities
+                    .chain(chain_id)
+                    .contracts
+                    .legacy_orchestrators
+                    .iter()
+                    .any(|legacy| legacy.orchestrator.version == orchestrator
+                        && legacy.simulator.version == simulator)
+            );
+        }
+    }
 
     Ok(())
 }
