@@ -1249,14 +1249,27 @@ impl Relay {
         amount: U256,
         total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
-        let mut remaining = amount.saturating_sub(existing);
+        let existing_balance = assets
+            .asset_on_chain(destination_chain_id, requested_asset)
+            .map(|asset| asset.balance)
+            .unwrap_or_default();
+        let mut remaining = amount.saturating_sub(existing_balance);
         if remaining.is_zero() {
             return Ok(Some(vec![]));
         }
 
+        let dst_decimals = self
+            .inner
+            .chains
+            .asset(destination_chain_id, requested_asset.address())
+            .map(|asset| asset.1.decimals)
+            .ok_or(RelayError::UnsupportedAsset {
+                asset: requested_asset.address(),
+                chain: destination_chain_id,
+            })?;
+
         // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<(ChainId, Address, U256)> = assets
+        let mut sources: Vec<_> = assets
             .0
             .iter()
             .filter_map(|(&chain, assets)| {
@@ -1264,15 +1277,15 @@ impl Relay {
                     return None;
                 }
 
-                let mapped = self
-                    .inner
-                    .chains
-                    .map_interop_asset(destination_chain_id, chain, requested_asset.address())?
-                    .address;
+                let mapped = self.inner.chains.map_interop_asset(
+                    destination_chain_id,
+                    chain,
+                    requested_asset.address(),
+                )?;
 
                 let balance = assets
                     .iter()
-                    .find(|a| a.address.address() == mapped)
+                    .find(|a| a.address.address() == mapped.address)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
@@ -1280,8 +1293,10 @@ impl Relay {
             })
             .collect();
 
-        // highest balances first
-        sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        // sort balances by value on destination chain
+        sources.sort_unstable_by_key(|(_, asset, balance)| {
+            adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals)
+        });
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
@@ -1291,9 +1306,9 @@ impl Relay {
                 let funding_context = FundingIntentContext {
                     eoa,
                     chain_id: chain,
-                    asset: asset.into(),
+                    asset: asset.address.into(),
                     amount: U256::from(1),
-                    fee_token: asset,
+                    fee_token: asset.address,
                     // note(onbjerg): it doesn't matter what the output intent digest is for
                     // simulation, as long as it's not zero. otherwise, the gas
                     // costs will differ a lot.
@@ -1333,11 +1348,23 @@ impl Relay {
                 break;
             }
 
-            let take = remaining.min(balance.saturating_sub(escrow_cost));
+            // Calculate the maximum amount we can bridge to destination
+            let max_take = adjust_balance_for_decimals(
+                balance.saturating_sub(escrow_cost),
+                asset.decimals,
+                dst_decimals,
+            );
+
+            let take = remaining.min(max_take);
+
+            // Convert the amount back to the source chain asset decimals
+            let amount_source = adjust_balance_for_decimals(take, dst_decimals, asset.decimals);
+
             plan.push(FundSource {
                 chain_id: chain,
-                amount: take,
-                address: asset,
+                amount_source,
+                amount_destination: take,
+                address: asset.address,
                 cost: escrow_cost,
             });
             remaining = remaining.saturating_sub(take);
@@ -1540,7 +1567,9 @@ impl Relay {
                 )
                 .await?
             {
-                (new_chains.iter().map(|source| source.amount).sum(), new_chains)
+                // We take `amount_destination` here, because `sourced_funds` is the amount of
+                // destination chain asset
+                (new_chains.iter().map(|source| source.amount_destination).sum(), new_chains)
             } else {
                 // We don't have enough funds across all chains, so we revert back to single chain
                 // to produce a quote with a `feeTokenDeficit`.
@@ -1632,7 +1661,7 @@ impl Relay {
                                 eoa,
                                 chain_id: source.chain_id,
                                 asset: source.address.into(),
-                                amount: source.amount,
+                                amount: source.amount_source,
                                 fee_token: source.address,
                                 output_intent_digest,
                                 output_chain_id: request.chain_id,
@@ -2734,5 +2763,42 @@ impl Relay {
         });
 
         Ok(needs_wrapping.then_some(key_address))
+    }
+}
+
+/// Adjusts a balance based on the difference in decimals.
+///
+/// # Example
+/// - USDC on chain A has 6 decimals, balance = 1_000_000 (represents 1 USDC)
+/// - USDC on chain B has 18 decimals
+/// - Result: 1_000_000_000_000_000_000 (represents 1 USDC with 18 decimals)
+pub fn adjust_balance_for_decimals(balance: U256, from_decimals: u8, to_decimals: u8) -> U256 {
+    let diff = (from_decimals as i32) - (to_decimals as i32);
+    let factor = U256::from(10).pow(U256::from(diff.unsigned_abs()));
+
+    if diff > 0 { balance / factor } else { balance * factor }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn test_adjust_balance_for_decimals() {
+        // Converting from 6 decimals to 18 decimals
+        let balance_6_decimals = U256::from(1_000_000u64);
+        let result = adjust_balance_for_decimals(balance_6_decimals, 6, 18);
+        assert_eq!(result, U256::from(1_000_000_000_000_000_000u128));
+
+        // Converting from 18 decimals to 6 decimals
+        let balance_18_decimals = U256::from(1_000_000_000_000_000_000u128);
+        let result = adjust_balance_for_decimals(balance_18_decimals, 18, 6);
+        assert_eq!(result, U256::from(1_000_000u64));
+
+        // Same decimals, no change
+        let balance = U256::from(123_456_789u64);
+        let result = adjust_balance_for_decimals(balance, 6, 6);
+        assert_eq!(result, balance);
     }
 }

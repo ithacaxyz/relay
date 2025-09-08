@@ -263,7 +263,7 @@ impl Chains {
                         chain
                             .assets
                             .interop_iter()
-                            .map(|(asset_uid, desc)| (*chain_id, (asset_uid.clone(), desc.clone())))
+                            .map(|(asset_uid, desc)| (*chain_id, asset_uid.clone(), desc.clone()))
                     })
                     .collect(),
                 liquidity_tracker.clone(),

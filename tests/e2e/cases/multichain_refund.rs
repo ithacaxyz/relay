@@ -45,6 +45,13 @@ async fn test_multichain_refund() -> Result<()> {
         let intent = &quotes.ty().quotes[i].intent;
         let execution_data = intent.execution_data();
 
+        let idx = setup
+            .env
+            .chain_ids
+            .iter()
+            .position(|id| *id == quotes.ty().quotes[i].chain_id)
+            .unwrap();
+
         // Decode the Vec<Call> from execution data
         let calls: Vec<Call> =
             Vec::<Call>::abi_decode(execution_data).expect("Failed to decode calls");
@@ -54,7 +61,8 @@ async fn test_multichain_refund() -> Result<()> {
             // Decode the escrow call to get the actual escrow amount
             if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&last_call.data) {
                 for escrow in escrow_call._escrows {
-                    transfers_from_other_chains += escrow.escrowAmount;
+                    transfers_from_other_chains +=
+                        escrow.escrowAmount * setup.decimals[2] / setup.decimals[idx];
                 }
             }
         }
@@ -155,14 +163,14 @@ async fn fetch_balances(setup: &MultichainTransferSetup, wallet: Address) -> Res
                 .balanceOf(wallet)
                 .call()
                 .await?;
-        wallet_balance += chain_wallet_balance;
+        wallet_balance += chain_wallet_balance * setup.decimals[2] / setup.decimals[chain_index];
 
         let chain_escrow_balance =
             IERC20::new(setup.env.erc20, setup.env.provider_for(chain_index))
                 .balanceOf(setup.env.escrow)
                 .call()
                 .await?;
-        escrow_balance += chain_escrow_balance;
+        escrow_balance += chain_escrow_balance * setup.decimals[2] / setup.decimals[chain_index];
 
         // debug for if the test fails
         eprintln!(

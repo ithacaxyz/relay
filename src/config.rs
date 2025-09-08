@@ -27,6 +27,7 @@ use alloy::{
 use alloy_chains::Chain;
 use eyre::Context;
 use reqwest::Url;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -696,7 +697,7 @@ pub struct RebalanceServiceConfig {
     pub funder_owner_key: String,
     /// Mapping of asset identifiers to rebalance threshold.
     #[serde(default, skip_serializing_if = "HashMap::is_empty", with = "crate::serde::hash_map")]
-    pub thresholds: HashMap<AssetUid, U256>,
+    pub thresholds: HashMap<AssetUid, Decimal>,
 }
 
 /// Configuration for price feeds.
