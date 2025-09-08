@@ -67,7 +67,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 schnellru = "0.2.4"
-semver = "1.0.26"
+semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
