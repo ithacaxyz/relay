@@ -13,8 +13,12 @@ use futures_util::{
     future::TryJoinAll,
     stream::{SelectAll, select_all},
 };
+use rust_decimal::{Decimal, prelude::ToPrimitive};
 use std::{ops::RangeInclusive, time::Duration};
 use tracing::{info, warn};
+
+/// Scale factor for the asset decimals.
+const SCALE_FACTOR: U256 = uint!(1000000000000000000_U256);
 
 /// Represents an asset in a chain tracked by [`RebalanceService`].
 #[derive(Debug, Clone)]
@@ -27,6 +31,8 @@ pub struct Asset {
     chain_id: ChainId,
     /// Asset decimals.
     decimals: u8,
+    /// Rebalance threshold.
+    rebalance_threshold: U256,
 }
 
 impl fmt::Display for Asset {
@@ -68,24 +74,33 @@ pub struct RebalanceService {
     /// Transfers that are in progress.
     transfers_in_progress: HashMap<BridgeTransferId, BridgeTransfer>,
     /// Rebalance thresholds.
-    thresholds: HashMap<AssetUid, U256>,
+    thresholds: HashMap<AssetUid, Decimal>,
 }
 
 impl RebalanceService {
     /// Creates a new [`RebalanceService`].
     pub fn new(
-        tokens: HashMap<ChainId, (AssetUid, AssetDescriptor)>,
+        tokens: Vec<(ChainId, AssetUid, AssetDescriptor)>,
         tracker: LiquidityTracker,
         bridges: impl IntoIterator<Item = Box<dyn Bridge>>,
-        thresholds: HashMap<AssetUid, U256>,
+        thresholds: HashMap<AssetUid, Decimal>,
     ) -> Self {
         let assets = tokens
             .into_iter()
-            .map(|(chain_id, (asset_uid, desc))| Asset {
-                uid: asset_uid.clone(),
-                address: desc.address,
-                chain_id,
-                decimals: desc.decimals,
+            .map(|(chain_id, asset_uid, desc)| {
+                let rebalance_threshold = if let Some(configured) = thresholds.get(&asset_uid) {
+                    let scaled = configured * Decimal::from(10u128.pow(desc.decimals as u32));
+                    U256::from(scaled.to_u128().unwrap())
+                } else {
+                    U256::from(10u128.pow(desc.decimals as u32))
+                };
+                Asset {
+                    uid: asset_uid.clone(),
+                    address: desc.address,
+                    chain_id,
+                    decimals: desc.decimals,
+                    rebalance_threshold,
+                }
             })
             .collect();
         Self {
@@ -100,14 +115,6 @@ impl RebalanceService {
 }
 
 impl RebalanceService {
-    /// Returns minimum balance that we need to hold for the given asset.
-    fn get_threshold(&self, asset: &Asset) -> U256 {
-        self.thresholds
-            .get(&asset.uid)
-            .copied()
-            .unwrap_or_else(|| U256::from(10).saturating_pow(U256::from(asset.decimals - 1)))
-    }
-
     /// Returns minimum amount for rebalancing to be performed.
     fn get_min_rebalance(&self, src: &Asset, dst: &Asset) -> U256 {
         let min_supported = self
@@ -121,7 +128,7 @@ impl RebalanceService {
             .min()
             .unwrap_or(U256::MAX);
 
-        (self.get_threshold(src) / uint!(10_U256)).max(min_supported)
+        (src.rebalance_threshold / uint!(10_U256)).max(min_supported)
     }
 
     /// Gets balance ranges for all assets.
@@ -197,24 +204,29 @@ impl RebalanceService {
 
     /// Finds next rebalance that needs to be delegated to a bridge.
     async fn find_next_rebalance(&self) -> eyre::Result<Option<AssetsToRebalance>> {
-        let mut coin_kind_to_deltas: HashMap<_, Vec<_>> = HashMap::default();
+        let mut coin_kind_to_scaled_deltas: HashMap<_, Vec<_>> = HashMap::default();
 
         for (asset, balance) in self.balance_ranges().await? {
-            let threshold = self.get_threshold(&asset);
+            let threshold = asset.rebalance_threshold;
 
             let min_delta = I256::from(*balance.start()) - I256::from(threshold);
             let max_delta = I256::from(*balance.end()) - I256::from(threshold);
 
-            coin_kind_to_deltas
+            let min_delta_scaled = min_delta * I256::from(SCALE_FACTOR)
+                / I256::from(U256::from(10u128.pow(asset.decimals as u32)));
+            let max_delta_scaled = max_delta * I256::from(SCALE_FACTOR)
+                / I256::from(U256::from(10u128.pow(asset.decimals as u32)));
+
+            coin_kind_to_scaled_deltas
                 .entry(asset.uid.clone())
                 .or_default()
-                .push((asset.clone(), min_delta..=max_delta));
+                .push((asset.clone(), min_delta_scaled..=max_delta_scaled));
         }
 
-        for deltas in coin_kind_to_deltas.values() {
+        for deltas in coin_kind_to_scaled_deltas.values() {
             // Find if there's an upper bound that is negative which means that even in the best
             // case scenario we'll be below threshold.
-            let Some(min_negative) =
+            let Some((dst, dst_deltas)) =
                 deltas.iter().filter(|(_, d)| d.end().is_negative()).min_by_key(|(_, d)| *d.end())
             else {
                 continue;
@@ -222,25 +234,26 @@ impl RebalanceService {
 
             // Find if there's a lower bound that is positive which means that even in the worst
             // case scenario we'll be above threshold.
-            let Some(max_positive) = deltas
+            let Some((src, src_deltas)) = deltas
                 .iter()
                 .filter(|(_, d)| d.start().is_positive())
                 .max_by_key(|(_, d)| *d.start())
             else {
-                warn!(
-                    "below threshold on chain {} but don't have funds to cover",
-                    min_negative.0.chain_id
-                );
+                warn!("below threshold on chain {} but don't have funds to cover", dst.chain_id);
                 continue;
             };
 
-            let rebalance_amount =
-                U256::from((-(*min_negative.1.end())).min(*max_positive.1.start()));
+            let rebalance_amount_scaled =
+                U256::from((-(*dst_deltas.end())).min(*src_deltas.start()));
 
-            if rebalance_amount >= self.get_min_rebalance(&max_positive.0, &min_negative.0) {
+            let rebalance_amount = rebalance_amount_scaled
+                * U256::from(10u128.pow(src.decimals as u32))
+                / SCALE_FACTOR;
+
+            if rebalance_amount >= self.get_min_rebalance(src, dst) {
                 return Ok(Some(AssetsToRebalance {
-                    from: max_positive.0.clone(),
-                    to: min_negative.0.clone(),
+                    from: src.clone(),
+                    to: dst.clone(),
                     amount: rebalance_amount,
                 }));
             }

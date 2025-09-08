@@ -27,10 +27,13 @@ use relay::{
         SettlerConfig, SettlerImplementation, SignerConfig, SimpleSettlerConfig,
         TransactionServiceConfig,
     },
+    provider::ProviderExt,
     signers::DynSigner,
     spawn::{RelayHandle, try_spawn},
     types::{
-        AssetDescriptor, AssetUid, Assets, IFunder,
+        AssetDescriptor, AssetUid, Assets,
+        IERC20::{self},
+        IFunder,
         rpc::{AuthorizeKeyResponse, GetKeysParameters},
     },
 };
@@ -564,36 +567,43 @@ impl Environment {
         let chain_ids =
             try_join_all(providers.iter().map(|provider| provider.get_chain_id())).await?;
 
-        // Build assets for chains. Every chain has the same assets, so we just build this once and
-        // clone.
-        //
-        // Each ERC20 has the UID derived from the order it was deployed. The native token is given
-        // the UID ETH. Everything is assumed to have 18 decimals.
-        //
-        // Only ETH and the first ERC20 is relayable across chains.
-        let erc20s = contracts.erc20s.iter().enumerate().map(|(idx, contract)| {
-            (
-                AssetUid::new(idx.to_string()),
-                AssetDescriptor {
-                    address: *contract,
-                    decimals: 18,
-                    fee_token: true,
-                    interop: idx == 0,
-                },
-            )
-        });
-        let assets = Assets::new(HashMap::from_iter(
-            std::iter::once((
-                AssetUid::new("eth".to_string()),
-                AssetDescriptor {
-                    address: Address::ZERO,
-                    decimals: 18,
-                    fee_token: true,
-                    interop: false,
-                },
-            ))
-            .chain(erc20s),
-        ));
+        let assets = try_join_all(providers.iter().map(async |provider| {
+            // Build assets for chains. Every chain has the same assets, but can have different
+            // decimals, so we need to query ERC20s for each chain.
+            //
+            // Each ERC20 has the UID derived from the order it was deployed. The native token
+            // is given the UID ETH with 18 decimals.
+            //
+            // Only ETH and the first ERC20 is relayable across chains.
+            alloy::contract::Result::<_>::Ok(Assets::new(HashMap::from_iter(
+                std::iter::once((
+                    AssetUid::new("eth".to_string()),
+                    AssetDescriptor {
+                        address: Address::ZERO,
+                        decimals: 18,
+                        fee_token: true,
+                        interop: false,
+                    },
+                ))
+                .chain(
+                    try_join_all(contracts.erc20s.iter().enumerate().map(
+                        |(idx, contract)| async move {
+                            alloy::contract::Result::<_>::Ok((
+                                AssetUid::new(idx.to_string()),
+                                AssetDescriptor {
+                                    address: *contract,
+                                    decimals: provider.get_token_decimals(*contract).await?,
+                                    fee_token: true,
+                                    interop: idx == 0,
+                                },
+                            ))
+                        },
+                    ))
+                    .await?,
+                ),
+            )))
+        }))
+        .await?;
 
         let database_url = if let Ok(db_url) = std::env::var("DATABASE_URL") {
             let opts = PgConnectOptions::from_str(&db_url)?;
@@ -667,8 +677,8 @@ impl Environment {
             .with_port(0)
             .with_metrics_port(0)
             .with_chains(HashMap::from_iter(
-                chain_ids.iter().enumerate().zip(endpoints.into_iter()).map(
-                    |((idx, chain_id), endpoint)| {
+                itertools::izip!(chain_ids.iter().enumerate(), endpoints, assets).map(
+                    |((idx, chain_id), endpoint, assets)| {
                         (
                             Chain::from_id(*chain_id),
                             ChainConfig {
@@ -980,8 +990,9 @@ pub async fn mint_erc20s<P: Provider>(
     for erc20 in erc20s {
         // Mint tokens for both signers.
         for addr in addresses {
+            let decimals = IERC20::new(*erc20, &provider).decimals().call().await?;
             MockErc20::new(*erc20, &provider)
-                .mint(*addr, U256::from(100e18))
+                .mint(*addr, U256::from(100 * 10u128.pow(decimals as u32)))
                 .send()
                 .await
                 .wrap_err("Minting failed")?
@@ -1193,6 +1204,10 @@ async fn deploy_simulator<P: Provider>(
 
 /// Deploy a single ERC20 token
 async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre::Result<Address> {
+    // Either 6 or 18 decimals to test interop between same asset UIDs with different decimals.
+    //
+    // TODO: is there a nicer way to do this deterministically?
+    let decimals_ = if provider.get_chain_id().await? % 2 == 0 { 6 } else { 18 };
     deploy_contract(
         provider,
         &contracts_path.join("MockERC20.sol/MockERC20.json"),
@@ -1200,7 +1215,8 @@ async fn deploy_erc20<P: Provider>(provider: &P, contracts_path: &Path) -> eyre:
             MockErc20::constructorCall {
                 name_: "mockName".into(),
                 symbol_: "mockSymbol".into(),
-                decimals_: 18,
+
+                decimals_,
             }
             .abi_encode()
             .into(),

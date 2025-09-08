@@ -152,17 +152,20 @@ pub struct GetAssetsResponse(
 );
 
 impl GetAssetsResponse {
-    /// Get the balance of a specific asset on the given chain.
-    pub fn balance_on_chain(&self, chain: ChainId, asset_address: AddressOrNative) -> U256 {
+    /// Get a specific asset on the given chain.
+    pub fn asset_on_chain(
+        &self,
+        chain: ChainId,
+        asset_address: AddressOrNative,
+    ) -> Option<&Asset7811> {
         self.0
             .get(&chain)
-            .and_then(|assets| {
-                assets
-                    .iter()
-                    .find(|asset| asset.address == asset_address)
-                    .map(|asset| asset.balance)
-            })
-            .unwrap_or_default()
+            .and_then(|assets| assets.iter().find(|asset| asset.address == asset_address))
+    }
+
+    /// Get the balance of a specific asset on the given chain.
+    pub fn balance_on_chain(&self, chain: ChainId, asset_address: AddressOrNative) -> U256 {
+        self.asset_on_chain(chain, asset_address).map(|asset| asset.balance).unwrap_or_default()
     }
 
     /// Finds the fee token with the highest USD value on the specified chain.
