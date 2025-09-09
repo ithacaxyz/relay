@@ -8,6 +8,7 @@ use crate::{
     error::{IntentError, StorageError},
     estimation::{build_simulation_overrides, fees::approx_intrinsic_cost},
     provider::ProviderExt,
+    rpc::ExtraFeeInfo,
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
@@ -269,9 +270,9 @@ impl Relay {
         auth: Option<SignedAuthorization>,
         fees: &Eip1559Estimation,
         gas_estimate: &GasEstimate,
-    ) -> Result<U256, RelayError> {
+    ) -> Result<ExtraFeeInfo, RelayError> {
         // Include the L1 DA fees if we're on an OP or Arbitrum rollup.
-        let fee = if chain.is_optimism() {
+        if chain.is_optimism() {
             // we only need the unsigned RLP data here because `estimate_l1_fee` will account for
             // signature overhead.
             let mut buf = Vec::new();
@@ -304,11 +305,12 @@ impl Relay {
                 .encode(&mut buf);
             }
 
-            chain.provider().estimate_l1_op_fee(buf.into()).await?
+            let l1_fee = chain.provider().estimate_l1_op_fee(buf.into()).await?;
+            Ok(ExtraFeeInfo::Optimism { l1_fee })
         } else if chain.is_arbitrum() {
-            chain
+            let components = chain
                 .provider()
-                .estimate_l1_arb_fee(
+                .estimate_l1_arb_fee_components(
                     chain.id(),
                     self.orchestrator(),
                     gas_estimate.tx,
@@ -316,12 +318,15 @@ impl Relay {
                     auth,
                     intent.encode_execute(),
                 )
-                .await?
-        } else {
-            U256::ZERO
-        };
+                .await?;
 
-        Ok(fee)
+            Ok(ExtraFeeInfo::Arbitrum {
+                l1_gas_estimate: components.gasEstimateForL1,
+                l1_base_fee_estimate: components.l1BaseFeeEstimate,
+            })
+        } else {
+            Ok(ExtraFeeInfo::None)
+        }
     }
 
     #[instrument(skip_all)]
@@ -539,7 +544,7 @@ impl Relay {
         // Fill combinedGas
         intent_to_sign = intent_to_sign.with_combined_gas(U256::from(gas_estimate.intent));
         // Calculate the real fee
-        let extra_fee_native = self
+        let extra_fee_info = self
             .estimate_extra_fee(
                 &chain,
                 &intent_to_sign,
@@ -549,6 +554,10 @@ impl Relay {
             )
             .await?;
 
+        // this should return zero on all non-arbitrum chains, we add this to the gaslimit
+        let extra_fee_gas = extra_fee_info.extra_gas();
+
+        let extra_fee_native = extra_fee_info.extra_fee();
         let extra_payment =
             extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
 
@@ -581,7 +590,7 @@ impl Relay {
             intent: intent_to_sign,
             extra_payment,
             eth_price,
-            tx_gas: gas_estimate.tx,
+            tx_gas: gas_estimate.tx + extra_fee_gas,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),

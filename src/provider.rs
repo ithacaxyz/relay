@@ -2,7 +2,10 @@
 
 use crate::{
     estimation::{
-        arb::{ARB_NODE_INTERFACE_ADDRESS, ArbNodeInterface},
+        arb::{
+            ARB_NODE_INTERFACE_ADDRESS,
+            ArbNodeInterface::{self, gasEstimateL1ComponentReturn},
+        },
         op::{OP_GAS_PRICE_ORACLE_ADDRESS, OpGasPriceOracle},
     },
     types::IERC20,
@@ -41,9 +44,10 @@ pub trait ProviderExt: Provider {
         }
     }
 
-    /// Estimates L1 DA fee of an Arbitrum rollup for given transaction parameters by using
-    /// [`NodeInterface`].
-    fn estimate_l1_arb_fee(
+    /// Estimates L1 DA fee components of an Arbitrum rollup for given transaction parameters by
+    /// using [`NodeInterface`]. Returns the raw gas estimate and base fee estimate components
+    /// after applying adjustments based on [`ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT`].
+    fn estimate_l1_arb_fee_components(
         &self,
         chain_id: ChainId,
         to: Address,
@@ -51,7 +55,7 @@ pub trait ProviderExt: Provider {
         fees: Eip1559Estimation,
         auth: Option<SignedAuthorization>,
         calldata: Bytes,
-    ) -> impl Future<Output = TransportResult<U256>> + Send
+    ) -> impl Future<Output = TransportResult<gasEstimateL1ComponentReturn>> + Send
     where
         Self: Sized,
     {
@@ -67,15 +71,15 @@ pub trait ProviderExt: Provider {
                 .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
                 .call()
                 .await
-                .map(|components| {
-                    let mut gas_estimate = components.gasEstimateForL1;
-
+                .map(|mut components| {
+                    // apply arb 7702 margin
                     if auth.is_some() {
-                        gas_estimate =
-                            gas_estimate * (100 + ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT) / 100;
+                        components.gasEstimateForL1 = components.gasEstimateForL1
+                            * (100 + ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT)
+                            / 100;
                     }
 
-                    U256::from(components.l1BaseFeeEstimate) * U256::from(gas_estimate)
+                    components
                 })
                 .map_err(TransportErrorKind::custom)
         }
