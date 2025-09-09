@@ -24,7 +24,7 @@ use alloy::{
 };
 use eyre::{Result, WrapErr};
 use futures_util::{future::try_join_all, try_join};
-use relay::{chains::RETRY_LAYER, interop::settler::layerzero::contracts::ILayerZeroEndpointV2};
+use relay::{interop::settler::layerzero::contracts::ILayerZeroEndpointV2, transport::RETRY_LAYER};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
