@@ -277,12 +277,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the service API key for protected RPC endpoints.
-    pub fn with_service_api_key(mut self, service_api_key: Option<String>) -> Self {
-        self.secrets.service_api_key = service_api_key.or(self.secrets.service_api_key);
-        self
-    }
-
     /// Sets the interop configuration.
     pub fn with_interop_config(mut self, interop_config: InteropConfig) -> Self {
         self.interop = Some(interop_config);

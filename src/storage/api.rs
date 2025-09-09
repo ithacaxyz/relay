@@ -98,9 +98,6 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Returns true if the email was verified successfully.
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool>;
 
-    /// Gets the verified email for a given wallet address.
-    async fn get_verified_email(&self, account: Address) -> Result<Option<String>>;
-
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
 
