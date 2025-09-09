@@ -476,11 +476,7 @@ impl Relay {
             // For single chain intents, sign the intent directly
             let signature = mock_key
                 .sign_payload_hash(
-                    intent_to_sign
-                        .compute_eip712_data(*orchestrator.address(), &provider)
-                        .await
-                        .map_err(RelayError::from)?
-                        .0,
+                    intent_to_sign.compute_eip712_data(*orchestrator.address(), &provider).await?.0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -648,11 +644,8 @@ impl Relay {
             .with_signature(signature);
 
         // Compute EIP-712 digest for the intent
-        let (eip712_digest, _) = quote
-            .intent
-            .compute_eip712_data(quote.orchestrator, &provider)
-            .await
-            .map_err(RelayError::from)?;
+        let (eip712_digest, _) =
+            quote.intent.compute_eip712_data(quote.orchestrator, &provider).await?;
 
         // Sign fund transfers if any
         if !quote.intent.encoded_fund_transfers().is_empty() {
@@ -1211,7 +1204,6 @@ impl Relay {
                         &provider,
                     )
                     .await
-                    .map_err(RelayError::from)
             },
             self.should_erc1271_wrap(&request, &delegation_status, &provider)
         )?;
@@ -1694,8 +1686,7 @@ impl Relay {
                         output_quote.orchestrator,
                         &self.provider(request.chain_id)?,
                     )
-                    .await
-                    .map_err(RelayError::from)?;
+                    .await?;
 
                 let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
@@ -2135,10 +2126,8 @@ impl RelayApiServer for Relay {
             Authorization { chain_id: U256::ZERO, address: request.delegation, nonce: auth_nonce };
 
         // Calculate the eip712 digest that the user will need to sign.
-        let (pre_call_digest, typed_data) = pre_call
-            .compute_eip712_data(self.orchestrator(), &provider)
-            .await
-            .map_err(RelayError::from)?;
+        let (pre_call_digest, typed_data) =
+            pre_call.compute_eip712_data(self.orchestrator(), &provider).await?;
 
         let digests =
             UpgradeAccountDigests { auth: authorization.signature_hash(), exec: pre_call_digest };
@@ -2293,11 +2282,7 @@ impl RelayApiServer for Relay {
             self.simulate_init(&storage_account, context.chain_id),
             // Calculate precall digest.
             async {
-                storage_account
-                    .pre_call
-                    .compute_eip712_data(self.orchestrator(), &provider)
-                    .await
-                    .map_err(RelayError::from)
+                storage_account.pre_call.compute_eip712_data(self.orchestrator(), &provider).await
             },
             // Get account nonce.
             async {
@@ -2498,8 +2483,7 @@ impl RelayApiServer for Relay {
         let results = try_join_all(
             signatures.into_iter().map(|signature| account.validate_signature(digest, signature)),
         )
-        .await
-        .map_err(RelayError::from)?;
+        .await?;
 
         let key_hash = results.into_iter().find_map(|result| result);
 
