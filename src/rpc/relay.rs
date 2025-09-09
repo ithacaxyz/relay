@@ -551,6 +551,7 @@ impl Relay {
             )
             .await?;
 
+        // this should return zero on all non-arbitrum chains, we add this to the gaslimit
         gas_estimate.tx += extra_fee_info.extra_gas();
 
         let extra_fee_native = extra_fee_info.extra_fee();
