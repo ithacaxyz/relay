@@ -2,7 +2,9 @@ use crate::{
     config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
 use alloy::{primitives::Address, providers::Provider, sol, transports::TransportErrorKind};
+use eyre::Context;
 use futures_util::future::try_join_all;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::try_join;
 
@@ -35,7 +37,7 @@ pub struct VersionedContract {
     pub address: Address,
     /// Contract version.
     #[serde(default)]
-    pub version: Option<String>,
+    pub version: Option<Version>,
 }
 
 impl VersionedContract {
@@ -56,16 +58,20 @@ impl VersionedContract {
                 );
                 domain.version
             })
-            .ok();
+            .wrap_err("failed to call contract")
+            .and_then(|version| {
+                Version::parse(&version).wrap_err("failed to parse version as semver")
+            });
 
-        if version.is_none() {
+        if let Err(err) = &version {
             tracing::debug!(
                 contract = %address,
+                ?err,
                 "Failed to fetch EIP712 domain"
             );
         }
 
-        Self { address, version }
+        Self { address, version: version.ok() }
     }
 
     /// Creates a [`VersionedContract`] without a version.
