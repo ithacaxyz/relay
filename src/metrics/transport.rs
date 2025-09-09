@@ -15,7 +15,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// A layer that wraps requests in spans with OpenTelemetry attributes.
 ///
-/// The OpenTelemetry attributes adhere to the OpenTelemtry conventions.
+/// The OpenTelemetry attributes adhere to the OpenTelemetry conventions.
 ///
 /// See:
 /// - <https://opentelemetry.io/docs/specs/semconv/rpc/json-rpc/>
