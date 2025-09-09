@@ -308,9 +308,9 @@ impl Relay {
             let l1_fee = chain.provider().estimate_l1_op_fee(buf.into()).await?;
             Ok(ExtraFeeInfo::Optimism { l1_fee })
         } else if chain.is_arbitrum() {
-            let components = chain
+            let gas_estimate = chain
                 .provider()
-                .estimate_l1_arb_fee_components(
+                .estimate_l1_arb_fee_gas(
                     chain.id(),
                     self.orchestrator(),
                     gas_estimate.tx,
@@ -320,10 +320,7 @@ impl Relay {
                 )
                 .await?;
 
-            Ok(ExtraFeeInfo::Arbitrum {
-                l1_gas_estimate: components.gasEstimateForL1,
-                l1_base_fee_estimate: components.l1BaseFeeEstimate,
-            })
+            Ok(ExtraFeeInfo::Arbitrum { gas_estimate })
         } else {
             Ok(ExtraFeeInfo::None)
         }
@@ -534,7 +531,7 @@ impl Relay {
             context.stored_authorization.is_some(),
         );
 
-        let gas_estimate = GasEstimate::from_combined_gas(
+        let mut gas_estimate = GasEstimate::from_combined_gas(
             gas_results.gCombined.to(),
             intrinsic_gas,
             &self.inner.quote_config,
@@ -554,8 +551,7 @@ impl Relay {
             )
             .await?;
 
-        // this should return zero on all non-arbitrum chains, we add this to the gaslimit
-        let extra_fee_gas = extra_fee_info.extra_gas();
+        gas_estimate.tx += extra_fee_info.extra_gas();
 
         let extra_fee_native = extra_fee_info.extra_fee();
         let extra_payment =
@@ -590,7 +586,7 @@ impl Relay {
             intent: intent_to_sign,
             extra_payment,
             eth_price,
-            tx_gas: gas_estimate.tx + extra_fee_gas,
+            tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),

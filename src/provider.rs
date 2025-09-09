@@ -4,7 +4,7 @@ use crate::{
     estimation::{
         arb::{
             ARB_NODE_INTERFACE_ADDRESS,
-            ArbNodeInterface::{self, gasEstimateL1ComponentReturn},
+            ArbNodeInterface::{self},
         },
         op::{OP_GAS_PRICE_ORACLE_ADDRESS, OpGasPriceOracle},
     },
@@ -47,7 +47,7 @@ pub trait ProviderExt: Provider {
     /// Estimates L1 DA fee components of an Arbitrum rollup for given transaction parameters by
     /// using [`NodeInterface`]. Returns the raw gas estimate and base fee estimate components
     /// after applying adjustments based on [`ARB_GAS_ESTIMATE_7702_MARGIN_PERCENT`].
-    fn estimate_l1_arb_fee_components(
+    fn estimate_l1_arb_fee_gas(
         &self,
         chain_id: ChainId,
         to: Address,
@@ -55,7 +55,7 @@ pub trait ProviderExt: Provider {
         fees: Eip1559Estimation,
         auth: Option<SignedAuthorization>,
         calldata: Bytes,
-    ) -> impl Future<Output = TransportResult<gasEstimateL1ComponentReturn>> + Send
+    ) -> impl Future<Output = TransportResult<u64>> + Send
     where
         Self: Sized,
     {
@@ -79,7 +79,7 @@ pub trait ProviderExt: Provider {
                             / 100;
                     }
 
-                    components
+                    components.gasEstimateForL1
                 })
                 .map_err(TransportErrorKind::custom)
         }
