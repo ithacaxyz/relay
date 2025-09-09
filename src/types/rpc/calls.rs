@@ -63,6 +63,14 @@ impl CallKey {
     pub fn key_hash(&self) -> B256 {
         Key::hash(self.key_type, &self.public_key)
     }
+
+    /// Returns the public key if it is a [`KeyType::Secp256k1`] key.
+    pub fn as_secp256k1(&self) -> Option<&Bytes> {
+        match self.key_type {
+            KeyType::Secp256k1 => Some(&self.public_key),
+            _ => None,
+        }
+    }
 }
 
 /// A set of balance overrides.
@@ -314,6 +322,16 @@ impl PrepareCallsParameters {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
+    }
+
+    /// Returns the key, if it's set in the request. Otherwise, returns a [`KeyType::Secp256k1`] key
+    /// for the given EOA.
+    pub fn get_key(&self, eoa: Address) -> CallKey {
+        self.key.clone().unwrap_or_else(move || CallKey {
+            key_type: KeyType::Secp256k1,
+            public_key: Bytes::copy_from_slice(eoa.as_slice()),
+            prehash: false,
+        })
     }
 }
 

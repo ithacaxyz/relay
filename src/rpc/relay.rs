@@ -1010,21 +1010,22 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
+        parameters: &BuildQuotesParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
         calculate_asset_deficits: bool,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
-        let Some(request_key) = &request.key else {
-            return Err(IntentError::MissingKey.into());
-        };
-
-        let key_hash = request_key.key_hash();
+        let key_hash = parameters.key.key_hash();
 
         // Find the key that authorizes this intent
         let Some(key) = self
-            .try_find_key(eoa, key_hash, &request.capabilities.pre_calls, request.chain_id)
+            .try_find_key(
+                parameters.eoa,
+                key_hash,
+                &request.capabilities.pre_calls,
+                request.chain_id,
+            )
             .await?
         else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
@@ -1042,7 +1043,7 @@ impl Relay {
         let (asset_diff, quote) = self
             .estimate_fee(
                 PartialIntent {
-                    eoa,
+                    eoa: parameters.eoa,
                     execution_data: request.calls.abi_encode().into(),
                     nonce,
                     payer: request.capabilities.meta.fee_payer,
@@ -1058,7 +1059,7 @@ impl Relay {
                     delegation_implementation: delegation_status.try_implementation()?,
                 },
                 request.chain_id,
-                request_key.prehash,
+                parameters.key.prehash,
                 FeeEstimationContext {
                     // fee_token should have been set in the beginning of prepare_calls_inner if it
                     // was not provided by the user
@@ -1141,7 +1142,7 @@ impl Relay {
             .await?;
 
         // If we're dealing with a PreCall do not estimate
-        let (asset_diff, context) = if request.capabilities.pre_call {
+        let (asset_diff, context, key) = if request.capabilities.pre_call {
             let precall = SignedCall {
                 eoa: request.from.unwrap_or_default(),
                 executionData: request.calls.abi_encode().into(),
@@ -1149,7 +1150,11 @@ impl Relay {
                 signature: Bytes::new(),
             };
 
-            (AssetDiffResponse::default(), PrepareCallsContext::with_precall(precall))
+            (
+                AssetDiffResponse::default(),
+                PrepareCallsContext::with_precall(precall),
+                request.key.clone(),
+            )
         } else {
             // Regular flow - sender and delegation status are required
             let Some(ref delegation_status) = delegation_status else {
@@ -1157,8 +1162,13 @@ impl Relay {
                 return Err(IntentError::MissingSender.into());
             };
 
-            let (asset_diffs, quotes) =
-                self.build_quotes(&request, nonce, delegation_status, intent_kind).await?;
+            let eoa = request.from.ok_or(IntentError::MissingSender)?;
+            let key = request.get_key(eoa);
+            let parameters = BuildQuotesParameters { eoa, key: key.clone() };
+
+            let (asset_diffs, quotes) = self
+                .build_quotes(&request, parameters, nonce, delegation_status, intent_kind)
+                .await?;
 
             let sig = self
                 .inner
@@ -1167,7 +1177,7 @@ impl Relay {
                 .await
                 .map_err(|err| RelayError::InternalError(err.into()))?;
 
-            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
+            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)), Some(key))
         };
 
         // Calculate the digest and check if ERC1271 wrapping is needed in parallel
@@ -1182,7 +1192,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(&request, &delegation_status, &provider)
+            self.should_erc1271_wrap(request.from, key.as_ref(), &delegation_status, &provider)
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -1204,7 +1214,7 @@ impl Relay {
                 revoke_keys: request.capabilities.revoke_keys,
                 asset_diff,
             },
-            key: request.key,
+            key,
         };
 
         Ok(response)
@@ -1215,6 +1225,7 @@ impl Relay {
     async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
+        parameters: BuildQuotesParameters,
         nonce: U256,
         delegation_status: &DelegationStatus,
         intent_kind: Option<IntentKind>,
@@ -1231,6 +1242,7 @@ impl Relay {
         {
             self.determine_quote_strategy(
                 request,
+                parameters,
                 required_funds.address,
                 required_funds.value,
                 nonce,
@@ -1238,9 +1250,16 @@ impl Relay {
             )
             .await
         } else {
-            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind, true)
-                .await
-                .map_err(Into::into)
+            self.build_single_chain_quote(
+                request,
+                &parameters,
+                delegation_status,
+                nonce,
+                intent_kind,
+                true,
+            )
+            .await
+            .map_err(Into::into)
         }
     }
 
@@ -1253,11 +1272,10 @@ impl Relay {
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
     #[expect(clippy::too_many_arguments)]
-    #[instrument(skip(self, request_key, assets))]
+    #[instrument(skip(self, parameters, assets))]
     async fn source_funds(
         &self,
-        eoa: Address,
-        request_key: &CallKey,
+        parameters: &BuildQuotesParameters,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         destination_orchestrator: Address,
@@ -1320,7 +1338,7 @@ impl Relay {
             .map(|(chain, asset, balance)| async move {
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
-                    eoa,
+                    eoa: parameters.eoa,
                     chain_id: chain,
                     asset: asset.address.into(),
                     amount: U256::from(1),
@@ -1334,7 +1352,7 @@ impl Relay {
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
-                        self.build_funding_intent(funding_context, request_key.clone())?,
+                        self.build_funding_intent(funding_context, parameters.key.clone())?,
                         // note(onbjerg): its ok the leaf isnt correct here for simulation
                         Some(IntentKind::MultiInput {
                             leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
@@ -1409,12 +1427,12 @@ impl Relay {
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
+        parameters: BuildQuotesParameters,
         requested_asset: Address,
         requested_funds: U256,
         nonce: U256,
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
-        let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
@@ -1434,13 +1452,13 @@ impl Relay {
 
         // Create a future for fetching assets interoperable with requested asset (needed for
         // source_funds). It will be awaited later when we actually need it.
-        let assets =
-            self.get_assets(GetAssetsParameters::for_assets_on_chains(eoa, interop_assets));
+        let assets = self
+            .get_assets(GetAssetsParameters::for_assets_on_chains(parameters.eoa, interop_assets));
 
         // Fetch EOA and funder's requested asset on destination chain
         let (destination_asset, funder_assets) = try_join!(
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
-                eoa,
+                parameters.eoa,
                 request.chain_id,
                 requested_asset,
             )),
@@ -1466,7 +1484,14 @@ impl Relay {
         // `requested_funds`.
         if requested_asset_balance_on_dst >= requested_funds {
             let (asset_diff, quotes) = self
-                .build_single_chain_quote(request, delegation_status, nonce, None, false)
+                .build_single_chain_quote(
+                    request,
+                    &parameters,
+                    delegation_status,
+                    nonce,
+                    None,
+                    false,
+                )
                 .await?;
 
             // It should never happen that we do not have a quote from this simulation, but to avoid
@@ -1489,7 +1514,7 @@ impl Relay {
                 .is_some()
             {
                 debug!(
-                    %eoa,
+                    eoa = %parameters.eoa,
                     chain_id = %request.chain_id,
                     %requested_asset,
                     %requested_funds,
@@ -1510,6 +1535,7 @@ impl Relay {
         let (_, mut output_quote) = self
             .build_intent(
                 request,
+                &parameters,
                 delegation_status,
                 nonce,
                 IntentKind::MultiOutput {
@@ -1552,7 +1578,7 @@ impl Relay {
             // requested from chains, minus the cost of transferring those funds out of the
             // respective chains.
             debug!(
-                %eoa,
+                eoa = %parameters.eoa,
                 chain_id = %request.chain_id,
                 %requested_asset,
                 %requested_funds,
@@ -1563,8 +1589,7 @@ impl Relay {
             );
             let (sourced_funds, funding_chains) = if let Some(new_chains) = self
                 .source_funds(
-                    eoa,
-                    request.key.as_ref().ok_or(IntentError::MissingKey)?,
+                    &parameters,
                     &assets,
                     request.chain_id,
                     output_quote.orchestrator,
@@ -1591,7 +1616,14 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(request, delegation_status, nonce, None, true)
+                    .build_single_chain_quote(
+                        request,
+                        &parameters,
+                        delegation_status,
+                        nonce,
+                        None,
+                        true,
+                    )
                     .await
                     .map_err(Into::into);
             };
@@ -1600,7 +1632,7 @@ impl Relay {
             let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
             debug!(
-                %eoa,
+                eoa = %parameters.eoa,
                 chain_id = %request.chain_id,
                 %requested_asset,
                 %requested_funds,
@@ -1625,6 +1657,7 @@ impl Relay {
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
                     request,
+                    &parameters,
                     delegation_status,
                     nonce,
                     IntentKind::MultiOutput {
@@ -1666,12 +1699,11 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)?;
 
-                let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
                             FundingIntentContext {
-                                eoa,
+                                eoa: parameters.eoa,
                                 chain_id: source.chain_id,
                                 asset: source.address.into(),
                                 amount: source.amount_source,
@@ -1680,7 +1712,7 @@ impl Relay {
                                 output_chain_id: request.chain_id,
                                 output_orchestrator: output_quote.orchestrator,
                             },
-                            request_key.clone(),
+                            parameters.key.clone(),
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
                         )
@@ -1762,6 +1794,7 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
+        parameters: &BuildQuotesParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
@@ -1770,6 +1803,7 @@ impl Relay {
         let (asset_diffs, quote) = self
             .build_intent(
                 request,
+                parameters,
                 delegation_status,
                 nonce,
                 intent_kind.unwrap_or(IntentKind::Single),
@@ -2738,20 +2772,18 @@ impl Relay {
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
-        request: &PrepareCallsParameters,
+        eoa: Option<Address>,
+        key: Option<&CallKey>,
         from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let key = match request.key.as_ref() {
-            Some(k) if k.key_type.is_secp256k1() => k,
-            _ => return Ok(None),
-        };
+        let Some(public_key) = key.and_then(|k| k.as_secp256k1()) else { return Ok(None) };
 
-        let key_address = Address::from_slice(&key.public_key[12..]);
+        let key_address = Address::from_slice(&public_key[12..]);
 
         // If the key address matches the EOA address AND we have a delegation status, use it
         // Otherwise, fetch the delegation status for the key address
-        let status = if request.from == Some(key_address) && from_delegation_status.is_some() {
+        let status = if eoa == Some(key_address) && from_delegation_status.is_some() {
             from_delegation_status.clone()
         } else {
             Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
@@ -2759,7 +2791,7 @@ impl Relay {
 
         // Only wrap if it's an IthacaAccount >=0.5
         let needs_wrapping = status.as_ref().is_some_and(|s| {
-            if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
+            if (s.is_delegated() || (s.is_stored() && eoa == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
                 return self
@@ -2772,6 +2804,12 @@ impl Relay {
 
         Ok(needs_wrapping.then_some(key_address))
     }
+}
+
+#[derive(Debug)]
+struct BuildQuotesParameters {
+    eoa: Address,
+    key: CallKey,
 }
 
 /// Adjusts a balance based on the difference in decimals.
