@@ -12,9 +12,7 @@ pub enum ExtraFeeInfo {
     /// https://docs.arbitrum.io/build-decentralized-apps/how-to-estimate-gas#breaking-down-the-formula
     Arbitrum {
         /// L1 gas estimate for the transaction
-        l1_gas_estimate: u64,
-        /// L1 base fee estimate
-        l1_base_fee_estimate: U256,
+        gas_estimate: u64,
     },
     /// Optimism L2 with calculated L1 fee.
     ///
@@ -33,9 +31,7 @@ impl ExtraFeeInfo {
     /// Returns the calculated extra fee based on the L2 type
     pub fn extra_fee(&self) -> U256 {
         match self {
-            Self::Arbitrum { l1_gas_estimate, l1_base_fee_estimate } => {
-                *l1_base_fee_estimate * U256::from(*l1_gas_estimate)
-            }
+            Self::Arbitrum { .. } => U256::ZERO,
             Self::Optimism { l1_fee } => *l1_fee,
             Self::None => U256::ZERO,
         }
@@ -45,7 +41,7 @@ impl ExtraFeeInfo {
     /// return zero on chains that are not arbitrum.
     pub fn extra_gas(&self) -> u64 {
         match self {
-            Self::Arbitrum { l1_gas_estimate, .. } => *l1_gas_estimate,
+            Self::Arbitrum { gas_estimate, .. } => *gas_estimate,
             _ => 0,
         }
     }
