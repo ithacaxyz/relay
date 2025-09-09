@@ -20,6 +20,7 @@ use std::{
 use tower::{Layer, Service};
 use url::Url;
 
+pub mod delegate;
 pub mod error;
 
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";

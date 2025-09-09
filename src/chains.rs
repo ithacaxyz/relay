@@ -25,7 +25,10 @@ use crate::{
     transactions::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
-    transport::{RETRY_LAYER, SequencerLayer, create_transport},
+    transport::{
+        RETRY_LAYER, SequencerLayer, create_transport,
+        delegate::{EthSendRawDelegateLayer, MulticastService},
+    },
     types::{AssetDescriptor, AssetUid, Assets},
 };
 
@@ -163,8 +166,13 @@ impl Chains {
                     chain_signers.iter().map(|s| s.address()).collect::<Vec<_>>()
                 );
 
-                let provider =
-                    try_build_provider(chain.id(), &desc.endpoint, desc.sequencer.as_ref()).await?;
+                let provider = try_build_provider(
+                    chain.id(),
+                    &desc.endpoint,
+                    desc.sequencer.as_ref(),
+                    desc.eth_send_raw_delegates.clone(),
+                )
+                .await?;
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
@@ -422,6 +430,7 @@ async fn try_build_provider(
     chain_id: ChainId,
     endpoint: &Url,
     sequencer_endpoint: Option<&Url>,
+    eth_send_raw_delegates: Vec<Url>,
 ) -> eyre::Result<DynProvider> {
     let (transport, is_local) = create_transport(endpoint).await?;
 
@@ -435,6 +444,20 @@ async fn try_build_provider(
         info!("Configured sequencer forwarding for chain {chain_id}");
 
         builder.layer(SequencerLayer::new(sequencer)).transport(transport, is_local)
+    } else if !eth_send_raw_delegates.is_empty() {
+        let mut delegates = Vec::with_capacity(eth_send_raw_delegates.len());
+        for delegate in eth_send_raw_delegates.iter() {
+            let delegate =
+                BuiltInConnectionString::from_str(delegate.as_str())?.connect_boxed().await?;
+            delegates.push(delegate);
+        }
+        info!(
+            "Configured eth_sendRawTransaction forwarding for chain {chain_id}: {eth_send_raw_delegates:?}"
+        );
+
+        builder
+            .layer(EthSendRawDelegateLayer::new(MulticastService::new(delegates)))
+            .transport(transport, is_local)
     } else {
         builder.transport(transport, is_local)
     };
