@@ -89,6 +89,8 @@ pub struct FeeEstimationContext {
     pub state_overrides: alloy::rpc::types::state::StateOverride,
     /// Balance overrides for simulation.
     pub balance_overrides: BalanceOverrides,
+    /// Whether to calculate asset deficits.
+    pub calculate_asset_deficits: bool,
 }
 
 impl FeeEstimationContext {
@@ -364,7 +366,9 @@ pub struct FundSource {
     /// The chain ID the funds are on.
     pub chain_id: ChainId,
     /// The amount of funds on that chain.
-    pub amount: U256,
+    pub amount_source: U256,
+    /// The amount of funds on that chain, denominated in the output chain's asset decimals.
+    pub amount_destination: U256,
     /// The address of the funds.
     ///
     /// # Note

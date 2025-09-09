@@ -49,7 +49,7 @@ use alloy::{
 };
 use alloy_chains::NamedChain;
 use futures::{StreamExt, stream::FuturesOrdered};
-use futures_util::{future::try_join_all, join};
+use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -196,61 +196,62 @@ impl Relay {
 
     /// Returns the [`RelayCapabilities`] for the given chain ids.
     pub async fn get_capabilities(&self, chains: Vec<ChainId>) -> RpcResult<RelayCapabilities> {
-        let capabilities = try_join_all(chains.into_iter().filter_map(|chain_id| {
-            // Relay needs a chain endpoint to support a chain.
-            let chain = self.inner.chains.get(chain_id)?;
-            let provider = chain.provider().clone();
-            let native_uid = chain.assets().native()?.0.clone();
-            let fee_tokens = chain.assets().fee_tokens();
+        let capabilities: FuturesUnordered<_> = chains
+            .into_iter()
+            .filter_map(|chain_id| {
+                // Relay needs a chain endpoint to support a chain.
+                let chain = self.inner.chains.get(chain_id)?;
+                let provider = chain.provider().clone();
+                let native_uid = chain.assets().native()?.0.clone();
+                let fee_tokens = chain.assets().fee_tokens();
 
-            Some(async move {
-                let fee_tokens = try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
-                    let provider = provider.clone();
-                    let native_uid = native_uid.clone();
-                    async move {
-                        let rate = self
-                            .inner
-                            .price_oracle
-                            .native_conversion_rate(token_uid.clone(), native_uid)
-                            .await
-                            .ok_or(QuoteError::UnavailablePrice(token.address))?;
-                        let symbol = self
-                            .inner
-                            .asset_info
-                            .get_asset_info_list(
-                                &provider,
-                                vec![Asset::infer_from_address(token.address)],
-                            )
-                            .await
-                            .ok()
-                            .and_then(|map| {
-                                map.iter()
-                                    .next()
-                                    .and_then(|(_, asset)| asset.metadata.symbol.clone())
-                            });
-                        Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
-                    }
-                }))
-                .await?;
+                Some(async move {
+                    let fee_tokens =
+                        try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                            let provider = provider.clone();
+                            let native_uid = native_uid.clone();
+                            async move {
+                                let rate = self
+                                    .inner
+                                    .price_oracle
+                                    .native_conversion_rate(token_uid.clone(), native_uid)
+                                    .await
+                                    .ok_or(QuoteError::UnavailablePrice(token.address))?;
+                                let symbol = self
+                                    .inner
+                                    .asset_info
+                                    .get_asset_info_list(
+                                        &provider,
+                                        vec![Asset::infer_from_address(token.address)],
+                                    )
+                                    .await
+                                    .ok()
+                                    .and_then(|map| {
+                                        map.iter()
+                                            .next()
+                                            .and_then(|(_, asset)| asset.metadata.symbol.clone())
+                                    });
+                                Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
+                            }
+                        }))
+                        .await?;
 
-                Ok::<_, QuoteError>((
-                    chain_id,
-                    ChainCapabilities {
-                        contracts: self.inner.contracts.clone(),
-                        fees: ChainFees {
-                            recipient: self.inner.fee_recipient,
-                            quote_config: self.inner.quote_config.clone(),
-                            tokens: fee_tokens,
+                    Ok::<_, QuoteError>((
+                        chain_id,
+                        ChainCapabilities {
+                            contracts: self.inner.contracts.clone(),
+                            fees: ChainFees {
+                                recipient: self.inner.fee_recipient,
+                                quote_config: self.inner.quote_config.clone(),
+                                tokens: fee_tokens,
+                            },
                         },
-                    },
-                ))
+                    ))
+                })
             })
-        }))
-        .await?
-        .into_iter()
-        .collect();
+            .collect();
 
-        Ok(RelayCapabilities(capabilities))
+        Ok(RelayCapabilities(capabilities.try_collect().await?))
     }
 
     /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
@@ -510,7 +511,8 @@ impl Relay {
                     U256::ZERO
                 };
 
-        let (asset_diffs, sim_result) = orchestrator
+        // Simulate the intent
+        let (asset_diffs, asset_deficits, gas_results) = orchestrator
             .simulate_execute(
                 mock_from,
                 self.get_simulator_for_orchestrator(*orchestrator.address()),
@@ -518,6 +520,7 @@ impl Relay {
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
                 chain.sim_mode(),
+                context.calculate_asset_deficits,
             )
             .await?;
 
@@ -527,7 +530,7 @@ impl Relay {
         );
 
         let gas_estimate = GasEstimate::from_combined_gas(
-            sim_result.gCombined.to(),
+            gas_results.gCombined.to(),
             intrinsic_gas,
             &self.inner.quote_config,
         );
@@ -583,6 +586,7 @@ impl Relay {
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
+            asset_deficits,
         };
 
         // Create ChainAssetDiffs with populated fiat values including fee
@@ -757,13 +761,16 @@ impl Relay {
 
         // Query keys from all requested chains in parallel and bubble errors
         let address = request.address;
-        let pairs = try_join_all(chains.into_iter().map(|chain_id| async move {
-            Ok::<_, RelayError>((chain_id, self.get_keys_for_chain(address, chain_id).await?))
-        }))
-        .await?;
-
-        // Build response from successful results
-        Ok(pairs.into_iter().map(|(chain_id, keys)| (U64::from(chain_id), keys)).collect())
+        chains
+            .into_iter()
+            .map(|chain_id| async move {
+                self.get_keys_for_chain(address, chain_id)
+                    .await
+                    .map(|keys| (U64::from(chain_id), keys))
+            })
+            .collect::<FuturesUnordered<_>>()
+            .try_collect()
+            .await
     }
 
     /// Get keys from an account on a specific chain.
@@ -984,6 +991,7 @@ impl Relay {
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
+                calculate_asset_deficits: false,
             },
         )
         .await?;
@@ -999,6 +1007,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
+        calculate_asset_deficits: bool,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
         let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
         let Some(request_key) = &request.key else {
@@ -1056,6 +1065,7 @@ impl Relay {
                     intent_kind,
                     state_overrides,
                     balance_overrides,
+                    calculate_asset_deficits,
                 },
             )
             .await
@@ -1222,7 +1232,7 @@ impl Relay {
             )
             .await
         } else {
-            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind)
+            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind, true)
                 .await
                 .map_err(Into::into)
         }
@@ -1249,14 +1259,27 @@ impl Relay {
         amount: U256,
         total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing = assets.balance_on_chain(destination_chain_id, requested_asset);
-        let mut remaining = amount.saturating_sub(existing);
+        let existing_balance = assets
+            .asset_on_chain(destination_chain_id, requested_asset)
+            .map(|asset| asset.balance)
+            .unwrap_or_default();
+        let mut remaining = amount.saturating_sub(existing_balance);
         if remaining.is_zero() {
             return Ok(Some(vec![]));
         }
 
+        let dst_decimals = self
+            .inner
+            .chains
+            .asset(destination_chain_id, requested_asset.address())
+            .map(|asset| asset.1.decimals)
+            .ok_or(RelayError::UnsupportedAsset {
+                asset: requested_asset.address(),
+                chain: destination_chain_id,
+            })?;
+
         // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<(ChainId, Address, U256)> = assets
+        let mut sources: Vec<_> = assets
             .0
             .iter()
             .filter_map(|(&chain, assets)| {
@@ -1264,15 +1287,15 @@ impl Relay {
                     return None;
                 }
 
-                let mapped = self
-                    .inner
-                    .chains
-                    .map_interop_asset(destination_chain_id, chain, requested_asset.address())?
-                    .address;
+                let mapped = self.inner.chains.map_interop_asset(
+                    destination_chain_id,
+                    chain,
+                    requested_asset.address(),
+                )?;
 
                 let balance = assets
                     .iter()
-                    .find(|a| a.address.address() == mapped)
+                    .find(|a| a.address.address() == mapped.address)
                     .map(|a| a.balance)
                     .unwrap_or(U256::ZERO);
 
@@ -1280,8 +1303,10 @@ impl Relay {
             })
             .collect();
 
-        // highest balances first
-        sources.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        // sort balances by value on destination chain
+        sources.sort_unstable_by_key(|(_, asset, balance)| {
+            adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals)
+        });
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
@@ -1291,9 +1316,9 @@ impl Relay {
                 let funding_context = FundingIntentContext {
                     eoa,
                     chain_id: chain,
-                    asset: asset.into(),
+                    asset: asset.address.into(),
                     amount: U256::from(1),
-                    fee_token: asset,
+                    fee_token: asset.address,
                     // note(onbjerg): it doesn't matter what the output intent digest is for
                     // simulation, as long as it's not zero. otherwise, the gas
                     // costs will differ a lot.
@@ -1333,11 +1358,23 @@ impl Relay {
                 break;
             }
 
-            let take = remaining.min(balance.saturating_sub(escrow_cost));
+            // Calculate the maximum amount we can bridge to destination
+            let max_take = adjust_balance_for_decimals(
+                balance.saturating_sub(escrow_cost),
+                asset.decimals,
+                dst_decimals,
+            );
+
+            let take = remaining.min(max_take);
+
+            // Convert the amount back to the source chain asset decimals
+            let amount_source = adjust_balance_for_decimals(take, dst_decimals, asset.decimals);
+
             plan.push(FundSource {
                 chain_id: chain,
-                amount: take,
-                address: asset,
+                amount_source,
+                amount_destination: take,
+                address: asset.address,
                 cost: escrow_cost,
             });
             remaining = remaining.saturating_sub(take);
@@ -1422,8 +1459,9 @@ impl Relay {
         // Try to simulate intent as single chain if we have enough assets to cover
         // `requested_funds`.
         if requested_asset_balance_on_dst >= requested_funds {
-            let (asset_diff, quotes) =
-                self.build_single_chain_quote(request, delegation_status, nonce, None).await?;
+            let (asset_diff, quotes) = self
+                .build_single_chain_quote(request, delegation_status, nonce, None, false)
+                .await?;
 
             // It should never happen that we do not have a quote from this simulation, but to avoid
             // outright crashing we just throw an internal error.
@@ -1463,24 +1501,19 @@ impl Relay {
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
-        let (_, quotes) = self
-            .build_single_chain_quote(
+        let (_, mut output_quote) = self
+            .build_intent(
                 request,
                 delegation_status,
                 nonce,
-                Some(IntentKind::MultiOutput {
+                IntentKind::MultiOutput {
                     leaf_index: 1,
                     fund_transfers: vec![(requested_asset, needed_funds)],
                     settler_context: Vec::<ChainId>::new().abi_encode().into(),
-                }),
+                },
+                false,
             )
             .await?;
-        // It should never happen that we do not have a quote from this simulation, but to avoid
-        // outright crashing we just throw an internal error.
-        let mut output_quote =
-            quotes.quotes.into_iter().next().ok_or_else(|| {
-                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
-            })?;
 
         // ensure interop has been configured, before proceeding
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
@@ -1540,7 +1573,9 @@ impl Relay {
                 )
                 .await?
             {
-                (new_chains.iter().map(|source| source.amount).sum(), new_chains)
+                // We take `amount_destination` here, because `sourced_funds` is the amount of
+                // destination chain asset
+                (new_chains.iter().map(|source| source.amount_destination).sum(), new_chains)
             } else {
                 // We don't have enough funds across all chains, so we revert back to single chain
                 // to produce a quote with a `feeTokenDeficit`.
@@ -1550,7 +1585,7 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(request, delegation_status, nonce, None)
+                    .build_single_chain_quote(request, delegation_status, nonce, None, true)
                     .await
                     .map_err(Into::into);
             };
@@ -1591,6 +1626,7 @@ impl Relay {
                         fund_transfers: vec![(requested_asset, sourced_funds)],
                         settler_context,
                     },
+                    false,
                 )
                 .await?;
             output_quote = new_quote;
@@ -1632,7 +1668,7 @@ impl Relay {
                                 eoa,
                                 chain_id: source.chain_id,
                                 asset: source.address.into(),
-                                amount: source.amount,
+                                amount: source.amount_source,
                                 fee_token: source.address,
                                 output_intent_digest,
                                 output_chain_id: request.chain_id,
@@ -1723,6 +1759,7 @@ impl Relay {
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
+        calculate_asset_deficits: bool,
     ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
             .build_intent(
@@ -1730,6 +1767,7 @@ impl Relay {
                 delegation_status,
                 nonce,
                 intent_kind.unwrap_or(IntentKind::Single),
+                calculate_asset_deficits,
             )
             .await?;
 
@@ -1903,7 +1941,7 @@ impl RelayApiServer for Relay {
     }
 
     async fn get_keys(&self, request: GetKeysParameters) -> RpcResult<GetKeysResponse> {
-        Ok(self.get_keys(request).await?)
+        Ok(Self::get_keys(self, request).await?)
     }
 
     #[instrument(skip_all)]
@@ -2727,5 +2765,42 @@ impl Relay {
         });
 
         Ok(needs_wrapping.then_some(key_address))
+    }
+}
+
+/// Adjusts a balance based on the difference in decimals.
+///
+/// # Example
+/// - USDC on chain A has 6 decimals, balance = 1_000_000 (represents 1 USDC)
+/// - USDC on chain B has 18 decimals
+/// - Result: 1_000_000_000_000_000_000 (represents 1 USDC with 18 decimals)
+pub fn adjust_balance_for_decimals(balance: U256, from_decimals: u8, to_decimals: u8) -> U256 {
+    let diff = (from_decimals as i32) - (to_decimals as i32);
+    let factor = U256::from(10).pow(U256::from(diff.unsigned_abs()));
+
+    if diff > 0 { balance / factor } else { balance * factor }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn test_adjust_balance_for_decimals() {
+        // Converting from 6 decimals to 18 decimals
+        let balance_6_decimals = U256::from(1_000_000u64);
+        let result = adjust_balance_for_decimals(balance_6_decimals, 6, 18);
+        assert_eq!(result, U256::from(1_000_000_000_000_000_000u128));
+
+        // Converting from 18 decimals to 6 decimals
+        let balance_18_decimals = U256::from(1_000_000_000_000_000_000u128);
+        let result = adjust_balance_for_decimals(balance_18_decimals, 18, 6);
+        assert_eq!(result, U256::from(1_000_000u64));
+
+        // Same decimals, no change
+        let balance = U256::from(123_456_789u64);
+        let result = adjust_balance_for_decimals(balance, 6, 6);
+        assert_eq!(result, balance);
     }
 }

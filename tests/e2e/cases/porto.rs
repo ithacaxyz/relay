@@ -220,11 +220,7 @@ async fn send_default() -> Result<()> {
             },
             // Transfer call: transfer 0.0001 ETH worth (using a placeholder value)
             TxContext {
-                calls: vec![Call::transfer(
-                    env.erc20,
-                    Address::ZERO,
-                    U256::from(100000000000000u64),
-                )],
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(1))],
                 key: Some(&key),
                 expected: ExpectedOutcome::Pass,
                 ..Default::default()

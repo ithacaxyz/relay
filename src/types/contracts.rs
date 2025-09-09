@@ -176,7 +176,7 @@ impl VersionedContracts {
 }
 
 /// Orchestrator and simulator versioned contracts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct VersionedOrchestratorContracts {
     /// Orchestrator contract.
     pub orchestrator: VersionedContract,

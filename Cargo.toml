@@ -3,6 +3,8 @@ name = "relay"
 version = "24.0.2"
 edition = "2024"
 publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ithacaxyz/relay"
 
 [[bin]]
 path = "src/bin/relay.rs"
@@ -120,6 +122,7 @@ dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
 tempfile = "3.21"
+insta = { version = "1.39.0", features = ["json", "redactions"] }
 
 [build-dependencies]
 vergen = { version = "9.0", features = ["build", "cargo", "emit_and_set"] }

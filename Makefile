@@ -188,7 +188,7 @@ test-base-sepolia: ## Run e2e tests against Base Sepolia fork. Use TEST=name to 
 			--workspace \
 			-E "test(~$(TEST))"; \
 	else \
-		export TEST_FILTER="(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not (test(~multichain) or test(~multi_chain))" && \
+		export TEST_FILTER="(kind(lib) | kind(bin) | kind(proc-macro) | kind(test)) and not (test(~multichain) or test(~multi_chain) or test(~rpc_snap))" && \
 		cargo e2e -- \
 			--locked \
 			--workspace \

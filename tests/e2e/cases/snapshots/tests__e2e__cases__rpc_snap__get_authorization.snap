@@ -1,0 +1,16 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "authorization": {
+    "chainId": "0x0",
+    "address": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
+    "nonce": "0x0",
+    "yParity": "0x0",
+    "r": "0xe46ab6ac9ca13464273108c00775c46f9fee1f2953b45bfd002c1b02ce3e1254",
+    "s": "0x21b84c92a4f780b39c5eb53ab28cb81812007ce3f8bc7ca930b1b54f90239089"
+  },
+  "data": "[data]",
+  "to": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35"
+}

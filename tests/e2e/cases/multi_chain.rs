@@ -3,7 +3,7 @@
 use crate::e2e::*;
 use alloy::{primitives::U256, providers::Provider};
 use eyre::Result;
-use relay::types::IERC20;
+use relay::{provider::ProviderExt, types::IERC20};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_chain_setup() -> Result<()> {
@@ -64,8 +64,10 @@ async fn test_multi_chain_token_balances() -> Result<()> {
             .balanceOf(env.eoa.address())
             .call()
             .await?;
+
+        let decimals = env.provider_for(i).get_token_decimals(env.fee_token).await?;
         assert!(
-            fee_token_balance >= U256::from(99e18),
+            fee_token_balance >= U256::from(99u128 * 10u128.pow(decimals as u32)),
             "Fee token not minted on chain {}",
             env.chain_id_for(i)
         );
@@ -75,8 +77,9 @@ async fn test_multi_chain_token_balances() -> Result<()> {
             .balanceOf(env.eoa.address())
             .call()
             .await?;
+        let decimals = env.provider_for(i).get_token_decimals(env.erc20).await?;
         assert!(
-            erc20_balance >= U256::from(99e18),
+            erc20_balance >= U256::from(99u128 * 10u128.pow(decimals as u32)),
             "ERC20 not minted on chain {}",
             env.chain_id_for(i)
         );

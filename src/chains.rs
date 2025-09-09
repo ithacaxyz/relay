@@ -6,7 +6,6 @@ use alloy::{
     primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::{BuiltInConnectionString, ClientBuilder},
-    transports::layers::RetryBackoffLayer,
 };
 use tracing::{info, warn};
 use url::Url;
@@ -26,15 +25,9 @@ use crate::{
     transactions::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
-    transport::{SequencerLayer, create_transport},
+    transport::{RETRY_LAYER, SequencerLayer, create_transport},
     types::{AssetDescriptor, AssetUid, Assets},
 };
-
-/// [`RetryBackoffLayer`] used for chain providers.
-///
-/// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
-/// any throttling.
-pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// A single supported chain.
 #[derive(Debug, Clone)]
@@ -263,7 +256,7 @@ impl Chains {
                         chain
                             .assets
                             .interop_iter()
-                            .map(|(asset_uid, desc)| (*chain_id, (asset_uid.clone(), desc.clone())))
+                            .map(|(asset_uid, desc)| (*chain_id, asset_uid.clone(), desc.clone()))
                     })
                     .collect(),
                 liquidity_tracker.clone(),

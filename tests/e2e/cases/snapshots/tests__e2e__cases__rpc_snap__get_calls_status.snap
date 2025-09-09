@@ -1,0 +1,99 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "id": "[id]",
+  "status": 200,
+  "receipts": [
+    {
+      "chainId": "0x7a69",
+      "logs": [
+        {
+          "address": "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
+          "topics": [
+            "[topic]",
+            "[topic]"
+          ],
+          "data": "[data]",
+          "blockHash": "[blockHash]",
+          "blockNumber": "[blockNumber]",
+          "blockTimestamp": "[blockTimestamp]",
+          "transactionHash": "[transactionHash]",
+          "transactionIndex": "0x0",
+          "logIndex": "0x0",
+          "removed": false
+        },
+        {
+          "address": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "topics": [
+            "[topic]",
+            "[topic]",
+            "[topic]"
+          ],
+          "data": "[data]",
+          "blockHash": "[blockHash]",
+          "blockNumber": "[blockNumber]",
+          "blockTimestamp": "[blockTimestamp]",
+          "transactionHash": "[transactionHash]",
+          "transactionIndex": "0x0",
+          "logIndex": "0x1",
+          "removed": false
+        },
+        {
+          "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "topics": [
+            "[topic]",
+            "[topic]",
+            "[topic]"
+          ],
+          "data": "[data]",
+          "blockHash": "[blockHash]",
+          "blockNumber": "[blockNumber]",
+          "blockTimestamp": "[blockTimestamp]",
+          "transactionHash": "[transactionHash]",
+          "transactionIndex": "0x0",
+          "logIndex": "0x2",
+          "removed": false
+        },
+        {
+          "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "topics": [
+            "[topic]",
+            "[topic]",
+            "[topic]"
+          ],
+          "data": "[data]",
+          "blockHash": "[blockHash]",
+          "blockNumber": "[blockNumber]",
+          "blockTimestamp": "[blockTimestamp]",
+          "transactionHash": "[transactionHash]",
+          "transactionIndex": "0x0",
+          "logIndex": "0x3",
+          "removed": false
+        },
+        {
+          "address": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "topics": [
+            "[topic]",
+            "[topic]",
+            "[topic]"
+          ],
+          "data": "[data]",
+          "blockHash": "[blockHash]",
+          "blockNumber": "[blockNumber]",
+          "blockTimestamp": "[blockTimestamp]",
+          "transactionHash": "[transactionHash]",
+          "transactionIndex": "0x0",
+          "logIndex": "0x4",
+          "removed": false
+        }
+      ],
+      "status": "0x1",
+      "blockHash": "[blockHash]",
+      "blockNumber": "[blockNumber]",
+      "gasUsed": "[gasUsed]",
+      "transactionHash": "[transactionHash]"
+    }
+  ]
+}

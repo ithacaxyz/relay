@@ -207,14 +207,14 @@ impl AssetInfoServiceHandle {
         &self,
         tx_request: &TransactionRequest,
         state_overrides: StateOverride,
-        logs: impl Iterator<Item = Log>,
+        logs: &[Log],
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
         let mut builder = AssetDiffs::builder();
         for log in logs {
             // ERC-20
             if let Some((asset, transfer)) =
-                IERC20Events::decode_log(&log).ok().map(|ev| match ev.data {
+                IERC20Events::decode_log(log).ok().map(|ev| match ev.data {
                     IERC20Events::Transfer(t) => (Asset::from(log.address), t),
                 })
             {
@@ -222,7 +222,7 @@ impl AssetInfoServiceHandle {
             }
             // ERC-721
             else if let Some((asset, transfer)) =
-                IERC721Events::decode_log(&log).ok().map(|ev| match ev.data {
+                IERC721Events::decode_log(log).ok().map(|ev| match ev.data {
                     IERC721Events::Transfer(t) => (Asset::from(log.address), t),
                 })
             {

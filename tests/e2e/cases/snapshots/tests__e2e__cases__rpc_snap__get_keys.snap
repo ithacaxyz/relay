@@ -1,0 +1,30 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "0x7a69": [
+    {
+      "hash": "0xf377756284e290a571b9f06981121207a3fd7e9970e1473fe9e553c16a804f68",
+      "expiry": "0x0",
+      "type": "secp256k1",
+      "role": "admin",
+      "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
+      "permissions": []
+    },
+    {
+      "hash": "0x12bbb12078df9966cf1035cfd7ec1d8eb6c5971cbef21427e9dd0865e8153efd",
+      "expiry": "0x0",
+      "type": "p256",
+      "role": "normal",
+      "publicKey": "0x53f04de62ca2d17dc1a7cf36672a3a84049eeaf8fc2d976c48f22b85b3d96b5938e8a43a312e3753964811c1874ce21343cc3cf8910e05585a6d7216986dfb85",
+      "permissions": [
+        {
+          "type": "call",
+          "selector": "0xa9059cbb",
+          "to": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e"
+        }
+      ]
+    }
+  ]
+}
