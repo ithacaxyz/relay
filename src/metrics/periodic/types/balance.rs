@@ -146,7 +146,7 @@ fn record_signer_metrics(chain: Chain, balances: Vec<Result<U256, Failure>>) {
         match format_units_f64(balance, decimals) {
             Ok(balance) => gauge!(
                 "signer.balance",
-                "address" => signer.to_checksum(Some(chain.id())),
+                "address" => signer.to_string(),
                 "chain_id" => chain.id().to_string(),
                 "symbol" => symbol.to_string(),
             )
@@ -179,7 +179,7 @@ fn record_funder_metrics(funder: Address, chain: Chain, balances: Vec<Result<U25
         match format_units_f64(balance, token.decimals) {
             Ok(balance) => gauge!(
                 "funder.balance",
-                "address" => funder.to_checksum(Some(chain.id())),
+                "address" => funder.to_string(),
                 "chain_id" => chain.id().to_string(),
                 "uid" => uid.to_string(),
             )

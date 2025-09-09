@@ -23,7 +23,7 @@ async fn balance_collector() -> Result<()> {
         for signer in chain.signer_addresses() {
             let expected_metric = format!(
                 r#"signer_balance{{address="{}",chain_id="{}",symbol="{}"}} {}"#,
-                signer.to_checksum(Some(chain.id())),
+                signer.to_checksum(None),
                 chain.id(),
                 native_symbol,
                 format_units_f64(chain.provider().get_balance(signer).await?, native_decimals)?
@@ -42,7 +42,7 @@ async fn balance_collector() -> Result<()> {
             };
             let expected_metric = format!(
                 r#"funder_balance{{address="{}",chain_id="{}",uid="{}"}} {}"#,
-                env.funder.to_checksum(Some(chain.id())),
+                env.funder.to_checksum(None),
                 chain.id(),
                 uid,
                 format_units_f64(balance, token.decimals)?
