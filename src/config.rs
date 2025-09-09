@@ -397,6 +397,9 @@ pub struct ChainConfig {
     /// Flashblocks streaming endpoint, if any.
     #[serde(default)]
     pub flashblocks: Option<Url>,
+    /// Endpoints to delegate `eth_sendRawTransaction` requests to.
+    #[serde(default)]
+    pub eth_send_raw_delegates: Vec<Url>,
     /// The simulation mode to use for the chain.
     #[serde(default)]
     pub sim_mode: SimMode,
@@ -1002,6 +1005,7 @@ sim_mode: trace
                 .unwrap(),
             sequencer: Some("https://mainnet-sequencer-dedicated.base.org/".parse().unwrap()),
             flashblocks: Some("https://mainnet-preconf.base.org/".parse().unwrap()),
+            eth_send_raw_delegates: vec![],
             sim_mode: SimMode::Trace,
             assets: Assets::new(assets),
             fees: Default::default(),
