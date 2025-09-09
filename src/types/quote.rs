@@ -117,8 +117,8 @@ pub struct Quote {
     pub intent: Intent,
     /// Extra payment for e.g L1 DA fee that is paid on top of the execution gas.
     pub extra_payment: U256,
-    /// Price of the ETH in the [`Intent::paymentToken`] in wei.
-    pub eth_price: U256,
+    /// Price of the native token in the [`Intent::paymentToken`] in wei.
+    pub native_price: U256,
     /// Decimals of the [`Intent::paymentToken`].
     pub payment_token_decimals: u8,
     /// The recommended gas limit for the transaction.

@@ -379,7 +379,7 @@ impl Relay {
             self.inner.price_oracle.native_conversion_rate(token_uid.clone(), native_uid.clone());
 
         // Execute all futures in parallel and handle errors
-        let (assets_response, fee_history, eth_price) = try_join!(
+        let (assets_response, fee_history, native_price) = try_join!(
             async { user_balance_fut.await.map_err(RelayError::internal) },
             async { fee_history_fut.await.map_err(RelayError::from) },
             async { Ok(native_price_fut.await) }
@@ -402,19 +402,19 @@ impl Relay {
             %chain_id,
             fee_token = ?token,
             ?fee_history,
-            ?eth_price,
+            ?native_price,
             orchestrator_version = ?orchestrator.version(),
             "Got fee parameters"
         );
 
         let native_fee_estimate = chain.fee_config().estimate_eip1559_fees(&fee_history);
 
-        let Some(eth_price) = eth_price else {
+        let Some(native_price) = native_price else {
             return Err(QuoteError::UnavailablePrice(token.address).into());
         };
         let payment_per_gas = (native_fee_estimate.max_fee_per_gas as f64
             * 10u128.pow(token.decimals as u32) as f64)
-            / f64::from(eth_price);
+            / f64::from(native_price);
 
         // fill intent - use the appropriate version based on orchestrator
         let mut intent_to_sign = Intent::for_orchestrator(
@@ -556,13 +556,13 @@ impl Relay {
 
         let extra_fee_native = extra_fee_info.extra_fee();
         let extra_payment =
-            extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / eth_price;
+            extra_fee_native * U256::from(10u128.pow(token.decimals as u32)) / native_price;
 
         debug!(
             chain_id = %chain.id(),
             %extra_payment,
             %extra_fee_native,
-            %eth_price,
+            %native_price,
             "Calculated extra payment"
         );
 
@@ -586,7 +586,7 @@ impl Relay {
             payment_token_decimals: token.decimals,
             intent: intent_to_sign,
             extra_payment,
-            eth_price,
+            native_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
