@@ -1,6 +1,6 @@
 use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
-    error::{IntentError, MerkleError},
+    error::{IntentError, MerkleError, RelayError},
     signers::Eip712PayLoadSigner,
     types::{IntentKind, Key, LazyMerkleTree, OrchestratorContract, Signature},
 };
@@ -628,7 +628,7 @@ impl SignedCalls for Intent {
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<(B256, alloy::dyn_abi::TypedData)>
+    ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError>
     where
         Self: Sync,
     {

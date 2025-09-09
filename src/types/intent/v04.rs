@@ -1,5 +1,8 @@
 use super::{SignedCall, SignedCalls};
-use crate::types::{Key, Orchestrator};
+use crate::{
+    error::RelayError,
+    types::{Key, Orchestrator},
+};
 use alloy::{
     dyn_abi::TypedData,
     primitives::{Address, B256, Keccak256, U256, keccak256},
@@ -150,7 +153,7 @@ impl SignedCalls for IntentV04 {
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<(B256, TypedData)>
+    ) -> Result<(B256, TypedData), RelayError>
     where
         Self: Sync,
     {

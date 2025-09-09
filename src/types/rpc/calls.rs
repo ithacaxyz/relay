@@ -392,6 +392,28 @@ pub struct PrepareCallsResponse {
     pub key: Option<CallKey>,
 }
 
+/// Response context for a precall.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    derive_more::Deref,
+    derive_more::DerefMut
+)]
+#[serde(rename_all = "camelCase")]
+pub struct PreCallContext {
+    /// Inner [`SignedCall`].
+    #[serde(flatten)]
+    #[deref]
+    #[deref_mut]
+    pub call: SignedCall,
+    /// The chain ID the precall is for.
+    #[serde(with = "alloy::serde::quantity")]
+    pub chain_id: ChainId,
+}
+
 /// Response context from `wallet_prepareCalls`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -401,7 +423,7 @@ pub enum PrepareCallsContext {
     Quote(Box<SignedQuotes>),
     /// The [`PreCall`] of the prepared call bundle.
     #[serde(rename = "preCall")]
-    PreCall(SignedCall),
+    PreCall(PreCallContext),
 }
 
 impl PrepareCallsContext {
@@ -411,7 +433,7 @@ impl PrepareCallsContext {
     }
 
     /// Initializes [`PrepareCallsContext`] with a [`PreCall`].
-    pub fn with_precall(precall: SignedCall) -> Self {
+    pub fn with_precall(precall: PreCallContext) -> Self {
         Self::PreCall(precall)
     }
 
@@ -440,7 +462,7 @@ impl PrepareCallsContext {
     }
 
     /// Consumes self and returns precall if it exists.
-    pub fn take_precall(self) -> Option<SignedCall> {
+    pub fn take_precall(self) -> Option<PreCallContext> {
         match self {
             PrepareCallsContext::Quote(_) => None,
             PrepareCallsContext::PreCall(precall) => Some(precall),
@@ -457,7 +479,7 @@ impl PrepareCallsContext {
         maybe_stored: Option<&CreatableAccount>,
         latest_orchestrator: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<(B256, TypedData)> {
+    ) -> Result<(B256, TypedData), RelayError> {
         match self {
             PrepareCallsContext::Quote(context) => {
                 let output_quote = context.ty().quotes.last().expect("should exist");

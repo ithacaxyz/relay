@@ -12,7 +12,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -42,6 +42,7 @@ pub struct InMemoryStorage {
     transfers:
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
     pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
+    precalls: DashMap<(Address, ChainId, U256), SignedCall>,
 }
 
 #[async_trait]
@@ -519,6 +520,30 @@ impl StorageApi for InMemoryStorage {
         }
 
         Ok(pending_transactions)
+    }
+
+    async fn store_precall(&self, chain_id: ChainId, call: SignedCall) -> Result<()> {
+        self.precalls.insert((call.eoa, chain_id, call.nonce), call);
+        Ok(())
+    }
+
+    async fn read_precalls_for_eoa(
+        &self,
+        chain_id: ChainId,
+        eoa: Address,
+    ) -> Result<Vec<SignedCall>> {
+        let mut precalls = Vec::new();
+        for entry in self.precalls.iter() {
+            if entry.key().0 == eoa && entry.key().1 == chain_id {
+                precalls.push(entry.value().clone());
+            }
+        }
+        Ok(precalls)
+    }
+
+    async fn remove_precall(&self, chain_id: ChainId, eoa: Address, nonce: U256) -> Result<()> {
+        self.precalls.remove(&(eoa, chain_id, nonce));
+        Ok(())
     }
 }
 

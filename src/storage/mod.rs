@@ -17,7 +17,7 @@ use crate::{
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -329,5 +329,26 @@ impl StorageApi for RelayStorage {
         chain_id: ChainId,
     ) -> api::Result<Vec<TxEnvelope>> {
         self.inner.load_pending_pull_gas_transactions(signer, chain_id).await
+    }
+
+    async fn store_precall(&self, chain_id: ChainId, call: SignedCall) -> api::Result<()> {
+        self.inner.store_precall(chain_id, call).await
+    }
+
+    async fn read_precalls_for_eoa(
+        &self,
+        chain_id: ChainId,
+        eoa: Address,
+    ) -> api::Result<Vec<SignedCall>> {
+        self.inner.read_precalls_for_eoa(chain_id, eoa).await
+    }
+
+    async fn remove_precall(
+        &self,
+        chain_id: ChainId,
+        eoa: Address,
+        nonce: U256,
+    ) -> api::Result<()> {
+        self.inner.remove_precall(chain_id, eoa, nonce).await
     }
 }
