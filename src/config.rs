@@ -971,6 +971,8 @@ mod tests {
 endpoint: ws://execution-service.base-mainnet-stable.svc.cluster.local:8546/
 sequencer: https://mainnet-sequencer-dedicated.base.org/
 flashblocks: https://mainnet-preconf.base.org/
+eth_send_raw_delegates:
+    - https://mainnet-preconf.base.org/
 assets:
   ethereum:
     # Address 0 denotes the native asset and it must be present, even if it is not a fee token.
@@ -1014,7 +1016,7 @@ sim_mode: trace
                 .unwrap(),
             sequencer: Some("https://mainnet-sequencer-dedicated.base.org/".parse().unwrap()),
             flashblocks: Some("https://mainnet-preconf.base.org/".parse().unwrap()),
-            eth_send_raw_delegates: vec![],
+            eth_send_raw_delegates: vec!["https://mainnet-preconf.base.org/".parse().unwrap()],
             sim_mode: SimMode::Trace,
             assets: Assets::new(assets),
             fees: Default::default(),
