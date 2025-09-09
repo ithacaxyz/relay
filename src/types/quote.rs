@@ -2,7 +2,7 @@
 
 use crate::{
     error::{QuoteError, RelayError},
-    types::{Intent, Intents, Signed},
+    types::{AssetDeficits, Intent, Intents, Signed},
 };
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
@@ -137,6 +137,9 @@ pub struct Quote {
     /// If it is 0, the user has enough balance to execute the call.
     #[serde(default)]
     pub fee_token_deficit: U256,
+    /// Assets user is missing for the intent to execute correctly.
+    #[serde(default, skip_serializing_if = "AssetDeficits::is_empty")]
+    pub asset_deficits: AssetDeficits,
 }
 
 impl Quote {

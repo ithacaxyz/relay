@@ -89,6 +89,8 @@ pub struct FeeEstimationContext {
     pub state_overrides: alloy::rpc::types::state::StateOverride,
     /// Balance overrides for simulation.
     pub balance_overrides: BalanceOverrides,
+    /// Whether to calculate asset deficits.
+    pub calculate_asset_deficits: bool,
 }
 
 impl FeeEstimationContext {

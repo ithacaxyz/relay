@@ -6,7 +6,6 @@ use alloy::{
     primitives::{Address, ChainId, map::HashMap},
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::client::{BuiltInConnectionString, ClientBuilder},
-    transports::layers::RetryBackoffLayer,
 };
 use tracing::{info, warn};
 use url::Url;
@@ -27,17 +26,11 @@ use crate::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
     transport::{
-        SequencerLayer, create_transport,
+        RETRY_LAYER, SequencerLayer, create_transport,
         delegate::{EthSendRawDelegateLayer, MulticastService},
     },
     types::{AssetDescriptor, AssetUid, Assets},
 };
-
-/// [`RetryBackoffLayer`] used for chain providers.
-///
-/// We are allowing max 10 retries with a backoff of 800ms. The CU/s is set to max value to avoid
-/// any throttling.
-pub const RETRY_LAYER: RetryBackoffLayer = RetryBackoffLayer::new(10, 800, u64::MAX);
 
 /// A single supported chain.
 #[derive(Debug, Clone)]

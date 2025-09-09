@@ -76,6 +76,9 @@ pub enum RelayError {
     /// An error occurred talking to RPC.
     #[error(transparent)]
     RpcError(#[from] alloy::transports::RpcError<TransportErrorKind>),
+    /// Contract error.
+    #[error(transparent)]
+    ContractError(#[from] alloy::contract::Error),
     /// The relay is unhealthy.
     #[error("service is unhealthy")]
     Unhealthy,
@@ -134,6 +137,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             RelayError::UnsupportedChain(_)
             | RelayError::AbiError(_)
             | RelayError::RpcError(_)
+            | RelayError::ContractError(_)
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
             | RelayError::UnsupportedAsset { .. }

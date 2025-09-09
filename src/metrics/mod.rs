@@ -105,7 +105,6 @@ where
         &self,
         requests: Batch<'a>,
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
-        // todo(onbjerg): this is assuming no one uses batching right now which might be ok
         self.service.batch(requests)
     }
 
@@ -113,8 +112,6 @@ where
         &self,
         n: Notification<'a, Option<Cow<'a, serde_json::value::RawValue>>>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
-        // todo(onbjerg): this is assuming no notifications - we don't have these right now, so
-        // that's okay
         self.service.notification(n)
     }
 }

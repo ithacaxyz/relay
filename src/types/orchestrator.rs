@@ -7,7 +7,9 @@ use alloy::{
     sol,
     transports::{TransportErrorKind, TransportResult},
 };
+use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
+use tokio::try_join;
 use tracing::debug;
 
 use super::{GasResults, simulator::SimulatorContract};
@@ -15,7 +17,13 @@ use crate::{
     asset::AssetInfoServiceHandle,
     config::SimMode,
     error::{IntentError, RelayError},
-    types::{AssetDiffs, Intent, OrchestratorContract::IntentExecuted},
+    types::{
+        Asset, AssetDeficit, AssetDeficits, AssetDiffs,
+        IERC20::{self, balanceOfCall},
+        Intent,
+        OrchestratorContract::IntentExecuted,
+        SimulationExecutionResult,
+    },
 };
 
 /// The 4-byte selector returned by the orchestrator if there is no error during execution.
@@ -222,6 +230,7 @@ impl<P: Provider> Orchestrator<P> {
     /// `simulator` contract address should have its balance set to `uint256.max`.
     ///
     /// This respects the given [`SimMode`] when performing the simulation.
+    #[expect(clippy::too_many_arguments)]
     pub async fn simulate_execute(
         &self,
         mock_from: Address,
@@ -230,20 +239,16 @@ impl<P: Provider> Orchestrator<P> {
         asset_info_handle: AssetInfoServiceHandle,
         gas_validation_offset: U256,
         sim_mode: SimMode,
-    ) -> Result<(AssetDiffs, GasResults), RelayError> {
+        calculate_asset_deficits: bool,
+    ) -> Result<(AssetDiffs, AssetDeficits, GasResults), RelayError> {
         let result = SimulatorContract::new(
             simulator,
             self.orchestrator.provider(),
             self.overrides.clone(),
             sim_mode,
+            calculate_asset_deficits,
         )
-        .simulate(
-            *self.address(),
-            mock_from,
-            intent.abi_encode(),
-            gas_validation_offset,
-            self.version.as_ref(),
-        )
+        .simulate(*self.address(), mock_from, intent, gas_validation_offset, self.version.as_ref())
         .await?;
 
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
@@ -251,11 +256,75 @@ impl<P: Provider> Orchestrator<P> {
         debug!(chain_id, block_number = %result.block_number, account = %intent.eoa(), nonce = %intent.nonce(), "simulation executed");
 
         // calculate asset diffs using the transaction request from simulation
+        let (asset_diffs, asset_deficits) = try_join!(
+            self.build_asset_diffs(&result, intent, &asset_info_handle),
+            self.build_asset_deficits(&result, intent, &asset_info_handle),
+        )?;
+
+        Ok((asset_diffs, asset_deficits, result.gas))
+    }
+
+    /// Builds [`AssetDeficits`] from a [`SimulationExecutionResult`].
+    async fn build_asset_deficits(
+        &self,
+        result: &SimulationExecutionResult,
+        intent: &Intent,
+        asset_info_handle: &AssetInfoServiceHandle,
+    ) -> Result<AssetDeficits, RelayError> {
+        if result.asset_deficits.is_empty() {
+            return Ok(AssetDeficits::default());
+        }
+
+        let mut balances = self
+            .orchestrator
+            .provider()
+            .multicall()
+            .block(result.block_number.into())
+            .dynamic::<balanceOfCall>();
+
+        for asset in result.asset_deficits.keys() {
+            balances = balances.add_dynamic(
+                IERC20::new(*asset, self.orchestrator.provider()).balanceOf(*intent.eoa()),
+            );
+        }
+
+        let (mut metadata, balances) = try_join!(
+            asset_info_handle.get_asset_info_list(
+                self.orchestrator.provider(),
+                result.asset_deficits.keys().map(|address| Asset::Token(*address)).collect(),
+            ),
+            balances.aggregate().map_err(RelayError::from)
+        )?;
+
+        let mut deficits = Vec::with_capacity(result.asset_deficits.len());
+        for ((&asset, &required), balance) in result.asset_deficits.iter().zip(balances) {
+            let Some(info) = metadata.remove(&Asset::Token(asset)) else {
+                continue;
+            };
+            deficits.push(AssetDeficit {
+                address: Some(asset),
+                metadata: info.metadata,
+                required,
+                deficit: required.saturating_sub(balance),
+                fiat: None,
+            });
+        }
+
+        Ok(AssetDeficits(deficits))
+    }
+
+    /// Builds [`AssetDiffs`] from a [`SimulationExecutionResult`].
+    async fn build_asset_diffs(
+        &self,
+        result: &SimulationExecutionResult,
+        intent: &Intent,
+        asset_info_handle: &AssetInfoServiceHandle,
+    ) -> Result<AssetDiffs, RelayError> {
         let mut asset_diffs = asset_info_handle
             .calculate_asset_diff(
                 &result.tx_request,
                 self.overrides.clone(),
-                result.logs.into_iter(),
+                &result.logs,
                 self.orchestrator.provider(),
             )
             .await?;
@@ -266,7 +335,7 @@ impl<P: Provider> Orchestrator<P> {
             asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
         }
 
-        Ok((asset_diffs, result.gas))
+        Ok(asset_diffs)
     }
 
     /// Call `Orchestrator.execute` with the provided [`Intent`].

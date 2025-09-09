@@ -141,6 +141,15 @@ impl Call {
             data: IERC20::transferCall { to, amount }.abi_encode().into(),
         }
     }
+
+    /// ERC20 transferFrom call.
+    pub fn transfer_from(erc20: Address, from: Address, to: Address, amount: U256) -> Self {
+        Self {
+            to: erc20,
+            value: U256::ZERO,
+            data: IERC20::transferFromCall { from, to, amount }.abi_encode().into(),
+        }
+    }
 }
 
 /// All selectors allowed in precalls.

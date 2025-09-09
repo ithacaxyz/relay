@@ -1,14 +1,9 @@
-use super::{
-    AssetType,
-    IERC20::{self},
-    IERC721,
-};
 use crate::{
     chains::Chains,
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::{PriceOracle, calculate_usd_value},
-    types::{AssetMetadata, Quote},
+    types::{AssetMetadata, AssetType, IERC20, IERC721, Quote},
 };
 use alloy::primitives::{
     Address, ChainId, U256,
@@ -25,8 +20,8 @@ pub struct AssetDiffs(pub Vec<(Address, Vec<AssetDiff>)>);
 
 impl AssetDiffs {
     /// Returns a [`AssetDiffBuilder`] that can build [`AssetDiffs`].
-    pub fn builder() -> AssetDiffBuilder {
-        AssetDiffBuilder::default()
+    pub fn builder() -> AssetDiffsBuilder {
+        AssetDiffsBuilder::default()
     }
 
     /// By default, asset diffs include the intent payment. This ensures it gets removed.
@@ -72,7 +67,6 @@ impl AssetDiffs {
 }
 
 /// Asset with metadata and value diff.
-#[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDiff {
     /// Asset address. `None` represents the native token.
@@ -83,7 +77,7 @@ pub struct AssetDiff {
     /// Token metadata.
     #[serde(flatten)]
     pub metadata: AssetMetadata,
-    /// Value or id.
+    /// ERC-20 value or ERC-721 token ID.
     pub value: U256,
     /// Incoming or outgoing direction.
     pub direction: DiffDirection,
@@ -101,6 +95,34 @@ pub struct FiatValue {
     /// Value as f64
     #[serde_as(as = "DisplayFromStr")]
     pub value: f64,
+}
+
+/// Asset deficits per account based on simulated execution traces.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetDeficits(pub Vec<AssetDeficit>);
+
+impl AssetDeficits {
+    /// Returns true if the asset deficits are empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Asset with metadata and deficit value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetDeficit {
+    /// Asset address. `None` represents the native token.
+    pub address: Option<Address>,
+    /// Token metadata.
+    #[serde(flatten)]
+    pub metadata: AssetMetadata,
+    /// Required balance of the asset.
+    pub required: U256,
+    /// Asset deficit.
+    pub deficit: U256,
+    /// Optional fiat value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fiat: Option<FiatValue>,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
@@ -190,7 +212,7 @@ pub struct AssetWithInfo {
 
 /// Builds a collapsed diff for both fungible & non-fungible tokens into [`AssetDiff`].
 #[derive(Debug, Default)]
-pub struct AssetDiffBuilder {
+pub struct AssetDiffsBuilder {
     /// Assets seen in events.
     seen_assets: HashSet<Asset>,
     // For each account: fungible token credits/debits & non fungible token in/out.
@@ -205,7 +227,7 @@ struct AccountChanges {
     non_fungible: HashSet<(Asset, DiffDirection, U256)>,
 }
 
-impl AssetDiffBuilder {
+impl AssetDiffsBuilder {
     /// Returns an iterator over seen assets.
     pub fn seen_assets(&self) -> impl Iterator<Item = &Asset> {
         self.seen_assets.iter()
