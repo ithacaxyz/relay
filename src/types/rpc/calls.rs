@@ -527,7 +527,7 @@ pub struct SendPreparedCallsParameters {
     /// The [`PrepareCallsContext`] of the prepared call bundle.
     pub context: PrepareCallsContext,
     /// Key that was used to sign the call bundle.
-    pub key: CallKey,
+    pub key: Option<CallKey>,
     /// Signature value.
     pub signature: Bytes,
 }

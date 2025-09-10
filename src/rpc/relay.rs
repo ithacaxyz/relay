@@ -609,7 +609,7 @@ impl Relay {
         quotes: SignedQuotes,
         capabilities: SendPreparedCallsCapabilities,
         signature: Bytes,
-        key: CallKey,
+        key: Option<CallKey>,
     ) -> RpcResult<BundleId> {
         // if we do **not** get an error here, then the quote ttl must be in the past, which means
         // it is expired
@@ -629,11 +629,10 @@ impl Relay {
         let bundle_id = BundleId(*quotes.hash());
 
         // compute real signature
-        let key_hash = key.key_hash();
         let signature = Signature {
             innerSignature: signature.clone(),
-            keyHash: key_hash,
-            prehash: key.prehash,
+            keyHash: key.as_ref().map_or(B256::ZERO, CallKey::key_hash),
+            prehash: key.is_some_and(|key| key.prehash),
         }
         .abi_encode_packed()
         .into();
@@ -2169,6 +2168,15 @@ impl RelayApiServer for Relay {
         let SendPreparedCallsParameters { capabilities, context, signature, key } = request;
         let Some(quotes) = context.take_quote() else {
             return Err(QuoteError::QuoteNotFound.into());
+        };
+
+        let key = if let Some(key) = key {
+            Some(key)
+        } else if alloy::primitives::Signature::from_raw(&signature).is_ok() {
+            None
+        } else {
+            // TODO: better error
+            return Err(QuoteError::InvalidQuoteSignature.into());
         };
 
         // broadcasts intents in transactions
