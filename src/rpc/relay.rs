@@ -1342,6 +1342,7 @@ impl Relay {
         sources.sort_unstable_by_key(|(_, asset, balance)| {
             adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals)
         });
+        sources.reverse();
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
@@ -1399,6 +1400,10 @@ impl Relay {
                 asset.decimals,
                 dst_decimals,
             );
+
+            if max_take.is_zero() {
+                continue;
+            }
 
             let take = remaining.min(max_take);
 
