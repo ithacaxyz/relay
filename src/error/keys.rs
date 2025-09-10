@@ -17,6 +17,9 @@ pub enum KeysError {
     /// Should only have admin authorization keys.
     #[error("should only have admin authorization keys")]
     OnlyAdminKeyAllowed,
+    /// Invalid signature.
+    #[error("invalid signature")]
+    InvalidSignature,
     /// Unknown key hash.
     #[error("key hash {0} is unknown")]
     UnknownKeyHash(KeyHash),
@@ -29,6 +32,7 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
             | KeysError::P256SessionKeyOnly
             | KeysError::MissingAdminKey
             | KeysError::OnlyAdminKeyAllowed
+            | KeysError::InvalidSignature
             | KeysError::UnknownKeyHash { .. } => invalid_params(err.to_string()),
         }
     }
