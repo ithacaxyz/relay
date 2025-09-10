@@ -6,7 +6,7 @@ use crate::{
     asset::AssetInfoServiceHandle,
     constants::{COLD_SSTORE_GAS_BUFFER, ESCROW_SALT_LENGTH, P256_GAS_BUFFER},
     error::{IntentError, StorageError},
-    estimation::{build_simulation_overrides, fees::approx_intrinsic_cost},
+    estimation::fees::approx_intrinsic_cost,
     provider::ProviderExt,
     rpc::ExtraFeeInfo,
     signers::Eip712PayLoadSigner,
@@ -385,10 +385,10 @@ impl Relay {
             assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
         // Build state overrides for simulation
-        let overrides =
-            build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
-                .await?
-                .build();
+        let overrides = chain
+            .build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
+            .await?
+            .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());
 
         let orchestrator =
