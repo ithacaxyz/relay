@@ -1009,7 +1009,7 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
-        parameters: &BuildQuotesParameters,
+        parameters: &IdentityParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
@@ -1162,11 +1162,10 @@ impl Relay {
             };
 
             let eoa = request.from.ok_or(IntentError::MissingSender)?;
-            let key = request.get_key(eoa);
-            let parameters = BuildQuotesParameters { eoa, key: key.clone() };
+            let parameters = IdentityParameters::new(eoa, request.key.as_ref());
 
             let (asset_diffs, quotes) = self
-                .build_quotes(&request, parameters, nonce, delegation_status, intent_kind)
+                .build_quotes(&request, &parameters, nonce, delegation_status, intent_kind)
                 .await?;
 
             let sig = self
@@ -1176,7 +1175,11 @@ impl Relay {
                 .await
                 .map_err(|err| RelayError::InternalError(err.into()))?;
 
-            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)), Some(key))
+            (
+                asset_diffs,
+                PrepareCallsContext::with_quotes(quotes.into_signed(sig)),
+                Some(parameters.key),
+            )
         };
 
         // Calculate the digest and check if ERC1271 wrapping is needed in parallel
@@ -1224,7 +1227,7 @@ impl Relay {
     async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
-        parameters: BuildQuotesParameters,
+        parameters: &IdentityParameters,
         nonce: U256,
         delegation_status: &DelegationStatus,
         intent_kind: Option<IntentKind>,
@@ -1251,7 +1254,7 @@ impl Relay {
         } else {
             self.build_single_chain_quote(
                 request,
-                &parameters,
+                parameters,
                 delegation_status,
                 nonce,
                 intent_kind,
@@ -1274,7 +1277,7 @@ impl Relay {
     #[instrument(skip(self, parameters, assets))]
     async fn source_funds(
         &self,
-        parameters: &BuildQuotesParameters,
+        parameters: &IdentityParameters,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         destination_orchestrator: Address,
@@ -1426,7 +1429,7 @@ impl Relay {
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
-        parameters: BuildQuotesParameters,
+        parameters: &IdentityParameters,
         requested_asset: Address,
         requested_funds: U256,
         nonce: U256,
@@ -1485,7 +1488,7 @@ impl Relay {
             let (asset_diff, quotes) = self
                 .build_single_chain_quote(
                     request,
-                    &parameters,
+                    parameters,
                     delegation_status,
                     nonce,
                     None,
@@ -1534,7 +1537,7 @@ impl Relay {
         let (_, mut output_quote) = self
             .build_intent(
                 request,
-                &parameters,
+                parameters,
                 delegation_status,
                 nonce,
                 IntentKind::MultiOutput {
@@ -1588,7 +1591,7 @@ impl Relay {
             );
             let (sourced_funds, funding_chains) = if let Some(new_chains) = self
                 .source_funds(
-                    &parameters,
+                    parameters,
                     &assets,
                     request.chain_id,
                     output_quote.orchestrator,
@@ -1617,7 +1620,7 @@ impl Relay {
                 return self
                     .build_single_chain_quote(
                         request,
-                        &parameters,
+                        parameters,
                         delegation_status,
                         nonce,
                         None,
@@ -1656,7 +1659,7 @@ impl Relay {
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
                     request,
-                    &parameters,
+                    parameters,
                     delegation_status,
                     nonce,
                     IntentKind::MultiOutput {
@@ -1793,7 +1796,7 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
-        parameters: &BuildQuotesParameters,
+        parameters: &IdentityParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
@@ -2815,9 +2818,24 @@ impl Relay {
 }
 
 #[derive(Debug)]
-struct BuildQuotesParameters {
+struct IdentityParameters {
     eoa: Address,
     key: CallKey,
+}
+
+impl IdentityParameters {
+    pub fn new(eoa: Address, key: Option<&CallKey>) -> Self {
+        let key = if let Some(key) = key {
+            key.clone()
+        } else {
+            CallKey {
+                key_type: KeyType::Secp256k1,
+                public_key: Bytes::copy_from_slice(eoa.as_slice()),
+                prehash: false,
+            }
+        };
+        Self { eoa, key }
+    }
 }
 
 /// Adjusts a balance based on the difference in decimals.

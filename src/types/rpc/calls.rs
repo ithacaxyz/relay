@@ -323,16 +323,6 @@ impl PrepareCallsParameters {
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
         }
     }
-
-    /// Returns the key, if it's set in the request. Otherwise, returns a [`KeyType::Secp256k1`] key
-    /// for the given EOA.
-    pub fn get_key(&self, eoa: Address) -> CallKey {
-        self.key.clone().unwrap_or_else(move || CallKey {
-            key_type: KeyType::Secp256k1,
-            public_key: Bytes::copy_from_slice(eoa.as_slice()),
-            prehash: false,
-        })
-    }
 }
 
 /// Capabilities for `wallet_prepareCalls` request.
