@@ -332,4 +332,4 @@ cargo test test_multichain
 
 ## Deploying
 
-A docker image is built and pushed to GitHub Packages (`ghcr.io/ithacaxyz/relay`) when a git tag (`vx.y.z`) is pushed to the repository. For deployment details, see the [infrastructure repository](https://github.com/ithacaxyz/infrastructure).
+A docker image is built and pushed to GitHub Packages (`ghcr.io/ithacaxyz/relay`) when a git tag (`vx.y.z`) is pushed to the repository. 
