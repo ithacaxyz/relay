@@ -888,6 +888,10 @@ impl Relay {
         pre_calls: &[SignedCall],
         chain_id: ChainId,
     ) -> Result<Option<IntentKey<Key>>, RelayError> {
+        if identity.key.as_secp256k1().is_some() && identity.root_eoa_derived {
+            return Ok(Some(IntentKey::EoaRootKey));
+        }
+
         for pre_call in pre_calls {
             if let Some(key) = pre_call
                 .authorized_keys()?
@@ -907,10 +911,6 @@ impl Relay {
             .map(|k| k.authorize_key.key.clone())
         {
             return Ok(Some(IntentKey::StoredKey(key)));
-        }
-
-        if identity.key.as_secp256k1().is_some() && identity.root_eoa_derived {
-            return Ok(Some(IntentKey::EoaRootKey));
         }
 
         Ok(None)
