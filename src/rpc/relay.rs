@@ -2237,12 +2237,13 @@ impl RelayApiServer for Relay {
         let intent_key = key
             .map(IntentKey::StoredKey)
             .or_else(|| {
+                // Check if the signature is a normal ECDSA signature, meaning that it was signed by
+                // the EOA.
                 alloy::primitives::Signature::from_raw(&signature)
                     .is_ok()
                     .then_some(IntentKey::EoaRootKey)
             })
-            // TOOD: better error
-            .ok_or(QuoteError::InvalidQuoteSignature)?;
+            .ok_or(IntentError::MissingKey)?;
 
         let key_hash = intent_key.key_hash();
         let signature = intent_key.wrap_signature(signature);
