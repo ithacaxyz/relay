@@ -631,11 +631,11 @@ impl Relay {
         // compute real signature
         let signature = if let Some(key) = key {
             Signature { innerSignature: signature, keyHash: key.key_hash(), prehash: key.prehash }
+                .abi_encode_packed()
+                .into()
         } else {
-            Signature { innerSignature: signature, keyHash: B256::ZERO, prehash: false }
-        }
-        .abi_encode_packed()
-        .into();
+            signature
+        };
 
         // single chain workflow
         if quotes.ty().multi_chain_root.is_none() {
