@@ -1027,17 +1027,19 @@ impl Relay {
                 (key, key_hash)
             })
             .or_else(|| {
-                identity.key.as_secp256k1().cloned().map(|public_key| {
-                    (
-                        Key {
-                            expiry: U40::MAX,
-                            keyType: KeyType::Secp256k1,
-                            isSuperAdmin: true,
-                            publicKey: public_key,
-                        },
-                        B256::ZERO,
-                    )
-                })
+                identity.key.as_secp256k1().filter(|_| identity.eoa_derived).cloned().map(
+                    |public_key| {
+                        (
+                            Key {
+                                expiry: U40::MAX,
+                                keyType: KeyType::Secp256k1,
+                                isSuperAdmin: true,
+                                publicKey: public_key,
+                            },
+                            B256::ZERO,
+                        )
+                    },
+                )
             })
         else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
@@ -2810,8 +2812,12 @@ impl Relay {
 
 #[derive(Debug)]
 struct IdentityParameters {
+    /// EOA address.
     eoa: Address,
+    /// Key.
     key: CallKey,
+    /// Whether the key is derived from the EOA address.
+    eoa_derived: bool,
 }
 
 impl IdentityParameters {
@@ -2820,16 +2826,19 @@ impl IdentityParameters {
     /// If the key is not provided, it will be generated from the EOA address as a
     /// [`KeyType::Secp256k1`] key.
     pub fn new(key: Option<&CallKey>, eoa: Address) -> Self {
-        let key = if let Some(key) = key {
-            key.clone()
+        if let Some(key) = key {
+            Self { eoa, key: key.clone(), eoa_derived: false }
         } else {
-            CallKey {
-                key_type: KeyType::Secp256k1,
-                public_key: eoa.abi_encode().into(),
-                prehash: false,
+            Self {
+                eoa,
+                key: CallKey {
+                    key_type: KeyType::Secp256k1,
+                    public_key: eoa.abi_encode().into(),
+                    prehash: false,
+                },
+                eoa_derived: true,
             }
-        };
-        Self { eoa, key }
+        }
     }
 }
 
