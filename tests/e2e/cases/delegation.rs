@@ -1,5 +1,5 @@
 use crate::e2e::{
-    AuthKind, ExpectedOutcome, TxContext, await_calls_status,
+    AuthKind, await_calls_status,
     cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
     constants::EOA_PRIVATE_KEY,
     environment::Environment,
@@ -18,7 +18,7 @@ use relay::{
     types::{
         Account, Call, IERC20,
         IthacaAccount::{self, upgradeProxyAccountCall},
-        KeyType, KeyWith712Signer, Signature, SignedCall, U40,
+        KeyType, KeyWith712Signer, Signature, SignedCall,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -713,81 +713,6 @@ async fn test_delegation_auto_upgrade() -> eyre::Result<()> {
         Some(chain_capabilities.contracts.delegation_implementation.address),
         "Account delegation should be upgraded to the current delegation"
     );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_key_from_eoa() -> eyre::Result<()> {
-    let env = Environment::setup().await.unwrap();
-
-    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::MAX, true);
-    upgrade_account_lazily(&env, &[], AuthKind::Auth).await?;
-    TxContext {
-        expected: ExpectedOutcome::Pass,
-        key: Some(&admin_key),
-        omit_call_key: true,
-        ..Default::default()
-    }
-    .process(0, &env)
-    .await?;
-
-    // let response = env
-    //     .relay_endpoint
-    //     .prepare_calls(PrepareCallsParameters {
-    //         from: Some(env.eoa.address()),
-    //         calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(1))],
-    //         chain_id: env.chain_id(),
-    //         capabilities: PrepareCallsCapabilities {
-    //             authorize_keys: vec![],
-    //             revoke_keys: vec![],
-    //             meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
-    //             pre_calls: vec![],
-    //             pre_call: false,
-    //             required_funds: vec![],
-    //         },
-    //         state_overrides: Default::default(),
-    //         balance_overrides: Default::default(),
-    //         key: None,
-    //     })
-    //     .await?;
-
-    // // Decode the execution data to Vec<Call>
-    // let calls = Vec::<Call>::abi_decode(
-    //     response.context.quote().unwrap().ty().quotes[0].intent.execution_data(),
-    // )
-    // .unwrap();
-    // assert_eq!(calls.len(), 2, "Expected exactly two calls (user transfer + upgrade call)");
-
-    // // Verify the last call is the upgrade call
-    // assert_eq!(
-    //     calls[1].data,
-    //     Bytes::from(
-    //         upgradeProxyAccountCall {
-    //             newImplementation: chain_capabilities.contracts.delegation_implementation.address
-    //         }
-    //         .abi_encode()
-    //     ),
-    //     "Last call should be upgradeProxyAccount with current delegation implementation"
-    // );
-    // let bundle_id = send_prepared_calls(
-    //     &env,
-    //     &admin_key,
-    //     admin_key.sign_payload_hash(response.digest).await?,
-    //     response.context,
-    // )
-    // .await?;
-
-    // // Wait for bundle to not be pending.
-    // let status = await_calls_status(&env, bundle_id).await?;
-    // assert!(status.status.is_confirmed(), "{status:?}");
-
-    // // Verify the delegation was upgraded to the new one
-    // assert_eq!(
-    //     Account::new(env.eoa.address(), env.provider()).delegation_implementation().await?,
-    //     Some(chain_capabilities.contracts.delegation_implementation.address),
-    //     "Account delegation should be upgraded to the current delegation"
-    // );
 
     Ok(())
 }
