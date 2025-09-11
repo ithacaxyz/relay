@@ -247,7 +247,7 @@ async fn test_send_prepared_calls() -> eyre::Result<()> {
         .send_prepared_calls(SendPreparedCallsParameters {
             capabilities: Default::default(),
             context: response.context,
-            key: key.to_call_key(),
+            key: Some(key.to_call_key()),
             signature,
         })
         .await?;
@@ -393,7 +393,7 @@ async fn test_get_calls_status() -> eyre::Result<()> {
         .send_prepared_calls(SendPreparedCallsParameters {
             capabilities: Default::default(),
             context: response.context,
-            key: key.to_call_key(),
+            key: Some(key.to_call_key()),
             signature,
         })
         .await?;

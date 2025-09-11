@@ -1,7 +1,7 @@
 use super::{await_calls_status, environment::Environment, prepare_calls, send_prepared_calls};
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, U256},
+    primitives::{Address, B256, U256},
     providers::Provider,
     sol_types::SolValue,
 };
@@ -117,14 +117,16 @@ impl AuthKind {
 #[derive(Debug, Default)]
 #[allow(dead_code)]
 pub struct TxContext<'a> {
-    /// List of calls to execute
+    /// List of calls to execute.
     pub calls: Vec<Call>,
-    /// Expected outcome of the transaction
+    /// Expected outcome of the transaction.
     pub expected: ExpectedOutcome,
     /// Optional authorization. Used only for upgrading existing EOAs.
     pub auth: Option<AuthKind>,
-    /// Optional Key that will sign the Intent
+    /// Optional Key that will sign the Intent.
     pub key: Option<&'a KeyWith712Signer>,
+    /// Do not include `key` in the `prepareCalls` parameters and use an empty `keyHash`.
+    pub omit_call_key: bool,
     /// List of keys to authorize that will be converted to calls on top of the Intent.
     pub authorization_keys: Vec<&'a KeyWith712Signer>,
     /// List of keys to revoke that will be converted to calls on bottom of the Intent.
@@ -266,10 +268,13 @@ pub async fn build_pre_calls<'a>(
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
         let mut intent = context.take_precall().unwrap();
-        intent.signature =
-            Signature { innerSignature: signature, keyHash: signer.key_hash(), prehash: false }
-                .abi_encode_packed()
-                .into();
+        intent.signature = Signature {
+            innerSignature: signature,
+            keyHash: if tx.omit_call_key { B256::ZERO } else { signer.key_hash() },
+            prehash: false,
+        }
+        .abi_encode_packed()
+        .into();
         intent
     }))
     .await;

@@ -82,7 +82,7 @@ async fn use_external_fee_payer() -> eyre::Result<()> {
                     .into(),
                 },
                 context,
-                key: eoa.key.to_call_key(),
+                key: Some(eoa.key.to_call_key()),
                 signature: eoa.key.sign_payload_hash(digest).await.unwrap(),
             })
             .await?

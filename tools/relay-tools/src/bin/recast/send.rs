@@ -301,7 +301,7 @@ async fn send_transaction(
     let send_params = SendPreparedCallsParameters {
         capabilities: Default::default(),
         context: prepare_response.context,
-        key: account_key.to_call_key(),
+        key: Some(account_key.to_call_key()),
         signature,
     };
 

@@ -81,6 +81,10 @@ pub struct FeeEstimationContext {
     pub stored_authorization: Option<SignedAuthorization>,
     /// The account key used for signing.
     pub account_key: Key,
+    /// The account key hash used for signing.
+    ///
+    /// Can be [`B256::ZERO`] to use the root EOA key.
+    pub key_hash: B256,
     /// Whether to override key slots in state.
     pub key_slot_override: bool,
     /// The kind of intent being estimated.
