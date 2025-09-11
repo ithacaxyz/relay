@@ -1208,7 +1208,12 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(request.from, key.as_ref(), &delegation_status, &provider)
+            self.should_erc1271_wrap(
+                request.from,
+                request.key.as_ref(),
+                &delegation_status,
+                &provider
+            )
         )?;
 
         // Wrap digest for ERC1271 validation if needed
