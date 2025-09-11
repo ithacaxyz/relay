@@ -196,7 +196,7 @@ impl StressAccount {
                 .send_prepared_calls(SendPreparedCallsParameters {
                     capabilities: Default::default(),
                     context,
-                    key: self.key.to_call_key(),
+                    key: Some(self.key.to_call_key()),
                     signature,
                 })
                 .await

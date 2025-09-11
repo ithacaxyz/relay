@@ -63,6 +63,14 @@ impl CallKey {
     pub fn key_hash(&self) -> B256 {
         Key::hash(self.key_type, &self.public_key)
     }
+
+    /// Returns the public key if it is a [`KeyType::Secp256k1`] key.
+    pub fn as_secp256k1(&self) -> Option<&Bytes> {
+        match self.key_type {
+            KeyType::Secp256k1 => Some(&self.public_key),
+            _ => None,
+        }
+    }
 }
 
 /// A set of balance overrides.
@@ -531,7 +539,7 @@ pub struct SendPreparedCallsParameters {
     /// The [`PrepareCallsContext`] of the prepared call bundle.
     pub context: PrepareCallsContext,
     /// Key that was used to sign the call bundle.
-    pub key: CallKey,
+    pub key: Option<CallKey>,
     /// Signature value.
     pub signature: Bytes,
 }

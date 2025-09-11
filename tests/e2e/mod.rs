@@ -39,7 +39,7 @@ use relay::{
         },
     },
 };
-use std::{iter, time::Duration};
+use std::{iter, ops::Not, time::Duration};
 use strum::IntoEnumIterator;
 
 /// Runs all configurations (in both ERC20 and native payment methods).
@@ -136,6 +136,7 @@ pub async fn prepare_calls(
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
     build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
+    let key = tx.omit_call_key.not().then_some(signer.to_call_key());
     let response = env
         .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
@@ -156,7 +157,7 @@ pub async fn prepare_calls(
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: Some(signer.to_call_key()),
+            key,
         })
         .await;
 
@@ -188,7 +189,7 @@ pub async fn send_prepared_calls(
         .send_prepared_calls(SendPreparedCallsParameters {
             capabilities: Default::default(),
             context,
-            key: signer.to_call_key(),
+            key: Some(signer.to_call_key()),
             signature,
         })
         .await

@@ -14,8 +14,8 @@ use crate::{
     types::{
         Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
         AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
-        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
-        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKey, IntentKind, Intents,
+        Key, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
@@ -351,7 +351,7 @@ impl Relay {
             })?;
 
         // create key
-        let mock_key = KeyWith712Signer::random_admin(context.account_key.keyType)
+        let mock_key = KeyWith712Signer::random_admin(context.key.key_type())
             .map_err(RelayError::from)
             .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
         // create a mock transaction signer
@@ -469,7 +469,7 @@ impl Relay {
                     *orchestrator.address(),
                     &provider,
                     &mock_key,
-                    context.account_key.key_hash(),
+                    &context.key,
                     prehash,
                 )
                 .await
@@ -483,20 +483,13 @@ impl Relay {
                 .await
                 .map_err(RelayError::from)?;
 
-            intent_to_sign = intent_to_sign.with_signature(
-                Signature {
-                    innerSignature: signature,
-                    keyHash: context.account_key.key_hash(),
-                    prehash,
-                }
-                .abi_encode_packed()
-                .into(),
-            );
-        }
+            intent_to_sign =
+                intent_to_sign.with_signature(context.key.wrap_signature(signature, prehash));
+        };
 
         let gas_validation_offset =
             // Account for gas variation in P256 sig verification.
-            if context.account_key.keyType.is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
+            if context.key.key_type().is_secp256k1() { U256::ZERO } else { P256_GAS_BUFFER }
                 // Account for the case when we change zero fee token balance to non-zero, thus skipping a cold storage write
                 // We're adding 1 wei to the balance in build_simulation_overrides, so it will be non-zero if fee_token_balance is zero
                 + if fee_token_balance.is_zero() && !context.fee_token.is_zero() {
@@ -643,7 +636,7 @@ impl Relay {
         &self,
         quotes: SignedQuotes,
         capabilities: SendPreparedCallsCapabilities,
-        signature: Signature,
+        signature: Bytes,
     ) -> RpcResult<BundleId> {
         // if we do **not** get an error here, then the quote ttl must be in the past, which means
         // it is expired
@@ -661,8 +654,6 @@ impl Relay {
         }
 
         let bundle_id = BundleId(*quotes.hash());
-
-        let signature = signature.abi_encode_packed().into();
 
         // single chain workflow
         if quotes.ty().multi_chain_root.is_none() {
@@ -883,30 +874,46 @@ impl Relay {
         Ok(calls)
     }
 
-    /// Given a key hash and a list of [`PreCall`], it tries to find a key from a requested EOA.
+    /// Given a key hash and a list of [`PreCall`], it tries to find a key for the requested
+    /// identity.
     ///
     /// If it cannot find it, it will attempt to fetch it from storage or on-chain.
+    ///
+    /// If it's not found in the storage or on-chain, it checks if the identity is derived from the
+    /// root EOA key, and if so, returns the root EOA key.
     #[instrument(skip_all)]
     async fn try_find_key(
         &self,
-        from: Address,
-        key_hash: KeyHash,
+        identity: &IdentityParameters,
         pre_calls: &[SignedCall],
         chain_id: ChainId,
-    ) -> Result<Option<Key>, RelayError> {
+    ) -> Result<Option<IntentKey<Key>>, RelayError> {
+        if identity.key.is_eoa_root_key() {
+            return Ok(Some(IntentKey::EoaRootKey));
+        }
+
         for pre_call in pre_calls {
-            if let Some(key) =
-                pre_call.authorized_keys()?.iter().find(|key| key.key_hash() == key_hash)
+            if let Some(key) = pre_call
+                .authorized_keys()?
+                .iter()
+                .find(|key| key.key_hash() == identity.key.key_hash())
             {
-                return Ok(Some(key.clone()));
+                return Ok(Some(IntentKey::StoredKey(key.clone())));
             }
         }
 
         // Get keys for the specific chain (treat errors as no keys available)
-        let keys = self.get_keys_for_chain(from, chain_id).await?;
-        let key = keys.iter().find(|k| k.hash == key_hash).map(|k| k.authorize_key.key.clone());
+        if let Some(key) = self
+            .get_keys_for_chain(identity.root_eoa, chain_id)
+            .await?
+            .iter()
+            .find(|k| k.hash == identity.key.key_hash())
+            .map(|k| k.authorize_key.key.clone())
+        {
+            return Ok(Some(IntentKey::StoredKey(key)));
+        }
 
-        Ok(key)
+        Ok(None)
     }
 
     /// Generates all calls from a [`PrepareCallsParameters`].
@@ -1015,7 +1022,7 @@ impl Relay {
             FeeEstimationContext {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
-                account_key: mock_key.key().clone(),
+                key: IntentKey::StoredKey(mock_key.key().clone()),
                 key_slot_override: true,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
@@ -1033,17 +1040,14 @@ impl Relay {
     async fn build_intent(
         &self,
         request: &PrepareCallsParameters,
+        identity: &IdentityParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: IntentKind,
         calculate_asset_deficits: bool,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let Some(eoa) = request.from else { return Err(IntentError::MissingSender.into()) };
-        let Some(request_key) = &request.key else {
-            return Err(IntentError::MissingKey.into());
-        };
-
-        let key_hash = request_key.key_hash();
+        let eoa = identity.root_eoa;
+        let key_hash = identity.key.key_hash();
 
         let mut account = Account::new(eoa, self.provider(request.chain_id)?);
         if !account.is_delegated().await? {
@@ -1092,8 +1096,7 @@ impl Relay {
             .collect::<Vec<_>>();
 
         // Find the key that authorizes this intent
-        let Some(key) = self.try_find_key(eoa, key_hash, &pre_calls, request.chain_id).await?
-        else {
+        let Some(key) = self.try_find_key(identity, &pre_calls, request.chain_id).await? else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
         };
 
@@ -1109,7 +1112,7 @@ impl Relay {
         let (asset_diff, quote) = self
             .estimate_fee(
                 PartialIntent {
-                    eoa,
+                    eoa: identity.root_eoa,
                     execution_data: request.calls.abi_encode().into(),
                     nonce,
                     payer: request.capabilities.meta.fee_payer,
@@ -1125,7 +1128,7 @@ impl Relay {
                     delegation_implementation: delegation_status.try_implementation()?,
                 },
                 request.chain_id,
-                request_key.prehash,
+                identity.key.prehash(),
                 FeeEstimationContext {
                     // fee_token should have been set in the beginning of prepare_calls_inner if it
                     // was not provided by the user
@@ -1133,7 +1136,7 @@ impl Relay {
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
-                    account_key: key,
+                    key,
                     key_slot_override: false,
                     intent_kind,
                     state_overrides,
@@ -1208,7 +1211,7 @@ impl Relay {
             .await?;
 
         // If we're dealing with a PreCall do not estimate
-        let (asset_diff, context) = if request.capabilities.pre_call {
+        let (asset_diff, context, key) = if request.capabilities.pre_call {
             let call = SignedCall {
                 eoa: request.from.unwrap_or_default(),
                 executionData: request.calls.abi_encode().into(),
@@ -1222,6 +1225,7 @@ impl Relay {
                     call,
                     chain_id: request.chain_id,
                 }),
+                request.key.clone(),
             )
         } else {
             // Regular flow - sender and delegation status are required
@@ -1230,8 +1234,12 @@ impl Relay {
                 return Err(IntentError::MissingSender.into());
             };
 
-            let (asset_diffs, quotes) =
-                self.build_quotes(&request, nonce, delegation_status, intent_kind).await?;
+            let eoa = request.from.ok_or(IntentError::MissingSender)?;
+            let identity = IdentityParameters::new(request.key.as_ref(), eoa);
+
+            let (asset_diffs, quotes) = self
+                .build_quotes(&request, &identity, nonce, delegation_status, intent_kind)
+                .await?;
 
             let sig = self
                 .inner
@@ -1240,7 +1248,11 @@ impl Relay {
                 .await
                 .map_err(|err| RelayError::InternalError(err.into()))?;
 
-            (asset_diffs, PrepareCallsContext::with_quotes(quotes.into_signed(sig)))
+            (
+                asset_diffs,
+                PrepareCallsContext::with_quotes(quotes.into_signed(sig)),
+                identity.key.into_stored_key(),
+            )
         };
 
         // Calculate the digest and check if ERC1271 wrapping is needed in parallel
@@ -1276,7 +1288,7 @@ impl Relay {
                 revoke_keys: request.capabilities.revoke_keys,
                 asset_diff,
             },
-            key: request.key,
+            key,
         };
 
         Ok(response)
@@ -1287,6 +1299,7 @@ impl Relay {
     async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
+        identity: &IdentityParameters,
         nonce: U256,
         delegation_status: &DelegationStatus,
         intent_kind: Option<IntentKind>,
@@ -1303,6 +1316,7 @@ impl Relay {
         {
             self.determine_quote_strategy(
                 request,
+                identity,
                 required_funds.address,
                 required_funds.value,
                 nonce,
@@ -1310,9 +1324,16 @@ impl Relay {
             )
             .await
         } else {
-            self.build_single_chain_quote(request, delegation_status, nonce, intent_kind, true)
-                .await
-                .map_err(Into::into)
+            self.build_single_chain_quote(
+                request,
+                identity,
+                delegation_status,
+                nonce,
+                intent_kind,
+                true,
+            )
+            .await
+            .map_err(Into::into)
         }
     }
 
@@ -1325,11 +1346,10 @@ impl Relay {
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
     #[expect(clippy::too_many_arguments)]
-    #[instrument(skip(self, request_key, assets))]
+    #[instrument(skip(self, identity, assets))]
     async fn source_funds(
         &self,
-        eoa: Address,
-        request_key: &CallKey,
+        identity: &IdentityParameters,
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         destination_orchestrator: Address,
@@ -1393,7 +1413,7 @@ impl Relay {
             .map(|(chain, asset, balance)| async move {
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
-                    eoa,
+                    eoa: identity.root_eoa,
                     chain_id: chain,
                     asset: asset.address.into(),
                     amount: U256::from(1),
@@ -1407,7 +1427,7 @@ impl Relay {
                 };
                 let escrow_cost = self
                     .prepare_calls_inner(
-                        self.build_funding_intent(funding_context, request_key.clone())?,
+                        self.build_funding_intent(funding_context, identity.key.clone())?,
                         // note(onbjerg): its ok the leaf isnt correct here for simulation
                         Some(IntentKind::MultiInput {
                             leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
@@ -1486,12 +1506,12 @@ impl Relay {
     async fn determine_quote_strategy(
         &self,
         request: &PrepareCallsParameters,
+        identity: &IdentityParameters,
         requested_asset: Address,
         requested_funds: U256,
         nonce: U256,
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
-        let eoa = request.from.ok_or(IntentError::MissingSender)?;
         let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
 
         // Only query inventory, if funds have been requested in the target chain.
@@ -1511,13 +1531,15 @@ impl Relay {
 
         // Create a future for fetching assets interoperable with requested asset (needed for
         // source_funds). It will be awaited later when we actually need it.
-        let assets =
-            self.get_assets(GetAssetsParameters::for_assets_on_chains(eoa, interop_assets));
+        let assets = self.get_assets(GetAssetsParameters::for_assets_on_chains(
+            identity.root_eoa,
+            interop_assets,
+        ));
 
         // Fetch EOA and funder's requested asset on destination chain
         let (destination_asset, funder_assets) = try_join!(
             self.get_assets(GetAssetsParameters::for_asset_on_chain(
-                eoa,
+                identity.root_eoa,
                 request.chain_id,
                 requested_asset,
             )),
@@ -1543,7 +1565,7 @@ impl Relay {
         // `requested_funds`.
         if requested_asset_balance_on_dst >= requested_funds {
             let (asset_diff, quotes) = self
-                .build_single_chain_quote(request, delegation_status, nonce, None, false)
+                .build_single_chain_quote(request, identity, delegation_status, nonce, None, false)
                 .await?;
 
             // It should never happen that we do not have a quote from this simulation, but to avoid
@@ -1566,7 +1588,7 @@ impl Relay {
                 .is_some()
             {
                 debug!(
-                    %eoa,
+                    eoa = %identity.root_eoa,
                     chain_id = %request.chain_id,
                     %requested_asset,
                     %requested_funds,
@@ -1587,6 +1609,7 @@ impl Relay {
         let (_, mut output_quote) = self
             .build_intent(
                 request,
+                identity,
                 delegation_status,
                 nonce,
                 IntentKind::MultiOutput {
@@ -1629,7 +1652,7 @@ impl Relay {
             // requested from chains, minus the cost of transferring those funds out of the
             // respective chains.
             debug!(
-                %eoa,
+                eoa = %identity.root_eoa,
                 chain_id = %request.chain_id,
                 %requested_asset,
                 %requested_funds,
@@ -1640,8 +1663,7 @@ impl Relay {
             );
             let (sourced_funds, funding_chains) = if let Some(new_chains) = self
                 .source_funds(
-                    eoa,
-                    request.key.as_ref().ok_or(IntentError::MissingKey)?,
+                    identity,
                     &assets,
                     request.chain_id,
                     output_quote.orchestrator,
@@ -1668,7 +1690,14 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(request, delegation_status, nonce, None, true)
+                    .build_single_chain_quote(
+                        request,
+                        identity,
+                        delegation_status,
+                        nonce,
+                        None,
+                        true,
+                    )
                     .await
                     .map_err(Into::into);
             };
@@ -1677,7 +1706,7 @@ impl Relay {
             let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
             debug!(
-                %eoa,
+                eoa = %identity.root_eoa,
                 chain_id = %request.chain_id,
                 %requested_asset,
                 %requested_funds,
@@ -1702,6 +1731,7 @@ impl Relay {
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
                     request,
+                    identity,
                     delegation_status,
                     nonce,
                     IntentKind::MultiOutput {
@@ -1742,12 +1772,11 @@ impl Relay {
                     )
                     .await?;
 
-                let request_key = request.key.as_ref().ok_or(IntentError::MissingKey)?;
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
                             FundingIntentContext {
-                                eoa,
+                                eoa: identity.root_eoa,
                                 chain_id: source.chain_id,
                                 asset: source.address.into(),
                                 amount: source.amount_source,
@@ -1756,7 +1785,7 @@ impl Relay {
                                 output_chain_id: request.chain_id,
                                 output_orchestrator: output_quote.orchestrator,
                             },
-                            request_key.clone(),
+                            identity.key.clone(),
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             source,
                         )
@@ -1816,12 +1845,12 @@ impl Relay {
     async fn simulate_funding_intent(
         &self,
         funding_context: FundingIntentContext,
-        request_key: CallKey,
+        intent_key: IntentKey<CallKey>,
         leaf_info: MerkleLeafInfo,
         source: &FundSource,
     ) -> RpcResult<PrepareCallsResponse> {
         self.prepare_calls_inner(
-            self.build_funding_intent(funding_context, request_key)?,
+            self.build_funding_intent(funding_context, intent_key)?,
             Some(IntentKind::MultiInput {
                 leaf_info,
                 // we override the fees here to avoid re-estimating. if we
@@ -1838,6 +1867,7 @@ impl Relay {
     async fn build_single_chain_quote(
         &self,
         request: &PrepareCallsParameters,
+        identity: &IdentityParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
         intent_kind: Option<IntentKind>,
@@ -1846,6 +1876,7 @@ impl Relay {
         let (asset_diffs, quote) = self
             .build_intent(
                 request,
+                identity,
                 delegation_status,
                 nonce,
                 intent_kind.unwrap_or(IntentKind::Single),
@@ -1913,7 +1944,7 @@ impl Relay {
         bundle_id: BundleId,
     ) -> RpcResult<BundleId> {
         let bundle =
-            self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, &signature).await?;
+            self.create_interop_bundle(bundle_id, &mut quotes, &capabilities, signature).await?;
 
         let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
         interop.send_bundle(bundle).await?;
@@ -1927,7 +1958,7 @@ impl Relay {
         bundle_id: BundleId,
         quotes: &mut SignedQuotes,
         capabilities: &SendPreparedCallsCapabilities,
-        signature: &Bytes,
+        signature: Bytes,
     ) -> Result<InteropBundle, RelayError> {
         let mut intents = Intents::new(
             quotes
@@ -1952,7 +1983,7 @@ impl Relay {
         let root = intents.root().await?;
         let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
             let proof = intents.get_proof_immutable(idx)?;
-            let merkle_sig = (proof, root, signature.clone()).abi_encode_params().into();
+            let merkle_sig = (proof, root, &signature).abi_encode_params().into();
 
             self.prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig)
                 .await
@@ -2150,12 +2181,6 @@ impl RelayApiServer for Relay {
 
         let provider = self.provider(chain_id)?;
 
-        // Upgrading account should have at least one authorize admin key since
-        // `wallet_prepareCalls` only accepts non-root keys.
-        if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-            return Err(KeysError::MissingAdminKey)?;
-        }
-
         // Generate all calls that will authorize keys and set their permissions
         let calls = self.authorize_into_calls(request.capabilities.authorize_keys.clone())?;
 
@@ -2209,13 +2234,21 @@ impl RelayApiServer for Relay {
         let SendPreparedCallsParameters { capabilities, context, signature, key } = request;
 
         // compute real signature
-        let key_hash = key.key_hash();
-        let signature = Signature {
-            innerSignature: signature.clone(),
-            keyHash: key_hash,
-            prehash: key.prehash,
-        };
+        let intent_key = key
+            .map(IntentKey::StoredKey)
+            .or_else(|| {
+                // Check if the signature is a normal ECDSA signature, meaning that it was signed by
+                // the EOA.
+                alloy::primitives::Signature::from_raw(&signature)
+                    .is_ok()
+                    .then_some(IntentKey::EoaRootKey)
+            })
+            .ok_or(IntentError::MissingKey)?;
 
+        let key_hash = intent_key.key_hash();
+        let signature = intent_key.wrap_signature(signature);
+
+        // broadcasts intents in transactions
         let id = match context {
             PrepareCallsContext::Quote(quotes) => {
                 self.send_intents(*quotes, capabilities, signature).await.inspect_err(|err| {
@@ -2234,18 +2267,25 @@ impl RelayApiServer for Relay {
                 let provider = self.provider(chain_id)?;
 
                 // Ensure that the key exists in the account
-                let Some(key) = self
-                    .get_keys_for_chain(call.eoa, chain_id)
-                    .await?
-                    .into_iter()
-                    .find(|key| key.authorize_key.key.key_hash() == key_hash)
-                else {
-                    return Err(KeysError::UnknownKeyHash(key_hash))?;
-                };
+                match intent_key {
+                    IntentKey::EoaRootKey => {
+                        // If the key is the root EOA key, it always has control over the account
+                    }
+                    IntentKey::StoredKey(_) => {
+                        let Some(key) = self
+                            .get_keys_for_chain(call.eoa, chain_id)
+                            .await?
+                            .into_iter()
+                            .find(|key| key.authorize_key.key.key_hash() == key_hash)
+                        else {
+                            return Err(KeysError::UnknownKeyHash(key_hash))?;
+                        };
 
-                // We only support storing precalls signed by admin keys
-                if !key.authorize_key.key.isSuperAdmin {
-                    return Err(KeysError::OnlyAdminKeyAllowed)?;
+                        // We only support storing precalls signed by admin keys
+                        if !key.authorize_key.key.isSuperAdmin {
+                            return Err(KeysError::OnlyAdminKeyAllowed)?;
+                        }
+                    }
                 }
 
                 // Build the account
@@ -2271,7 +2311,7 @@ impl RelayApiServer for Relay {
                 }
 
                 // Store the precall
-                call.signature = signature.abi_encode_packed().into();
+                call.signature = signature;
                 self.inner.storage.store_precall(chain_id, call).await?;
 
                 Default::default()
@@ -2286,17 +2326,6 @@ impl RelayApiServer for Relay {
         tracing::Span::current().record("eth.chain_id", context.chain_id);
 
         let provider = self.provider(context.chain_id)?;
-
-        // Ensures precall authorizes an admin key
-        if !context
-            .pre_call
-            .authorized_keys()
-            .map_err(RelayError::from)?
-            .iter()
-            .any(|k| k.isSuperAdmin)
-        {
-            return Err(KeysError::MissingAdminKey)?;
-        }
 
         // Ensures signature matches the requested account (7702 auth)
         let got = signatures
@@ -2511,14 +2540,18 @@ impl RelayApiServer for Relay {
         let mut account = Account::new(address, self.provider(chain_id)?);
         // Get keys for the specific chain (treat errors as no keys available)
         let keys = self.get_keys_for_chain(address, chain_id).await?;
-        let signatures: Vec<Signature> = keys
+        let signatures: Vec<Bytes> = keys
             .iter()
             .filter_map(|k| {
-                k.authorize_key.key.isSuperAdmin.then_some(Signature {
-                    innerSignature: signature.clone(),
-                    keyHash: k.authorize_key.key.key_hash(),
-                    prehash: false,
-                })
+                k.authorize_key.key.isSuperAdmin.then_some(
+                    Signature {
+                        innerSignature: signature.clone(),
+                        keyHash: k.authorize_key.key.key_hash(),
+                        prehash: false,
+                    }
+                    .abi_encode_packed()
+                    .into(),
+                )
             })
             .collect();
 
@@ -2812,7 +2845,7 @@ impl Relay {
     fn build_funding_intent(
         &self,
         context: FundingIntentContext,
-        request_key: CallKey,
+        intent_key: IntentKey<CallKey>,
     ) -> Result<PrepareCallsParameters, RelayError> {
         let escrow = self.create_escrow_struct(&context)?;
         let calls = self.build_escrow_calls(escrow, &context);
@@ -2831,7 +2864,7 @@ impl Relay {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: Some(request_key),
+            key: intent_key.into_stored_key(),
         })
     }
 
@@ -2851,12 +2884,11 @@ impl Relay {
         from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let key = match request.key.as_ref() {
-            Some(k) if k.key_type.is_secp256k1() => k,
-            _ => return Ok(None),
+        let Some(public_key) = request.key.as_ref().and_then(|k| k.as_secp256k1()) else {
+            return Ok(None);
         };
 
-        let key_address = Address::from_slice(&key.public_key[12..]);
+        let key_address = Address::from_slice(&public_key[12..]);
 
         // If the key address matches the EOA address AND we have a delegation status, use it
         // Otherwise, fetch the delegation status for the key address
@@ -2880,6 +2912,28 @@ impl Relay {
         });
 
         Ok(needs_wrapping.then_some(key_address))
+    }
+}
+
+#[derive(Debug)]
+struct IdentityParameters {
+    /// Root EOA address.
+    root_eoa: Address,
+    /// Key
+    key: IntentKey<CallKey>,
+}
+
+impl IdentityParameters {
+    /// Creates a new [`IdentityParameters`] instance from the provided key.
+    ///
+    /// If the key is not provided, it will be derived from the root EOA address as
+    /// [`KeyType::Secp256k1`] key.
+    pub fn new(key: Option<&CallKey>, root_eoa: Address) -> Self {
+        if let Some(key) = key {
+            Self { root_eoa, key: IntentKey::StoredKey(key.clone()) }
+        } else {
+            Self { root_eoa, key: IntentKey::EoaRootKey }
+        }
     }
 }
 

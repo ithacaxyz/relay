@@ -871,7 +871,7 @@ impl InteropTester {
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: key.to_call_key(),
+                key: Some(key.to_call_key()),
                 signature,
             })
             .await;
