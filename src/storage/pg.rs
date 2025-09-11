@@ -12,7 +12,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -674,19 +674,6 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn get_verified_email(&self, account: Address) -> Result<Option<String>> {
-        let row = sqlx::query!(
-            "select email from emails where address = $1 and verified_at is not null",
-            account.as_slice()
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
-        Ok(row.map(|r| r.email))
-    }
-
-    #[instrument(skip_all)]
     async fn ping(&self) -> Result<()> {
         // acquire a connection to ensure DB is reachable
         self.pool.acquire().await.map_err(eyre::Error::from).map_err(Into::into).map(drop)
@@ -1323,5 +1310,63 @@ impl StorageApi for PgStorage {
         }
 
         Ok(pending_transactions)
+    }
+
+    #[instrument(skip_all)]
+    async fn store_precall(&self, chain_id: ChainId, call: SignedCall) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO precalls (chain_id, address, data, nonce)
+            VALUES ($1, $2, $3, $4)
+            "#,
+            chain_id as i64,
+            call.eoa.as_slice(),
+            serde_json::to_value(&call)?,
+            call.nonce.as_le_slice(),
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn read_precalls_for_eoa(
+        &self,
+        chain_id: ChainId,
+        eoa: Address,
+    ) -> Result<Vec<SignedCall>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT data
+            FROM precalls
+            WHERE chain_id = $1 AND address = $2
+            "#,
+            chain_id as i64,
+            eoa.as_slice(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(rows.into_iter().map(|row| serde_json::from_value(row.data).unwrap()).collect())
+    }
+
+    #[instrument(skip_all)]
+    async fn remove_precall(&self, chain_id: ChainId, eoa: Address, nonce: U256) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM precalls WHERE chain_id = $1 AND address = $2 AND nonce = $3
+            "#,
+            chain_id as i64,
+            eoa.as_slice(),
+            nonce.as_le_slice(),
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
     }
 }

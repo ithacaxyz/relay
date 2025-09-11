@@ -1,11 +1,12 @@
 use std::ops::Not;
 
+use crate::e2e::send_prepared_calls;
+
 use super::{await_calls_status, environment::Environment, prepare_calls};
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, B256, U256},
+    primitives::{Address, U256},
     providers::Provider,
-    sol_types::SolValue,
 };
 use derive_more::Debug;
 use eyre::WrapErr;
@@ -16,7 +17,6 @@ use relay::{
     types::{
         Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::IntentExecuted,
-        Signature, SignedCall,
         rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey, SendPreparedCallsParameters},
     },
 };
@@ -275,24 +275,16 @@ pub async fn build_pre_calls<'a>(
     env: &Environment,
     pre_calls: &[TxContext<'a>],
     tx_num: usize,
-) -> eyre::Result<Vec<SignedCall>> {
-    let pre_calls = join_all(pre_calls.iter().map(|tx| async move {
+) -> eyre::Result<()> {
+    join_all(pre_calls.iter().map(|tx| async move {
         let signer = tx.key.expect("intent should have a key");
         let (signature, context) =
             prepare_calls(tx_num, tx, signer, env, true).await.unwrap().unwrap();
-        let mut intent = context.take_precall().unwrap();
-        intent.signature = Signature {
-            innerSignature: signature,
-            keyHash: if tx.omit_call_key { B256::ZERO } else { signer.key_hash() },
-            prehash: false,
-        }
-        .abi_encode_packed()
-        .into();
-        intent
+        send_prepared_calls(env, signer, signature, context).await.unwrap();
     }))
     .await;
 
-    Ok(pre_calls)
+    Ok(())
 }
 
 /// Helper macro for checking the outcome of a successful transaction.

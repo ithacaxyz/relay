@@ -1,5 +1,5 @@
 use super::{
-    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, Signature, rpc::Permission,
+    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, rpc::Permission,
     storage::CreatableAccount,
 };
 use crate::{
@@ -20,7 +20,7 @@ use alloy::{
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol,
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolStruct},
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -424,18 +424,14 @@ impl<P: Provider> Account<P> {
     pub async fn validate_signature(
         &self,
         digest: B256,
-        signature: Signature,
-    ) -> TransportResult<Option<KeyHash>> {
+        signature: Bytes,
+    ) -> Result<Option<KeyHash>, RelayError> {
         let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
             .delegation
-            .unwrapAndValidateSignature(
-                self.digest_erc1271(digest),
-                signature.abi_encode_packed().into(),
-            )
+            .unwrapAndValidateSignature(digest, signature)
             .call()
             .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
+            .await?;
 
         Ok(isValid.then_some(keyHash))
     }
@@ -455,8 +451,13 @@ impl<P: Provider> Account<P> {
     ///
     /// This gets the next nonce for sequence key `0`.
     pub async fn get_nonce(&self) -> TransportResult<U256> {
+        self.get_nonce_for_sequence(DEFAULT_SEQUENCE_KEY).await
+    }
+
+    /// Get the next nonce for the given sequence key.
+    pub async fn get_nonce_for_sequence(&self, sequence_key: U192) -> TransportResult<U256> {
         self.delegation
-            .getNonce(DEFAULT_SEQUENCE_KEY)
+            .getNonce(sequence_key)
             .call()
             .overrides(self.overrides.clone())
             .await

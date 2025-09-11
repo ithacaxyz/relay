@@ -134,7 +134,7 @@ pub async fn prepare_calls(
     env: &Environment,
     pre_call: bool,
 ) -> eyre::Result<Option<(Bytes, PrepareCallsContext)>> {
-    let pre_calls = build_pre_calls(env, &tx.pre_calls, tx_num).await?;
+    build_pre_calls(env, &tx.pre_calls, tx_num).await?;
 
     let key = tx.omit_call_key.not().then_some(signer.to_call_key());
     let response = env
@@ -151,7 +151,7 @@ pub async fn prepare_calls(
                     fee_token: Some(tx.fee_token.unwrap_or(env.fee_token)),
                     nonce: tx.nonce,
                 },
-                pre_calls,
+                pre_calls: vec![],
                 pre_call,
                 required_funds: vec![],
             },

@@ -10,7 +10,7 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, rpc::BundleId},
+    types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -97,9 +97,6 @@ pub trait StorageApi: Debug + Send + Sync {
     ///
     /// Returns true if the email was verified successfully.
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool>;
-
-    /// Gets the verified email for a given wallet address.
-    async fn get_verified_email(&self, account: Address) -> Result<Option<String>>;
 
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
@@ -278,4 +275,17 @@ pub trait StorageApi: Debug + Send + Sync {
         signer: Address,
         chain_id: ChainId,
     ) -> Result<Vec<TxEnvelope>>;
+
+    /// Stores a precall.
+    async fn store_precall(&self, chain_id: ChainId, call: SignedCall) -> Result<()>;
+
+    /// Reads precalls for a given EOA.
+    async fn read_precalls_for_eoa(
+        &self,
+        chain_id: ChainId,
+        eoa: Address,
+    ) -> Result<Vec<SignedCall>>;
+
+    /// Removes a precall.
+    async fn remove_precall(&self, chain_id: ChainId, eoa: Address, nonce: U256) -> Result<()>;
 }

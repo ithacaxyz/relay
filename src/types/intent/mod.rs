@@ -1,6 +1,6 @@
 use super::{Call, IDelegation::authorizeCall, Key, MerkleLeafInfo};
 use crate::{
-    error::{IntentError, MerkleError},
+    error::{IntentError, MerkleError, RelayError},
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
@@ -211,7 +211,7 @@ pub trait SignedCalls {
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> impl Future<Output = eyre::Result<(B256, TypedData)>> + Send
+    ) -> impl Future<Output = Result<(B256, TypedData), RelayError>> + Send
     where
         Self: Sync;
 }
@@ -229,7 +229,7 @@ impl SignedCalls for SignedCall {
         &self,
         orchestrator_address: Address,
         provider: &DynProvider,
-    ) -> eyre::Result<(B256, TypedData)>
+    ) -> Result<(B256, TypedData), RelayError>
     where
         Self: Sync,
     {
