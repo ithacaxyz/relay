@@ -2,7 +2,7 @@ use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
     error::{IntentError, MerkleError, RelayError},
     signers::Eip712PayLoadSigner,
-    types::{IntentKind, Key, LazyMerkleTree, OrchestratorContract, Signature},
+    types::{IntentKey, IntentKind, Key, LazyMerkleTree, OrchestratorContract},
 };
 use alloy::{
     dyn_abi::TypedData,
@@ -563,7 +563,7 @@ impl Intent {
         orchestrator: Address,
         provider: &DynProvider,
         signer: &S,
-        key_hash: B256,
+        intent_key: &IntentKey<Key>,
         prehash: bool,
     ) -> Result<Self, IntentError> {
         let leaf_info = intent_kind.merkle_leaf_info()?;
@@ -585,16 +585,13 @@ impl Intent {
         let proof = tree.proof(leaf_info.index).map_err(IntentError::from)?;
 
         // Sign the merkle root (treating it as if it were an intent digest)
-        let signature: Bytes = Signature {
-            innerSignature: signer
+        let signature = intent_key.wrap_signature(
+            signer
                 .sign_payload_hash(root)
                 .await
                 .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?,
-            keyHash: key_hash,
             prehash,
-        }
-        .abi_encode_packed()
-        .into();
+        );
 
         // Build merkle signature format: (proof, root, signature)
         self = self.with_signature((proof, root, signature).abi_encode_params().into());

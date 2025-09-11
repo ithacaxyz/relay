@@ -469,7 +469,7 @@ impl Relay {
                     *orchestrator.address(),
                     &provider,
                     &mock_key,
-                    context.key.key_hash(),
+                    &context.key,
                     prehash,
                 )
                 .await
