@@ -1208,12 +1208,7 @@ impl Relay {
                     .await
                     .map_err(RelayError::from)
             },
-            self.should_erc1271_wrap(
-                request.from,
-                request.key.as_ref(),
-                &delegation_status,
-                &provider
-            )
+            self.should_erc1271_wrap(&request, &delegation_status, &provider)
         )?;
 
         // Wrap digest for ERC1271 validation if needed
@@ -2122,12 +2117,6 @@ impl RelayApiServer for Relay {
 
         let provider = self.provider(chain_id)?;
 
-        // Upgrading account should have at least one authorize admin key since
-        // `wallet_prepareCalls` only accepts non-root keys.
-        // if !request.capabilities.authorize_keys.iter().any(|key| key.key.isSuperAdmin) {
-        //     return Err(KeysError::MissingAdminKey)?;
-        // }
-
         // Generate all calls that will authorize keys and set their permissions
         let calls = self.authorize_into_calls(request.capabilities.authorize_keys.clone())?;
 
@@ -2211,17 +2200,6 @@ impl RelayApiServer for Relay {
         tracing::Span::current().record("eth.chain_id", context.chain_id);
 
         let provider = self.provider(context.chain_id)?;
-
-        // Ensures precall authorizes an admin key
-        // if !context
-        //     .pre_call
-        //     .authorized_keys()
-        //     .map_err(RelayError::from)?
-        //     .iter()
-        //     .any(|k| k.isSuperAdmin)
-        // {
-        //     return Err(KeysError::MissingAdminKey)?;
-        // }
 
         // Ensures signature matches the requested account (7702 auth)
         let got = signatures
@@ -2795,18 +2773,19 @@ impl Relay {
     /// Returns the key address if wrapping is needed, None otherwise.
     async fn should_erc1271_wrap<P: Provider>(
         &self,
-        eoa: Option<Address>,
-        key: Option<&CallKey>,
+        request: &PrepareCallsParameters,
         from_delegation_status: &Option<DelegationStatus>,
         provider: &P,
     ) -> Result<Option<Address>, RelayError> {
-        let Some(public_key) = key.and_then(|k| k.as_secp256k1()) else { return Ok(None) };
+        let Some(public_key) = request.key.as_ref().and_then(|k| k.as_secp256k1()) else {
+            return Ok(None);
+        };
 
         let key_address = Address::from_slice(&public_key[12..]);
 
         // If the key address matches the EOA address AND we have a delegation status, use it
         // Otherwise, fetch the delegation status for the key address
-        let status = if eoa == Some(key_address) && from_delegation_status.is_some() {
+        let status = if request.from == Some(key_address) && from_delegation_status.is_some() {
             from_delegation_status.clone()
         } else {
             Account::new(key_address, provider).delegation_status(&self.inner.storage).await.ok()
@@ -2814,7 +2793,7 @@ impl Relay {
 
         // Only wrap if it's an IthacaAccount >=0.5
         let needs_wrapping = status.as_ref().is_some_and(|s| {
-            if (s.is_delegated() || (s.is_stored() && eoa == Some(key_address)))
+            if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
                 return self
