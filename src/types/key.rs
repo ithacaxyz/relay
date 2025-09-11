@@ -294,7 +294,7 @@ impl KeyWith712Signer {
         Ok(Some(key))
     }
 
-    /// Returns a admin [`Self`] from a [`KeyType`].
+    /// Returns an admin [`Self`] from a [`KeyType`].
     ///
     /// This is intended for testing.
     pub fn mock_admin_with_key(key_type: KeyType, mock_key: B256) -> eyre::Result<Option<Self>> {
@@ -329,6 +329,9 @@ impl KeyWith712Signer {
         Ok(Some(KeyWith712Signer { key, signer, permissions: vec![] }))
     }
 
+    /// Returns an admin [`Self`] with [`KeyType::Secp256k1`] using the provided signer.
+    ///
+    /// This is intended for testing.
     pub fn secp256k1_from_signer(
         signer: DynSigner,
         expiry: U40,
