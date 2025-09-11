@@ -134,7 +134,7 @@ mod tests {
     #[tokio::test]
     async fn test_layerzero_diagnostics_ethereum_mainnet() {
         let ethereum_provider = ProviderBuilder::new()
-            .connect_http("https://reth-ethereum.ithaca.xyz/rpc".parse().unwrap());
+            .connect_http("https://eu-central-mainnet.rpc.ithaca.xyz".parse().unwrap());
         let endpoint = ILayerZeroEndpointV2::new(
             address!("0x1a44076050125825900e736c501f859c50fE728c"),
             &ethereum_provider,
