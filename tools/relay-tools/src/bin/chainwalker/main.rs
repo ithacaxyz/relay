@@ -39,6 +39,11 @@ pub struct Args {
     #[arg(long = "no-run")]
     no_run: bool,
 
+    /// Do not pass a separate `key` to `prepareCalls` requests and let the relay to detect EOA
+    /// signature instead
+    #[arg(long = "no-key")]
+    no_key: bool,
+
     /// Continue even if account has been used before (only use if testing same account
     /// implementation)
     #[arg(long = "force")]
@@ -78,6 +83,7 @@ async fn main() -> Result<()> {
         exclude_chains: args.exclude_chains,
         transfer_percentage: args.transfer_percentage,
         no_run: args.no_run,
+        no_key: args.no_key,
         skip_settlement_wait: args.skip_settlement_wait,
         account_key,
     };

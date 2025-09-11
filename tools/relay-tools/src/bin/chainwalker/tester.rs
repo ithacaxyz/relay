@@ -22,6 +22,7 @@ use relay_tools::common::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    ops::Not,
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info, warn};
@@ -37,6 +38,7 @@ pub struct InteropTester {
     pub transfer_percentage: u8,
     pub no_run: bool,
     pub skip_settlement_wait: bool,
+    pub no_key: bool,
     pub account_key: KeyWith712Signer,
 }
 
@@ -812,7 +814,7 @@ impl InteropTester {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: Some(key.to_call_key()),
+            key: self.no_key.not().then_some(key.to_call_key()),
         };
 
         let prepare_result = loop {
@@ -871,7 +873,7 @@ impl InteropTester {
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: Some(key.to_call_key()),
+                key: self.no_key.not().then_some(key.to_call_key()),
                 signature,
             })
             .await;
