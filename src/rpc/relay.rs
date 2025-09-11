@@ -888,7 +888,7 @@ impl Relay {
         pre_calls: &[SignedCall],
         chain_id: ChainId,
     ) -> Result<Option<IntentKey<Key>>, RelayError> {
-        if identity.key.as_secp256k1().is_some() && identity.root_eoa_derived {
+        if identity.key.is_eoa_root_key() {
             return Ok(Some(IntentKey::EoaRootKey));
         }
 
@@ -1128,7 +1128,7 @@ impl Relay {
                     delegation_implementation: delegation_status.try_implementation()?,
                 },
                 request.chain_id,
-                identity.key.prehash,
+                identity.key.prehash(),
                 FeeEstimationContext {
                     // fee_token should have been set in the beginning of prepare_calls_inner if it
                     // was not provided by the user
@@ -1251,7 +1251,7 @@ impl Relay {
             (
                 asset_diffs,
                 PrepareCallsContext::with_quotes(quotes.into_signed(sig)),
-                Some(identity.key),
+                identity.key.into_stored_key(),
             )
         };
 
@@ -1845,12 +1845,12 @@ impl Relay {
     async fn simulate_funding_intent(
         &self,
         funding_context: FundingIntentContext,
-        request_key: CallKey,
+        intent_key: IntentKey<CallKey>,
         leaf_info: MerkleLeafInfo,
         source: &FundSource,
     ) -> RpcResult<PrepareCallsResponse> {
         self.prepare_calls_inner(
-            self.build_funding_intent(funding_context, request_key)?,
+            self.build_funding_intent(funding_context, intent_key)?,
             Some(IntentKind::MultiInput {
                 leaf_info,
                 // we override the fees here to avoid re-estimating. if we
@@ -2844,7 +2844,7 @@ impl Relay {
     fn build_funding_intent(
         &self,
         context: FundingIntentContext,
-        request_key: CallKey,
+        intent_key: IntentKey<CallKey>,
     ) -> Result<PrepareCallsParameters, RelayError> {
         let escrow = self.create_escrow_struct(&context)?;
         let calls = self.build_escrow_calls(escrow, &context);
@@ -2863,7 +2863,7 @@ impl Relay {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: Some(request_key),
+            key: intent_key.into_stored_key(),
         })
     }
 
@@ -2918,10 +2918,8 @@ impl Relay {
 struct IdentityParameters {
     /// Root EOA address.
     root_eoa: Address,
-    /// Key.
-    key: CallKey,
-    /// Whether the key is derived from the root EOA address.
-    root_eoa_derived: bool,
+    /// Key
+    key: IntentKey<CallKey>,
 }
 
 impl IdentityParameters {
@@ -2931,17 +2929,9 @@ impl IdentityParameters {
     /// [`KeyType::Secp256k1`] key.
     pub fn new(key: Option<&CallKey>, root_eoa: Address) -> Self {
         if let Some(key) = key {
-            Self { root_eoa, key: key.clone(), root_eoa_derived: false }
+            Self { root_eoa, key: IntentKey::StoredKey(key.clone()) }
         } else {
-            Self {
-                root_eoa,
-                key: CallKey {
-                    key_type: KeyType::Secp256k1,
-                    public_key: root_eoa.abi_encode().into(),
-                    prehash: false,
-                },
-                root_eoa_derived: true,
-            }
+            Self { root_eoa, key: IntentKey::EoaRootKey }
         }
     }
 }

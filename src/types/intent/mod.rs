@@ -392,8 +392,21 @@ pub enum IntentKey<K> {
 }
 
 impl<K> IntentKey<K> {
-    /// Returns the stored key if it exists.
+    /// Returns `true` if the key is an EOA root key.
+    pub const fn is_eoa_root_key(&self) -> bool {
+        matches!(self, IntentKey::EoaRootKey)
+    }
+
+    /// Returns a reference to the stored key if it exists.
     pub const fn as_stored_key(&self) -> Option<&K> {
+        match self {
+            IntentKey::EoaRootKey => None,
+            IntentKey::StoredKey(key) => Some(key),
+        }
+    }
+
+    /// Returns the stored key if it exists.
+    pub fn into_stored_key(self) -> Option<K> {
         match self {
             IntentKey::EoaRootKey => None,
             IntentKey::StoredKey(key) => Some(key),
@@ -457,6 +470,16 @@ impl IntentKey<CallKey> {
         match self {
             IntentKey::EoaRootKey => B256::ZERO,
             IntentKey::StoredKey(key) => key.key_hash(),
+        }
+    }
+
+    /// Returns whether the digest will be prehashed by the key.
+    ///
+    /// For EOA root key, returns `false`.
+    pub fn prehash(&self) -> bool {
+        match self {
+            IntentKey::EoaRootKey => false,
+            IntentKey::StoredKey(key) => key.prehash,
         }
     }
 
