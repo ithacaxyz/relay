@@ -53,7 +53,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{collections::HashMap, iter, sync::Arc, time::SystemTime};
+use std::{cmp, collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
@@ -1338,11 +1338,11 @@ impl Relay {
             })
             .collect();
 
-        // sort balances by value on destination chain
+        // sort balances by value on destination chain. we sort in descending order to ensure that
+        // we try chains with the highest balance first
         sources.sort_unstable_by_key(|(_, asset, balance)| {
-            adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals)
+            cmp::Reverse(adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals))
         });
-        sources.reverse();
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
