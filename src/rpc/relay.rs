@@ -12,10 +12,10 @@ use crate::{
     signers::Eip712PayLoadSigner,
     transactions::interop::InteropBundle,
     types::{
-        Account, Asset, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice, AssetType, Call,
-        ChainAssetDiffs, DelegationStatus, Escrow, FundSource, FundingIntentContext, GasEstimate,
-        Health, IERC20, IEscrow, IntentKind, Intents, Key, KeyHash, KeyType,
-        MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
+        AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
+        FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKind, Intents, Key,
+        KeyHash, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
@@ -506,7 +506,7 @@ impl Relay {
                 };
 
         // Simulate the intent
-        let (asset_diffs, asset_deficits, gas_results) = orchestrator
+        let (asset_diffs, mut asset_deficits, gas_results) = orchestrator
             .simulate_execute(
                 mock_from,
                 self.get_simulator_for_orchestrator(*orchestrator.address()),
@@ -571,8 +571,49 @@ impl Relay {
         );
         intent_to_sign.set_payment(payment_amount);
 
-        let fee_token_deficit =
-            intent_to_sign.total_payment_max_amount().saturating_sub(fee_token_balance);
+        // Find amount of fee token spent by this intent.
+        let fee_token_spending = asset_diffs
+            .0
+            .iter()
+            .find(|(address, _)| *address == intent.eoa)
+            .and_then(|(_, diffs)| {
+                diffs.iter().find(|diff| diff.address.unwrap_or_default() == context.fee_token)
+            })
+            .map(|diff| diff.value)
+            .unwrap_or(U256::ZERO);
+
+        // Calculate fee token deficit accounting for any additional spending
+        let fee_token_deficit = intent_to_sign
+            .total_payment_max_amount()
+            .saturating_sub(fee_token_balance.saturating_sub(fee_token_spending));
+
+        // Record fee token deficit in asset deficits
+        if !fee_token_deficit.is_zero() {
+            if let Some(existing) = asset_deficits
+                .0
+                .iter_mut()
+                .find(|asset| asset.address.unwrap_or_default() == context.fee_token)
+            {
+                existing.deficit += intent_to_sign.total_payment_max_amount();
+                existing.required += intent_to_sign.total_payment_max_amount();
+            } else if let Some(metadata) = self
+                .inner
+                .asset_info
+                .get_asset_info_list(&provider, vec![Asset::Token(context.fee_token)])
+                .await?
+                .remove(&Asset::Token(context.fee_token))
+                .map(|info| info.metadata)
+            {
+                asset_deficits.0.push(AssetDeficit {
+                    address: (!context.fee_token.is_zero()).then_some(context.fee_token),
+                    metadata,
+                    required: intent_to_sign.total_payment_max_amount() + fee_token_spending,
+                    deficit: fee_token_deficit,
+                    fiat: None,
+                });
+            }
+        }
+
         let quote = Quote {
             chain_id,
             payment_token_decimals: token.decimals,
