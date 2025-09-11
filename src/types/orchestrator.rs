@@ -298,10 +298,19 @@ impl<P: Provider> Orchestrator<P> {
         )?;
 
         let mut deficits = Vec::with_capacity(result.asset_deficits.len());
-        for ((&asset, &required), balance) in result.asset_deficits.iter().zip(balances) {
+        for ((&asset, required), balance) in result.asset_deficits.iter().zip(balances) {
             let Some(info) = metadata.remove(&Asset::Token(asset)) else {
                 continue;
             };
+
+            let mut required = *required;
+
+            // Remove the fee from the required amount as to not confuse the user.
+            let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
+            if payer == *intent.eoa() && asset == intent.payment_token() {
+                required -= U256::from(1);
+            }
+
             deficits.push(AssetDeficit {
                 address: Some(asset),
                 metadata: info.metadata,
