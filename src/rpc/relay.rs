@@ -2841,7 +2841,7 @@ impl IdentityParameters {
         } else {
             CallKey {
                 key_type: KeyType::Secp256k1,
-                public_key: Bytes::copy_from_slice(eoa.as_slice()),
+                public_key: eoa.abi_encode().into(),
                 prehash: false,
             }
         };
