@@ -8,7 +8,7 @@
 
 use crate::{
     error::RelayError,
-    types::{FeeEstimationContext, PartialIntent},
+    types::{FeeEstimationContext, IntentKey, PartialIntent},
 };
 use alloy::{
     primitives::{Address, U256},
@@ -45,11 +45,15 @@ pub async fn build_simulation_overrides<P: Provider>(
             AccountOverride::default()
                 // If the fee token is the native token, we override it
                 .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                .with_state_diff(if context.key_slot_override {
-                    context.account_key.storage_slots()
-                } else {
-                    Default::default()
-                })
+                .with_state_diff(
+                    if context.key_slot_override
+                        && let IntentKey::StoredKey(key) = &context.key
+                    {
+                        key.storage_slots()
+                    } else {
+                        Default::default()
+                    },
+                )
                 // we manually etch the 7702 designator since we do not have a signed auth item
                 .with_7702_delegation_designator_opt(context.stored_auth_address()),
         )

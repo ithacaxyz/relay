@@ -4,10 +4,10 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        Orchestrator, SignedCall,
+        KeyType, Orchestrator, Signature, SignedCall,
         rpc::{
-            AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, Permission,
-            SpendPermission,
+            AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, CallKey,
+            Permission, SpendPermission,
         },
     },
 };
@@ -79,12 +79,8 @@ pub struct FeeEstimationContext {
     pub fee_token: Address,
     /// Optional stored authorization for EIP-7702 delegation.
     pub stored_authorization: Option<SignedAuthorization>,
-    /// The account key used for signing.
-    pub account_key: Key,
-    /// The account key hash used for signing.
-    ///
-    /// Can be [`B256::ZERO`] to use the root EOA key.
-    pub key_hash: B256,
+    /// The key that will sign the intent.
+    pub key: IntentKey<Key>,
     /// Whether to override key slots in state.
     pub key_slot_override: bool,
     /// The kind of intent being estimated.
@@ -384,4 +380,91 @@ pub struct FundSource {
     /// The cost is in base units of the funds we are trying to transfer; in the future, we may
     /// want to separate this out.
     pub cost: U256,
+}
+
+/// Intent signer key.
+#[derive(Debug, Clone)]
+pub enum IntentKey<K> {
+    /// EOA root key is signing the intent.
+    EoaRootKey,
+    /// Custom stored key is signing the intent.
+    StoredKey(K),
+}
+
+impl IntentKey<Key> {
+    /// Returns the type of the key used to sign the intent.
+    ///
+    /// For EOA root key, returns [`KeyType::Secp256k1`].
+    pub const fn key_type(&self) -> KeyType {
+        match self {
+            IntentKey::EoaRootKey => KeyType::Secp256k1,
+            IntentKey::StoredKey(key) => key.keyType,
+        }
+    }
+
+    /// Returns the hash of the key used to sign the intent.
+    ///
+    /// For EOA root key, returns [`B256::ZERO`].
+    pub fn key_hash(&self) -> B256 {
+        match self {
+            IntentKey::EoaRootKey => B256::ZERO,
+            IntentKey::StoredKey(key) => key.key_hash(),
+        }
+    }
+
+    /// Wraps the provided signature according to [`IntentKey`] type.
+    ///
+    /// - For [`IntentKey::EoaRootKey`], returns the signature as is.
+    /// - For [`IntentKey::StoredKey`], wraps the signature with the key hash and provided prehash
+    ///   flag, and ABI encodes it.
+    pub fn wrap_signature(&self, signature: Bytes, prehash: bool) -> Bytes {
+        match self {
+            IntentKey::EoaRootKey => signature,
+            IntentKey::StoredKey(key) => {
+                Signature { innerSignature: signature, keyHash: key.key_hash(), prehash }
+                    .abi_encode_packed()
+                    .into()
+            }
+        }
+    }
+}
+
+impl IntentKey<CallKey> {
+    /// Returns the type of the key used to sign the intent.
+    ///
+    /// For EOA root key, returns [`KeyType::Secp256k1`].
+    pub const fn key_type(&self) -> KeyType {
+        match self {
+            IntentKey::EoaRootKey => KeyType::Secp256k1,
+            IntentKey::StoredKey(key) => key.key_type,
+        }
+    }
+
+    /// Returns the hash of the key used to sign the intent.
+    ///
+    /// For EOA root key, returns [`B256::ZERO`].
+    pub fn key_hash(&self) -> B256 {
+        match self {
+            IntentKey::EoaRootKey => B256::ZERO,
+            IntentKey::StoredKey(key) => key.key_hash(),
+        }
+    }
+
+    /// Wraps the provided signature according to [`IntentKey`] type.
+    ///
+    /// - For [`IntentKey::EoaRootKey`], returns the signature as is.
+    /// - For [`IntentKey::StoredKey`], wraps the signature with the key hash and provided prehash
+    ///   flag, and ABI encodes it.
+    pub fn wrap_signature(&self, signature: Bytes) -> Bytes {
+        match self {
+            IntentKey::EoaRootKey => signature,
+            IntentKey::StoredKey(key) => Signature {
+                innerSignature: signature,
+                keyHash: key.key_hash(),
+                prehash: key.prehash,
+            }
+            .abi_encode_packed()
+            .into(),
+        }
+    }
 }
