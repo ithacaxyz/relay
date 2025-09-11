@@ -491,12 +491,16 @@ impl Relay {
                 .await
                 .map_err(RelayError::from)?;
 
-            intent_to_sign = intent_to_sign.with_signature(
-                Signature { innerSignature: signature, keyHash: context.key_hash, prehash }
-                    .abi_encode_packed()
-                    .into(),
-            );
-        }
+            intent_to_sign = if context.key_hash.is_zero() {
+                intent_to_sign.with_signature(signature)
+            } else {
+                intent_to_sign.with_signature(
+                    Signature { innerSignature: signature, keyHash: context.key_hash, prehash }
+                        .abi_encode_packed()
+                        .into(),
+                )
+            };
+        };
 
         let gas_validation_offset =
             // Account for gas variation in P256 sig verification.

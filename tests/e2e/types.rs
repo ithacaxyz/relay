@@ -1,4 +1,6 @@
-use super::{await_calls_status, environment::Environment, prepare_calls, send_prepared_calls};
+use std::ops::Not;
+
+use super::{await_calls_status, environment::Environment, prepare_calls};
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, U256},
@@ -9,12 +11,13 @@ use derive_more::Debug;
 use eyre::WrapErr;
 use futures_util::future::{BoxFuture, join_all};
 use relay::{
+    rpc::RelayApiClient,
     signers::DynSigner,
     types::{
         Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::IntentExecuted,
         Signature, SignedCall,
-        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
+        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey, SendPreparedCallsParameters},
     },
 };
 
@@ -176,7 +179,17 @@ impl TxContext<'_> {
         let intent_nonce = context.quote().as_ref().unwrap().ty().quotes[0].intent.nonce();
 
         // Submit signed call
-        let bundle = send_prepared_calls(env, signer, signature, context).await;
+        let bundle = env
+            .relay_endpoint
+            .send_prepared_calls(SendPreparedCallsParameters {
+                capabilities: Default::default(),
+                context,
+                key: self.omit_call_key.not().then_some(signer.to_call_key()),
+                signature,
+            })
+            .await
+            .map(|bundle| bundle.id)
+            .map_err(Into::into);
 
         self.check_bundle(bundle, tx_num, None, intent_nonce, env).await
     }
