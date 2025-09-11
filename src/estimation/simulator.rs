@@ -8,7 +8,7 @@
 
 use crate::{
     error::RelayError,
-    types::{FeeEstimationContext, IntentKey, PartialIntent},
+    types::{FeeEstimationContext, PartialIntent},
 };
 use alloy::{
     primitives::{Address, U256},
@@ -46,8 +46,8 @@ pub async fn build_simulation_overrides<P: Provider>(
                 // If the fee token is the native token, we override it
                 .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
                 .with_state_diff(
-                    if context.key_slot_override
-                        && let IntentKey::StoredKey(key) = &context.key
+                    if let Some(key) =
+                        context.key.as_stored_key().filter(|_| context.key_slot_override)
                     {
                         key.storage_slots()
                     } else {

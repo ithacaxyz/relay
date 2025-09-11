@@ -888,7 +888,6 @@ impl Relay {
         pre_calls: &[SignedCall],
         chain_id: ChainId,
     ) -> Result<Option<IntentKey<Key>>, RelayError> {
-        println!("trying to find key for identity: {:?}", identity);
         for pre_call in pre_calls {
             if let Some(key) = pre_call
                 .authorized_keys()?
@@ -1047,13 +1046,13 @@ impl Relay {
         intent_kind: IntentKind,
         calculate_asset_deficits: bool,
     ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
-        let root_eoa = identity.root_eoa;
+        let eoa = identity.root_eoa;
         let key_hash = identity.key.key_hash();
 
-        let mut account = Account::new(root_eoa, self.provider(request.chain_id)?);
+        let mut account = Account::new(eoa, self.provider(request.chain_id)?);
         if !account.is_delegated().await? {
-            let Some(stored) = self.inner.storage.read_account(&root_eoa).await? else {
-                return Err(StorageError::AccountDoesNotExist(root_eoa).into());
+            let Some(stored) = self.inner.storage.read_account(&eoa).await? else {
+                return Err(StorageError::AccountDoesNotExist(eoa).into());
             };
 
             account = account.with_overrides(stored.state_overrides()?);
@@ -1062,7 +1061,7 @@ impl Relay {
         let stored_precalls = self
             .inner
             .storage
-            .read_precalls_for_eoa(request.chain_id, root_eoa)
+            .read_precalls_for_eoa(request.chain_id, eoa)
             .await?
             .into_iter()
             // Only retain precalls that are relevant for this intent's signing key.
@@ -1078,10 +1077,7 @@ impl Relay {
                     return Ok::<_, RelayError>(Some(call));
                 } else if call.nonce < nonce {
                     // Remove if nonce is already used.
-                    self.inner
-                        .storage
-                        .remove_precall(request.chain_id, root_eoa, call.nonce)
-                        .await?;
+                    self.inner.storage.remove_precall(request.chain_id, eoa, call.nonce).await?;
                 }
 
                 Ok(None)
@@ -1100,9 +1096,7 @@ impl Relay {
             .collect::<Vec<_>>();
 
         // Find the key that authorizes this intent
-        let Some(key) =
-            self.try_find_key(identity, &request.capabilities.pre_calls, request.chain_id).await?
-        else {
+        let Some(key) = self.try_find_key(identity, &pre_calls, request.chain_id).await? else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
         };
 
@@ -2251,7 +2245,7 @@ impl RelayApiServer for Relay {
             .ok_or(QuoteError::InvalidQuoteSignature)?;
 
         let key_hash = intent_key.key_hash();
-        let signature = intent_key.wrap_signature(signature.clone());
+        let signature = intent_key.wrap_signature(signature);
 
         // broadcasts intents in transactions
         let id = match context {

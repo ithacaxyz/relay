@@ -391,6 +391,16 @@ pub enum IntentKey<K> {
     StoredKey(K),
 }
 
+impl<K> IntentKey<K> {
+    /// Returns the stored key if it exists.
+    pub const fn as_stored_key(&self) -> Option<&K> {
+        match self {
+            IntentKey::EoaRootKey => None,
+            IntentKey::StoredKey(key) => Some(key),
+        }
+    }
+}
+
 impl IntentKey<Key> {
     /// Returns the type of the key used to sign the intent.
     ///
