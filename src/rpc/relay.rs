@@ -611,6 +611,8 @@ impl Relay {
                     deficit: fee_token_deficit,
                     fiat: None,
                 });
+            } else {
+                debug!(fee_token = %context.fee_token, "No metadata found for fee token");
             }
         }
 
