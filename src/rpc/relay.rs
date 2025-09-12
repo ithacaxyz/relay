@@ -1173,11 +1173,12 @@ impl Relay {
             // Fetch account assets and status in parallel if we need to auto-select fee token
             if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
                 let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+                let fee_payer = request.capabilities.meta.fee_payer.unwrap_or(from);
 
                 let (status, _) =
                     tokio::try_join!(account.delegation_status(&self.inner.storage), async {
                         let assets = self
-                            .get_assets(GetAssetsParameters::for_chain(from, request.chain_id))
+                            .get_assets(GetAssetsParameters::for_chain(fee_payer, request.chain_id))
                             .await
                             .map_err(RelayError::internal)?;
                         request.capabilities.meta.fee_token = Some(

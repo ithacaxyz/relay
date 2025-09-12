@@ -17,22 +17,46 @@ use relay::{
         },
     },
 };
-/// An account that can be used to send intents.
-pub struct MockAccount {
-    pub address: Address,
-    pub key: KeyWith712Signer,
+
+/// Builder for [`MockAccount`]
+pub struct MockAccountBuilder {
+    key: Option<B256>,
+    mint_erc20: bool,
 }
 
-impl MockAccount {
-    /// Creates a new random account onchain.
-    pub async fn new(env: &Environment) -> eyre::Result<Self> {
-        Self::with_key(env, B256::random()).await
+impl Default for MockAccountBuilder {
+    fn default() -> Self {
+        Self { key: None, mint_erc20: true }
+    }
+}
+
+impl MockAccountBuilder {
+    /// Creates a new [`MockAccountBuilder`]
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Creates a new account onchain with the given key.
-    pub async fn with_key(env: &Environment, key: B256) -> eyre::Result<Self> {
+    /// Set the key for the account
+    pub fn with_key(mut self, key: B256) -> Self {
+        self.key = Some(key);
+        self
+    }
+
+    /// Do not mint ERC20 token
+    pub fn no_erc20_mint(mut self) -> Self {
+        self.mint_erc20 = false;
+        self
+    }
+
+    /// Build the [`MockAccount`]
+    pub async fn build(self, env: &Environment) -> eyre::Result<MockAccount> {
         let eoa = DynSigner::from_signing_key(&B256::random().to_string()).await?;
-        let key = KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, key).unwrap().unwrap();
+        let key = KeyWith712Signer::mock_admin_with_key(
+            KeyType::Secp256k1,
+            self.key.unwrap_or_else(B256::random),
+        )
+        .unwrap()
+        .unwrap();
 
         let PrepareUpgradeAccountResponse { context, digests, .. } = env
             .relay_endpoint
@@ -61,16 +85,20 @@ impl MockAccount {
             .await
             .unwrap();
 
+        let mut calls = vec![];
+        if self.mint_erc20 {
+            calls.push(Call {
+                to: env.erc20,
+                value: U256::ZERO,
+                data: MockErc20::mintCall { a: eoa.address(), val: U256::from(100e18) }
+                    .abi_encode()
+                    .into(),
+            })
+        };
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
-                calls: vec![Call {
-                    to: env.erc20,
-                    value: U256::ZERO,
-                    data: MockErc20::mintCall { a: eoa.address(), val: U256::from(100e18) }
-                        .abi_encode()
-                        .into(),
-                }],
+                calls,
                 chain_id: env.chain_id(),
                 from: Some(eoa.address()),
                 capabilities: PrepareCallsCapabilities {
@@ -98,6 +126,25 @@ impl MockAccount {
         assert!(status.status.is_final());
 
         Ok(MockAccount { address: eoa.address(), key })
+    }
+}
+
+/// An account that can be used to send intents.
+pub struct MockAccount {
+    pub address: Address,
+    pub key: KeyWith712Signer,
+}
+
+// TODO: remove `new` and `with_key` methods, use `MockAccountBuilder` everywhere
+impl MockAccount {
+    /// Creates a new random account onchain.
+    pub async fn new(env: &Environment) -> eyre::Result<Self> {
+        MockAccountBuilder::new().build(env).await
+    }
+
+    /// Creates a new account onchain with the given key.
+    pub async fn with_key(env: &Environment, key: B256) -> eyre::Result<Self> {
+        MockAccountBuilder::new().with_key(key).build(env).await
     }
 
     /// Prepares a simple transaction from the account which is ready to be sent to the transacton
