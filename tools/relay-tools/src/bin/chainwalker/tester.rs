@@ -18,7 +18,8 @@ use relay::{
     },
 };
 use relay_tools::common::{
-    format_chain, format_prepare_debug, format_units_safe, normalize_amount,
+    format::format_quote_deficits, format_chain, format_prepare_debug, format_units_safe,
+    normalize_amount,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -857,8 +858,17 @@ impl InteropTester {
         let Some(quotes) = context.quote() else {
             return Err(eyre!("No quotes returned"));
         };
-        if quotes.ty().quotes.len() <= 1 {
-            error!("Expected interop bundle but got {} quotes", quotes.ty().quotes.len());
+        if quotes.ty().quotes.is_empty() {
+            error!("Expected interop bundle but didn't get any quotes");
+            return failed_transfer_result(
+                conn,
+                total_transfer,
+                "Failed",
+                "No interop bundle created - check chain connectivity".to_string(),
+            );
+        } else if quotes.ty().quotes.len() == 1 {
+            error!("Expected interop bundle but got 1 quote");
+            eprint!("{}", format_quote_deficits(&quotes.ty().quotes[0], conn.to_token_decimals));
             return failed_transfer_result(
                 conn,
                 total_transfer,
