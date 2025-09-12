@@ -18,7 +18,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Asset, AssetType, Call, IERC20, KeyType, KeyWith712Signer,
+        Asset, AssetDiff, AssetType, Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddressOrNative, AssetFilterItem, GetAssetsParameters, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse,
@@ -129,17 +129,24 @@ async fn asset_diff() -> eyre::Result<()> {
         async { env.relay_endpoint.prepare_calls(p).await }
     };
 
+    let find_full_diff = |resp: &PrepareCallsResponse,
+                          eoa: Address,
+                          token: Address,
+                          is_incoming: bool|
+     -> Option<AssetDiff> {
+        let asset_diffs = resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
+        asset_diffs
+            .0
+            .iter()
+            .filter(|(addr, _)| addr == &eoa)
+            .flat_map(|(_, diffs)| diffs.iter())
+            .find(|d| d.address == Some(token) && d.direction.is_incoming() == is_incoming)
+            .cloned()
+    };
+
     let find_diff =
         |resp: &PrepareCallsResponse, eoa: Address, token: Address, is_incoming: bool| {
-            let asset_diffs =
-                resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
-            asset_diffs
-                .0
-                .iter()
-                .filter(|(addr, _)| addr == &eoa)
-                .flat_map(|(_, diffs)| diffs.iter())
-                .find(|d| d.address == Some(token) && d.direction.is_incoming() == is_incoming)
-                .map(|d| d.value)
+            find_full_diff(resp, eoa, token, is_incoming).map(|d| d.value)
         };
 
     let mint_erc721 = if std::env::var("TEST_ERC721").is_ok() {
@@ -164,10 +171,11 @@ async fn asset_diff() -> eyre::Result<()> {
     // test2: eoa mints and transfers the NFT out. So, only the receiving address should have have
     // an inflow.
     let random_eoa = Address::random();
+    let erc20_recipient = Address::random();
 
     let resp2 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.erc20s[5], erc20_recipient, U256::from(1u64)),
         mint_erc721,
         common_calls::transfer_721(env.erc721, env.eoa.address(), random_eoa, erc721_id),
     ])
@@ -180,7 +188,13 @@ async fn asset_diff() -> eyre::Result<()> {
     assert_eq!(find_diff(&resp2, random_eoa, env.erc721, is_incoming), Some(erc721_id));
 
     // ERC20 spend repeats
-    assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
+    let erc20_diff = find_full_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming);
+    assert!(erc20_diff.is_some());
+
+    // make sure recipient is the erc20 recipient
+    let diff_recipients = erc20_diff.unwrap().recipients;
+    assert_eq!(diff_recipients.len(), 1);
+    assert_eq!(diff_recipients[0], erc20_recipient);
 
     Ok(())
 }
