@@ -22,7 +22,11 @@ use url::Url;
 #[derive(Debug, Parser)]
 #[command(author, about = "Chainwalker - Walking through chain connections", long_about = None)]
 pub struct Args {
-    /// Mnemonic phrase for accounts that will be used for testing
+    /// Mnemonic phrase for accounts that will be used for testing.
+    ///
+    /// Two keys will be derived from this mnemonic:
+    /// - Root EOA key to use when `--use-root-key` is used
+    /// - Custom account key to use when `--use-root-key` is not used
     #[arg(long = "mnemonic", value_name = "PHRASE", required = true, env = "MNEMONIC")]
     mnemonic: String,
 
