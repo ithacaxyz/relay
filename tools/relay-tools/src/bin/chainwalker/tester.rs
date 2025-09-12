@@ -31,7 +31,6 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug)]
 pub struct InteropTester {
     pub test_account: DynSigner,
-    pub root_key: KeyWith712Signer,
     pub account_key: KeyWith712Signer,
     pub relay_client: HttpClient,
     pub only_uids: Option<Vec<String>>,
@@ -864,15 +863,18 @@ impl InteropTester {
         let (total_fee, fee_formatted) = self.calculate_total_fee(quotes, conn)?;
 
         // Sign and send
-        let key = if self.use_root_key { &self.root_key } else { &self.account_key };
-        let signature = key.sign_payload_hash(digest).await?;
+        let signature = if self.use_root_key {
+            self.test_account.sign_payload_hash(digest).await
+        } else {
+            self.account_key.sign_payload_hash(digest).await
+        }?;
 
         let bundle_result = self
             .relay_client
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: self.use_root_key.then(|| self.account_key.to_call_key()),
+                key: self.use_root_key.not().then(|| self.account_key.to_call_key()),
                 signature,
             })
             .await;

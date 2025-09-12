@@ -169,7 +169,7 @@ async fn get_authorization() -> eyre::Result<()> {
 async fn eoa_key_lazily() -> eyre::Result<()> {
     let env = Environment::setup().await.unwrap();
 
-    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::MAX, true);
+    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::ZERO, true);
     upgrade_account_lazily(&env, &[], AuthKind::Auth).await?;
 
     let recipient = Address::random();
@@ -194,7 +194,7 @@ async fn eoa_key_lazily() -> eyre::Result<()> {
 async fn eoa_key_eagerly() -> eyre::Result<()> {
     let env = Environment::setup().await.unwrap();
 
-    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::MAX, true);
+    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::ZERO, true);
     upgrade_account_lazily(&env, &[], AuthKind::Auth).await?;
     TxContext {
         expected: ExpectedOutcome::Pass,

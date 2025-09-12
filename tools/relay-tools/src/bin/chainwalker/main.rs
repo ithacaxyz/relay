@@ -71,20 +71,18 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let mut signers = DynSigner::derive_from_mnemonic(args.mnemonic.parse()?, 2)?;
-    let root_signer = signers.remove(0);
+    let test_account = signers.remove(0);
     let account_signer = signers.remove(0);
 
-    let root_key = KeyWith712Signer::secp256k1_from_signer(root_signer.clone(), U40::MAX, true);
-    let account_key = KeyWith712Signer::secp256k1_from_signer(account_signer, U40::MAX, true);
+    let account_key = KeyWith712Signer::secp256k1_from_signer(account_signer, U40::ZERO, true);
 
     let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
 
-    info!("Initialized Chainwalker for address: {}", root_signer.address());
+    info!("Initialized Chainwalker for address: {}", test_account.address());
 
     // Create InteropTester
     let mut tester = InteropTester {
-        test_account: root_signer,
-        root_key,
+        test_account,
         account_key,
         relay_client,
         only_uids: args.only_uids,
