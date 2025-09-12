@@ -1104,7 +1104,7 @@ impl Relay {
             .into_iter()
             .flatten();
 
-        let pre_calls = request
+        let mut pre_calls = request
             .capabilities
             .pre_calls
             .iter()
@@ -1117,6 +1117,17 @@ impl Relay {
         // Check if upgrade is needed (only for delegated accounts)
         if let Some(new_impl) = self.maybe_delegation_upgrade(delegation_implementation)? {
             calls.push(Call::upgrade_proxy_account(new_impl));
+        }
+
+        // delegate the fee payer if it is stored and
+        if let Some(fee_payer) = request.capabilities.meta.fee_payer {
+            // check if delegation is needed
+            let delegation_status = self.delegation_status(&fee_payer, request.chain_id).await?;
+
+            if let DelegationStatus::Stored { account, .. } = delegation_status {
+                // put the delegation as the first call
+                pre_calls.insert(0, account.pre_call.clone());
+            }
         }
 
         // Find the key that authorizes this intent
