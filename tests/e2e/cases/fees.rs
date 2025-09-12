@@ -1,7 +1,8 @@
 use crate::e2e::{
     AuthKind, await_calls_status,
-    cases::upgrade::upgrade_account_lazily,
+    cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
     environment::{Environment, EnvironmentConfig, mint_erc20s},
+    eoa::MockAccount,
     send_prepared_calls,
 };
 use alloy::{
@@ -162,6 +163,66 @@ async fn auto_select_fee_token() -> eyre::Result<()> {
         quote.ty().quotes[0].intent.payment_token(),
         env.fee_token,
         "Should have selected the fee token with highest USD value"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_select_fee_token_with_fee_payer() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    // Create a separate fee payer account (upgraded Porto account)
+    let fee_payer = MockAccount::new(&env).await?;
+
+    // Give the fee_payer some ERC20s
+    for _ in 0..5 {
+        mint_erc20s(&[env.fee_token], &[fee_payer.address], env.provider()).await?;
+    }
+
+    // Create and authorize a key
+    let admin_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(env.eoa.address()),
+            calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(100))],
+            chain_id: env.chain_id(),
+            capabilities: PrepareCallsCapabilities {
+                authorize_keys: vec![],
+                meta: Meta {
+                    fee_payer: Some(fee_payer.address), // Specify fee_payer
+                    fee_token: None,                    /* Not specifying fee token - relay
+                                                         * should auto-select from fee_payer's
+                                                         * assets */
+                    nonce: None,
+                },
+                revoke_keys: vec![],
+                pre_calls: vec![],
+                pre_call: false,
+                required_funds: vec![],
+            },
+            state_overrides: Default::default(),
+            balance_overrides: Default::default(),
+            key: Some(admin_key.to_call_key()),
+        })
+        .await?;
+
+    // Verify that the fee token was auto-selected based on fee_payer's assets
+    let quote = response.context.quote().expect("Should have quote context");
+    assert_eq!(
+        quote.ty().quotes[0].intent.payment_token(),
+        env.fee_token,
+        "Should have selected the fee token from fee_payer's assets, not from EOA's assets"
+    );
+
+    // Also verify the payer is set correctly
+    assert_eq!(
+        quote.ty().quotes[0].intent.payer(),
+        fee_payer.address,
+        "Intent payer should be the fee_payer address"
     );
 
     Ok(())
