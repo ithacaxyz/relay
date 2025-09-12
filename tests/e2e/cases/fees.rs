@@ -2,7 +2,7 @@ use crate::e2e::{
     AuthKind, await_calls_status,
     cases::{upgrade::upgrade_account_lazily, upgrade_account_eagerly},
     environment::{Environment, EnvironmentConfig, mint_erc20s},
-    eoa::MockAccount,
+    eoa::MockAccountBuilder,
     send_prepared_calls,
 };
 use alloy::{
@@ -172,8 +172,8 @@ async fn auto_select_fee_token() -> eyre::Result<()> {
 async fn auto_select_fee_token_with_fee_payer() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
-    // Create a separate fee payer account (upgraded Porto account)
-    let fee_payer = MockAccount::new(&env).await?;
+    // Create a separate fee payer account (upgraded Porto account) without any ERC20
+    let fee_payer = MockAccountBuilder::new().no_erc20_mint().build(&env).await?;
 
     // Give the fee_payer some ERC20s
     for _ in 0..5 {
