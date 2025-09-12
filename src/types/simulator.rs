@@ -393,20 +393,20 @@ impl<P: Provider> SimulatorContract<P> {
         let callee = call.to?;
 
         // Extract sender and amount
-        let (asset, from, to, amount) =
+        let (asset, from, to, amount, is_transfer_from) =
             // First try to decode as `transferFrom`, as it's
             // more likely the user is interacting with a
             // contract that tries to pull funds from their
             // wallet
             IERC20::transferFromCall::abi_decode(&call.input)
-                    .map(|transfer| (transfer.from, transfer.to, transfer.amount))
+                    .map(|transfer| (transfer.from, transfer.to, transfer.amount, true))
                     .or_else(|_| {
                         // Then try to decode as `transfer` in case the user is making a direct
                         // transfer
                         IERC20::transferCall::abi_decode(&call.input)
-                            .map(|transfer| (call.from, transfer.to, transfer.amount))
-                    }).map(|(from, to, amount)| {
-                        (Asset::Token(callee), from, to, amount)
+                            .map(|transfer| (call.from, transfer.to, transfer.amount, false))
+                    }).map(|(from, to, amount, is_transfer_from)| {
+                        (Asset::Token(callee), from, to, amount, is_transfer_from)
                     })
                     // If both attempts failed, it's not an ERC-20 transfer. We're sure that it's not a
                     // native token transfer either, because tracing of calls with insufficient native
@@ -438,10 +438,14 @@ impl<P: Provider> SimulatorContract<P> {
         {
         }
         // USDT transfers just revert on not enough allowance or insufficient funds
-        else if call.error.is_some()
-            // Make sure it's not a revert due to insufficient allowance
-            && let Ok(allowance) = IERC20::new(asset.address(), self.simulator.provider()).allowance(from, to).call().await
-            && allowance > amount
+        else if call.error.is_some() && !is_transfer_from {
+        } else if call.error.is_some()
+            && is_transfer_from
+            && let Ok(allowance) = IERC20::new(asset.address(), self.simulator.provider())
+                .allowance(from, to)
+                .call()
+                .await
+            && allowance >= amount
         {
         } else {
             return Some((from, to, asset, amount, true));
