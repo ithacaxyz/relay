@@ -1,5 +1,5 @@
 use super::{report::*, utils::find_eulerian_path_indices};
-use alloy::primitives::{Address, ChainId, U256};
+use alloy::primitives::{Address, B256, Bytes, ChainId, U256};
 use eyre::{Result, eyre};
 use jsonrpsee::http_client::HttpClient;
 use relay::{
@@ -9,8 +9,8 @@ use relay::{
     types::{
         AssetUid, Call, KeyWith712Signer, Quotes, Signed,
         rpc::{
-            Asset7811, BundleId, CallStatusCode, GetAssetsParameters, GetKeysParameters, Meta,
-            PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            Asset7811, BundleId, CallKey, CallStatusCode, GetAssetsParameters, GetKeysParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse, RelayCapabilities,
             RequiredAsset, SendPreparedCallsParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters, UpgradeAccountSignatures,
@@ -31,15 +31,15 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug)]
 pub struct InteropTester {
     pub test_account: DynSigner,
+    pub account_key: KeyWith712Signer,
     pub relay_client: HttpClient,
     pub only_uids: Option<Vec<String>>,
     pub only_chains: Option<Vec<ChainId>>,
     pub exclude_chains: Option<Vec<ChainId>>,
     pub transfer_percentage: u8,
     pub no_run: bool,
+    pub use_root_key: bool,
     pub skip_settlement_wait: bool,
-    pub no_key: bool,
-    pub account_key: KeyWith712Signer,
 }
 
 impl InteropTester {
@@ -793,9 +793,6 @@ impl InteropTester {
             );
         }
 
-        // Use the account key
-        let key = &self.account_key;
-
         // Prepare the call - for interop, we receive tokens on the destination chain
         let call_transfer_amount = total_transfer / U256::from(2); // todo(joshie): there's an edge case on USDT that makes us understimate gas on a self transfer of the full amount.
         let call = if conn.to_token_address.is_zero() {
@@ -825,7 +822,7 @@ impl InteropTester {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: self.no_key.not().then_some(key.to_call_key()),
+            key: self.call_key(),
         };
 
         let prepare_result = loop {
@@ -876,16 +873,13 @@ impl InteropTester {
         // Calculate total fee from all quotes
         let (total_fee, fee_formatted) = self.calculate_total_fee(quotes, conn)?;
 
-        // Sign and send
-        let signature = key.sign_payload_hash(digest).await?;
-
         let bundle_result = self
             .relay_client
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: self.no_key.not().then_some(key.to_call_key()),
-                signature,
+                key: self.call_key(),
+                signature: self.sign_digest(digest).await?,
             })
             .await;
 
@@ -970,6 +964,18 @@ impl InteropTester {
         }
     }
 
+    async fn sign_digest(&self, digest: B256) -> Result<Bytes> {
+        if self.use_root_key {
+            self.test_account.sign_payload_hash(digest).await
+        } else {
+            self.account_key.sign_payload_hash(digest).await
+        }
+    }
+
+    fn call_key(&self) -> Option<CallKey> {
+        self.use_root_key.not().then(|| self.account_key.to_call_key())
+    }
+
     fn calculate_total_fee(
         &self,
         quotes: &Signed<Quotes>,
@@ -1017,15 +1023,12 @@ impl InteropTester {
             return Err(eyre!("Chain {} not found in capabilities", chain_id));
         };
 
-        // Use the existing account key
-        let key = &self.account_key;
-
         // Prepare upgrade
         let PrepareUpgradeAccountResponse { context, digests, .. } = self
             .relay_client
             .prepare_upgrade_account(PrepareUpgradeAccountParameters {
                 capabilities: UpgradeAccountCapabilities {
-                    authorize_keys: vec![key.to_authorized()],
+                    authorize_keys: vec![self.account_key.to_authorized()],
                 },
                 chain_id: Some(chain_id),
                 address: self.test_account.address(),

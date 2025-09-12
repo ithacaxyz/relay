@@ -5,12 +5,15 @@ mod report;
 mod tester;
 mod utils;
 
-use alloy::primitives::ChainId;
+use alloy::primitives::{ChainId, keccak256};
 use clap::Parser;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use jsonrpsee::http_client::HttpClientBuilder;
-use relay::signers::DynSigner;
-use relay_tools::common::{create_passkey, init_logging};
+use relay::{
+    signers::DynSigner,
+    types::{KeyType, KeyWith712Signer},
+};
+use relay_tools::common::init_logging;
 use tester::InteropTester;
 use tracing::info;
 use url::Url;
@@ -39,10 +42,9 @@ pub struct Args {
     #[arg(long = "no-run")]
     no_run: bool,
 
-    /// Do not pass a separate `key` to `prepareCalls` requests and let the relay to detect EOA
-    /// signature instead
-    #[arg(long = "no-key")]
-    no_key: bool,
+    /// Do not pass a separate `key` to `prepareCalls` requests and use the root EOA key instead
+    #[arg(long = "use-root-key")]
+    use_root_key: bool,
 
     /// Continue even if account has been used before (only use if testing same account
     /// implementation)
@@ -71,21 +73,26 @@ async fn main() -> Result<()> {
     // Create InteropTester
     let test_account = DynSigner::from_signing_key(&args.private_key).await?;
     let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-    let account_key = create_passkey(&args.private_key)?;
+    // Derive an account key that will be authorized in porto account, it's different from the root
+    // EOA key
+    let account_key =
+        KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, keccak256(&args.private_key))?
+            .ok_or_eyre("Failed to create account key")?;
 
     info!("Initialized Chainwalker for address: {}", test_account.address());
 
+    // Create InteropTester
     let mut tester = InteropTester {
         test_account,
+        account_key,
         relay_client,
         only_uids: args.only_uids,
         only_chains: args.only_chains,
         exclude_chains: args.exclude_chains,
         transfer_percentage: args.transfer_percentage,
         no_run: args.no_run,
-        no_key: args.no_key,
+        use_root_key: args.use_root_key,
         skip_settlement_wait: args.skip_settlement_wait,
-        account_key,
     };
 
     let _report = tester.run(args.force).await?;
