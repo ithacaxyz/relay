@@ -5,7 +5,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use relay::types::{
-    Call, DiffDirection,
+    Call, DiffDirection, Quote,
     rpc::{PrepareCallsContext, PrepareCallsParameters, PrepareCallsResponse},
 };
 
@@ -180,4 +180,42 @@ pub fn format_chain(chain_id: ChainId) -> String {
 pub fn format_units_safe(value: U256, decimals: u8) -> String {
     use alloy::primitives::utils::format_units;
     format_units(value, decimals).unwrap_or_else(|_| value.to_string())
+}
+
+/// Format quote deficits
+pub fn format_quote_deficits(quote: &Quote, fee_token_decimals: u8) -> String {
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "Estimated fees: {}\n",
+        format_units_safe(quote.intent.total_payment_max_amount(), fee_token_decimals)
+    ));
+
+    if !quote.fee_token_deficit.is_zero() {
+        output.push_str(&format!(
+            "Fee token deficit: {}\n",
+            format_units_safe(quote.fee_token_deficit, fee_token_decimals)
+        ));
+    }
+
+    if !quote.asset_deficits.is_empty() {
+        for deficit in &quote.asset_deficits.0 {
+            let decimals = deficit.metadata.decimals.unwrap_or_default();
+            if deficit.address.unwrap_or_default() == quote.intent.payment_token() {
+                output.push_str(&format!(
+                    "Asset deficit: {} {}\n",
+                    format_units_safe(deficit.deficit, decimals),
+                    deficit.metadata.symbol.clone().unwrap_or_default()
+                ));
+            } else {
+                output.push_str(&format!(
+                    "Unexpected deficit: {} {}\n",
+                    format_units_safe(deficit.deficit, decimals),
+                    deficit.metadata.symbol.clone().unwrap_or_default()
+                ));
+            }
+        }
+    }
+
+    output
 }
