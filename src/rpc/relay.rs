@@ -1167,19 +1167,18 @@ impl Relay {
         let provider = self.provider(request.chain_id)?;
 
         // Get delegation status and ensure fee_token is set (only for non-pre_call)
-        let delegation_status = if let Some(address) =
-            request.capabilities.meta.fee_payer.or(request.from)
-        {
-            let account = Account::new(address, provider.clone());
+        let delegation_status = if let Some(from) = request.from {
+            let account = Account::new(from, provider.clone());
 
             // Fetch account assets and status in parallel if we need to auto-select fee token
             if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
                 let chain = self.inner.chains.ensure_chain(request.chain_id)?;
+                let sender = request.capabilities.meta.fee_payer.unwrap_or(from);
 
                 let (status, _) =
                     tokio::try_join!(account.delegation_status(&self.inner.storage), async {
                         let assets = self
-                            .get_assets(GetAssetsParameters::for_chain(address, request.chain_id))
+                            .get_assets(GetAssetsParameters::for_chain(sender, request.chain_id))
                             .await
                             .map_err(RelayError::internal)?;
                         request.capabilities.meta.fee_token = Some(
