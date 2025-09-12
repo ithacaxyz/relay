@@ -9,8 +9,11 @@ use alloy::primitives::ChainId;
 use clap::Parser;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClientBuilder;
-use relay::signers::DynSigner;
-use relay_tools::common::{create_passkey, init_logging};
+use relay::{
+    signers::DynSigner,
+    types::{KeyWith712Signer, U40},
+};
+use relay_tools::common::init_logging;
 use tester::InteropTester;
 use tracing::info;
 use url::Url;
@@ -19,9 +22,9 @@ use url::Url;
 #[derive(Debug, Parser)]
 #[command(author, about = "Chainwalker - Walking through chain connections", long_about = None)]
 pub struct Args {
-    /// Private key of test account that will be used for testing
-    #[arg(long = "private-key", value_name = "KEY", required = true, env = "PRIVATE_KEY")]
-    private_key: String,
+    /// Mnemonic phrase for accounts that will be used for testing
+    #[arg(long = "mnemonic", value_name = "PHRASE", required = true, env = "MNEMONIC")]
+    mnemonic: String,
 
     /// Only test these specific interop token UIDs
     #[arg(long = "only-uids", value_delimiter = ',')]
@@ -39,10 +42,9 @@ pub struct Args {
     #[arg(long = "no-run")]
     no_run: bool,
 
-    /// Do not pass a separate `key` to `prepareCalls` requests and let the relay to detect EOA
-    /// signature instead
-    #[arg(long = "no-key")]
-    no_key: bool,
+    /// Do not pass a separate `key` to `prepareCalls` requests and use the root EOA key instead
+    #[arg(long = "use-root-key")]
+    use_root_key: bool,
 
     /// Continue even if account has been used before (only use if testing same account
     /// implementation)
@@ -68,24 +70,30 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Create InteropTester
-    let test_account = DynSigner::from_signing_key(&args.private_key).await?;
+    let mut signers = DynSigner::derive_from_mnemonic(args.mnemonic.parse()?, 2)?;
+    let root_signer = signers.remove(0);
+    let account_signer = signers.remove(0);
+
+    let root_key = KeyWith712Signer::secp256k1_from_signer(root_signer.clone(), U40::MAX, true);
+    let account_key = KeyWith712Signer::secp256k1_from_signer(account_signer, U40::MAX, true);
+
     let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
-    let account_key = create_passkey(&args.private_key)?;
 
-    info!("Initialized Chainwalker for address: {}", test_account.address());
+    info!("Initialized Chainwalker for address: {}", root_signer.address());
 
+    // Create InteropTester
     let mut tester = InteropTester {
-        test_account,
+        test_account: root_signer,
+        root_key,
+        account_key,
         relay_client,
         only_uids: args.only_uids,
         only_chains: args.only_chains,
         exclude_chains: args.exclude_chains,
         transfer_percentage: args.transfer_percentage,
         no_run: args.no_run,
-        no_key: args.no_key,
+        use_root_key: args.use_root_key,
         skip_settlement_wait: args.skip_settlement_wait,
-        account_key,
     };
 
     let _report = tester.run(args.force).await?;
