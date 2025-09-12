@@ -5,13 +5,13 @@ mod report;
 mod tester;
 mod utils;
 
-use alloy::primitives::ChainId;
+use alloy::primitives::{ChainId, keccak256};
 use clap::Parser;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use jsonrpsee::http_client::HttpClientBuilder;
 use relay::{
     signers::DynSigner,
-    types::{KeyWith712Signer, U40},
+    types::{KeyType, KeyWith712Signer},
 };
 use relay_tools::common::init_logging;
 use tester::InteropTester;
@@ -22,13 +22,9 @@ use url::Url;
 #[derive(Debug, Parser)]
 #[command(author, about = "Chainwalker - Walking through chain connections", long_about = None)]
 pub struct Args {
-    /// Mnemonic phrase for accounts that will be used for testing.
-    ///
-    /// Two keys will be derived from this mnemonic:
-    /// - Root EOA key
-    /// - Custom account key to use when `--use-root-key` is not used
-    #[arg(long = "mnemonic", value_name = "PHRASE", required = true, env = "MNEMONIC")]
-    mnemonic: String,
+    /// Private key of test account that will be used for testing
+    #[arg(long = "private-key", value_name = "KEY", required = true, env = "PRIVATE_KEY")]
+    private_key: String,
 
     /// Only test these specific interop token UIDs
     #[arg(long = "only-uids", value_delimiter = ',')]
@@ -74,13 +70,14 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let mut signers = DynSigner::derive_from_mnemonic(args.mnemonic.parse()?, 2)?;
-    let test_account = signers.remove(0);
-    let account_signer = signers.remove(0);
-
-    let account_key = KeyWith712Signer::secp256k1_from_signer(account_signer, U40::ZERO, true);
-
+    // Create InteropTester
+    let test_account = DynSigner::from_signing_key(&args.private_key).await?;
     let relay_client = HttpClientBuilder::new().build(&args.relay_url)?;
+    // Derive an account key that will be authorized in porto account, it's different from the root
+    // EOA key
+    let account_key =
+        KeyWith712Signer::mock_admin_with_key(KeyType::Secp256k1, keccak256(&args.private_key))?
+            .ok_or_eyre("Failed to create account key")?;
 
     info!("Initialized Chainwalker for address: {}", test_account.address());
 
