@@ -3,7 +3,7 @@ use alloy::primitives::{Address, ChainId, U256};
 use eyre::{Result, eyre};
 use jsonrpsee::http_client::HttpClient;
 use relay::{
-    rpc::RelayApiClient,
+    rpc::{RelayApiClient, adjust_balance_for_decimals},
     signers::{DynSigner, Eip712PayLoadSigner},
     storage::BundleStatus,
     types::{
@@ -446,12 +446,18 @@ impl InteropTester {
 
         // The destination funder needs to have enough to cover the transfer amount
         // (The relay will handle pulling from various source chains)
-        if funder_balance < transfer_amount {
+        if funder_balance
+            < adjust_balance_for_decimals(
+                transfer_amount,
+                conn.from_token_decimals,
+                conn.to_token_decimals,
+            )
+        {
             error!(
                 chain = %format_chain(conn.to_chain),
                 token = %conn.to_token_address,
                 uid = %conn.token_uid,
-                required = %format_units_safe(transfer_amount, conn.to_token_decimals),
+                required = %format_units_safe(transfer_amount, conn.from_token_decimals),
                 available = %format_units_safe(funder_balance, conn.to_token_decimals),
                 "Destination chain funder has insufficient balance for this transfer"
             );
@@ -459,7 +465,7 @@ impl InteropTester {
                 "Funder on {} has insufficient {} balance: {} required, {} available",
                 format_chain(conn.to_chain),
                 conn.token_uid,
-                format_units_safe(transfer_amount, conn.to_token_decimals),
+                format_units_safe(transfer_amount, conn.from_token_decimals),
                 format_units_safe(funder_balance, conn.to_token_decimals)
             ));
         }
@@ -468,7 +474,7 @@ impl InteropTester {
             chain = %format_chain(conn.to_chain),
             token = %conn.to_token_address,
             uid = %conn.token_uid,
-            required = %format_units_safe(transfer_amount, conn.to_token_decimals),
+            required = %format_units_safe(transfer_amount, conn.from_token_decimals),
             available = %format_units_safe(funder_balance, conn.to_token_decimals),
             "Destination chain funder has sufficient balance for this transfer"
         );
@@ -501,10 +507,13 @@ impl InteropTester {
                 let balance = user_assets.balance_on_chain(chain, token.into());
                 token_info
                     .entry(uid.clone())
-                    .and_modify(|(start_chain, max_bal, _)| {
-                        if balance > *max_bal {
+                    .and_modify(|(start_chain, max_bal, start_decimals)| {
+                        if adjust_balance_for_decimals(balance, decimals, *start_decimals)
+                            > *max_bal
+                        {
                             *max_bal = balance;
                             *start_chain = chain;
+                            *start_decimals = decimals;
                         }
                     })
                     .or_insert((chain, balance, decimals));
@@ -530,19 +539,21 @@ impl InteropTester {
         let mut insufficient = Vec::new();
 
         for conn in test_plan {
-            let (starting_chain, max_balance, _) = token_info.get(&conn.token_uid).unwrap();
+            let (starting_chain, max_balance, start_decimals) =
+                token_info.get(&conn.token_uid).unwrap();
 
             // Helper to check funder balance
             let mut check_funder = |chain: ChainId, token: Address, decimals: u8| {
                 if chain != *starting_chain {
                     let key = (chain, token);
                     let funder_balance = funder_balances.get(&key).copied().unwrap_or(U256::ZERO);
-                    if funder_balance < *max_balance {
+                    if adjust_balance_for_decimals(funder_balance, decimals, *start_decimals)
+                        < *max_balance
+                    {
                         insufficient.push((
                             key,
-                            *max_balance,
-                            funder_balance,
-                            decimals,
+                            format_units_safe(*max_balance, *start_decimals),
+                            format_units_safe(funder_balance, decimals),
                             conn.token_uid.clone(),
                         ));
                     }
@@ -559,13 +570,13 @@ impl InteropTester {
 
         if !insufficient.is_empty() {
             error!("Insufficient funder liquidity detected:");
-            for ((chain_id, token), required, available, decimals, uid) in insufficient {
+            for ((chain_id, token), required, available, uid) in insufficient {
                 error!(
                     chain = %format_chain(chain_id),
                     token = %token,
                     uid = %uid,
-                    required = %format_units_safe(required, decimals),
-                    available = %format_units_safe(available, decimals),
+                    required = %required,
+                    available = %available,
                     "Funder has insufficient balance"
                 );
             }
