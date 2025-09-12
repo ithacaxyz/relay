@@ -154,4 +154,10 @@ impl Quote {
         hasher.update(self.orchestrator);
         hasher.finalize()
     }
+
+    /// Returns true if the quote has any deficits.
+    pub fn has_deficits(&self) -> bool {
+        self.asset_deficits.0.iter().any(|deficit| !deficit.deficit.is_zero())
+            || !self.fee_token_deficit.is_zero()
+    }
 }
