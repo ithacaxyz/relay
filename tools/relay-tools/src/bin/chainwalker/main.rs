@@ -25,7 +25,7 @@ pub struct Args {
     /// Mnemonic phrase for accounts that will be used for testing.
     ///
     /// Two keys will be derived from this mnemonic:
-    /// - Root EOA key to use when `--use-root-key` is used
+    /// - Root EOA key
     /// - Custom account key to use when `--use-root-key` is not used
     #[arg(long = "mnemonic", value_name = "PHRASE", required = true, env = "MNEMONIC")]
     mnemonic: String,

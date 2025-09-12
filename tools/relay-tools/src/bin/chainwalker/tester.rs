@@ -1,5 +1,5 @@
 use super::{report::*, utils::find_eulerian_path_indices};
-use alloy::primitives::{Address, ChainId, U256};
+use alloy::primitives::{Address, B256, Bytes, ChainId, U256};
 use eyre::{Result, eyre};
 use jsonrpsee::http_client::HttpClient;
 use relay::{
@@ -9,8 +9,8 @@ use relay::{
     types::{
         AssetUid, Call, KeyWith712Signer, Quotes, Signed,
         rpc::{
-            Asset7811, BundleId, CallStatusCode, GetAssetsParameters, GetKeysParameters, Meta,
-            PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            Asset7811, BundleId, CallKey, CallStatusCode, GetAssetsParameters, GetKeysParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse, RelayCapabilities,
             RequiredAsset, SendPreparedCallsParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters, UpgradeAccountSignatures,
@@ -811,7 +811,7 @@ impl InteropTester {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: self.use_root_key.not().then(|| self.account_key.to_call_key()),
+            key: self.call_key(),
         };
 
         let prepare_result = loop {
@@ -862,20 +862,13 @@ impl InteropTester {
         // Calculate total fee from all quotes
         let (total_fee, fee_formatted) = self.calculate_total_fee(quotes, conn)?;
 
-        // Sign and send
-        let signature = if self.use_root_key {
-            self.test_account.sign_payload_hash(digest).await
-        } else {
-            self.account_key.sign_payload_hash(digest).await
-        }?;
-
         let bundle_result = self
             .relay_client
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: self.use_root_key.not().then(|| self.account_key.to_call_key()),
-                signature,
+                key: self.call_key(),
+                signature: self.sign_digest(digest).await?,
             })
             .await;
 
@@ -958,6 +951,18 @@ impl InteropTester {
                 ))
             }
         }
+    }
+
+    async fn sign_digest(&self, digest: B256) -> Result<Bytes> {
+        if self.use_root_key {
+            self.test_account.sign_payload_hash(digest).await
+        } else {
+            self.account_key.sign_payload_hash(digest).await
+        }
+    }
+
+    fn call_key(&self) -> Option<CallKey> {
+        self.use_root_key.not().then(|| self.account_key.to_call_key())
     }
 
     fn calculate_total_fee(
