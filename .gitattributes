@@ -1,0 +1,4 @@
+* text=auto
+.gitattributes !filter !diff
+
+Dockerfile.* linguist-language=Dockerfile
