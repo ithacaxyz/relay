@@ -433,7 +433,7 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
     for asset in chain_user_assets {
         // check that it has metadata and has prices
         if !asset.address.is_native() {
-            assert!(asset.metadata.as_ref().is_some_and(|meta| meta.price.is_some()));
+            assert!(asset.metadata.as_ref().is_some_and(|meta| meta.fiat.is_some()));
         }
     }
 

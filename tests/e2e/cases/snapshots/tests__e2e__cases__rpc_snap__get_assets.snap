@@ -10,7 +10,7 @@ expression: response
       "type": "native",
       "metadata": {
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -24,7 +24,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -38,7 +38,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -52,7 +52,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -66,7 +66,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -80,7 +80,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -94,7 +94,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -108,7 +108,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -122,7 +122,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -136,7 +136,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }
@@ -150,7 +150,7 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
           "value": "1"
         }

@@ -2118,7 +2118,7 @@ impl RelayApiServer for Relay {
                                 // use a constant 18 for native assets
                                 decimals: Some(18),
                                 uri: None,
-                                price,
+                                fiat: price,
                             }),
                         });
                     }
@@ -2143,7 +2143,7 @@ impl RelayApiServer for Relay {
                             symbol: Some(symbol),
                             decimals: Some(decimals),
                             uri: None,
-                            price,
+                            fiat: price,
                         }),
                     })
                 });

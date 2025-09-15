@@ -177,7 +177,7 @@ pub struct AssetMetadataWithPrice {
     pub decimals: Option<u8>,
     /// Price information
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price: Option<AssetPrice>,
+    pub fiat: Option<AssetPrice>,
 }
 
 /// Asset type.
