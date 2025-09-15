@@ -1,0 +1,5 @@
+* text=auto
+.gitattributes !filter !diff
+
+Dockerfile.* linguist-language=Dockerfile
+.zed/*.json linguist-language=JSON-with-Comments
