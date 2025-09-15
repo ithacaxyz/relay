@@ -459,7 +459,10 @@ async fn asset_deficits() -> eyre::Result<()> {
     // create prepare_call request with a transfer exceeding balance
     let params = PrepareCallsParameters {
         from: Some(env.eoa.address()),
-        calls: vec![Call::transfer(env.erc20s[5], Address::with_last_byte(1), amount)],
+        calls: vec![
+            Call::transfer(env.erc20s[5], Address::with_last_byte(1), amount),
+            Call::transfer(env.erc20s[6], Address::with_last_byte(2), U256::from(1)),
+        ],
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
             meta: Meta { fee_payer: None, fee_token: Some(env.erc20s[5]), nonce: None },
@@ -476,11 +479,24 @@ async fn asset_deficits() -> eyre::Result<()> {
 
     let output = env.relay_endpoint.prepare_calls(params).await?;
     let quote = &output.context.quote().unwrap().ty().quotes[0];
-    let deficit = &quote.asset_deficits.0[0];
+    let deficit_5 = &quote
+        .asset_deficits
+        .0
+        .iter()
+        .find(|deficit| deficit.address == Some(env.erc20s[5]))
+        .unwrap();
 
-    assert_eq!(deficit.address, Some(env.erc20s[5]));
-    assert_eq!(deficit.deficit, amount + quote.intent.total_payment_max_amount() - balance);
-    assert_eq!(deficit.required, amount + quote.intent.total_payment_max_amount());
+    let deficit_6 = &quote
+        .asset_deficits
+        .0
+        .iter()
+        .find(|deficit| deficit.address == Some(env.erc20s[6]))
+        .unwrap();
+
+    assert_eq!(deficit_5.deficit, amount + quote.intent.total_payment_max_amount() - balance);
+    assert_eq!(deficit_5.required, amount + quote.intent.total_payment_max_amount());
+    assert_eq!(deficit_6.deficit, U256::from(1));
+    assert_eq!(deficit_6.required, U256::from(1));
 
     // create prepare_call request with a transfer of entire balance
     let params = PrepareCallsParameters {
