@@ -37,7 +37,7 @@ use alloy::{
     primitives::{
         Address, B256, BlockNumber, Bytes, ChainId, TxKind, U64, U256,
         aliases::{B192, U192},
-        bytes, uint,
+        bytes,
     },
     providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rlp::Encodable,
@@ -1514,6 +1514,14 @@ impl Relay {
 
                     let deficit = quote.asset_deficits.0.first().unwrap();
                     let asset = deficit.address.unwrap_or_default();
+
+                    // If interop is not enabled or not supported for the requested asset, we can't
+                    // proceed and should return quote with deficits.
+                    if self.inner.chains.interop().is_none()
+                        || self.inner.chains.interop_asset(request.chain_id, asset).is_none()
+                    {
+                        return Ok((asset_diff, quotes));
+                    }
 
                     // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
                     let (required, deficit) = if Some(asset) == request.capabilities.meta.fee_token
