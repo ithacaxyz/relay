@@ -3,7 +3,7 @@ use crate::{
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::{PriceOracle, calculate_usd_value},
-    types::{AssetMetadata, AssetType, IERC20, IERC721, Quote},
+    types::{AssetMetadata, AssetPrice, AssetType, IERC20, IERC721, Quote},
 };
 use alloy::primitives::{
     Address, ChainId, U256,
@@ -83,18 +83,7 @@ pub struct AssetDiff {
     pub direction: DiffDirection,
     /// Optional fiat value
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fiat: Option<FiatValue>,
-}
-
-/// Fiat value representation
-#[serde_as]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FiatValue {
-    /// Currency code (e.g., "usd")
-    pub currency: String,
-    /// Value as f64
-    #[serde_as(as = "DisplayFromStr")]
-    pub value: f64,
+    pub fiat: Option<AssetPrice>,
 }
 
 /// Asset deficits per account based on simulated execution traces.
@@ -122,7 +111,7 @@ pub struct AssetDeficit {
     pub deficit: U256,
     /// Optional fiat value
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fiat: Option<FiatValue>,
+    pub fiat: Option<AssetPrice>,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
@@ -439,7 +428,7 @@ impl ChainAssetDiffs {
                         return;
                     };
 
-                    diff.fiat = Some(FiatValue {
+                    diff.fiat = Some(AssetPrice {
                         currency: "usd".to_string(),
                         value: calculate_usd_value(
                             diff.value,
@@ -465,7 +454,7 @@ pub struct AssetDiffResponse {
     /// - Aggregated total: Chain ID 0 is a special key that stores the sum of all individual chain
     ///   fees.
     #[serde(with = "alloy::serde::quantity::hashmap")]
-    pub fee_totals: HashMap<ChainId, FiatValue>,
+    pub fee_totals: HashMap<ChainId, AssetPrice>,
     /// Asset diffs by chain ID.
     ///
     /// Note: There is no aggregated entry for asset diffs (no chain ID 0).
@@ -500,7 +489,7 @@ impl AssetDiffResponse {
     pub fn push(&mut self, chain_id: ChainId, chain_diffs: ChainAssetDiffs) {
         self.fee_totals.insert(
             chain_id,
-            FiatValue { currency: "usd".to_string(), value: chain_diffs.fee_usd },
+            AssetPrice { currency: "usd".to_string(), value: chain_diffs.fee_usd },
         );
         self.asset_diffs.insert(chain_id, chain_diffs.asset_diffs);
 
@@ -519,7 +508,7 @@ impl AssetDiffResponse {
             .map(|(_, fiat)| fiat.value)
             .sum();
 
-        self.fee_totals.insert(0, FiatValue { currency: "usd".to_string(), value: total });
+        self.fee_totals.insert(0, AssetPrice { currency: "usd".to_string(), value: total });
     }
 }
 
@@ -542,7 +531,7 @@ mod tests {
             },
             value: U256::from(1000000000000000000u64), // 1e18
             direction: DiffDirection::Incoming,
-            fiat: Some(FiatValue { currency: "usd".to_string(), value: 100.50 }),
+            fiat: Some(AssetPrice { currency: "usd".to_string(), value: 100.50 }),
         };
 
         let serialized = serde_json::to_value(&asset_diff).unwrap();

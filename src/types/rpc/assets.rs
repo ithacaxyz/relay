@@ -192,7 +192,7 @@ impl GetAssetsResponse {
                             // meta.price is Some and is_usd() returned true
                             calculate_usd_value(
                                 asset.balance,
-                                meta.price.as_ref().unwrap().price,
+                                meta.price.as_ref().unwrap().value,
                                 decimals,
                             )
                         }
