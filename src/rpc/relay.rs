@@ -1049,14 +1049,14 @@ impl Relay {
         let eoa = identity.root_eoa;
         let key_hash = identity.key.key_hash();
 
-        let mut account = Account::new(eoa, self.provider(request.chain_id)?);
-        if !account.is_delegated().await? {
-            let Some(stored) = self.inner.storage.read_account(&eoa).await? else {
-                return Err(StorageError::AccountDoesNotExist(eoa).into());
-            };
+        let provider = self.provider(request.chain_id)?;
 
+        let mut account = Account::new(eoa, &provider);
+        if let Some(stored) = delegation_status.stored_account() {
             account = account.with_overrides(stored.state_overrides()?);
         }
+
+        let delegation_implementation = delegation_status.try_implementation()?;
 
         let stored_precalls = self
             .inner
@@ -1095,6 +1095,13 @@ impl Relay {
             .chain(stored_precalls)
             .collect::<Vec<_>>();
 
+        let mut calls = request.calls.clone();
+
+        // Check if upgrade is needed (only for delegated accounts)
+        if let Some(new_impl) = self.maybe_delegation_upgrade(delegation_implementation)? {
+            calls.push(Call::upgrade_proxy_account(new_impl));
+        }
+
         // Find the key that authorizes this intent
         let Some(key) = self.try_find_key(identity, &pre_calls, request.chain_id).await? else {
             return Err(KeysError::UnknownKeyHash(key_hash).into());
@@ -1113,7 +1120,7 @@ impl Relay {
             .estimate_fee(
                 PartialIntent {
                     eoa: identity.root_eoa,
-                    execution_data: request.calls.abi_encode().into(),
+                    execution_data: calls.abi_encode().into(),
                     nonce,
                     payer: request.capabilities.meta.fee_payer,
                     // stored PreCall should come first since it's been signed by the root
@@ -1125,7 +1132,7 @@ impl Relay {
                         .chain(pre_calls)
                         .collect(),
                     fund_transfers: intent_kind.fund_transfers(),
-                    delegation_implementation: delegation_status.try_implementation()?,
+                    delegation_implementation,
                 },
                 request.chain_id,
                 identity.key.prehash(),
@@ -1159,7 +1166,6 @@ impl Relay {
     async fn prepare_calls_inner(
         &self,
         mut request: PrepareCallsParameters,
-        intent_kind: Option<IntentKind>,
     ) -> RpcResult<PrepareCallsResponse> {
         // Checks calls and precall calls in the request
         request.check_calls(self.delegation_implementation())?;
@@ -1168,15 +1174,13 @@ impl Relay {
 
         // Get delegation status and ensure fee_token is set (only for non-pre_call)
         let delegation_status = if let Some(from) = request.from {
-            let account = Account::new(from, provider.clone());
-
             // Fetch account assets and status in parallel if we need to auto-select fee token
             if !request.capabilities.pre_call && request.capabilities.meta.fee_token.is_none() {
                 let chain = self.inner.chains.ensure_chain(request.chain_id)?;
                 let fee_payer = request.capabilities.meta.fee_payer.unwrap_or(from);
 
                 let (status, _) =
-                    tokio::try_join!(account.delegation_status(&self.inner.storage), async {
+                    tokio::try_join!(self.delegation_status(&from, request.chain_id), async {
                         let assets = self
                             .get_assets(GetAssetsParameters::for_chain(fee_payer, request.chain_id))
                             .await
@@ -1188,7 +1192,7 @@ impl Relay {
                     })?;
                 Some(status)
             } else {
-                Some(account.delegation_status(&self.inner.storage).await?)
+                Some(self.delegation_status(&from, request.chain_id).await?)
             }
         } else {
             None
@@ -1196,15 +1200,6 @@ impl Relay {
 
         // Generate all requested calls.
         request.calls = self.generate_calls(&request)?;
-
-        // Check if upgrade is needed (only for non-precalls with a delegated account)
-        if !request.capabilities.pre_call
-            && let Some(status) = &delegation_status
-            && let Ok(impl_addr) = status.try_implementation()
-            && let Some(new_impl) = self.maybe_delegation_upgrade(impl_addr)?
-        {
-            request.calls.push(Call::upgrade_proxy_account(new_impl));
-        }
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request
@@ -1238,9 +1233,8 @@ impl Relay {
             let eoa = request.from.ok_or(IntentError::MissingSender)?;
             let identity = IdentityParameters::new(request.key.as_ref(), eoa);
 
-            let (asset_diffs, quotes) = self
-                .build_quotes(&request, &identity, nonce, delegation_status, intent_kind)
-                .await?;
+            let (asset_diffs, quotes) =
+                self.build_quotes(&request, &identity, nonce, delegation_status).await?;
 
             let sig = self
                 .inner
@@ -1303,7 +1297,6 @@ impl Relay {
         identity: &IdentityParameters,
         nonce: U256,
         delegation_status: &DelegationStatus,
-        intent_kind: Option<IntentKind>,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
         // todo(onbjerg): this is incorrect. we still want to also do multichain if you do not have
         // enough funds to execute the intent, regardless of whether the user requested any funds
@@ -1325,16 +1318,9 @@ impl Relay {
             )
             .await
         } else {
-            self.build_single_chain_quote(
-                request,
-                identity,
-                delegation_status,
-                nonce,
-                intent_kind,
-                true,
-            )
-            .await
-            .map_err(Into::into)
+            self.build_single_chain_quote(request, identity, delegation_status, nonce, true)
+                .await
+                .map_err(Into::into)
         }
     }
 
@@ -1427,24 +1413,16 @@ impl Relay {
                     output_orchestrator: destination_orchestrator,
                 };
                 let escrow_cost = self
-                    .prepare_calls_inner(
-                        self.build_funding_intent(funding_context, identity.key.clone())?,
-                        // note(onbjerg): its ok the leaf isnt correct here for simulation
-                        Some(IntentKind::MultiInput {
-                            leaf_info: MerkleLeafInfo { total: total_leaves, index: 0 },
-                            fee: None,
-                        }),
+                    .simulate_funding_intent(
+                        funding_context,
+                        identity,
+                        MerkleLeafInfo { total: total_leaves, index: 0 },
+                        None,
                     )
-                    .await
-                    .map_err(RelayError::internal)
-                    .inspect_err(|err| error!("Failed to simulate funding intent: {err:?}"))?
-                    .context
-                    .quote()
-                    .expect("should always be a quote")
-                    .ty()
-                    .fees()
-                    .map(|(_, cost)| cost)
-                    .unwrap_or_default();
+                    .await?
+                    .1
+                    .intent
+                    .total_payment_max_amount();
 
                 Result::<_, RelayError>::Ok((chain, asset, balance, escrow_cost))
             })
@@ -1566,7 +1544,7 @@ impl Relay {
         // `requested_funds`.
         if requested_asset_balance_on_dst >= requested_funds {
             let (asset_diff, quotes) = self
-                .build_single_chain_quote(request, identity, delegation_status, nonce, None, false)
+                .build_single_chain_quote(request, identity, delegation_status, nonce, false)
                 .await?;
 
             // It should never happen that we do not have a quote from this simulation, but to avoid
@@ -1691,14 +1669,7 @@ impl Relay {
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
                 return self
-                    .build_single_chain_quote(
-                        request,
-                        identity,
-                        delegation_status,
-                        nonce,
-                        None,
-                        true,
-                    )
+                    .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                     .await
                     .map_err(Into::into);
             };
@@ -1786,9 +1757,12 @@ impl Relay {
                                 output_chain_id: request.chain_id,
                                 output_orchestrator: output_quote.orchestrator,
                             },
-                            identity.key.clone(),
+                            identity,
                             MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
-                            source,
+                            // we override the fees here to avoid re-estimating. if we
+                            // re-estimate, we might end up with
+                            // a higher fee, which will invalidate the entire call.
+                            Some(source.cost),
                         )
                         .await
                     },
@@ -1800,10 +1774,9 @@ impl Relay {
                 let mut all_asset_diffs = AssetDiffResponse::default();
 
                 // Process source chains
-                for resp in funding_intents {
-                    all_quotes
-                        .extend(resp.context.quote().expect("should exist").ty().quotes.clone());
-                    all_asset_diffs.extend(resp.capabilities.asset_diff);
+                for (asset_diff, quote) in funding_intents {
+                    all_asset_diffs.push(quote.chain_id, asset_diff);
+                    all_quotes.push(quote);
                 }
 
                 // Add output chain
@@ -1846,19 +1819,28 @@ impl Relay {
     async fn simulate_funding_intent(
         &self,
         funding_context: FundingIntentContext,
-        intent_key: IntentKey<CallKey>,
+        identity: &IdentityParameters,
         leaf_info: MerkleLeafInfo,
-        source: &FundSource,
-    ) -> RpcResult<PrepareCallsResponse> {
-        self.prepare_calls_inner(
-            self.build_funding_intent(funding_context, intent_key)?,
-            Some(IntentKind::MultiInput {
-                leaf_info,
-                // we override the fees here to avoid re-estimating. if we
-                // re-estimate, we might end up with
-                // a higher fee, which will invalidate the entire call.
-                fee: Some((source.address, source.cost)),
-            }),
+        fee: Option<U256>,
+    ) -> Result<(ChainAssetDiffs, Quote), RelayError> {
+        let fee = fee.map(|fee| (funding_context.fee_token, fee));
+
+        let request = self.build_funding_intent(funding_context, identity.key.clone())?;
+
+        let delegation_status =
+            self.delegation_status(&identity.root_eoa, request.chain_id).await?;
+
+        let nonce = request
+            .get_nonce(delegation_status.stored_account(), &self.provider(request.chain_id)?)
+            .await?;
+
+        self.build_intent(
+            &request,
+            identity,
+            &delegation_status,
+            nonce,
+            IntentKind::MultiInput { leaf_info, fee },
+            false,
         )
         .await
     }
@@ -1871,7 +1853,6 @@ impl Relay {
         identity: &IdentityParameters,
         delegation_status: &DelegationStatus,
         nonce: U256,
-        intent_kind: Option<IntentKind>,
         calculate_asset_deficits: bool,
     ) -> Result<(AssetDiffResponse, Quotes), RelayError> {
         let (asset_diffs, quote) = self
@@ -1880,7 +1861,7 @@ impl Relay {
                 identity,
                 delegation_status,
                 nonce,
-                intent_kind.unwrap_or(IntentKind::Single),
+                IntentKind::Single,
                 calculate_asset_deficits,
             )
             .await?;
@@ -2009,6 +1990,15 @@ impl Relay {
     async fn get_token_price(&self, chain: u64, asset: &AssetFilterItem) -> Option<AssetPrice> {
         let (uid, _) = self.inner.chains.fee_token(chain, asset.address.address())?;
         self.inner.price_oracle.usd_conversion_rate(uid.clone()).await.map(AssetPrice::from_price)
+    }
+
+    /// Fetches [`DelegationStatus`] for an EOA on a given chain.
+    async fn delegation_status(
+        &self,
+        eoa: &Address,
+        chain: u64,
+    ) -> Result<DelegationStatus, RelayError> {
+        Account::new(*eoa, self.provider(chain)?).delegation_status(&self.inner.storage).await
     }
 }
 
@@ -2168,7 +2158,7 @@ impl RelayApiServer for Relay {
         request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
         tracing::Span::current().record("eth.chain_id", request.chain_id);
-        self.prepare_calls_inner(request, None).await
+        self.prepare_calls_inner(request).await
     }
 
     async fn prepare_upgrade_account(
