@@ -18,7 +18,7 @@ name = "recast"
 path = "src/bin/recast/mod.rs"
 
 [dependencies]
-alloy = { version = "1.0.27", features = [
+alloy = { version = "1.0.31", features = [
     "std",
     "json-rpc",
     "providers",
