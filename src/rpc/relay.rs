@@ -1509,6 +1509,13 @@ impl Relay {
                     // If we have more than 1 asset deficit it means we will have to source more
                     // than one asset which is not currently supported.
                     if quote.asset_deficits.0.len() > 1 {
+                        debug!(
+                            eoa = %identity.root_eoa,
+                            chain_id = %request.chain_id,
+                            fee = %quote.intent.total_payment_max_amount(),
+                            deficits = %quote.asset_deficits.0.len(),
+                            "Intent requires multiple assets"
+                        );
                         return Ok((asset_diff, quotes));
                     }
 
