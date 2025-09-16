@@ -140,6 +140,8 @@ pub struct Quote {
     /// Assets user is missing for the intent to execute correctly.
     #[serde(default, skip_serializing_if = "AssetDeficits::is_empty")]
     pub asset_deficits: AssetDeficits,
+    /// Whether the quote has deficits.
+    pub has_deficits: bool,
 }
 
 impl Quote {
@@ -152,6 +154,7 @@ impl Quote {
         }
         hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
+        hasher.update([self.has_deficits as u8]);
         hasher.finalize()
     }
 }

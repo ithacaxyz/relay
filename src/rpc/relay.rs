@@ -620,6 +620,7 @@ impl Relay {
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
             orchestrator: *orchestrator.address(),
+            has_deficits: !asset_deficits.is_empty() || !fee_token_deficit.is_zero(),
             fee_token_deficit,
             asset_deficits,
         };
@@ -643,6 +644,11 @@ impl Relay {
         // it is expired
         if SystemTime::now().duration_since(quotes.ty().ttl).is_ok() {
             return Err(QuoteError::QuoteExpired.into());
+        }
+
+        // If any of the quotes have deficits, return an error
+        if quotes.ty().quotes.iter().any(|q| q.has_deficits) {
+            return Err(QuoteError::QuoteHasDeficits.into());
         }
 
         // this can be done by just verifying the signature & intent hash against the rfq
