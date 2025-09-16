@@ -5,5 +5,5 @@ expression: response
 {
   "status": "[status]",
   "version": "[version]",
-  "quote_signer": "[quote_signer]"
+  "quoteSigner": "[quoteSigner]"
 }

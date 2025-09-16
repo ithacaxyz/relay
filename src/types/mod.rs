@@ -81,6 +81,7 @@ pub type U40 = Uint<40, 1>;
 
 /// The health response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Health {
     /// The status (usually OK) of the RPC.
     pub status: String,
