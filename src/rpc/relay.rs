@@ -572,6 +572,7 @@ impl Relay {
             .and_then(|(_, diffs)| {
                 diffs.iter().find(|diff| diff.address.unwrap_or_default() == context.fee_token)
             })
+            .filter(|diff| diff.direction.is_outgoing())
             .map(|diff| diff.value)
             .unwrap_or(U256::ZERO);
 
@@ -1289,41 +1290,6 @@ impl Relay {
         Ok(response)
     }
 
-    /// Build quote with optional funding chain detection
-    #[instrument(skip_all)]
-    async fn build_quotes(
-        &self,
-        request: &PrepareCallsParameters,
-        identity: &IdentityParameters,
-        nonce: U256,
-        delegation_status: &DelegationStatus,
-    ) -> RpcResult<(AssetDiffResponse, Quotes)> {
-        // todo(onbjerg): this is incorrect. we still want to also do multichain if you do not have
-        // enough funds to execute the intent, regardless of whether the user requested any funds
-        // specifically. i'm too dumb to figure out the exact call graph of this right now, so will
-        // leave this as an exercise for later.
-        // Check if funding is required
-        // todo: this only supports one asset...
-        if let Some(required_funds) = request.capabilities.required_funds.first()
-            && self.inner.chains.interop().is_some()
-            && self.inner.chains.interop_asset(request.chain_id, required_funds.address).is_some()
-        {
-            self.determine_quote_strategy(
-                request,
-                identity,
-                required_funds.address,
-                required_funds.value,
-                nonce,
-                delegation_status,
-            )
-            .await
-        } else {
-            self.build_single_chain_quote(request, identity, delegation_status, nonce, true)
-                .await
-                .map_err(Into::into)
-        }
-    }
-
     /// Generates a list of chain and amounts that fund a target chain operation.
     ///
     /// # Returns
@@ -1482,57 +1448,112 @@ impl Relay {
     ///   we continue this process a number of times, until `balance + funding - required_assets -
     ///   fee >= 0`.
     #[instrument(skip(self, request, delegation_status), fields(chain_id = request.chain_id))]
-    async fn determine_quote_strategy(
+    async fn build_quotes(
         &self,
         request: &PrepareCallsParameters,
         identity: &IdentityParameters,
-        requested_asset: Address,
-        requested_funds: U256,
         nonce: U256,
         delegation_status: &DelegationStatus,
     ) -> RpcResult<(AssetDiffResponse, Quotes)> {
-        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
+        let requested_asset_and_balance =
+            if let Some(requested_asset) = request.capabilities.required_funds.first() {
+                let destination_asset = self
+                    .get_assets(GetAssetsParameters::for_asset_on_chain(
+                        identity.root_eoa,
+                        request.chain_id,
+                        requested_asset.address,
+                    ))
+                    .await?;
 
-        // Only query inventory, if funds have been requested in the target chain.
-        let asset = if requested_asset.is_zero() {
-            AddressOrNative::Native
-        } else {
-            AddressOrNative::Address(requested_asset)
-        };
+                let requested_asset_balance_on_dst = destination_asset
+                    .balance_on_chain(request.chain_id, requested_asset.address.into());
 
-        // Get interop assets for the requested asset on the source chain.
-        let interop_assets = self
-            .inner
-            .chains
-            .map_interop_assets_per_chain(request.chain_id, requested_asset)
-            .map(|(chain_id, desc)| (chain_id, desc.address))
-            .collect();
+                Some((requested_asset, requested_asset_balance_on_dst))
+            } else {
+                None
+            };
 
-        // Create a future for fetching assets interoperable with requested asset (needed for
-        // source_funds). It will be awaited later when we actually need it.
-        let assets = self.get_assets(GetAssetsParameters::for_assets_on_chains(
-            identity.root_eoa,
-            interop_assets,
-        ));
+        let (requested_asset, requested_funds, requested_asset_balance_on_dst) =
+            match requested_asset_and_balance {
+                // If requested assets are specified explicitly and we know that balance is not
+                // enough, we can proceed to multichain estimation.
+                Some((requested, balance)) if balance < requested.value => {
+                    (requested.address, requested.value, balance)
+                }
+                // Otherwise, we try to simulate intent as single chain first.
+                _ => {
+                    let (asset_diff, quotes) = self
+                        .build_single_chain_quote(request, identity, delegation_status, nonce, true)
+                        .await?;
 
-        // Fetch EOA and funder's requested asset on destination chain
-        let (destination_asset, funder_assets) = try_join!(
-            self.get_assets(GetAssetsParameters::for_asset_on_chain(
-                identity.root_eoa,
-                request.chain_id,
-                requested_asset,
-            )),
-            self.get_assets(GetAssetsParameters::for_asset_on_chain(
+                    // It should never happen that we do not have a quote from this simulation, but
+                    // to avoid outright crashing we just throw an internal
+                    // error.
+                    let quote = quotes.quotes.first().ok_or_else(|| {
+                        RelayError::InternalError(eyre::eyre!("no quote after simulation"))
+                    })?;
+
+                    // If we could successfuly simulate the intent without any deficits, then we can
+                    // just do this single chain instead.
+                    if quote.asset_deficits.is_empty() {
+                        debug!(
+                            eoa = %identity.root_eoa,
+                            chain_id = %request.chain_id,
+                            fee = %quote.intent.total_payment_max_amount(),
+                            "Falling back to single chain for intent"
+                        );
+
+                        return Ok((asset_diff, quotes));
+                    }
+
+                    // If we have more than 1 asset deficit it means we will have to source more
+                    // than one asset which is not currently supported.
+                    if quote.asset_deficits.0.len() > 1 {
+                        debug!(
+                            eoa = %identity.root_eoa,
+                            chain_id = %request.chain_id,
+                            fee = %quote.intent.total_payment_max_amount(),
+                            deficits = %quote.asset_deficits.0.len(),
+                            "Intent requires multiple assets"
+                        );
+                        return Ok((asset_diff, quotes));
+                    }
+
+                    let deficit = quote.asset_deficits.0.first().unwrap();
+                    let asset = deficit.address.unwrap_or_default();
+
+                    // If interop is not enabled or not supported for the requested asset, we can't
+                    // proceed and should return quote with deficits.
+                    if self.inner.chains.interop().is_none()
+                        || self.inner.chains.interop_asset(request.chain_id, asset).is_none()
+                    {
+                        return Ok((asset_diff, quotes));
+                    }
+
+                    // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
+                    let (required, deficit) = if Some(asset) == request.capabilities.meta.fee_token
+                    {
+                        (
+                            deficit.required.saturating_sub(quote.fee_token_deficit),
+                            deficit.deficit.saturating_sub(quote.fee_token_deficit),
+                        )
+                    } else {
+                        (deficit.required, deficit.deficit)
+                    };
+
+                    (asset, required, deficit)
+                }
+            };
+
+        // Fetch funder's requested asset on destination chain
+        let funder_balance_on_dst = self
+            .get_assets(GetAssetsParameters::for_asset_on_chain(
                 self.inner.contracts.funder.address,
                 request.chain_id,
-                requested_asset
+                requested_asset,
             ))
-        )?;
-        let requested_asset_balance_on_dst =
-            destination_asset.balance_on_chain(request.chain_id, requested_asset.into());
-
-        let funder_balance_on_dst =
-            funder_assets.balance_on_chain(request.chain_id, requested_asset.into());
+            .await?
+            .balance_on_chain(request.chain_id, requested_asset.into());
 
         // Check if funder has sufficient liquidity for the requested asset
         let needed_funds = requested_funds.saturating_sub(requested_asset_balance_on_dst);
@@ -1540,47 +1561,9 @@ impl Relay {
             return Err(QuoteError::InsufficientLiquidity.into());
         }
 
-        // Try to simulate intent as single chain if we have enough assets to cover
-        // `requested_funds`.
-        if requested_asset_balance_on_dst >= requested_funds {
-            let (asset_diff, quotes) = self
-                .build_single_chain_quote(request, identity, delegation_status, nonce, false)
-                .await?;
-
-            // It should never happen that we do not have a quote from this simulation, but to avoid
-            // outright crashing we just throw an internal error.
-            let output_quote = quotes.quotes.first().ok_or_else(|| {
-                RelayError::InternalError(eyre::eyre!("no quote after simulation"))
-            })?;
-
-            // If we can cover the fees + requested assets *without* `sourced_funds`, then we can
-            // just do this single chain instead.
-            if requested_asset_balance_on_dst
-                .checked_sub(requested_funds)
-                .and_then(|n| {
-                    n.checked_sub(if source_fee {
-                        output_quote.intent.total_payment_max_amount()
-                    } else {
-                        U256::ZERO
-                    })
-                })
-                .is_some()
-            {
-                debug!(
-                    eoa = %identity.root_eoa,
-                    chain_id = %request.chain_id,
-                    %requested_asset,
-                    %requested_funds,
-                    %requested_asset_balance_on_dst,
-                    %source_fee,
-                    fee = %output_quote.intent.total_payment_max_amount(),
-                    "Falling back to single chain for intent"
-                );
-
-                return Ok((asset_diff, quotes));
-            }
-        }
-
+        // At this point, we can assume that `requested_funds` are enough for intent to succeed
+        // without the fees. Now we need to find a way to source the funds plus the fees.
+        //
         // Simulate the output intent first to get the fees required to execute it.
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
@@ -1608,8 +1591,30 @@ impl Relay {
             RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
         )?;
 
-        // Await a future with assets on interoperable chains
-        let assets = assets.await?;
+        // Get interop assets for the requested asset on source chains.
+        let interop_assets = self
+            .inner
+            .chains
+            .map_interop_assets_per_chain(request.chain_id, requested_asset)
+            .map(|(chain_id, desc)| (chain_id, desc.address))
+            .collect();
+
+        // Fetch assets on the source chains.
+        let assets = self
+            .get_assets(GetAssetsParameters::for_assets_on_chains(
+                identity.root_eoa,
+                interop_assets,
+            ))
+            .await?;
+
+        let source_fee = request.capabilities.meta.fee_token == Some(requested_asset);
+
+        // Only query inventory, if funds have been requested in the target chain.
+        let asset = if requested_asset.is_zero() {
+            AddressOrNative::Native
+        } else {
+            AddressOrNative::Address(requested_asset)
+        };
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
