@@ -4,5 +4,6 @@ expression: response
 ---
 {
   "status": "[status]",
-  "version": "[version]"
+  "version": "[version]",
+  "quote_signer": "[quote_signer]"
 }
