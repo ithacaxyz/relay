@@ -169,6 +169,7 @@ async fn test_prepare_calls() -> eyre::Result<()> {
         ".context.quote.v" => reduction_from_str::<U64>("v"),
         ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
         ".digest" => reduction_from_str::<B256>("digest"),
+        ".signature" => reduction_from_str::<Bytes>("signature"),
         ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
         ".typedData.message.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
         ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
