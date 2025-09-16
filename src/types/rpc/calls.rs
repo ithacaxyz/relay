@@ -415,8 +415,6 @@ impl PrepareCallsResponse {
         let mut response_value = serde_json::to_value(&self)?;
         response_value.as_object_mut().ok_or_eyre("response is not an object")?.remove("signature");
 
-        println!("response_value: {}", serde_json::to_string(&response_value)?);
-
         self.signature = signer
             .sign_hash(&keccak256(serde_json::to_vec(&response_value)?))
             .await?
