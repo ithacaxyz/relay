@@ -37,6 +37,7 @@ async fn test_health() -> eyre::Result<()> {
     insta::assert_json_snapshot!(response, {
         ".status" => reduction_from_str::<String>("status"),
         ".version" => reduction_from_str::<String>("version"),
+        ".quote_signer" => reduction_from_str::<Address>("quote_signer"),
     });
 
     Ok(())

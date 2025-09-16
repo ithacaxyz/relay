@@ -2030,8 +2030,14 @@ impl RelayApiServer for Relay {
             })
             .is_ok();
 
+        let quote_signer = self.inner.quote_signer.address();
+
         if chains_ok && db_ok {
-            Ok(Health { status: "rpc ok".into(), version: RELAY_SHORT_VERSION.into() })
+            Ok(Health {
+                status: "rpc ok".into(),
+                version: RELAY_SHORT_VERSION.into(),
+                quote_signer,
+            })
         } else {
             Err(RelayError::Unhealthy.into())
         }
