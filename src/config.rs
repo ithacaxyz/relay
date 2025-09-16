@@ -55,6 +55,9 @@ pub struct RelayConfig {
     /// Email configuration.
     #[serde(default)]
     pub email: EmailConfig,
+    /// Phone configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<PhoneConfig>,
     /// Transaction service configuration.
     #[serde(default)]
     pub transactions: TransactionServiceConfig,
@@ -254,6 +257,43 @@ impl RelayConfig {
     /// Sets the Porto base URL.
     pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
         self.email.porto_base_url = value.or(self.email.porto_base_url);
+        self
+    }
+
+    /// Sets the Twilio Account SID.
+    pub fn with_twilio_account_sid(mut self, sid: Option<String>) -> Self {
+        if sid.is_some() {
+            if let Some(phone) = self.phone.as_mut() {
+                phone.twilio_account_sid = sid.or(phone.twilio_account_sid.clone());
+            } else {
+                self.phone = Some(PhoneConfig { twilio_account_sid: sid, ..Default::default() });
+            }
+        }
+        self
+    }
+
+    /// Sets the Twilio Auth Token.
+    pub fn with_twilio_auth_token(mut self, token: Option<String>) -> Self {
+        if token.is_some() {
+            if let Some(phone) = self.phone.as_mut() {
+                phone.twilio_auth_token = token.or(phone.twilio_auth_token.clone());
+            } else {
+                self.phone = Some(PhoneConfig { twilio_auth_token: token, ..Default::default() });
+            }
+        }
+        self
+    }
+
+    /// Sets the Twilio Verify Service SID.
+    pub fn with_twilio_verify_service_sid(mut self, sid: Option<String>) -> Self {
+        if sid.is_some() {
+            if let Some(phone) = self.phone.as_mut() {
+                phone.twilio_verify_service_sid = sid.or(phone.twilio_verify_service_sid.clone());
+            } else {
+                self.phone =
+                    Some(PhoneConfig { twilio_verify_service_sid: sid, ..Default::default() });
+            }
+        }
         self
     }
 
@@ -639,6 +679,32 @@ pub struct EmailConfig {
     pub resend_api_key: Option<String>,
     /// Porto base URL.
     pub porto_base_url: Option<String>,
+}
+
+/// Phone configuration.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneConfig {
+    /// Twilio Account SID.
+    pub twilio_account_sid: Option<String>,
+    /// Twilio Auth Token.
+    pub twilio_auth_token: Option<String>,
+    /// Twilio Verify Service SID.
+    pub twilio_verify_service_sid: Option<String>,
+    /// Maximum verification attempts.
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    /// Rate limit in minutes.
+    #[serde(default = "default_rate_limit_minutes")]
+    pub rate_limit_minutes: u32,
+}
+
+fn default_max_attempts() -> u32 {
+    5
+}
+
+fn default_rate_limit_minutes() -> u32 {
+    10
 }
 
 /// Secrets (kept out of serialized output).

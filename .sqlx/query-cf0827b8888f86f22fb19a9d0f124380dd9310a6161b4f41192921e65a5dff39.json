@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update phones set verified_at = now() where address = $1 and phone = $2 and verified_at is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cf0827b8888f86f22fb19a9d0f124380dd9310a6161b4f41192921e65a5dff39"
+}

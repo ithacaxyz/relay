@@ -181,15 +181,50 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
     );
-    let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
-        AccountRpc::new(
-            relay.clone(),
-            Resend::new(resend_api_key),
-            storage.clone(),
-            config.email.porto_base_url.unwrap_or("id.porto.sh".to_string()),
-        )
-        .into_rpc()
-    });
+    // Setup account RPC module if email is configured
+    let account_rpc = if let Some(resend_api_key) = &config.email.resend_api_key {
+        // Check if phone verification is also configured
+        let phone_setup = config.phone.as_ref().and_then(|phone_config| {
+            match (
+                &phone_config.twilio_account_sid,
+                &phone_config.twilio_auth_token,
+                &phone_config.twilio_verify_service_sid,
+            ) {
+                (Some(account_sid), Some(auth_token), Some(service_sid)) => Some((
+                    crate::twilio::TwilioClient::new(
+                        account_sid.clone(),
+                        auth_token.clone(),
+                        service_sid.clone(),
+                    ),
+                    phone_config.clone(),
+                )),
+                _ => None,
+            }
+        });
+
+        // Create AccountRpc with or without phone support
+        let rpc = if let Some((twilio_client, phone_config)) = phone_setup {
+            AccountRpc::with_phone(
+                relay.clone(),
+                Resend::new(resend_api_key),
+                storage.clone(),
+                config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
+                twilio_client,
+                phone_config,
+            )
+        } else {
+            AccountRpc::new(
+                relay.clone(),
+                Resend::new(resend_api_key),
+                storage.clone(),
+                config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
+            )
+        };
+
+        Some(rpc.into_rpc())
+    } else {
+        None
+    };
     let mut rpc = relay.into_rpc();
 
     // http layers
@@ -234,8 +269,10 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     .absolute(1);
 
     if let Some(account_rpc) = account_rpc {
+        info!("Started relay with e-mail provider");
         rpc.merge(account_rpc).expect("could not merge rpc modules");
     } else {
+        info!("Started relay without e-mail provider");
         warn!("No e-mail provider configured.");
     }
 
