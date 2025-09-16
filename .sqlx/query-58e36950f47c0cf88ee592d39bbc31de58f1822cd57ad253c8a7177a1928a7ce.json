@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update phones set attempts = attempts + 1 where address = $1 and phone = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58e36950f47c0cf88ee592d39bbc31de58f1822cd57ad253c8a7177a1928a7ce"
+}

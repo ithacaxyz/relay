@@ -24,5 +24,6 @@ pub mod spawn;
 pub mod storage;
 pub mod transactions;
 pub mod transport;
+pub mod twilio;
 pub mod types;
 pub mod version;

@@ -674,6 +674,127 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
+    async fn verified_phone_exists(&self, phone: &str) -> Result<bool> {
+        let exists = sqlx::query!(
+            "select * from phones where phone = $1 and verified_at is not null",
+            phone
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?
+        .is_some();
+
+        Ok(exists)
+    }
+
+    #[instrument(skip_all)]
+    async fn add_unverified_phone(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0) 
+             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, created_at = now()",
+            account.as_slice(),
+            phone,
+            verification_sid,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn verify_phone(&self, account: Address, phone: &str) -> Result<bool> {
+        let affected = sqlx::query!(
+            "update phones set verified_at = now() where address = $1 and phone = $2 and verified_at is null",
+            account.as_slice(),
+            phone
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(affected.rows_affected() > 0)
+    }
+
+    #[instrument(skip_all)]
+    async fn verify_phone_with_code(
+        &self,
+        account: Address,
+        phone: &str,
+        code: &str,
+    ) -> Result<bool> {
+        let affected = sqlx::query!(
+            "update phones set verified_at = now() where address = $1 and phone = $2 and verification_sid = $3 and verified_at is null",
+            account.as_slice(),
+            phone,
+            code
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(affected.rows_affected() > 0)
+    }
+
+    #[instrument(skip_all)]
+    async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32> {
+        let record = sqlx::query!(
+            "select attempts from phones where address = $1 and phone = $2",
+            account.as_slice(),
+            phone
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(record.map(|r| r.attempts as u32).unwrap_or(0))
+    }
+
+    #[instrument(skip_all)]
+    async fn increment_phone_verification_attempts(
+        &self,
+        account: Address,
+        phone: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            "update phones set attempts = attempts + 1 where address = $1 and phone = $2",
+            account.as_slice(),
+            phone
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn update_phone_verification_sid(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            "update phones set verification_sid = $3 where address = $1 and phone = $2",
+            account.as_slice(),
+            phone,
+            verification_sid
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
     async fn ping(&self) -> Result<()> {
         // acquire a connection to ensure DB is reachable
         self.pool.acquire().await.map_err(eyre::Error::from).map_err(Into::into).map(drop)

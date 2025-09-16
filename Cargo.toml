@@ -68,6 +68,7 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
+urlencoding = "2.1"
 schnellru = "0.2.4"
 semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1", features = ["rc"] }

@@ -221,3 +221,35 @@ pub struct GetAuthorizationResponse {
     /// The address of the initializer.
     pub to: Address,
 }
+
+/// Parameters for `account_setPhone`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPhoneParameters {
+    /// The phone number to associate with the wallet.
+    pub phone: String,
+    /// The wallet address.
+    pub wallet_address: Address,
+}
+
+/// Parameters for `account_verifyPhone`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyPhoneParameters {
+    /// The phone number to verify.
+    pub phone: String,
+    /// The verification code.
+    pub code: String,
+    /// The wallet address.
+    pub wallet_address: Address,
+}
+
+/// Parameters for `account_resendVerifyPhone`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResendVerifyPhoneParameters {
+    /// The phone number to resend verification to.
+    pub phone: String,
+    /// The wallet address.
+    pub wallet_address: Address,
+}
