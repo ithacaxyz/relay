@@ -1119,14 +1119,23 @@ impl Relay {
             calls.push(Call::upgrade_proxy_account(new_impl));
         }
 
-        // delegate the fee payer if it is stored and
+        // delegate the fee payer if it is stored, only adding a precall if it's for delegation to
+        // an ithaca account, assuming the configured delegation account is an ithaca account.
         if let Some(fee_payer) = request.capabilities.meta.fee_payer {
             // check if delegation is needed
             let delegation_status = self.delegation_status(&fee_payer, request.chain_id).await?;
 
-            if let DelegationStatus::Stored { account, .. } = delegation_status {
-                // put the delegation as the first call
-                pre_calls.insert(0, account.pre_call.clone());
+            if let DelegationStatus::Stored { account, implementation } = delegation_status {
+                // check if the implementation is at least TODO. before ithaca account TODO, the
+                // contracts had a check which required all precalls to be signed by the eoa
+                //
+                // here we just make sure that thet feePayer delegates to an ithaca account,
+                // otherwise TODO discussion on what could happen
+                // TODO: fill in version, setting to 0.5.6 for now
+                if self.is_ithaca_account(implementation, semver::Version::new(0, 5, 6)) {
+                    // put the delegation as the first call
+                    pre_calls.insert(0, account.pre_call.clone());
+                }
             }
         }
 
@@ -1187,6 +1196,14 @@ impl Relay {
             })?;
 
         Ok((asset_diff, quote))
+    }
+
+    /// Checks if the provided address points to an ithaca account, with the desired version or
+    /// higher.
+    fn is_ithaca_account(&self, implementation: Address, min_version: semver::Version) -> bool {
+        self.get_delegation_implementation_version(implementation)
+            .map(|v| v >= min_version)
+            .unwrap_or(false)
     }
 
     #[instrument(skip_all)]
@@ -2935,10 +2952,7 @@ impl Relay {
             if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
-                return self
-                    .get_delegation_implementation_version(impl_addr)
-                    .map(|v| v >= semver::Version::new(0, 5, 0))
-                    .unwrap_or(false);
+                return self.is_ithaca_account(impl_addr, semver::Version::new(0, 5, 0));
             }
             false
         });

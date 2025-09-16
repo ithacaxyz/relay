@@ -193,3 +193,6 @@ async fn test_paymaster_auto_upgrade() -> eyre::Result<()> {
 
     Ok(())
 }
+
+// TODO: test like the above but for incompatible ithaca account versions, and non-ithaca accounts
+// (or just accounts that are not configured in the relay)
