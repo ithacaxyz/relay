@@ -11,6 +11,9 @@ pub enum QuoteError {
     /// The quote was not found.
     #[error("expected quote was not found")]
     QuoteNotFound,
+    /// The quote has deficits.
+    #[error("quote has asset deficits and is expected to fail")]
+    QuoteHasDeficits,
     /// The provided quote was not signed by the relay.
     #[error("invalid quote signer")]
     InvalidQuoteSignature,
@@ -60,6 +63,7 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidNumberOfIntents { .. }
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
+            | QuoteError::QuoteHasDeficits
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..)
             | QuoteError::UnavailablePriceFeed

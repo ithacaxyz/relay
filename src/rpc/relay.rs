@@ -384,6 +384,13 @@ impl Relay {
         let fee_token_balance =
             assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
+        let fee_token_funding = intent
+            .fund_transfers
+            .iter()
+            .filter(|(token, _)| *token == context.fee_token)
+            .map(|(_, amount)| amount)
+            .sum::<U256>();
+
         // Build state overrides for simulation
         let overrides =
             build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
@@ -572,14 +579,23 @@ impl Relay {
             .and_then(|(_, diffs)| {
                 diffs.iter().find(|diff| diff.address.unwrap_or_default() == context.fee_token)
             })
-            .filter(|diff| diff.direction.is_outgoing())
-            .map(|diff| diff.value)
-            .unwrap_or(U256::ZERO);
+            .map(|diff| {
+                if diff.direction.is_outgoing() {
+                    // intent spent entire funding along with some extra amount
+                    diff.value.saturating_add(fee_token_funding)
+                } else {
+                    // the actual spending here might be negative but we cap it at
+                    // `fee_token_funding` as this is the maximum amount that can be spent on the
+                    // fees (everything else is received after fee payment)
+                    fee_token_funding.saturating_sub(diff.value)
+                }
+            })
+            .unwrap_or(fee_token_funding);
 
         // Calculate fee token deficit accounting for any additional spending
-        let fee_token_deficit = intent_to_sign
-            .total_payment_max_amount()
-            .saturating_sub(fee_token_balance.saturating_sub(fee_token_spending));
+        let fee_token_deficit = intent_to_sign.total_payment_max_amount().saturating_sub(
+            fee_token_balance.saturating_add(fee_token_funding).saturating_sub(fee_token_spending),
+        );
 
         // Record fee token deficit in asset deficits
         if !fee_token_deficit.is_zero() {
@@ -643,6 +659,11 @@ impl Relay {
         // it is expired
         if SystemTime::now().duration_since(quotes.ty().ttl).is_ok() {
             return Err(QuoteError::QuoteExpired.into());
+        }
+
+        // If any of the quotes have deficits, return an error
+        if quotes.ty().quotes.iter().any(|q| q.has_deficits()) {
+            return Err(QuoteError::QuoteHasDeficits.into());
         }
 
         // this can be done by just verifying the signature & intent hash against the rfq
