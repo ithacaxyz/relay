@@ -216,7 +216,7 @@ impl BalanceOverride {
 }
 
 /// Request parameters for `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsParameters {
     /// Call bundle to prepare.
@@ -329,7 +329,7 @@ impl PrepareCallsParameters {
 }
 
 /// Capabilities for `wallet_prepareCalls` request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
     /// Keys to authorize on the account.

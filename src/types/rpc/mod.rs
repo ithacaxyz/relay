@@ -25,7 +25,7 @@ use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 /// Represents extra request values.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
     /// Payer of the gas
