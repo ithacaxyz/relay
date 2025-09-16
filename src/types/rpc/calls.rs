@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
     error::{IntentError, RelayError},
+    signers::DynSigner,
     storage::BundleStatus,
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
@@ -18,6 +19,7 @@ use alloy::{
     primitives::{
         Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
         aliases::{B192, U192},
+        keccak256,
         map::B256HashMap,
         wrap_fixed_bytes,
     },
@@ -29,6 +31,7 @@ use alloy::{
     sol_types::SolEvent,
     uint,
 };
+use eyre::OptionExt;
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -398,6 +401,28 @@ pub struct PrepareCallsResponse {
     /// Key that will be used to sign the call bundle.
     #[serde(default)]
     pub key: Option<CallKey>,
+    /// Signature of the response for verifying the integrity of Relay response when using merchant
+    /// RPC.
+    pub signature: Bytes,
+}
+
+impl PrepareCallsResponse {
+    /// Calculates the signature of the response using the provided signer.
+    ///
+    /// The response is first serialized as compact JSON without `signature` field with all object
+    /// keys sorted, then hashed with keccak256, and finally signed by the provided signer.
+    pub async fn with_signature(mut self, signer: &DynSigner) -> eyre::Result<Self> {
+        let mut response_value = serde_json::to_value(&self)?;
+        response_value.as_object_mut().ok_or_eyre("response is not an object")?.remove("signature");
+        response_value.sort_all_objects();
+
+        self.signature = signer
+            .sign_hash(&keccak256(serde_json::to_vec(&response_value)?))
+            .await?
+            .as_bytes()
+            .into();
+        Ok(self)
+    }
 }
 
 /// Response context for a precall.
@@ -662,9 +687,24 @@ pub struct CallsStatusCapabilities {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::{
+        AssetDeficit, AssetDeficits, AssetDiff, AssetDiffs, AssetMetadata, CallPermission,
+        DiffDirection, FiatValue, Intent, IntentV05,
+        IthacaAccount::SpendPeriod,
+        Quote, Quotes, U40,
+        rpc::{Permission, PermissionDiscriminants, SpendPermission},
+    };
+
     use super::*;
-    use alloy::primitives::address;
-    use std::str::FromStr;
+    use alloy::{
+        dyn_abi::{Eip712Domain, Resolver},
+        eips::eip1559::Eip1559Estimation,
+        primitives::{FixedBytes, address},
+        signers::local::LocalSigner,
+    };
+    use serde_json::Value;
+    use std::{str::FromStr, sync::Arc, time::SystemTime};
+    use strum::IntoEnumIterator;
 
     #[test]
     fn serde_balance_overrides() {
@@ -731,5 +771,159 @@ mod tests {
             )]),
         };
         assert_eq!(*balance_override, expected);
+    }
+
+    // Sanity test to help us notice any changes to `prepareCalls` response, so that SDK can adjust
+    // their digest generation accordingly.
+    //
+    // The test doesn't use any [`Default`] implementations, and instead relies on exhaustive struct
+    // initializations that will break when we modify fields or enum variants.
+    #[tokio::test]
+    async fn test_prepare_calls_response_signature() -> eyre::Result<()> {
+        let asset_metadata = AssetMetadata {
+            name: Some("Ethereum".to_string()),
+            symbol: Some("ETH".to_string()),
+            uri: Some("https://ethereum.org".to_string()),
+            decimals: Some(18),
+        };
+        let fiat_value_usd = FiatValue { currency: "USD".to_string(), value: 0.0 };
+
+        let signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::new([1; 32]))?));
+
+        let context_quote = PrepareCallsContext::Quote(Box::new(
+            Quotes {
+                quotes: vec![Quote {
+                    chain_id: 0,
+                    intent: Intent::V05(IntentV05::default()),
+                    extra_payment: U256::ZERO,
+                    eth_price: U256::ZERO,
+                    payment_token_decimals: 0,
+                    tx_gas: 0,
+                    native_fee_estimate: Eip1559Estimation {
+                        max_fee_per_gas: 0,
+                        max_priority_fee_per_gas: 0,
+                    },
+                    authorization_address: Some(Address::ZERO),
+                    orchestrator: Address::ZERO,
+                    fee_token_deficit: U256::ZERO,
+                    asset_deficits: AssetDeficits(vec![AssetDeficit {
+                        address: Some(Address::ZERO),
+                        metadata: asset_metadata.clone(),
+                        required: U256::ZERO,
+                        deficit: U256::ZERO,
+                        fiat: Some(fiat_value_usd.clone()),
+                    }]),
+                }],
+                ttl: SystemTime::UNIX_EPOCH,
+                multi_chain_root: Some(B256::ZERO),
+            }
+            .into_signed(signer.sign_hash(&B256::ZERO).await?),
+        ));
+        let context_precall = PrepareCallsContext::PreCall(PreCallContext {
+            call: SignedCall {
+                eoa: Address::ZERO,
+                executionData: Bytes::new(),
+                nonce: U256::ZERO,
+                signature: Bytes::new(),
+            },
+            chain_id: 0,
+        });
+
+        for (name, context) in [("quote", context_quote), ("precall", context_precall)] {
+            let response = PrepareCallsResponse {
+                context,
+                digest: B256::ZERO,
+                typed_data: TypedData {
+                    domain: Eip712Domain::default(),
+                    resolver: Resolver::default(),
+                    primary_type: "".to_string(),
+                    message: Value::Null,
+                },
+                capabilities: PrepareCallsResponseCapabilities {
+                    authorize_keys: vec![AuthorizeKeyResponse {
+                        hash: B256::ZERO,
+                        authorize_key: AuthorizeKey {
+                            key: Key {
+                                expiry: U40::ZERO,
+                                keyType: KeyType::Secp256k1,
+                                isSuperAdmin: true,
+                                publicKey: Address::ZERO.as_slice().into(),
+                            },
+                            permissions: PermissionDiscriminants::iter()
+                                .map(|permission| match permission {
+                                    PermissionDiscriminants::Call => {
+                                        Permission::Call(CallPermission {
+                                            selector: FixedBytes::<4>::ZERO,
+                                            to: Address::ZERO,
+                                        })
+                                    }
+                                    PermissionDiscriminants::Spend => {
+                                        Permission::Spend(SpendPermission {
+                                            limit: U256::ZERO,
+                                            period: SpendPeriod::Minute,
+                                            token: Address::ZERO,
+                                        })
+                                    }
+                                })
+                                .collect(),
+                        },
+                    }],
+                    revoke_keys: vec![RevokeKey { hash: B256::ZERO }],
+                    asset_diff: AssetDiffResponse {
+                        fee_totals: HashMap::from_iter([
+                            (0, FiatValue { currency: "USD".to_string(), value: 0.0 }),
+                            (1, FiatValue { currency: "GBP".to_string(), value: 0.0 }),
+                        ]),
+                        asset_diffs: HashMap::from_iter([
+                            (
+                                0,
+                                AssetDiffs(vec![(
+                                    Address::ZERO,
+                                    vec![AssetDiff {
+                                        address: Some(Address::ZERO),
+                                        token_kind: Some(AssetType::Native),
+                                        metadata: asset_metadata.clone(),
+                                        value: U256::ZERO,
+                                        direction: DiffDirection::Incoming,
+                                        fiat: Some(fiat_value_usd.clone()),
+                                    }],
+                                )]),
+                            ),
+                            (
+                                1,
+                                AssetDiffs(vec![(
+                                    Address::ZERO,
+                                    vec![AssetDiff {
+                                        address: Some(Address::ZERO),
+                                        token_kind: Some(AssetType::Native),
+                                        metadata: asset_metadata.clone(),
+                                        value: U256::ZERO,
+                                        direction: DiffDirection::Incoming,
+                                        fiat: Some(FiatValue {
+                                            currency: "GBP".to_string(),
+                                            value: 0.0,
+                                        }),
+                                    }],
+                                )]),
+                            ),
+                        ]),
+                    },
+                },
+                key: Some(CallKey {
+                    key_type: KeyType::Secp256k1,
+                    public_key: Address::ZERO.as_slice().into(),
+                    prehash: false,
+                }),
+                signature: Bytes::new(),
+            }
+            .with_signature(&signer)
+            .await?;
+
+            let mut response_value = serde_json::to_value(&response)?;
+            response_value.sort_all_objects();
+            insta::assert_json_snapshot!(format!("prepare_calls_{name}"), response_value);
+        }
+
+        Ok(())
     }
 }

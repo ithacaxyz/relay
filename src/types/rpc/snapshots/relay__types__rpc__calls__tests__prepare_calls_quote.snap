@@ -1,0 +1,166 @@
+---
+source: src/types/rpc/calls.rs
+expression: response_value
+---
+{
+  "capabilities": {
+    "assetDiffs": {
+      "0x0": [
+        [
+          "0x0000000000000000000000000000000000000000",
+          [
+            {
+              "address": "0x0000000000000000000000000000000000000000",
+              "decimals": 18,
+              "direction": "incoming",
+              "fiat": {
+                "currency": "USD",
+                "value": "0"
+              },
+              "name": "Ethereum",
+              "symbol": "ETH",
+              "type": "native",
+              "uri": "https://ethereum.org",
+              "value": "0x0"
+            }
+          ]
+        ]
+      ],
+      "0x1": [
+        [
+          "0x0000000000000000000000000000000000000000",
+          [
+            {
+              "address": "0x0000000000000000000000000000000000000000",
+              "decimals": 18,
+              "direction": "incoming",
+              "fiat": {
+                "currency": "GBP",
+                "value": "0"
+              },
+              "name": "Ethereum",
+              "symbol": "ETH",
+              "type": "native",
+              "uri": "https://ethereum.org",
+              "value": "0x0"
+            }
+          ]
+        ]
+      ]
+    },
+    "authorizeKeys": [
+      {
+        "expiry": "0x0",
+        "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "permissions": [
+          {
+            "selector": "0x00000000",
+            "to": "0x0000000000000000000000000000000000000000",
+            "type": "call"
+          },
+          {
+            "limit": "0x0",
+            "period": "minute",
+            "token": "0x0000000000000000000000000000000000000000",
+            "type": "spend"
+          }
+        ],
+        "publicKey": "0x0000000000000000000000000000000000000000",
+        "role": "admin",
+        "type": "secp256k1"
+      }
+    ],
+    "feeTotals": {
+      "0x0": {
+        "currency": "USD",
+        "value": "0"
+      },
+      "0x1": {
+        "currency": "GBP",
+        "value": "0"
+      }
+    },
+    "revokeKeys": [
+      {
+        "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  "context": {
+    "quote": {
+      "hash": "0x35ff2b8269cf978c32d4015acc1177a012f4bdec71d737306b682d664c865f85",
+      "multiChainRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "quotes": [
+        {
+          "assetDeficits": [
+            {
+              "address": "0x0000000000000000000000000000000000000000",
+              "decimals": 18,
+              "deficit": "0x0",
+              "fiat": {
+                "currency": "USD",
+                "value": "0"
+              },
+              "name": "Ethereum",
+              "required": "0x0",
+              "symbol": "ETH",
+              "uri": "https://ethereum.org"
+            }
+          ],
+          "authorizationAddress": "0x0000000000000000000000000000000000000000",
+          "chainId": "0x0",
+          "ethPrice": "0x0",
+          "extraPayment": "0x0",
+          "feeTokenDeficit": "0x0",
+          "intent": {
+            "combinedGas": "0x0",
+            "encodedFundTransfers": [],
+            "encodedPreCalls": [],
+            "eoa": "0x0000000000000000000000000000000000000000",
+            "executionData": "0x",
+            "expiry": "0x0",
+            "funder": "0x0000000000000000000000000000000000000000",
+            "funderSignature": "0x",
+            "isMultichain": false,
+            "nonce": "0x0",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentAmount": "0x0",
+            "paymentMaxAmount": "0x0",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "paymentSignature": "0x",
+            "paymentToken": "0x0000000000000000000000000000000000000000",
+            "settler": "0x0000000000000000000000000000000000000000",
+            "settlerContext": "0x",
+            "signature": "0x",
+            "supportedAccountImplementation": "0x0000000000000000000000000000000000000000"
+          },
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "0x0",
+            "maxPriorityFeePerGas": "0x0"
+          },
+          "orchestrator": "0x0000000000000000000000000000000000000000",
+          "paymentTokenDecimals": 0,
+          "txGas": "0x0"
+        }
+      ],
+      "r": "0x6734cb4e3c071082482bf0f8579484f28dcdb1ca15b0cce72fbf130b2673d00c",
+      "s": "0x5fbeecc4075cfd6a52634210486f24ce6db20f2870e606acc43ade814d48394a",
+      "ttl": 0,
+      "v": "0x0",
+      "yParity": "0x0"
+    }
+  },
+  "digest": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "key": {
+    "prehash": false,
+    "publicKey": "0x0000000000000000000000000000000000000000",
+    "type": "secp256k1"
+  },
+  "signature": "0x9b493304c492daf5d60de3f599f7caa7b738790a9ae415e48c1b53d4bfd2e54234141c8680af91108197a7279ee7e2b3d73a357f2d5529e4b67d809e1c015cdf1b",
+  "typedData": {
+    "domain": {},
+    "message": null,
+    "primaryType": "",
+    "types": {}
+  }
+}

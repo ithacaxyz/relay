@@ -213,6 +213,7 @@ impl spendAndExecuteInfosReturn {
 
 /// Represents a granted allowance to execute a specific function on a target contract.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(Default))]
 pub struct CallPermission {
     /// The 4-byte selector of the allowed function.
     #[serde(deserialize_with = "crate::serde::fn_selector::deserialize")]

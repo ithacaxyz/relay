@@ -8,6 +8,8 @@ use crate::types::{
 
 /// Represents key permissions.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[cfg_attr(test, derive(strum::EnumDiscriminants))]
+#[cfg_attr(test, strum_discriminants(derive(strum::EnumIter), doc = "Key permissions"))]
 #[serde(tag = "type")]
 pub enum Permission {
     /// Call permission.
