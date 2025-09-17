@@ -612,7 +612,8 @@ impl Signer {
     ///     1. We failed to send a transaction. This is very unlikely, and if happens, hard to
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
-    ///        transaction wa successfully broadcasted but never confirmed likely causing a nonce gap.
+    ///        transaction wa successfully broadcasted but never confirmed likely causing a nonce
+    ///        gap.
     #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id, %nonce))]
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
