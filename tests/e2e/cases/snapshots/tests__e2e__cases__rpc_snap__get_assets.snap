@@ -10,9 +10,9 @@ expression: response
       "type": "native",
       "metadata": {
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -24,9 +24,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -38,9 +38,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -52,9 +52,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -66,9 +66,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -80,9 +80,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -94,9 +94,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -108,9 +108,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -122,9 +122,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -136,9 +136,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     },
@@ -150,9 +150,9 @@ expression: response
         "name": "mockName",
         "symbol": "mockSymbol",
         "decimals": 18,
-        "price": {
+        "fiat": {
           "currency": "USD",
-          "price": 1.0
+          "value": "1"
         }
       }
     }
