@@ -20,7 +20,7 @@ mod tokens;
 pub use tokens::*;
 
 mod key;
-use alloy::primitives::Uint;
+use alloy::primitives::{Address, Uint};
 pub use key::*;
 
 mod intent;
@@ -81,9 +81,12 @@ pub type U40 = Uint<40, 1>;
 
 /// The health response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Health {
     /// The status (usually OK) of the RPC.
     pub status: String,
     /// The version of the RPC.
     pub version: String,
+    /// The address of the quote signer.
+    pub quote_signer: Address,
 }

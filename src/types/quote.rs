@@ -143,6 +143,11 @@ pub struct Quote {
 }
 
 impl Quote {
+    /// Returns true if the quote has deficits.
+    pub fn has_deficits(&self) -> bool {
+        !self.asset_deficits.is_empty() || !self.fee_token_deficit.is_zero()
+    }
+
     /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
@@ -152,6 +157,7 @@ impl Quote {
         }
         hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
+        hasher.update([self.has_deficits() as u8]);
         hasher.finalize()
     }
 }
