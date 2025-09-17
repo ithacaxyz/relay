@@ -407,20 +407,21 @@ pub struct PrepareCallsResponse {
 }
 
 impl PrepareCallsResponse {
-    /// Calculates the signature of the response using the provided signer.
+    /// Signs over the response digest using the provided signer, and sets the `signature` field.
+    pub async fn with_signature(mut self, signer: &DynSigner) -> eyre::Result<Self> {
+        let digest = self.digest()?;
+        self.signature = signer.sign_hash(&digest).await?.as_bytes().into();
+        Ok(self)
+    }
+
+    /// Calculates the digest of the response.
     ///
     /// The response is first serialized as compact JSON without `signature` field with all object
     /// keys sorted, then hashed with keccak256, and finally signed by the provided signer.
-    pub async fn with_signature(mut self, signer: &DynSigner) -> eyre::Result<Self> {
-        let mut response_value = serde_json::to_value(&self)?;
+    fn digest(&self) -> eyre::Result<B256> {
+        let mut response_value = serde_json::to_value(self)?;
         response_value.as_object_mut().ok_or_eyre("response is not an object")?.remove("signature");
-
-        self.signature = signer
-            .sign_hash(&keccak256(serde_json::to_vec(&response_value)?))
-            .await?
-            .as_bytes()
-            .into();
-        Ok(self)
+        Ok(keccak256(serde_json::to_vec(&response_value)?))
     }
 }
 
