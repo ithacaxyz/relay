@@ -88,7 +88,7 @@ expression: response_value
   },
   "context": {
     "quote": {
-      "hash": "0x35ff2b8269cf978c32d4015acc1177a012f4bdec71d737306b682d664c865f85",
+      "hash": "0x407b032265b9dcda1a27ce4e10b21271ea9342cf8f09f713f2684823879a9272",
       "multiChainRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
       "quotes": [
         {
@@ -156,7 +156,7 @@ expression: response_value
     "publicKey": "0x0000000000000000000000000000000000000000",
     "type": "secp256k1"
   },
-  "signature": "0x9b493304c492daf5d60de3f599f7caa7b738790a9ae415e48c1b53d4bfd2e54234141c8680af91108197a7279ee7e2b3d73a357f2d5529e4b67d809e1c015cdf1b",
+  "signature": "0x6428cb0ec2d7da3cbd9aae00a97fdfa9e44913e55824ddcc1eed49bceadcafeb634059ca7de4e805c96352c18f8cecc7d225f82821f5a065af0f84c4698d36181b",
   "typedData": {
     "domain": {},
     "message": null,
