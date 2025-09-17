@@ -8,9 +8,6 @@ pub enum KeysError {
     /// The key type is not supported.
     #[error("only supports `p256`, `webauthnp256` and `secp256k1` key types")]
     UnsupportedKeyType,
-    /// The p256 key type is only supported as session key.
-    #[error("`p256` can only be used as a session key, not admin.")]
-    P256SessionKeyOnly,
     /// Missing at least one admin authorization key.
     #[error("should have at least one admin authorization key")]
     MissingAdminKey,
@@ -29,7 +26,6 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: KeysError) -> Self {
         match err {
             KeysError::UnsupportedKeyType
-            | KeysError::P256SessionKeyOnly
             | KeysError::MissingAdminKey
             | KeysError::OnlyAdminKeyAllowed
             | KeysError::InvalidSignature

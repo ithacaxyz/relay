@@ -55,10 +55,6 @@ impl AuthorizeKey {
     pub fn into_calls(mut self) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
 
-        if self.key.isSuperAdmin && self.key_type().is_p256() {
-            return Err(KeysError::P256SessionKeyOnly);
-        }
-
         calls.extend(self.permissions.drain(..).map(|perm| match perm {
             Permission::Call(perm) => {
                 Call::set_can_execute(self.key.key_hash(), perm.to, perm.selector, true)
