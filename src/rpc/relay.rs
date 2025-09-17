@@ -1306,7 +1306,11 @@ impl Relay {
                 asset_diff,
             },
             key,
-        };
+            signature: Bytes::new(),
+        }
+        .with_signature(&self.inner.quote_signer)
+        .await
+        .map_err(RelayError::InternalError)?;
 
         Ok(response)
     }
