@@ -688,8 +688,8 @@ pub struct CallsStatusCapabilities {
 #[cfg(test)]
 mod tests {
     use crate::types::{
-        AssetDeficit, AssetDeficits, AssetDiff, AssetDiffs, AssetMetadata, CallPermission,
-        DiffDirection, FiatValue, Intent, IntentV05,
+        AssetDeficit, AssetDeficits, AssetDiff, AssetDiffs, AssetMetadata, AssetPrice,
+        CallPermission, DiffDirection, Intent, IntentV05,
         IthacaAccount::SpendPeriod,
         Quote, Quotes, U40,
         rpc::{Permission, PermissionDiscriminants, SpendPermission},
@@ -786,7 +786,8 @@ mod tests {
             uri: Some("https://ethereum.org".to_string()),
             decimals: Some(18),
         };
-        let fiat_value_usd = FiatValue { currency: "USD".to_string(), value: 0.0 };
+        let asset_price_usd = AssetPrice { currency: "USD".to_string(), value: 0.0 };
+        let asset_price_gbp = AssetPrice { currency: "GBP".to_string(), value: 0.0 };
 
         let signer = DynSigner(Arc::new(LocalSigner::from_bytes(&B256::new([1; 32]))?));
 
@@ -811,7 +812,7 @@ mod tests {
                         metadata: asset_metadata.clone(),
                         required: U256::ZERO,
                         deficit: U256::ZERO,
-                        fiat: Some(fiat_value_usd.clone()),
+                        fiat: Some(asset_price_usd.clone()),
                     }]),
                 }],
                 ttl: SystemTime::UNIX_EPOCH,
@@ -871,8 +872,8 @@ mod tests {
                     revoke_keys: vec![RevokeKey { hash: B256::ZERO }],
                     asset_diff: AssetDiffResponse {
                         fee_totals: HashMap::from_iter([
-                            (0, FiatValue { currency: "USD".to_string(), value: 0.0 }),
-                            (1, FiatValue { currency: "GBP".to_string(), value: 0.0 }),
+                            (0, asset_price_usd.clone()),
+                            (1, asset_price_gbp.clone()),
                         ]),
                         asset_diffs: HashMap::from_iter([
                             (
@@ -885,7 +886,7 @@ mod tests {
                                         metadata: asset_metadata.clone(),
                                         value: U256::ZERO,
                                         direction: DiffDirection::Incoming,
-                                        fiat: Some(fiat_value_usd.clone()),
+                                        fiat: Some(asset_price_usd.clone()),
                                     }],
                                 )]),
                             ),
@@ -899,10 +900,7 @@ mod tests {
                                         metadata: asset_metadata.clone(),
                                         value: U256::ZERO,
                                         direction: DiffDirection::Incoming,
-                                        fiat: Some(FiatValue {
-                                            currency: "GBP".to_string(),
-                                            value: 0.0,
-                                        }),
+                                        fiat: Some(asset_price_gbp.clone()),
                                     }],
                                 )]),
                             ),
