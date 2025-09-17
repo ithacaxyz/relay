@@ -8,26 +8,28 @@ use relay::types::{Call, KeyType, KeyWith712Signer};
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]
 async fn behavior_delegation() -> Result<()> {
-    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
-    run_e2e(|env| {
-        vec![
-            // Authorize key (delegation provided in the call)
-            TxContext {
-                authorization_keys: vec![&key],
-                expected: ExpectedOutcome::Pass,
-                auth: Some(AuthKind::Auth),
-                ..Default::default()
-            },
-            // Perform a transfer signed by the authorized key
-            TxContext {
-                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
-                expected: ExpectedOutcome::Pass,
-                key: Some(&key),
-                ..Default::default()
-            },
-        ]
-    })
-    .await?;
+    for key_type in KeyType::iter() {
+        let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
+        run_e2e(|env| {
+            vec![
+                // Authorize key (delegation provided in the call)
+                TxContext {
+                    authorization_keys: vec![&key],
+                    expected: ExpectedOutcome::Pass,
+                    auth: Some(AuthKind::Auth),
+                    ..Default::default()
+                },
+                // Perform a transfer signed by the authorized key
+                TxContext {
+                    calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                    expected: ExpectedOutcome::Pass,
+                    key: Some(&key),
+                    ..Default::default()
+                },
+            ]
+        })
+        .await?;
+    }
     Ok(())
 }
 
