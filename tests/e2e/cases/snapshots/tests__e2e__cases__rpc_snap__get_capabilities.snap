@@ -11,7 +11,7 @@ expression: response
       },
       "accountImplementation": {
         "address": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431",
-        "version": "0.5.9"
+        "version": "0.5.10"
       },
       "legacyOrchestrators": [
         {
