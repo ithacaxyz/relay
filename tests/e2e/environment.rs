@@ -310,6 +310,18 @@ async fn setup_chain_with_contracts<P: Provider>(
         .get_receipt()
         .await?;
 
+    // Set up orchestrators
+    provider
+        .send_transaction(TransactionRequest::default().with_to(contracts.funder).with_call(
+            &IFunder::setOrchestratorsCall {
+                ocs: vec![contracts.orchestrator, contracts.legacy_orchestrator.orchestrator],
+                val: true,
+            },
+        ))
+        .await?
+        .get_receipt()
+        .await?;
+
     // Fund EOA and mint tokens
     let holders = &[eoa_address, contracts.funder]
         .iter()
@@ -1151,13 +1163,13 @@ async fn deploy_orchestrator<P: Provider + WalletProvider>(
 async fn deploy_funder<P: Provider + WalletProvider>(
     provider: &P,
     contracts_path: &Path,
-    orchestrator: Address,
+    _orchestrator: Address,
 ) -> eyre::Result<Address> {
     let funder_eoa = provider.default_signer_address();
     deploy_contract(
         provider,
         &contracts_path.join("SimpleFunder.sol/SimpleFunder.json"),
-        Some((funder_eoa, orchestrator, funder_eoa).abi_encode().into()),
+        Some((funder_eoa, funder_eoa).abi_encode().into()),
     )
     .await
 }
