@@ -878,7 +878,6 @@ impl Relay {
             vec![false; keys.len()]
         };
 
-        // Combine keys with their spend permissions
         Ok(keys
             .into_iter()
             .zip(spend_permissions_disabled)
