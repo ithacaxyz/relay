@@ -3,7 +3,7 @@ use crate::{
     error::{IntentError, MerkleError, RelayError},
     types::{
         CallPermission,
-        IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
+        IthacaAccount::{setCanExecuteCall, setSpendLimitCall, setSpendLimitsEnabledCall},
         KeyType, Orchestrator, Signature, SignedCall,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, CallKey,
@@ -127,6 +127,7 @@ impl SignedCall {
         &self,
     ) -> Result<Vec<AuthorizeKeyResponse>, alloy::sol_types::Error> {
         let mut permissions: HashMap<B256, Vec<Permission>> = HashMap::default();
+        let mut spend_permissions_disabled: HashMap<B256, bool> = HashMap::default();
 
         for call in self.calls()? {
             // try decoding as a setSpendLimit call first.
@@ -150,6 +151,12 @@ impl SignedCall {
                     .or_default()
                     .push(CallPermission { selector, to }.into());
             }
+
+            if let Ok(setSpendLimitsEnabledCall { keyHash, enabled }) =
+                setSpendLimitsEnabledCall::abi_decode(&call.data)
+            {
+                spend_permissions_disabled.insert(keyHash, enabled);
+            }
         }
 
         Ok(self
@@ -161,6 +168,7 @@ impl SignedCall {
                     authorize_key: AuthorizeKey {
                         permissions: permissions.remove(&hash).unwrap_or_default(),
                         key,
+                        spend_permissions_disabled: spend_permissions_disabled.remove(&hash),
                     },
                     hash,
                 }

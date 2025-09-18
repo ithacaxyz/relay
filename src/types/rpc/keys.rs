@@ -34,12 +34,16 @@ pub type GetKeysResponse = HashMap<U64, Vec<AuthorizeKeyResponse>>;
 ///
 /// If the key already exists, the permissions are updated.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthorizeKey {
     /// The key to authorize or modify permissions for.
     #[serde(flatten)]
     pub key: Key,
     /// The permissions for the key.
     pub permissions: Vec<Permission>,
+    /// Whether spend permissions are disabled, and unlimited spending is permitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_permissions_disabled: Option<bool>,
 }
 
 impl AuthorizeKey {
@@ -54,6 +58,13 @@ impl AuthorizeKey {
     /// registry.
     pub fn into_calls(mut self) -> Result<(Call, Vec<Call>), KeysError> {
         let mut calls = Vec::new();
+
+        if self.spend_permissions_disabled.is_some() {
+            calls.push(Call::set_spend_limits_enabled(
+                self.key.key_hash(),
+                !self.spend_permissions_disabled.unwrap(),
+            ));
+        }
 
         calls.extend(self.permissions.drain(..).map(|perm| match perm {
             Permission::Call(perm) => {
@@ -159,6 +170,7 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
+            spend_permissions_disabled: None,
         };
 
         let (authorize, calls) = key.clone().into_calls().unwrap();
@@ -207,6 +219,7 @@ mod tests {
                     token: Address::ZERO,
                 }),
             ],
+            spend_permissions_disabled: None,
         };
 
         assert_eq!(
@@ -233,6 +246,7 @@ mod tests {
                     to: Address::ZERO,
                     selector: fixed_bytes!("0xa9059cbb"),
                 })],
+                spend_permissions_disabled: None,
             },
         };
 
@@ -267,6 +281,7 @@ mod tests {
                         to: Address::ZERO,
                         selector: fixed_bytes!("0xa9059cbb"),
                     })],
+                    spend_permissions_disabled: None,
                 },
             }
         );

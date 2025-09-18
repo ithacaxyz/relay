@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{AuthError, RelayError},
-    types::IERC20,
+    types::{IERC20, IthacaAccount::setSpendLimitsEnabledCall},
 };
 
 use super::{
@@ -78,6 +78,13 @@ impl Call {
     ) -> Self {
         Self::self_call(
             setSpendLimitCall { keyHash: key_hash, token, period, limit }.abi_encode().into(),
+        )
+    }
+
+    /// Create a call to set the spend limits enabled for `key_hash`.
+    pub fn set_spend_limits_enabled(key_hash: B256, enabled: bool) -> Self {
+        Self::self_call(
+            setSpendLimitsEnabledCall { keyHash: key_hash, enabled }.abi_encode().into(),
         )
     }
 

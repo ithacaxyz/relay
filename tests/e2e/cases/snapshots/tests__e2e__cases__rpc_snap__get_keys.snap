@@ -10,7 +10,8 @@ expression: response
       "type": "secp256k1",
       "role": "admin",
       "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
-      "permissions": []
+      "permissions": [],
+      "spendPermissionsDisabled": false
     },
     {
       "hash": "0x12bbb12078df9966cf1035cfd7ec1d8eb6c5971cbef21427e9dd0865e8153efd",
@@ -24,7 +25,8 @@ expression: response
           "selector": "0xa9059cbb",
           "to": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e"
         }
-      ]
+      ],
+      "spendPermissionsDisabled": false
     }
   ]
 }

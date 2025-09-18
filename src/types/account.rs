@@ -131,6 +131,9 @@ sol! {
             onlyThis
             checkKeyHashIsNonZero(keyHash);
 
+        /// Sets whether spend limits are enabled for a specific key.
+        function setSpendLimitsEnabled(bytes32 keyHash, bool enabled);
+
         /// Removes the daily spend limit of `token` for `keyHash` for `period`.
         function removeSpendLimit(bytes32 keyHash, address token, SpendPeriod period)
             public
@@ -147,6 +150,9 @@ sol! {
         /// - `target` is in the upper 20 bytes.
         /// - `fnSel` is in the lower 4 bytes.
         function spendAndExecuteInfos(bytes32[] calldata keyHashes) returns (SpendInfo[][] memory keys_spends, bytes32[][] memory keys_executes);
+
+        /// Returns whether spend limits are enabled for a specific key.
+        function spendLimitsEnabled(bytes32 keyHash) public view virtual returns (bool);
 
         /// The orchestrator address.
         address public ORCHESTRATOR;
@@ -408,6 +414,17 @@ impl<P: Provider> Account<P> {
         Ok(key_hashes.zip(permissions).collect())
     }
 
+    /// Returns whether spend permissions are disabled for a key hash.
+    pub async fn spend_permissions_disabled(&self, key_hash: B256) -> TransportResult<bool> {
+        self.delegation
+            .spendLimitsEnabled(key_hash)
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map(|enabled| !enabled)
+            .map_err(TransportErrorKind::custom)
+    }
+
     /// Fetch the orchestrator address from the delegation contract.
     pub async fn get_orchestrator(&self) -> TransportResult<Address> {
         self.delegation
@@ -462,6 +479,25 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
+    }
+
+    /// Get the EIP-712 domain of the delegation.
+    pub async fn eip712_domain(&self) -> TransportResult<Eip712Domain> {
+        let domain = self
+            .delegation
+            .eip712Domain()
+            .call()
+            .overrides(self.overrides.clone())
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        Ok(Eip712Domain::new(
+            Some(domain.name.into()),
+            Some(domain.version.into()),
+            Some(domain.chainId),
+            Some(domain.verifyingContract),
+            None,
+        ))
     }
 }
 

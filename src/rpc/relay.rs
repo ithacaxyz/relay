@@ -53,6 +53,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
+use semver::Version;
 use std::{cmp, collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
@@ -862,13 +863,31 @@ impl Relay {
             .await
             .map_err(RelayError::from)?;
 
+        let domain = account.eip712_domain().await?;
+        let version = Version::parse(&domain.version.unwrap_or_default()).unwrap();
+
+        // Determine if spend permissions are disabled for each key
+        let spend_permissions_disabled = if version >= Version::parse("0.5.6").unwrap() {
+            futures::future::try_join_all(
+                keys.iter()
+                    .map(|(hash, _)| account.spend_permissions_disabled(*hash))
+                    .collect::<Vec<_>>(),
+            )
+            .await?
+        } else {
+            vec![false; keys.len()]
+        };
+
+        // Combine keys with their spend permissions
         Ok(keys
             .into_iter()
-            .map(|(hash, key)| AuthorizeKeyResponse {
+            .zip(spend_permissions_disabled)
+            .map(|((hash, key), spend_permissions_disabled)| AuthorizeKeyResponse {
                 hash,
                 authorize_key: AuthorizeKey {
                     key,
                     permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
+                    spend_permissions_disabled: Some(spend_permissions_disabled),
                 },
             })
             .collect())

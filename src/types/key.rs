@@ -272,6 +272,8 @@ pub struct KeyWith712Signer {
     signer: Arc<dyn Eip712PayLoadSigner>,
     /// Key permissions in case it's not an admin key.
     permissions: Vec<Permission>,
+    /// Whether spend permissions are disabled.
+    spend_permissions_disabled: Option<bool>,
 }
 
 impl KeyWith712Signer {
@@ -326,7 +328,12 @@ impl KeyWith712Signer {
             _ => return Ok(None),
         };
 
-        Ok(Some(KeyWith712Signer { key, signer, permissions: vec![] }))
+        Ok(Some(KeyWith712Signer {
+            key,
+            signer,
+            permissions: vec![],
+            spend_permissions_disabled: None,
+        }))
     }
 
     /// Returns an admin [`Self`] with [`KeyType::Secp256k1`] using the provided signer.
@@ -342,6 +349,7 @@ impl KeyWith712Signer {
             key,
             signer: Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
             permissions: vec![],
+            spend_permissions_disabled: None,
         }
     }
 
@@ -374,7 +382,11 @@ impl KeyWith712Signer {
 
     /// Returns a [`AuthorizeKey`] equivalent.
     pub fn to_authorized(&self) -> AuthorizeKey {
-        AuthorizeKey { key: self.key.clone(), permissions: self.permissions.clone() }
+        AuthorizeKey {
+            key: self.key.clone(),
+            permissions: self.permissions.clone(),
+            spend_permissions_disabled: self.spend_permissions_disabled,
+        }
     }
 
     /// Returns its [`RevokeKey`].
