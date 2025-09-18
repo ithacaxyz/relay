@@ -40,7 +40,7 @@ impl CreatableAccount {
         Ok(self.pre_call.authorized_keys_with_permissions()?)
     }
 
-    /// Builds state overrides for the account, including 7702 autorization and authorized keys.
+    /// Builds state overrides for the account, including 7702 authorization and authorized keys.
     pub fn state_overrides(&self) -> Result<StateOverride, RelayError> {
         Ok(StateOverridesBuilder::with_capacity(1)
             .append(
