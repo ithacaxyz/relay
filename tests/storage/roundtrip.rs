@@ -159,6 +159,7 @@ impl Fixtures {
             tx_gas: r_u64,
             native_fee_estimate: r_fee,
             authorization_address: Some(r_address),
+            additional_authorization: None,
             orchestrator: r_address,
             fee_token_deficit: r_u256,
             asset_deficits: Default::default(),

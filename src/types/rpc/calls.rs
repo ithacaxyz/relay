@@ -805,6 +805,7 @@ mod tests {
                         max_priority_fee_per_gas: 0,
                     },
                     authorization_address: Some(Address::ZERO),
+                    additional_authorization: None,
                     orchestrator: Address::ZERO,
                     fee_token_deficit: U256::ZERO,
                     asset_deficits: AssetDeficits(vec![AssetDeficit {

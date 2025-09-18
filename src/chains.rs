@@ -160,6 +160,14 @@ impl Chain {
             )
             .extend(context.state_overrides.clone());
 
+        if let Some((address, auth)) = &context.additional_authorization {
+            let delegation_address = auth.address();
+            overrides = overrides.append(
+                *address,
+                AccountOverride::default().with_7702_delegation_designator(*delegation_address),
+            );
+        }
+
         // If the fee token is an ERC20, we do a balance override, merging it with the client
         // supplied balance override if necessary.
         if !context.fee_token.is_zero() {

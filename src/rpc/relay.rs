@@ -635,6 +635,7 @@ impl Relay {
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
+            additional_authorization: context.additional_authorization,
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
             asset_deficits,
@@ -1041,6 +1042,7 @@ impl Relay {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
+                additional_authorization: None,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -1119,6 +1121,8 @@ impl Relay {
             calls.push(Call::upgrade_proxy_account(new_impl));
         }
 
+        let mut additional_authorization = None;
+
         // delegate the fee payer if it is stored, only adding a precall if it's for delegation to
         // an ithaca account, assuming the configured delegation account is an ithaca account.
         if let Some(fee_payer) = request.capabilities.meta.fee_payer {
@@ -1135,6 +1139,7 @@ impl Relay {
                 if self.is_ithaca_account(implementation, semver::Version::new(0, 5, 6)) {
                     // put the delegation as the first call
                     pre_calls.insert(0, account.pre_call.clone());
+                    additional_authorization = Some((fee_payer, account.signed_authorization))
                 }
             }
         }
@@ -1180,6 +1185,7 @@ impl Relay {
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
+                    additional_authorization,
                     key,
                     intent_kind,
                     state_overrides,
