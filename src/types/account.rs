@@ -457,13 +457,13 @@ impl<P: Provider> Account<P> {
         let mut result = HashMap::new();
 
         for (idx, (key_hash, permission)) in key_hashes.into_iter().zip(permissions).enumerate() {
-            let spend_permissions_enabled = if output[idx + 2].success {
-                spendLimitsEnabledCall::abi_decode_returns(&output[idx + 1].returnData)?
+            let spend_permissions_disabled = if output[idx + 2].success {
+                !spendLimitsEnabledCall::abi_decode_returns(&output[idx + 1].returnData)?
             } else {
                 // `spendPermissionsEnabled` was added in 0.5.9
                 if version < Version::new(0, 5, 9) {
-                    // default to true for older versions
-                    true
+                    // default to false for older versions
+                    false
                 } else {
                     return Err(TransportErrorKind::custom_str(
                         "couldn't fetch spendLimitsEnabled flag",
@@ -482,17 +482,6 @@ impl<P: Provider> Account<P> {
         );
 
         Ok(result)
-    }
-
-    /// Returns whether spend permissions are disabled for a key hash.
-    pub async fn spend_permissions_disabled(&self, key_hash: B256) -> TransportResult<bool> {
-        self.delegation
-            .spendLimitsEnabled(key_hash)
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map(|enabled| !enabled)
-            .map_err(TransportErrorKind::custom)
     }
 
     /// Fetch the orchestrator address from the delegation contract.
