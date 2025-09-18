@@ -67,6 +67,7 @@ expression: response_value
         ],
         "publicKey": "0x0000000000000000000000000000000000000000",
         "role": "admin",
+        "spendPermissionsDisabled": false,
         "type": "secp256k1"
       }
     ],
@@ -101,7 +102,7 @@ expression: response_value
     "publicKey": "0x0000000000000000000000000000000000000000",
     "type": "secp256k1"
   },
-  "signature": "0x90729c8310fcf41d52abb3db07777500ccd3b84dfdaf9074063499a170aa214104db37720e4e7fdb339f8c3af6e748a38a57e98b73d45998ce786f91b3ac0f821c",
+  "signature": "0x1d18dee3433b10c316bd939fb08fb8d816734d937fbf0aef6b99538a9fc35c793f7ce1fe190334589adaabb94e50b5ed224aeed45077bca0c52c38ce9422c1911b",
   "typedData": {
     "domain": {},
     "message": null,
