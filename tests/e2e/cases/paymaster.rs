@@ -158,6 +158,8 @@ async fn test_paymaster_auto_upgrade() -> eyre::Result<()> {
         .await
         .unwrap();
 
+    println!("got past prepareCalls");
+
     // Ensure the payer on Intent is as expected
     // todo(onbjerg): this assumes a single intent
     assert_eq!(context.quote_mut().unwrap().ty().quotes[0].intent.payer(), paymaster.address);
@@ -193,6 +195,3 @@ async fn test_paymaster_auto_upgrade() -> eyre::Result<()> {
 
     Ok(())
 }
-
-// TODO: test like the above but for incompatible ithaca account versions, and non-ithaca accounts
-// (or just accounts that are not configured in the relay)
