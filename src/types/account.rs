@@ -472,7 +472,7 @@ impl<P: Provider> Account<P> {
                 }
             };
 
-            result.insert(key_hash, (permission, spend_permissions_enabled));
+            result.insert(key_hash, (permission, spend_permissions_disabled));
         }
 
         debug!(
@@ -538,25 +538,6 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
-    }
-
-    /// Get the EIP-712 domain of the delegation.
-    pub async fn eip712_domain(&self) -> TransportResult<Eip712Domain> {
-        let domain = self
-            .delegation
-            .eip712Domain()
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
-        Ok(Eip712Domain::new(
-            Some(domain.name.into()),
-            Some(domain.version.into()),
-            Some(domain.chainId),
-            Some(domain.verifyingContract),
-            None,
-        ))
     }
 }
 
