@@ -24,7 +24,7 @@ pub type KeyID = Address;
 
 sol! {
     /// The type of key.
-    #[derive(Debug, Eq, PartialEq, Serialize, Deserialize, strum::EnumIter)]
+    #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "lowercase")]
     enum KeyType {
         /// A P256 key.

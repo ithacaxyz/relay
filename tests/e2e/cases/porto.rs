@@ -8,7 +8,7 @@ use relay::types::{Call, KeyType, KeyWith712Signer};
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]
 async fn behavior_delegation() -> Result<()> {
-    for key_type in KeyType::iter() {
+    for key_type in [KeyType::P256, KeyType::WebAuthnP256, KeyType::Secp256k1] {
         let key = KeyWith712Signer::random_admin(key_type)?.unwrap();
         run_e2e(|env| {
             vec![
