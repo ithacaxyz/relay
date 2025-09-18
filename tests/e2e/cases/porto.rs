@@ -3,7 +3,7 @@
 use crate::e2e::{common_calls as calls, *};
 use alloy::{primitives::U256, sol_types::SolCall};
 use eyre::Result;
-use relay::types::{Call, KeyType, KeyWith712Signer};
+use relay::types::{Call, IERC20::transferCall, KeyType, KeyWith712Signer};
 
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]
@@ -573,6 +573,38 @@ async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
             }],
             // Execute the transfer via session key in the same intent
             calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+            // The intent is signed by the session key itself
+            key: Some(&session_key),
+            ..Default::default()
+        }]
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_key_no_spend_permissions() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session_key =
+        KeyWith712Signer::random_session(KeyType::P256)?.unwrap().no_spend_permissions();
+    run_e2e(|env| {
+        vec![TxContext {
+            authorization_keys: vec![&key],
+            expected: ExpectedOutcome::Pass,
+            // Bundle session key authorization as a precall
+            pre_calls: vec![TxContext {
+                authorization_keys: vec![&session_key],
+                key: Some(&key),
+                calls: vec![Call::set_can_execute(
+                    session_key.key_hash(),
+                    env.erc20,
+                    transferCall::SELECTOR.into(),
+                    true,
+                )],
+                ..Default::default()
+            }],
+            // Execute the transfer via session key in the same intent
+            calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(10000000u64))],
             // The intent is signed by the session key itself
             key: Some(&session_key),
             ..Default::default()

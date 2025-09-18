@@ -98,7 +98,8 @@ expression: response
         "type": "secp256k1",
         "role": "admin",
         "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
-        "permissions": []
+        "permissions": [],
+        "spendPermissionsDisabled": false
       }
     ]
   }

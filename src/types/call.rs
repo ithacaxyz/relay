@@ -160,11 +160,12 @@ impl Call {
 }
 
 /// All selectors allowed in precalls.
-const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
+const WHITELISTED_SELECTORS: [[u8; 4]; 7] = [
     authorizeCall::SELECTOR,
     revokeCall::SELECTOR,
     setCanExecuteCall::SELECTOR,
     setSpendLimitCall::SELECTOR,
     removeSpendLimitCall::SELECTOR,
     upgradeProxyAccountCall::SELECTOR,
+    setSpendLimitsEnabledCall::SELECTOR,
 ];

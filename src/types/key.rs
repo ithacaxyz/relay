@@ -359,6 +359,12 @@ impl KeyWith712Signer {
         self
     }
 
+    /// Disables spend permissions.
+    pub fn no_spend_permissions(mut self) -> Self {
+        self.spend_permissions_disabled = true;
+        self
+    }
+
     /// Encodes and signs the typed data according to [EIP-712].
     ///
     /// [EIP-712]: https://eips.ethereum.org/EIPS/eip-712
