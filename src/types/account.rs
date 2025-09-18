@@ -458,7 +458,7 @@ impl<P: Provider> Account<P> {
 
         for (idx, (key_hash, permission)) in key_hashes.into_iter().zip(permissions).enumerate() {
             let spend_permissions_disabled = if output[idx + 2].success {
-                !spendLimitsEnabledCall::abi_decode_returns(&output[idx + 1].returnData)?
+                !spendLimitsEnabledCall::abi_decode_returns(&output[idx + 2].returnData)?
             } else {
                 // `spendPermissionsEnabled` was added in 0.5.9
                 if version < Version::new(0, 5, 9) {
