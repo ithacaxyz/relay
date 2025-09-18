@@ -1153,13 +1153,33 @@ async fn deploy_funder<P: Provider + WalletProvider>(
     contracts_path: &Path,
     orchestrator: Address,
 ) -> eyre::Result<Address> {
+    use alloy::sol;
+
+    sol! {
+        function setOrchestrators(address[] memory ocs, bool val) external;
+    }
+
     let funder_eoa = provider.default_signer_address();
-    deploy_contract(
+    let funder_address = deploy_contract(
         provider,
         &contracts_path.join("SimpleFunder.sol/SimpleFunder.json"),
-        Some((funder_eoa, orchestrator, funder_eoa).abi_encode().into()),
+        Some((funder_eoa, funder_eoa).abi_encode().into()),
     )
-    .await
+    .await?;
+
+    // Set orchestrator as approved
+    provider
+        .send_transaction(TransactionRequest::default().with_to(funder_address).with_call(
+            &setOrchestratorsCall {
+                ocs: vec![orchestrator],
+                val: true,
+            },
+        ))
+        .await?
+        .get_receipt()
+        .await?;
+
+    Ok(funder_address)
 }
 
 /// Deploy the delegation implementation contract
