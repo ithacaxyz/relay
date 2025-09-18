@@ -37,6 +37,7 @@ use eyre::{OptionExt, WrapErr};
 use futures_util::{
     StreamExt, future::try_join_all, lock::Mutex, stream::FuturesUnordered, try_join,
 };
+use metrics::gauge;
 use opentelemetry::trace::{SpanKind, TraceContextExt};
 use std::{
     fmt::Display,
@@ -195,7 +196,7 @@ impl Signer {
         )?;
 
         // Heuristically estimate the block time.
-        let block_time = {
+        let estimated_block_time = {
             let latest = latest.ok_or_eyre("couldn't fetch latest block")?;
             let length = 1000.min(latest.header.number - 1);
             let start = provider
@@ -208,12 +209,17 @@ impl Signer {
             )
         };
 
+        // Populate a metric once with the estimated block time. This does not need to be updated
+        // multiple times so we have no need for the gauge later
+        let block_time_metric = gauge!("estimated_block_time", "chain_id" => chain_id.to_string());
+        block_time_metric.set(estimated_block_time);
+
         let inner = SignerInner {
             id,
             provider,
             wallet,
             chain_id,
-            block_time,
+            block_time: estimated_block_time,
             nonce: Mutex::new(nonce),
             events_tx,
             storage,
