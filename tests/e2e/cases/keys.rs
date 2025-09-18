@@ -55,7 +55,7 @@ async fn get_keys() -> eyre::Result<()> {
                 authorize_key: AuthorizeKey {
                     key: key.key().clone(),
                     permissions,
-                    spend_permissions_disabled: Some(false),
+                    spend_permissions_disabled: false,
                 },
             }
         })

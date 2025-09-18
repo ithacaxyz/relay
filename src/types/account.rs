@@ -5,7 +5,10 @@ use super::{
 use crate::{
     error::{AuthError, RelayError},
     storage::StorageApi,
-    types::IDelegation,
+    types::{
+        IDelegation,
+        IthacaAccount::{eip712DomainCall, spendAndExecuteInfosCall, spendLimitsEnabledCall},
+    },
 };
 use IthacaAccount::{
     IthacaAccountInstance, spendAndExecuteInfosReturn, unwrapAndValidateSignatureReturn,
@@ -14,7 +17,10 @@ use alloy::{
     dyn_abi::Eip712Domain,
     eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, B256, Bytes, FixedBytes, U256, aliases::U192, map::HashMap},
-    providers::Provider,
+    providers::{
+        MULTICALL3_ADDRESS, Provider,
+        bindings::IMulticall3::{Call3, aggregate3Call},
+    },
     rpc::types::{
         TransactionRequest,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
@@ -24,6 +30,8 @@ use alloy::{
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
+use eyre::Context;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -393,25 +401,87 @@ impl<P: Provider> Account<P> {
     pub async fn permissions(
         &self,
         key_hashes: impl Iterator<Item = B256> + Clone,
-    ) -> TransportResult<HashMap<B256, Vec<Permission>>> {
+    ) -> Result<HashMap<B256, (Vec<Permission>, bool)>, RelayError> {
         debug!(eoa = %self.delegation.address(), "Fetching permissions");
 
-        let permissions = self
-            .delegation
-            .spendAndExecuteInfos(key_hashes.clone().collect())
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?
-            .into_permissions();
+        let key_hashes: Vec<_> = key_hashes.collect();
+
+        // Prepare multicall
+        let mut calls = vec![
+            // Fetch spend and execute permissions
+            Call3 {
+                target: *self.delegation.address(),
+                allowFailure: false,
+                callData: spendAndExecuteInfosCall { keyHashes: key_hashes.clone() }
+                    .abi_encode()
+                    .into(),
+            },
+            // Fetch EIP712 domain
+            Call3 {
+                target: *self.delegation.address(),
+                allowFailure: false,
+                callData: eip712DomainCall {}.abi_encode().into(),
+            },
+        ];
+
+        // Fetch spendLimitsEnabled flags for each key
+        for key_hash in &key_hashes {
+            calls.push(Call3 {
+                target: *self.delegation.address(),
+                // allow failures because this was only added in 0.5.9
+                allowFailure: true,
+                callData: spendLimitsEnabledCall { keyHash: *key_hash }.abi_encode().into(),
+            });
+        }
+
+        let output = aggregate3Call::abi_decode_returns(
+            &self
+                .delegation
+                .provider()
+                .call(
+                    TransactionRequest::default()
+                        .to(MULTICALL3_ADDRESS)
+                        .input(aggregate3Call { calls }.abi_encode().into()),
+                )
+                .overrides(self.overrides.clone())
+                .await?,
+        )?;
+
+        let permissions =
+            spendAndExecuteInfosCall::abi_decode_returns(&output[0].returnData)?.into_permissions();
+
+        let version =
+            Version::parse(&eip712DomainCall::abi_decode_returns(&output[1].returnData)?.version)
+                .wrap_err("failed to parse account domain version as semver")?;
+
+        let mut result = HashMap::new();
+
+        for (idx, (key_hash, permission)) in key_hashes.into_iter().zip(permissions).enumerate() {
+            let spend_permissions_enabled = if output[idx + 2].success {
+                spendLimitsEnabledCall::abi_decode_returns(&output[idx + 1].returnData)?
+            } else {
+                // `spendPermissionsEnabled` was added in 0.5.9
+                if version < Version::new(0, 5, 9) {
+                    // default to true for older versions
+                    true
+                } else {
+                    return Err(TransportErrorKind::custom_str(
+                        "couldn't fetch spendLimitsEnabled flag",
+                    )
+                    .into());
+                }
+            };
+
+            result.insert(key_hash, (permission, spend_permissions_enabled));
+        }
 
         debug!(
             eoa = %self.delegation.address(),
-            permissions = ?permissions,
+            permissions = ?result,
             "Fetched keys permissions"
         );
 
-        Ok(key_hashes.zip(permissions).collect())
+        Ok(result)
     }
 
     /// Returns whether spend permissions are disabled for a key hash.

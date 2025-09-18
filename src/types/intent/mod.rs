@@ -168,7 +168,9 @@ impl SignedCall {
                     authorize_key: AuthorizeKey {
                         permissions: permissions.remove(&hash).unwrap_or_default(),
                         key,
-                        spend_permissions_disabled: spend_permissions_disabled.remove(&hash),
+                        spend_permissions_disabled: spend_permissions_disabled
+                            .remove(&hash)
+                            .unwrap_or_default(),
                     },
                     hash,
                 }

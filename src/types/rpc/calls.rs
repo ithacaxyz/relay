@@ -867,7 +867,7 @@ mod tests {
                                     }
                                 })
                                 .collect(),
-                            spend_permissions_disabled: None,
+                            spend_permissions_disabled: false,
                         },
                     }],
                     revoke_keys: vec![RevokeKey { hash: B256::ZERO }],

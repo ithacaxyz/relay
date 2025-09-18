@@ -45,7 +45,6 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use alloy_chains::NamedChain;
-use eyre::Context;
 use futures::{StreamExt, future::TryJoinAll, stream::FuturesOrdered};
 use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -54,14 +53,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use semver::Version;
-use std::{
-    cmp,
-    collections::HashMap,
-    iter,
-    sync::{Arc, LazyLock},
-    time::SystemTime,
-};
+use std::{cmp, collections::HashMap, iter, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
@@ -85,9 +77,6 @@ use crate::{
         },
     },
 };
-
-/// Version "0.5.6" parsed as semver into [`Version`].
-static VERSION_0_5_6: LazyLock<Version> = LazyLock::new(|| Version::parse("0.5.6").unwrap());
 
 /// Ithaca `relay_` RPC namespace.
 #[rpc(server, client, namespace = "wallet")]
@@ -870,35 +859,17 @@ impl Relay {
         // Get all permissions from non admin keys
         let mut permissioned_keys = account
             .permissions(keys.iter().filter(|(_, key)| !key.isSuperAdmin).map(|(hash, _)| *hash))
-            .await
-            .map_err(RelayError::from)?;
-
-        let domain = account.eip712_domain().await?;
-        let version = Version::parse(&domain.version.unwrap_or_default())
-            .wrap_err("failed to parse account domain version as semver")?;
-
-        // Determine if spend permissions are disabled for each key
-        let spend_permissions_disabled = if version >= *VERSION_0_5_6 {
-            futures::future::try_join_all(
-                keys.iter()
-                    .map(|(hash, _)| account.spend_permissions_disabled(*hash))
-                    .collect::<Vec<_>>(),
-            )
-            .await?
-        } else {
-            vec![false; keys.len()]
-        };
+            .await?;
 
         Ok(keys
             .into_iter()
-            .zip(spend_permissions_disabled)
-            .map(|((hash, key), spend_permissions_disabled)| AuthorizeKeyResponse {
-                hash,
-                authorize_key: AuthorizeKey {
-                    key,
-                    permissions: permissioned_keys.remove(&hash).unwrap_or_default(),
-                    spend_permissions_disabled: Some(spend_permissions_disabled),
-                },
+            .map(|(hash, key)| {
+                let (permissions, spend_permissions_disabled) =
+                    permissioned_keys.remove(&hash).unwrap_or_default();
+                AuthorizeKeyResponse {
+                    hash,
+                    authorize_key: AuthorizeKey { key, permissions, spend_permissions_disabled },
+                }
             })
             .collect())
     }

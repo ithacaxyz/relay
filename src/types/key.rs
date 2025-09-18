@@ -273,7 +273,7 @@ pub struct KeyWith712Signer {
     /// Key permissions in case it's not an admin key.
     permissions: Vec<Permission>,
     /// Whether spend permissions are disabled.
-    spend_permissions_disabled: Option<bool>,
+    spend_permissions_disabled: bool,
 }
 
 impl KeyWith712Signer {
@@ -332,7 +332,7 @@ impl KeyWith712Signer {
             key,
             signer,
             permissions: vec![],
-            spend_permissions_disabled: None,
+            spend_permissions_disabled: false,
         }))
     }
 
@@ -349,7 +349,7 @@ impl KeyWith712Signer {
             key,
             signer: Arc::new(signer) as Arc<dyn Eip712PayLoadSigner>,
             permissions: vec![],
-            spend_permissions_disabled: None,
+            spend_permissions_disabled: false,
         }
     }
 
