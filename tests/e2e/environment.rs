@@ -1032,7 +1032,7 @@ async fn deploy_all_contracts<P: Provider + WalletProvider>(
     };
 
     // Prepare futures for parallel deployment
-    let funder_future = async { deploy_funder(provider, &contracts_path, orchestrator).await };
+    let funder_future = async { deploy_funder(provider, &contracts_path).await };
 
     let delegation_future = async {
         if let Ok(address) = std::env::var("TEST_PROXY") {
@@ -1163,7 +1163,6 @@ async fn deploy_orchestrator<P: Provider + WalletProvider>(
 async fn deploy_funder<P: Provider + WalletProvider>(
     provider: &P,
     contracts_path: &Path,
-    _orchestrator: Address,
 ) -> eyre::Result<Address> {
     let funder_eoa = provider.default_signer_address();
     deploy_contract(
