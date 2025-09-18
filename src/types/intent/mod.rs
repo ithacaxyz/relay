@@ -155,7 +155,7 @@ impl SignedCall {
             if let Ok(setSpendLimitsEnabledCall { keyHash, enabled }) =
                 setSpendLimitsEnabledCall::abi_decode(&call.data)
             {
-                spend_permissions_disabled.insert(keyHash, enabled);
+                spend_permissions_disabled.insert(keyHash, !enabled);
             }
         }
 
