@@ -7,11 +7,11 @@ expression: response
     "contracts": {
       "orchestrator": {
         "address": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-        "version": "0.5.3"
+        "version": "0.5.5"
       },
       "accountImplementation": {
         "address": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431",
-        "version": "0.5.5"
+        "version": "0.5.9"
       },
       "legacyOrchestrators": [
         {
