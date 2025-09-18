@@ -49,6 +49,7 @@ sol! {
 
         function pullGas(uint256 amount) external;
         function setGasWallet(address[] memory wallets, bool isGasWallet);
+        function setOrchestrators(address[] memory ocs, bool val);
         function gasWallets(address wallet) external returns (bool);
 
         function owner() external view returns (address);
