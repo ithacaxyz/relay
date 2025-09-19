@@ -407,7 +407,7 @@ async fn get_keys_multichain_three_chains_two_have_session() -> eyre::Result<()>
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context: resp.context,
-                key: admin_key.to_call_key(),
+                key: Some(admin_key.to_call_key()),
                 signature: sig,
             })
             .await?;

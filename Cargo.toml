@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "24.0.3"
+version = "24.0.8"
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ path = "src/bin/relay.rs"
 name = "relay"
 
 [dependencies]
-alloy = { version = "1.0.30", features = [
+alloy = { version = "1.0.31", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -112,7 +112,7 @@ strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.30", features = [
+alloy = { version = "1.0.31", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
@@ -122,7 +122,7 @@ dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
 tempfile = "3.21"
-insta = { version = "1.39.0", features = ["json", "redactions"] }
+insta = { version = "1.43.2", features = ["json", "redactions"] }
 
 [build-dependencies]
 vergen = { version = "9.0", features = ["build", "cargo", "emit_and_set"] }

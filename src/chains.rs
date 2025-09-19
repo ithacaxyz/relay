@@ -155,11 +155,14 @@ impl Chain {
                 AccountOverride::default()
                     // If the fee token is the native token, we override it
                     .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                    .with_state_diff(if context.key_slot_override {
-                        context.account_key.storage_slots()
-                    } else {
-                        Default::default()
-                    })
+                    .with_state_diff(
+                        context
+                            .key
+                            .as_stored_key()
+                            .filter(|_| context.key_slot_override)
+                            .map(|key| key.storage_slots())
+                            .unwrap_or_default(),
+                    )
                     // we manually etch the 7702 designator since we do not have a signed auth item
                     .with_7702_delegation_designator_opt(context.stored_auth_address()),
             )

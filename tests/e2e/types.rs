@@ -1,4 +1,8 @@
-use super::{await_calls_status, environment::Environment, prepare_calls, send_prepared_calls};
+use std::ops::Not;
+
+use crate::e2e::send_prepared_calls;
+
+use super::{await_calls_status, environment::Environment, prepare_calls};
 use alloy::{
     eips::eip7702::{SignedAuthorization, constants::EIP7702_DELEGATION_DESIGNATOR},
     primitives::{Address, U256},
@@ -8,11 +12,12 @@ use derive_more::Debug;
 use eyre::WrapErr;
 use futures_util::future::{BoxFuture, join_all};
 use relay::{
+    rpc::RelayApiClient,
     signers::DynSigner,
     types::{
         Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::IntentExecuted,
-        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey},
+        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey, SendPreparedCallsParameters},
     },
 };
 
@@ -115,14 +120,16 @@ impl AuthKind {
 #[derive(Debug, Default)]
 #[allow(dead_code)]
 pub struct TxContext<'a> {
-    /// List of calls to execute
+    /// List of calls to execute.
     pub calls: Vec<Call>,
-    /// Expected outcome of the transaction
+    /// Expected outcome of the transaction.
     pub expected: ExpectedOutcome,
     /// Optional authorization. Used only for upgrading existing EOAs.
     pub auth: Option<AuthKind>,
-    /// Optional Key that will sign the Intent
+    /// Optional Key that will sign the Intent.
     pub key: Option<&'a KeyWith712Signer>,
+    /// Do not include `key` in the `prepareCalls` parameters and use an empty `keyHash`.
+    pub omit_call_key: bool,
     /// List of keys to authorize that will be converted to calls on top of the Intent.
     pub authorization_keys: Vec<&'a KeyWith712Signer>,
     /// List of keys to revoke that will be converted to calls on bottom of the Intent.
@@ -172,7 +179,17 @@ impl TxContext<'_> {
         let intent_nonce = context.quote().as_ref().unwrap().ty().quotes[0].intent.nonce();
 
         // Submit signed call
-        let bundle = send_prepared_calls(env, signer, signature, context).await;
+        let bundle = env
+            .relay_endpoint
+            .send_prepared_calls(SendPreparedCallsParameters {
+                capabilities: Default::default(),
+                context,
+                key: self.omit_call_key.not().then_some(signer.to_call_key()),
+                signature,
+            })
+            .await
+            .map(|bundle| bundle.id)
+            .map_err(Into::into);
 
         self.check_bundle(bundle, tx_num, None, intent_nonce, env).await
     }

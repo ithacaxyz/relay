@@ -18,6 +18,7 @@ expression: value
                 "value": "0.000000000000000002"
               },
               "name": "mockName",
+              "recipients": [],
               "symbol": "mockSymbol",
               "type": "erc20",
               "value": "0x2"
@@ -36,6 +37,9 @@ expression: value
                 "value": "0.000000000000000001"
               },
               "name": "mockName",
+              "recipients": [
+                "0x0000000000000000000000000000000000000000"
+              ],
               "symbol": "mockSymbol",
               "type": "erc20",
               "value": "0x1"
@@ -114,12 +118,13 @@ expression: value
     "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
     "type": "secp256k1"
   },
+  "signature": "[signature]",
   "typedData": {
     "domain": {
       "chainId": "0x7a69",
       "name": "Orchestrator",
       "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-      "version": "0.5.3"
+      "version": "0.5.5"
     },
     "message": {
       "calls": [

@@ -1,16 +1,16 @@
 use super::{report::*, utils::find_eulerian_path_indices};
-use alloy::primitives::{Address, ChainId, U256};
+use alloy::primitives::{Address, B256, Bytes, ChainId, U256};
 use eyre::{Result, eyre};
 use jsonrpsee::http_client::HttpClient;
 use relay::{
-    rpc::RelayApiClient,
+    rpc::{RelayApiClient, adjust_balance_for_decimals},
     signers::{DynSigner, Eip712PayLoadSigner},
     storage::BundleStatus,
     types::{
         AssetUid, Call, KeyWith712Signer, Quotes, Signed,
         rpc::{
-            Asset7811, BundleId, CallStatusCode, GetAssetsParameters, GetKeysParameters, Meta,
-            PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            Asset7811, BundleId, CallKey, CallStatusCode, GetAssetsParameters, GetKeysParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse, RelayCapabilities,
             RequiredAsset, SendPreparedCallsParameters, UpgradeAccountCapabilities,
             UpgradeAccountParameters, UpgradeAccountSignatures,
@@ -18,10 +18,12 @@ use relay::{
     },
 };
 use relay_tools::common::{
-    format_chain, format_prepare_debug, format_units_safe, normalize_amount,
+    format::format_quote_deficits, format_chain, format_prepare_debug, format_units_safe,
+    normalize_amount,
 };
 use std::{
     collections::{HashMap, HashSet},
+    ops::Not,
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info, warn};
@@ -30,14 +32,15 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug)]
 pub struct InteropTester {
     pub test_account: DynSigner,
+    pub account_key: KeyWith712Signer,
     pub relay_client: HttpClient,
     pub only_uids: Option<Vec<String>>,
     pub only_chains: Option<Vec<ChainId>>,
     pub exclude_chains: Option<Vec<ChainId>>,
     pub transfer_percentage: u8,
     pub no_run: bool,
+    pub use_root_key: bool,
     pub skip_settlement_wait: bool,
-    pub account_key: KeyWith712Signer,
 }
 
 impl InteropTester {
@@ -444,12 +447,18 @@ impl InteropTester {
 
         // The destination funder needs to have enough to cover the transfer amount
         // (The relay will handle pulling from various source chains)
-        if funder_balance < transfer_amount {
+        if funder_balance
+            < adjust_balance_for_decimals(
+                transfer_amount,
+                conn.from_token_decimals,
+                conn.to_token_decimals,
+            )
+        {
             error!(
                 chain = %format_chain(conn.to_chain),
                 token = %conn.to_token_address,
                 uid = %conn.token_uid,
-                required = %format_units_safe(transfer_amount, conn.to_token_decimals),
+                required = %format_units_safe(transfer_amount, conn.from_token_decimals),
                 available = %format_units_safe(funder_balance, conn.to_token_decimals),
                 "Destination chain funder has insufficient balance for this transfer"
             );
@@ -457,7 +466,7 @@ impl InteropTester {
                 "Funder on {} has insufficient {} balance: {} required, {} available",
                 format_chain(conn.to_chain),
                 conn.token_uid,
-                format_units_safe(transfer_amount, conn.to_token_decimals),
+                format_units_safe(transfer_amount, conn.from_token_decimals),
                 format_units_safe(funder_balance, conn.to_token_decimals)
             ));
         }
@@ -466,7 +475,7 @@ impl InteropTester {
             chain = %format_chain(conn.to_chain),
             token = %conn.to_token_address,
             uid = %conn.token_uid,
-            required = %format_units_safe(transfer_amount, conn.to_token_decimals),
+            required = %format_units_safe(transfer_amount, conn.from_token_decimals),
             available = %format_units_safe(funder_balance, conn.to_token_decimals),
             "Destination chain funder has sufficient balance for this transfer"
         );
@@ -499,10 +508,13 @@ impl InteropTester {
                 let balance = user_assets.balance_on_chain(chain, token.into());
                 token_info
                     .entry(uid.clone())
-                    .and_modify(|(start_chain, max_bal, _)| {
-                        if balance > *max_bal {
+                    .and_modify(|(start_chain, max_bal, start_decimals)| {
+                        if adjust_balance_for_decimals(balance, decimals, *start_decimals)
+                            > *max_bal
+                        {
                             *max_bal = balance;
                             *start_chain = chain;
+                            *start_decimals = decimals;
                         }
                     })
                     .or_insert((chain, balance, decimals));
@@ -528,19 +540,21 @@ impl InteropTester {
         let mut insufficient = Vec::new();
 
         for conn in test_plan {
-            let (starting_chain, max_balance, _) = token_info.get(&conn.token_uid).unwrap();
+            let (starting_chain, max_balance, start_decimals) =
+                token_info.get(&conn.token_uid).unwrap();
 
             // Helper to check funder balance
             let mut check_funder = |chain: ChainId, token: Address, decimals: u8| {
                 if chain != *starting_chain {
                     let key = (chain, token);
                     let funder_balance = funder_balances.get(&key).copied().unwrap_or(U256::ZERO);
-                    if funder_balance < *max_balance {
+                    if adjust_balance_for_decimals(funder_balance, decimals, *start_decimals)
+                        < *max_balance
+                    {
                         insufficient.push((
                             key,
-                            *max_balance,
-                            funder_balance,
-                            decimals,
+                            format_units_safe(*max_balance, *start_decimals),
+                            format_units_safe(funder_balance, decimals),
                             conn.token_uid.clone(),
                         ));
                     }
@@ -557,13 +571,13 @@ impl InteropTester {
 
         if !insufficient.is_empty() {
             error!("Insufficient funder liquidity detected:");
-            for ((chain_id, token), required, available, decimals, uid) in insufficient {
+            for ((chain_id, token), required, available, uid) in insufficient {
                 error!(
                     chain = %format_chain(chain_id),
                     token = %token,
                     uid = %uid,
-                    required = %format_units_safe(required, decimals),
-                    available = %format_units_safe(available, decimals),
+                    required = %required,
+                    available = %available,
                     "Funder has insufficient balance"
                 );
             }
@@ -780,9 +794,6 @@ impl InteropTester {
             );
         }
 
-        // Use the account key
-        let key = &self.account_key;
-
         // Prepare the call - for interop, we receive tokens on the destination chain
         let call_transfer_amount = total_transfer / U256::from(2); // todo(joshie): there's an edge case on USDT that makes us understimate gas on a self transfer of the full amount.
         let call = if conn.to_token_address.is_zero() {
@@ -812,7 +823,7 @@ impl InteropTester {
             },
             state_overrides: Default::default(),
             balance_overrides: Default::default(),
-            key: Some(key.to_call_key()),
+            key: self.call_key(),
         };
 
         let prepare_result = loop {
@@ -847,8 +858,17 @@ impl InteropTester {
         let Some(quotes) = context.quote() else {
             return Err(eyre!("No quotes returned"));
         };
-        if quotes.ty().quotes.len() <= 1 {
-            error!("Expected interop bundle but got {} quotes", quotes.ty().quotes.len());
+        if quotes.ty().quotes.is_empty() {
+            error!("Expected interop bundle but didn't get any quotes");
+            return failed_transfer_result(
+                conn,
+                total_transfer,
+                "Failed",
+                "No interop bundle created - check chain connectivity".to_string(),
+            );
+        } else if quotes.ty().quotes.len() == 1 {
+            error!("Expected interop bundle but got 1 quote");
+            eprint!("{}", format_quote_deficits(&quotes.ty().quotes[0], conn.to_token_decimals));
             return failed_transfer_result(
                 conn,
                 total_transfer,
@@ -863,16 +883,13 @@ impl InteropTester {
         // Calculate total fee from all quotes
         let (total_fee, fee_formatted) = self.calculate_total_fee(quotes, conn)?;
 
-        // Sign and send
-        let signature = key.sign_payload_hash(digest).await?;
-
         let bundle_result = self
             .relay_client
             .send_prepared_calls(SendPreparedCallsParameters {
                 capabilities: Default::default(),
                 context,
-                key: key.to_call_key(),
-                signature,
+                key: self.call_key(),
+                signature: self.sign_digest(digest).await?,
             })
             .await;
 
@@ -957,6 +974,18 @@ impl InteropTester {
         }
     }
 
+    async fn sign_digest(&self, digest: B256) -> Result<Bytes> {
+        if self.use_root_key {
+            self.test_account.sign_payload_hash(digest).await
+        } else {
+            self.account_key.sign_payload_hash(digest).await
+        }
+    }
+
+    fn call_key(&self) -> Option<CallKey> {
+        self.use_root_key.not().then(|| self.account_key.to_call_key())
+    }
+
     fn calculate_total_fee(
         &self,
         quotes: &Signed<Quotes>,
@@ -1004,15 +1033,12 @@ impl InteropTester {
             return Err(eyre!("Chain {} not found in capabilities", chain_id));
         };
 
-        // Use the existing account key
-        let key = &self.account_key;
-
         // Prepare upgrade
         let PrepareUpgradeAccountResponse { context, digests, .. } = self
             .relay_client
             .prepare_upgrade_account(PrepareUpgradeAccountParameters {
                 capabilities: UpgradeAccountCapabilities {
-                    authorize_keys: vec![key.to_authorized()],
+                    authorize_keys: vec![self.account_key.to_authorized()],
                 },
                 chain_id: Some(chain_id),
                 address: self.test_account.address(),

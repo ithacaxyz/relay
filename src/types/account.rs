@@ -1,5 +1,5 @@
 use super::{
-    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, Signature, rpc::Permission,
+    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, rpc::Permission,
     storage::CreatableAccount,
 };
 use crate::{
@@ -20,7 +20,7 @@ use alloy::{
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol,
-    sol_types::{SolCall, SolStruct, SolValue},
+    sol_types::{SolCall, SolStruct},
     transports::{TransportErrorKind, TransportResult},
     uint,
 };
@@ -424,11 +424,11 @@ impl<P: Provider> Account<P> {
     pub async fn validate_signature(
         &self,
         digest: B256,
-        signature: Signature,
+        signature: Bytes,
     ) -> Result<Option<KeyHash>, RelayError> {
         let unwrapAndValidateSignatureReturn { isValid, keyHash } = self
             .delegation
-            .unwrapAndValidateSignature(digest, signature.abi_encode_packed().into())
+            .unwrapAndValidateSignature(digest, signature)
             .call()
             .overrides(self.overrides.clone())
             .await?;

@@ -39,25 +39,36 @@ use relay::{
 /// Funds are locked in escrow, settler provides liquidity on destination.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multichain_usdt_transfer() -> Result<()> {
-    // Set up the multichain transfer scenario
-    let setup = MultichainTransferSetup::run().await?;
-    let chain3_id = setup.env.chain_id_for(2);
+    for without_required_funds in [true, false] {
+        // Set up the multichain transfer scenario
+        let setup = if without_required_funds {
+            MultichainTransferSetup::run_without_required_funds().await?
+        } else {
+            MultichainTransferSetup::run().await?
+        };
+        let chain3_id = setup.env.chain_id_for(2);
 
-    // Send prepared calls on chain 3
-    let bundle_id =
-        send_prepared_calls(&setup.env, &setup.key, setup.signature, setup.context).await?;
-    let status = await_calls_status(&setup.env, bundle_id).await?;
-    assert!(status.status.is_confirmed());
+        // Send prepared calls on chain 3
+        let bundle_id =
+            send_prepared_calls(&setup.env, &setup.key, setup.signature, setup.context).await?;
+        let status = await_calls_status(&setup.env, bundle_id).await?;
+        assert!(status.status.is_confirmed());
 
-    // Target has receive our full transfer
-    let assets = setup
-        .env
-        .relay_endpoint
-        .get_assets(GetAssetsParameters::eoa(setup.target_recipient))
-        .await?;
-    assert!(
-        assets.0.get(&chain3_id).unwrap().iter().any(|a| a.balance == setup.total_transfer_amount)
-    );
+        // Target has receive our full transfer
+        let assets = setup
+            .env
+            .relay_endpoint
+            .get_assets(GetAssetsParameters::eoa(setup.target_recipient))
+            .await?;
+        assert!(
+            assets
+                .0
+                .get(&chain3_id)
+                .unwrap()
+                .iter()
+                .any(|a| a.balance == setup.total_transfer_amount)
+        );
+    }
 
     Ok(())
 }
@@ -187,22 +198,28 @@ pub struct MultichainTransferSetup {
 impl MultichainTransferSetup {
     /// Run the multichain transfer setup with default configuration
     pub async fn run() -> Result<Self> {
-        Self::setup_with_config(None, false).await
+        Self::setup_with_config(None, false, false).await
     }
 
     /// Run the multichain transfer setup with a custom refund threshold
     pub async fn run_with_refund_threshold(seconds: u64) -> Result<Self> {
-        Self::setup_with_config(Some(seconds), false).await
+        Self::setup_with_config(Some(seconds), false, false).await
     }
 
     /// Run the multichain transfer setup with LayerZero
     pub async fn run_with_layer_zero() -> Result<Self> {
-        Self::setup_with_config(None, true).await
+        Self::setup_with_config(None, true, false).await
+    }
+
+    /// Run the multichain transfer setup without required funds
+    pub async fn run_without_required_funds() -> Result<Self> {
+        Self::setup_with_config(None, false, true).await
     }
 
     async fn setup_with_config(
         escrow_refund_threshold: Option<u64>,
         use_layerzero: bool,
+        without_required_funds: bool,
     ) -> Result<Self> {
         let num_chains = 3;
         // Set up environment configuration
@@ -272,7 +289,11 @@ impl MultichainTransferSetup {
                     meta: Meta { fee_payer: None, fee_token: Some(env.erc20), nonce: None },
                     pre_calls: vec![],
                     pre_call: false,
-                    required_funds: vec![RequiredAsset::new(env.erc20, total_transfer_amount)],
+                    required_funds: if without_required_funds {
+                        vec![]
+                    } else {
+                        vec![RequiredAsset::new(env.erc20, total_transfer_amount)]
+                    },
                 },
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),

@@ -37,6 +37,7 @@ use eyre::{OptionExt, WrapErr};
 use futures_util::{
     StreamExt, future::try_join_all, lock::Mutex, stream::FuturesUnordered, try_join,
 };
+use metrics::gauge;
 use opentelemetry::trace::{SpanKind, TraceContextExt};
 use std::{
     fmt::Display,
@@ -195,7 +196,7 @@ impl Signer {
         )?;
 
         // Heuristically estimate the block time.
-        let block_time = {
+        let estimated_block_time = {
             let latest = latest.ok_or_eyre("couldn't fetch latest block")?;
             let length = 1000.min(latest.header.number - 1);
             let start = provider
@@ -208,12 +209,17 @@ impl Signer {
             )
         };
 
+        // Populate a metric once with the estimated block time. This does not need to be updated
+        // multiple times so we have no need for the gauge later
+        let block_time_metric = gauge!("estimated_block_time", "chain_id" => chain_id.to_string());
+        block_time_metric.set(estimated_block_time);
+
         let inner = SignerInner {
             id,
             provider,
             wallet,
             chain_id,
-            block_time,
+            block_time: estimated_block_time,
             nonce: Mutex::new(nonce),
             events_tx,
             storage,
@@ -612,7 +618,8 @@ impl Signer {
     ///     1. We failed to send a transaction. This is very unlikely, and if happens, hard to
     ///        recover as it most likely signals critical KMS or RPC failure.
     ///     2. We failed to wait for a transaction to be mined. This is more likely, and means that
-    ///        transaction wa succesfuly broadcasted but never confirmed likely causing a nonce gap.
+    ///        transaction wa successfully broadcasted but never confirmed likely causing a nonce
+    ///        gap.
     #[instrument(skip_all, fields(signer = %self.address(), chain_id = %self.chain_id, %nonce))]
     async fn close_nonce_gap(&self, nonce: u64, min_fees: Option<Eip1559Estimation>) {
         self.metrics.detected_nonce_gaps.increment(1);
@@ -841,7 +848,7 @@ impl Signer {
             .await
             .wrap_err("failed to read pending transactions")?;
 
-        // Make sure that loaded transactions are not getting overriden by the new ones
+        // Make sure that loaded transactions are not getting overridden by the new ones
         {
             let mut lock = self.nonce.lock().await;
             if let Some(nonce) = loaded_transactions.iter().map(|tx| tx.nonce() + 1).max()

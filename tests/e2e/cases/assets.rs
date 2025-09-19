@@ -18,7 +18,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Asset, AssetType, Call, IERC20, KeyType, KeyWith712Signer,
+        Asset, AssetDiff, AssetType, Call, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddressOrNative, AssetFilterItem, GetAssetsParameters, Meta, PrepareCallsCapabilities,
             PrepareCallsParameters, PrepareCallsResponse,
@@ -129,17 +129,24 @@ async fn asset_diff() -> eyre::Result<()> {
         async { env.relay_endpoint.prepare_calls(p).await }
     };
 
+    let find_full_diff = |resp: &PrepareCallsResponse,
+                          eoa: Address,
+                          token: Address,
+                          is_incoming: bool|
+     -> Option<AssetDiff> {
+        let asset_diffs = resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
+        asset_diffs
+            .0
+            .iter()
+            .filter(|(addr, _)| addr == &eoa)
+            .flat_map(|(_, diffs)| diffs.iter())
+            .find(|d| d.address == Some(token) && d.direction.is_incoming() == is_incoming)
+            .cloned()
+    };
+
     let find_diff =
         |resp: &PrepareCallsResponse, eoa: Address, token: Address, is_incoming: bool| {
-            let asset_diffs =
-                resp.capabilities.asset_diff.asset_diffs.get(&env.chain_id()).unwrap();
-            asset_diffs
-                .0
-                .iter()
-                .filter(|(addr, _)| addr == &eoa)
-                .flat_map(|(_, diffs)| diffs.iter())
-                .find(|d| d.address == Some(token) && d.direction.is_incoming() == is_incoming)
-                .map(|d| d.value)
+            find_full_diff(resp, eoa, token, is_incoming).map(|d| d.value)
         };
 
     let mint_erc721 = if std::env::var("TEST_ERC721").is_ok() {
@@ -164,10 +171,11 @@ async fn asset_diff() -> eyre::Result<()> {
     // test2: eoa mints and transfers the NFT out. So, only the receiving address should have have
     // an inflow.
     let random_eoa = Address::random();
+    let erc20_recipient = Address::random();
 
     let resp2 = prepare_calls(vec![
         common_calls::mint(env.erc20, env.eoa.address(), U256::from(10_000_000u64)),
-        Call::transfer(env.erc20s[5], Address::ZERO, U256::from(1u64)),
+        Call::transfer(env.erc20s[5], erc20_recipient, U256::from(1u64)),
         mint_erc721,
         common_calls::transfer_721(env.erc721, env.eoa.address(), random_eoa, erc721_id),
     ])
@@ -180,7 +188,13 @@ async fn asset_diff() -> eyre::Result<()> {
     assert_eq!(find_diff(&resp2, random_eoa, env.erc721, is_incoming), Some(erc721_id));
 
     // ERC20 spend repeats
-    assert!(find_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming).is_some());
+    let erc20_diff = find_full_diff(&resp2, env.eoa.address(), env.erc20s[5], !is_incoming);
+    assert!(erc20_diff.is_some());
+
+    // make sure recipient is the erc20 recipient
+    let diff_recipients = erc20_diff.unwrap().recipients;
+    assert_eq!(diff_recipients.len(), 1);
+    assert_eq!(diff_recipients[0], erc20_recipient);
 
     Ok(())
 }
@@ -433,7 +447,7 @@ async fn get_assets_price_no_filter() -> eyre::Result<()> {
     for asset in chain_user_assets {
         // check that it has metadata and has prices
         if !asset.address.is_native() {
-            assert!(asset.metadata.as_ref().is_some_and(|meta| meta.price.is_some()));
+            assert!(asset.metadata.as_ref().is_some_and(|meta| meta.fiat.is_some()));
         }
     }
 
@@ -456,13 +470,16 @@ async fn asset_deficits() -> eyre::Result<()> {
         IERC20::new(env.erc20s[5], env.provider()).balanceOf(env.eoa.address()).call().await?;
     let amount = balance * U256::from(2);
 
-    // create prepare_call request
+    // create prepare_call request with a transfer exceeding balance
     let params = PrepareCallsParameters {
         from: Some(env.eoa.address()),
-        calls: vec![Call::transfer(env.erc20s[5], Address::with_last_byte(1), amount)],
+        calls: vec![
+            Call::transfer(env.erc20s[5], Address::with_last_byte(1), amount),
+            Call::transfer(env.erc20s[6], Address::with_last_byte(2), U256::from(1)),
+        ],
         chain_id: env.chain_id(),
         capabilities: PrepareCallsCapabilities {
-            meta: Meta { fee_payer: None, fee_token: Some(Address::ZERO), nonce: None },
+            meta: Meta { fee_payer: None, fee_token: Some(env.erc20s[5]), nonce: None },
             authorize_keys: vec![],
             revoke_keys: vec![],
             pre_calls: vec![],
@@ -475,11 +492,52 @@ async fn asset_deficits() -> eyre::Result<()> {
     };
 
     let output = env.relay_endpoint.prepare_calls(params).await?;
-    let deficit = &output.context.quote().unwrap().ty().quotes[0].asset_deficits.0[0];
+    let quote = &output.context.quote().unwrap().ty().quotes[0];
+    let deficit_5 = &quote
+        .asset_deficits
+        .0
+        .iter()
+        .find(|deficit| deficit.address == Some(env.erc20s[5]))
+        .unwrap();
+
+    let deficit_6 = &quote
+        .asset_deficits
+        .0
+        .iter()
+        .find(|deficit| deficit.address == Some(env.erc20s[6]))
+        .unwrap();
+
+    assert_eq!(deficit_5.deficit, amount + quote.intent.total_payment_max_amount() - balance);
+    assert_eq!(deficit_5.required, amount + quote.intent.total_payment_max_amount());
+    assert_eq!(deficit_6.deficit, U256::from(1));
+    assert_eq!(deficit_6.required, U256::from(1));
+
+    // create prepare_call request with a transfer of entire balance
+    let params = PrepareCallsParameters {
+        from: Some(env.eoa.address()),
+        calls: vec![Call::transfer(env.erc20s[5], Address::with_last_byte(1), balance)],
+        chain_id: env.chain_id(),
+        capabilities: PrepareCallsCapabilities {
+            meta: Meta { fee_payer: None, fee_token: Some(env.erc20s[5]), nonce: None },
+            authorize_keys: vec![],
+            revoke_keys: vec![],
+            pre_calls: vec![],
+            pre_call: false,
+            required_funds: vec![],
+        },
+        state_overrides: Default::default(),
+        balance_overrides: Default::default(),
+        key: Some(admin_key.to_call_key()),
+    };
+
+    let output = env.relay_endpoint.prepare_calls(params).await?;
+    let quote = &output.context.quote().unwrap().ty().quotes[0];
+    let deficit = &quote.asset_deficits.0[0];
 
     assert_eq!(deficit.address, Some(env.erc20s[5]));
-    assert_eq!(deficit.deficit, amount - balance);
-    assert_eq!(deficit.required, amount);
+    assert_eq!(deficit.deficit, quote.intent.total_payment_max_amount());
+    assert_eq!(deficit.required, balance + quote.intent.total_payment_max_amount());
+    assert_eq!(quote.fee_token_deficit, quote.intent.total_payment_max_amount());
 
     Ok(())
 }

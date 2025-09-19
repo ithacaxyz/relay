@@ -37,6 +37,7 @@ async fn test_health() -> eyre::Result<()> {
     insta::assert_json_snapshot!(response, {
         ".status" => reduction_from_str::<String>("status"),
         ".version" => reduction_from_str::<String>("version"),
+        ".quoteSigner" => reduction_from_str::<Address>("quoteSigner"),
     });
 
     Ok(())
@@ -169,6 +170,7 @@ async fn test_prepare_calls() -> eyre::Result<()> {
         ".context.quote.v" => reduction_from_str::<U64>("v"),
         ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
         ".digest" => reduction_from_str::<B256>("digest"),
+        ".signature" => reduction_from_str::<Bytes>("signature"),
         ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
         ".typedData.message.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
         ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
@@ -247,7 +249,7 @@ async fn test_send_prepared_calls() -> eyre::Result<()> {
         .send_prepared_calls(SendPreparedCallsParameters {
             capabilities: Default::default(),
             context: response.context,
-            key: key.to_call_key(),
+            key: Some(key.to_call_key()),
             signature,
         })
         .await?;
@@ -393,7 +395,7 @@ async fn test_get_calls_status() -> eyre::Result<()> {
         .send_prepared_calls(SendPreparedCallsParameters {
             capabilities: Default::default(),
             context: response.context,
-            key: key.to_call_key(),
+            key: Some(key.to_call_key()),
             signature,
         })
         .await?;

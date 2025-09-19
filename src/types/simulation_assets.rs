@@ -3,7 +3,7 @@ use crate::{
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::{PriceOracle, calculate_usd_value},
-    types::{AssetMetadata, AssetType, IERC20, IERC721, Quote},
+    types::{AssetMetadata, AssetPrice, AssetType, IERC20, IERC721, Quote},
 };
 use alloy::primitives::{
     Address, ChainId, U256,
@@ -83,18 +83,9 @@ pub struct AssetDiff {
     pub direction: DiffDirection,
     /// Optional fiat value
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fiat: Option<FiatValue>,
-}
-
-/// Fiat value representation
-#[serde_as]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FiatValue {
-    /// Currency code (e.g., "usd")
-    pub currency: String,
-    /// Value as f64
-    #[serde_as(as = "DisplayFromStr")]
-    pub value: f64,
+    pub fiat: Option<AssetPrice>,
+    /// List of recipients for this asset diff.
+    pub recipients: Vec<Address>,
 }
 
 /// Asset deficits per account based on simulated execution traces.
@@ -122,7 +113,7 @@ pub struct AssetDeficit {
     pub deficit: U256,
     /// Optional fiat value
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fiat: Option<FiatValue>,
+    pub fiat: Option<AssetPrice>,
 }
 
 /// Asset coming from `eth_simulateV1` transfer logs.
@@ -219,12 +210,31 @@ pub struct AssetDiffsBuilder {
     per_account: HashMap<Address, AccountChanges>,
 }
 
+/// Tracks fungible token transfers for an asset.
+#[derive(Debug, Default)]
+struct FungibleTransfer {
+    /// Total amount credited to the account.
+    credit: U256,
+    /// Total amount debited from the account.
+    debit: U256,
+    /// Recipients when this account sends tokens (only tracked for debits).
+    recipients: HashSet<Address>,
+}
+
+/// Tracks non-fungible token transfers.
+#[derive(Debug, Clone)]
+struct NftTransfer {
+    /// Recipient for outgoing transfers (None for incoming).
+    recipient: Option<Address>,
+}
+
 #[derive(Debug, Default)]
 struct AccountChanges {
     /// Account debits and credits per asset.
-    fungible: HashMap<Asset, (U256, U256)>,
-    /// Account nft sends and receives.
-    non_fungible: HashSet<(Asset, DiffDirection, U256)>,
+    fungible: HashMap<Asset, FungibleTransfer>,
+    /// Account nft sends and receives, keyed by (asset, direction, id) so we can easily look up
+    /// the opposite direction of nft transfers.
+    non_fungible: HashMap<(Asset, DiffDirection, U256), NftTransfer>,
 }
 
 impl AssetDiffsBuilder {
@@ -239,9 +249,11 @@ impl AssetDiffsBuilder {
             changes
                 .non_fungible
                 .iter()
-                .filter(|(asset, change, _)| change.is_incoming() && asset.is_native().not())
+                .filter(|((asset, direction, _), _)| {
+                    direction.is_incoming() && asset.is_native().not()
+                })
                 // Safe to call .address() since we filter off native assets.
-                .map(|(asset, _, id)| (asset.address(), *id))
+                .map(|((asset, _, id), _)| (asset.address(), *id))
         })
     }
 
@@ -255,40 +267,40 @@ impl AssetDiffsBuilder {
             .or_default()
             .fungible
             .entry(asset)
-            .and_modify(|(c, _)| *c += transfer.amount)
-            .or_insert((transfer.amount, U256::ZERO));
-
-        // debits
-        self.per_account
-            .entry(transfer.from)
             .or_default()
-            .fungible
-            .entry(asset)
-            .and_modify(|(_, d)| *d += transfer.amount)
-            .or_insert((U256::ZERO, transfer.amount));
+            .credit += transfer.amount;
+
+        // debits and track recipient
+        let debit_entry =
+            self.per_account.entry(transfer.from).or_default().fungible.entry(asset).or_default();
+
+        debit_entry.debit += transfer.amount;
+        debit_entry.recipients.insert(transfer.to);
     }
 
     /// Records a [`IERC721::Transfer`] event.
     pub fn record_erc721(&mut self, asset: Asset, transfer: IERC721::Transfer) {
         self.seen_assets.insert(asset);
 
-        for &(eoa, diff) in &[
-            (transfer.from, DiffDirection::Outgoing), // sent
-            (transfer.to, DiffDirection::Incoming),   // received
+        for (eoa, diff, recipient) in [
+            (transfer.from, DiffDirection::Outgoing, Some(transfer.to)), // sent
+            (transfer.to, DiffDirection::Incoming, None),                // received
         ] {
-            // we are only interested in collapsed/net diffs. When a eoa sends and
+            // We are only interested in collapsed/net diffs. When an eoa sends and
             // receives the same NFT, it should not have an entry.
             //
-            // * if there is no other diff: insert it
             // * if the eoa is sending, but there is a diff with a receiving event: just remove
             //   existing
             // * if the eoa is receiving, but there is a diff with a sending event: just remove
             //   existing
 
-            let nft_set = &mut self.per_account.entry(eoa).or_default().non_fungible;
+            let nft_map = &mut self.per_account.entry(eoa).or_default().non_fungible;
+            let key = (asset, diff, transfer.id);
+            let opposite_key = (asset, diff.opposite(), transfer.id);
 
-            if !nft_set.remove(&(asset, diff.opposite(), transfer.id)) {
-                nft_set.insert((asset, diff, transfer.id));
+            if nft_map.remove(&opposite_key).is_none() {
+                // No opposite direction exists, so insert this one
+                nft_map.insert(key, NftTransfer { recipient });
             }
         }
     }
@@ -306,16 +318,20 @@ impl AssetDiffsBuilder {
                 Vec::with_capacity(changes.fungible.len() + changes.non_fungible.len());
 
             // fungible tokens
-            for (asset, (credit, debit)) in changes.fungible {
+            for (asset, transfer) in changes.fungible {
                 // skip zero‐net
-                if credit == debit {
+                if transfer.credit == transfer.debit {
                     continue;
                 }
 
-                let (direction, value) = if credit > debit {
-                    (DiffDirection::Incoming, credit - debit)
+                let (direction, value, recipients) = if transfer.credit > transfer.debit {
+                    (DiffDirection::Incoming, transfer.credit - transfer.debit, Vec::new())
                 } else {
-                    (DiffDirection::Outgoing, debit - credit)
+                    (
+                        DiffDirection::Outgoing,
+                        transfer.debit - transfer.credit,
+                        transfer.recipients.into_iter().collect(),
+                    )
                 };
 
                 let info = &metadata[&asset];
@@ -327,11 +343,12 @@ impl AssetDiffsBuilder {
                     value,
                     direction,
                     fiat: None,
+                    recipients,
                 });
             }
 
             // non-fungible tokens
-            for (asset, direction, id) in changes.non_fungible {
+            for ((asset, direction, id), nft) in changes.non_fungible {
                 let info = &metadata[&asset];
                 let uri = asset
                     .is_native()
@@ -347,6 +364,7 @@ impl AssetDiffsBuilder {
                     value: id,
                     direction,
                     fiat: None,
+                    recipients: nft.recipient.into_iter().collect(),
                 });
             }
 
@@ -439,7 +457,7 @@ impl ChainAssetDiffs {
                         return;
                     };
 
-                    diff.fiat = Some(FiatValue {
+                    diff.fiat = Some(AssetPrice {
                         currency: "usd".to_string(),
                         value: calculate_usd_value(
                             diff.value,
@@ -465,7 +483,7 @@ pub struct AssetDiffResponse {
     /// - Aggregated total: Chain ID 0 is a special key that stores the sum of all individual chain
     ///   fees.
     #[serde(with = "alloy::serde::quantity::hashmap")]
-    pub fee_totals: HashMap<ChainId, FiatValue>,
+    pub fee_totals: HashMap<ChainId, AssetPrice>,
     /// Asset diffs by chain ID.
     ///
     /// Note: There is no aggregated entry for asset diffs (no chain ID 0).
@@ -500,7 +518,7 @@ impl AssetDiffResponse {
     pub fn push(&mut self, chain_id: ChainId, chain_diffs: ChainAssetDiffs) {
         self.fee_totals.insert(
             chain_id,
-            FiatValue { currency: "usd".to_string(), value: chain_diffs.fee_usd },
+            AssetPrice { currency: "usd".to_string(), value: chain_diffs.fee_usd },
         );
         self.asset_diffs.insert(chain_id, chain_diffs.asset_diffs);
 
@@ -519,7 +537,7 @@ impl AssetDiffResponse {
             .map(|(_, fiat)| fiat.value)
             .sum();
 
-        self.fee_totals.insert(0, FiatValue { currency: "usd".to_string(), value: total });
+        self.fee_totals.insert(0, AssetPrice { currency: "usd".to_string(), value: total });
     }
 }
 
@@ -542,7 +560,8 @@ mod tests {
             },
             value: U256::from(1000000000000000000u64), // 1e18
             direction: DiffDirection::Incoming,
-            fiat: Some(FiatValue { currency: "usd".to_string(), value: 100.50 }),
+            fiat: Some(AssetPrice { currency: "usd".to_string(), value: 100.50 }),
+            recipients: vec![],
         };
 
         let serialized = serde_json::to_value(&asset_diff).unwrap();
@@ -558,7 +577,8 @@ mod tests {
             "fiat": {
                 "currency": "usd",
                 "value": "100.5"
-            }
+            },
+            "recipients": []
         });
 
         assert_eq!(serialized, expected);
@@ -577,7 +597,8 @@ mod tests {
             "fiat": {
                 "currency": "usd",
                 "value": "50.25"
-            }
+            },
+            "recipients": ["0x9876543210987654321098765432109876543210"]
         });
 
         let asset_diff: AssetDiff = serde_json::from_value(json).unwrap();
@@ -594,5 +615,10 @@ mod tests {
         assert_eq!(asset_diff.direction, DiffDirection::Outgoing);
         assert_eq!(asset_diff.fiat.as_ref().unwrap().currency, "usd");
         assert_eq!(asset_diff.fiat.as_ref().unwrap().value, 50.25);
+        assert_eq!(asset_diff.recipients.len(), 1);
+        assert_eq!(
+            asset_diff.recipients[0],
+            address!("0x9876543210987654321098765432109876543210")
+        );
     }
 }

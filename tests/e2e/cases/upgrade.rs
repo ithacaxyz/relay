@@ -3,17 +3,18 @@
 use crate::e2e::{AuthKind, ExpectedOutcome, TxContext, environment::Environment};
 use alloy::{
     eips::eip7702::SignedAuthorization,
-    primitives::Bytes,
+    primitives::{Address, Bytes, U256},
     providers::{Provider, ext::AnvilApi},
     sol_types::SolCall,
 };
 use relay::{
     rpc::RelayApiClient,
     types::{
-        KeyType, KeyWith712Signer, OrchestratorContract, SignedCalls,
+        Call, KeyType, KeyWith712Signer, OrchestratorContract, SignedCalls, U40,
         rpc::{
-            AuthorizeKey, GetAuthorizationParameters, PrepareUpgradeAccountParameters,
-            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            AuthorizeKey, GetAssetsParameters, GetAuthorizationParameters,
+            PrepareUpgradeAccountParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
+            UpgradeAccountSignatures,
         },
     },
 };
@@ -160,6 +161,49 @@ async fn get_authorization() -> eyre::Result<()> {
     assert_eq!(response.authorization, authorization);
     assert_eq!(response.data, expected_data);
     assert_eq!(response.to, env.orchestrator);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn eoa_key_lazily() -> eyre::Result<()> {
+    let env = Environment::setup().await.unwrap();
+
+    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::ZERO, true);
+    upgrade_account_lazily(&env, &[], AuthKind::Auth).await?;
+
+    let recipient = Address::random();
+    TxContext {
+        calls: vec![Call::transfer(env.erc20, recipient, U256::ONE)],
+        expected: ExpectedOutcome::Pass,
+        key: Some(&admin_key),
+        omit_call_key: true,
+        ..Default::default()
+    }
+    .process(0, &env)
+    .await?;
+
+    // Target has received our full transfer
+    let assets = env.relay_endpoint.get_assets(GetAssetsParameters::eoa(recipient)).await?;
+    assert!(assets.0.get(&env.chain_id()).unwrap().iter().any(|a| a.balance == U256::ONE));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn eoa_key_eagerly() -> eyre::Result<()> {
+    let env = Environment::setup().await.unwrap();
+
+    let admin_key = KeyWith712Signer::secp256k1_from_signer(env.eoa.clone(), U40::ZERO, true);
+    upgrade_account_lazily(&env, &[], AuthKind::Auth).await?;
+    TxContext {
+        expected: ExpectedOutcome::Pass,
+        key: Some(&admin_key),
+        omit_call_key: true,
+        ..Default::default()
+    }
+    .process(0, &env)
+    .await?;
 
     Ok(())
 }

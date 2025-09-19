@@ -1,0 +1,111 @@
+---
+source: src/types/rpc/calls.rs
+expression: response_value
+---
+{
+  "capabilities": {
+    "assetDiffs": {
+      "0x0": [
+        [
+          "0x0000000000000000000000000000000000000000",
+          [
+            {
+              "address": "0x0000000000000000000000000000000000000000",
+              "decimals": 18,
+              "direction": "incoming",
+              "fiat": {
+                "currency": "USD",
+                "value": "0"
+              },
+              "name": "Ethereum",
+              "symbol": "ETH",
+              "type": "native",
+              "uri": "https://ethereum.org",
+              "value": "0x0"
+            }
+          ]
+        ]
+      ],
+      "0x1": [
+        [
+          "0x0000000000000000000000000000000000000000",
+          [
+            {
+              "address": "0x0000000000000000000000000000000000000000",
+              "decimals": 18,
+              "direction": "incoming",
+              "fiat": {
+                "currency": "GBP",
+                "value": "0"
+              },
+              "name": "Ethereum",
+              "symbol": "ETH",
+              "type": "native",
+              "uri": "https://ethereum.org",
+              "value": "0x0"
+            }
+          ]
+        ]
+      ]
+    },
+    "authorizeKeys": [
+      {
+        "expiry": "0x0",
+        "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "permissions": [
+          {
+            "selector": "0x00000000",
+            "to": "0x0000000000000000000000000000000000000000",
+            "type": "call"
+          },
+          {
+            "limit": "0x0",
+            "period": "minute",
+            "token": "0x0000000000000000000000000000000000000000",
+            "type": "spend"
+          }
+        ],
+        "publicKey": "0x0000000000000000000000000000000000000000",
+        "role": "admin",
+        "type": "secp256k1"
+      }
+    ],
+    "feeTotals": {
+      "0x0": {
+        "currency": "USD",
+        "value": "0"
+      },
+      "0x1": {
+        "currency": "GBP",
+        "value": "0"
+      }
+    },
+    "revokeKeys": [
+      {
+        "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  "context": {
+    "preCall": {
+      "chainId": "0x0",
+      "eoa": "0x0000000000000000000000000000000000000000",
+      "executionData": "0x",
+      "nonce": "0x0",
+      "signature": "0x"
+    }
+  },
+  "digest": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "key": {
+    "prehash": false,
+    "publicKey": "0x0000000000000000000000000000000000000000",
+    "type": "secp256k1"
+  },
+  "signature": "0x90729c8310fcf41d52abb3db07777500ccd3b84dfdaf9074063499a170aa214104db37720e4e7fdb339f8c3af6e748a38a57e98b73d45998ce786f91b3ac0f821c",
+  "typedData": {
+    "domain": {},
+    "message": null,
+    "primaryType": "",
+    "types": {}
+  }
+}
