@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use rand::{Rng, distr::Alphanumeric};
 use resend_rs::{Resend, types::CreateEmailBaseOptions};
-use tracing::info;
 use url::Url;
 
 use crate::{
@@ -176,7 +175,6 @@ impl AccountApiServer for AccountRpc {
         &self,
         SetPhoneParameters { phone, wallet_address }: SetPhoneParameters,
     ) -> RpcResult<()> {
-        info!("got setPhone");
         let client = self.twilio_client.as_ref().ok_or_else(|| {
             PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
         })?;
@@ -186,7 +184,6 @@ impl AccountApiServer for AccountRpc {
             return Err(PhoneError::PhoneAlreadyVerified.into());
         }
 
-        info!("checking if phone allowed");
         // Check line type to prevent VoIP numbers
         if !client.is_phone_allowed(&phone).await.map_err(PhoneError::InternalError)? {
             return Err(PhoneError::InvalidPhoneNumber.into());

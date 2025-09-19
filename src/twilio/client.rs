@@ -1,7 +1,7 @@
 //! Twilio client implementation.
 
 use super::{
-    error::{TwilioError, TwilioErrorCode},
+    error::TwilioError,
     lookup::LookupResponse,
     verify::{VerificationCheckResponse, VerificationResponse},
 };
@@ -45,7 +45,7 @@ impl TwilioClient {
             Ok(response.json().await?)
         } else {
             let error: TwilioError = response.json().await?;
-            Err(parse_error(error))
+            Err(error.into())
         }
     }
 
@@ -74,7 +74,7 @@ impl TwilioClient {
             Ok(response.json().await?)
         } else {
             let error: TwilioError = response.json().await?;
-            Err(parse_error(error))
+            Err(error.into())
         }
     }
 
@@ -98,28 +98,17 @@ impl TwilioClient {
                 Ok(intel.line_type.is_allowed_for_verification())
             } else {
                 // If no line type info, allow by default
+                error!("No line type intelligence data returned for phone: {}", phone_number);
                 Ok(true)
             }
         } else {
-            // If lookup fails, allow by default (could be international number)
+            // If lookup fails, allow by default (could be canadian number)
+            error!(
+                "Twilio Lookup API failed with status {} for phone: {}",
+                response.status(),
+                phone_number
+            );
             Ok(true)
-        }
-    }
-}
-
-/// Parse Twilio error into user-friendly error.
-fn parse_error(error: TwilioError) -> eyre::Report {
-    match error.code {
-        TwilioErrorCode::NotFound => {
-            // 20404 can mean verification was "soft deleted" after too many failed attempts
-            eyre::eyre!("Invalid or expired verification code")
-        }
-        TwilioErrorCode::TooManyRequests => {
-            eyre::eyre!("Too many requests, please try again later")
-        }
-        TwilioErrorCode::Unknown(code) => {
-            error!("Unknown Twilio error {}: {}", code, error.message);
-            eyre::eyre!("Phone verification service error")
         }
     }
 }
