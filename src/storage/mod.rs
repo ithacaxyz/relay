@@ -144,15 +144,6 @@ impl StorageApi for RelayStorage {
         self.inner.mark_phone_verified(account, phone).await
     }
 
-    async fn verify_phone_with_code(
-        &self,
-        account: Address,
-        phone: &str,
-        code: &str,
-    ) -> api::Result<bool> {
-        self.inner.verify_phone_with_code(account, phone, code).await
-    }
-
     async fn get_phone_verification_attempts(
         &self,
         account: Address,

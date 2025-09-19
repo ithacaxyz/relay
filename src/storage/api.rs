@@ -112,14 +112,6 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Mark a phone number as verified for an account.
     async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()>;
 
-    /// Verifies a phone with a code. Returns true if code matches.
-    async fn verify_phone_with_code(
-        &self,
-        account: Address,
-        phone: &str,
-        code: &str,
-    ) -> Result<bool>;
-
     /// Gets the number of verification attempts for a phone number.
     async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32>;
 
