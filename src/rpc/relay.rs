@@ -386,7 +386,7 @@ impl Relay {
 
         // Build state overrides for simulation
         let overrides = chain
-            .build_simulation_overrides(&intent, &context, mock_from, fee_token_balance, &provider)
+            .build_simulation_overrides(&intent, &context, mock_from, fee_token_balance)
             .await?
             .build();
         let account = Account::new(intent.eoa, &provider).with_overrides(overrides.clone());

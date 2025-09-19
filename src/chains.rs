@@ -140,7 +140,6 @@ impl Chain {
         context: &FeeEstimationContext,
         mock_from: Address,
         fee_token_balance: U256,
-        provider: &P,
     ) -> Result<StateOverridesBuilder, RelayError> {
         // Add 1 wei worth of the fee token to ensure the user always has enough to pass the call
         // simulation
@@ -176,7 +175,7 @@ impl Chain {
                     .modify_token(context.fee_token, |balance| {
                         balance.add_balance(intent.eoa, new_fee_token_balance);
                     })
-                    .into_state_overrides(provider)
+                    .into_state_overrides(self.provider())
                     .await?,
             );
         }
