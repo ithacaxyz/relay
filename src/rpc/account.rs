@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use rand::{Rng, distr::Alphanumeric};
 use resend_rs::{Resend, types::CreateEmailBaseOptions};
+use tracing::info;
 use url::Url;
 
 use crate::{
@@ -71,7 +72,7 @@ pub struct AccountRpc {
     storage: RelayStorage,
     porto_base_url: String,
     twilio_client: Option<TwilioClient>,
-    phone_config: crate::config::PhoneConfig,
+    phone_config: Option<crate::config::PhoneConfig>,
 }
 
 impl AccountRpc {
@@ -82,14 +83,7 @@ impl AccountRpc {
         storage: RelayStorage,
         porto_base_url: String,
     ) -> Self {
-        Self {
-            relay,
-            client,
-            storage,
-            porto_base_url,
-            twilio_client: None,
-            phone_config: Default::default(),
-        }
+        Self { relay, client, storage, porto_base_url, twilio_client: None, phone_config: None }
     }
 
     /// Create a new account RPC module with phone verification support.
@@ -107,7 +101,7 @@ impl AccountRpc {
             storage,
             porto_base_url,
             twilio_client: Some(twilio_client),
-            phone_config,
+            phone_config: Some(phone_config),
         }
     }
 }
@@ -181,6 +175,7 @@ impl AccountApiServer for AccountRpc {
         &self,
         SetPhoneParameters { phone, wallet_address }: SetPhoneParameters,
     ) -> RpcResult<()> {
+        info!("got setPhone");
         let client = self.twilio_client.as_ref().ok_or_else(|| {
             PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
         })?;
@@ -190,6 +185,7 @@ impl AccountApiServer for AccountRpc {
             return Err(PhoneError::PhoneAlreadyVerified.into());
         }
 
+        info!("checking if phone allowed");
         // Check line type to prevent VoIP numbers
         if !client.is_phone_allowed(&phone).await.map_err(|err| PhoneError::InternalError(err))? {
             return Err(PhoneError::InvalidPhoneNumber.into());
@@ -197,7 +193,7 @@ impl AccountApiServer for AccountRpc {
 
         // Start verification with Twilio Verify API v2
         let verification = client
-            .start_verification(&phone, "sms")
+            .start_verification(&phone)
             .await
             .map_err(|err| PhoneError::InternalError(err))?;
 
@@ -215,9 +211,14 @@ impl AccountApiServer for AccountRpc {
             PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
         })?;
 
+        let phone_config = self
+            .phone_config
+            .as_ref()
+            .ok_or_else(|| PhoneError::InternalError(eyre::eyre!("Phone configuration missing")))?;
+
         // Check attempts
         let attempts = self.storage.get_phone_verification_attempts(wallet_address, &phone).await?;
-        if attempts >= self.phone_config.max_attempts {
+        if attempts >= phone_config.max_attempts {
             return Err(PhoneError::TooManyAttempts.into());
         }
 
@@ -227,7 +228,7 @@ impl AccountApiServer for AccountRpc {
             .await
             .map_err(|err| PhoneError::InternalError(err))?;
 
-        if check.status != "approved" {
+        if !check.status.is_approved() {
             // Increment attempts on failed verification
             self.storage.increment_phone_verification_attempts(wallet_address, &phone).await?;
             return Err(PhoneError::InvalidCode.into());
@@ -254,7 +255,7 @@ impl AccountApiServer for AccountRpc {
 
         // Start a new verification with Twilio
         let verification = client
-            .start_verification(&phone, "sms")
+            .start_verification(&phone)
             .await
             .map_err(|err| PhoneError::InternalError(err))?;
 

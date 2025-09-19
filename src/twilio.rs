@@ -1,8 +1,9 @@
 //! Simple Twilio Verify API v2 and Lookup v2 client implementation.
 
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use tracing::{error, info};
 
 /// Twilio client for Verify API v2.
 #[derive(Clone, Debug)]
@@ -13,13 +14,60 @@ pub struct TwilioClient {
     verify_service_sid: String,
 }
 
+/// Verification status from Twilio Verify API.
+///
+/// See [Twilio Verification Check API documentation](https://www.twilio.com/docs/verify/api/verification-check)
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerificationStatus {
+    /// Verification is pending (code sent, awaiting user input)
+    Pending,
+    /// Verification is approved (correct code provided)
+    Approved,
+    /// Verification was canceled
+    Canceled,
+    /// Maximum attempts exceeded
+    #[serde(rename = "max_attempts_reached")]
+    MaxAttemptsReached,
+    /// Verification has been deleted
+    Deleted,
+    /// Verification failed
+    Failed,
+    /// Verification has expired
+    Expired,
+}
+
+impl VerificationStatus {
+    /// Check if the verification is approved.
+    pub fn is_approved(&self) -> bool {
+        matches!(self, Self::Approved)
+    }
+
+    /// Check if the verification is still pending.
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    /// Check if the verification failed or was invalid.
+    pub fn is_failed(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed
+                | Self::Expired
+                | Self::MaxAttemptsReached
+                | Self::Canceled
+                | Self::Deleted
+        )
+    }
+}
+
 /// Response from creating a verification.
 #[derive(Debug, Deserialize)]
 pub struct VerificationResponse {
     /// Unique identifier for this verification.
     pub sid: String,
-    /// Status of the verification (e.g., "pending", "approved").
-    pub status: String,
+    /// Status of the verification.
+    pub status: VerificationStatus,
     /// The phone number being verified.
     pub to: String,
     /// The channel used for verification (e.g., "sms", "call").
@@ -33,14 +81,63 @@ pub struct VerificationResponse {
 pub struct VerificationCheckResponse {
     /// Unique identifier for this verification check.
     pub sid: String,
-    /// Status of the verification check (e.g., "approved", "pending").
-    pub status: String,
+    /// Status of the verification check.
+    pub status: VerificationStatus,
     /// The phone number that was verified.
     pub to: String,
     /// The channel used for verification (e.g., "sms", "call").
     pub channel: String,
     /// Whether the verification check was valid.
     pub valid: bool,
+}
+
+/// Phone line type from Twilio Lookup v2 API.
+///
+/// See [Twilio's Line Type Intelligence documentation](https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence#type-property-values)
+/// for detailed descriptions of each type.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineType {
+    /// Mobile phone line
+    Mobile,
+    /// Landline phone
+    Landline,
+    /// Voice over IP line
+    Voip,
+    /// Fixed VoIP (non-mobile VoIP with fixed address)
+    #[serde(rename = "fixedVoip")]
+    FixedVoip,
+    /// Non-fixed VoIP (can be used from anywhere)
+    #[serde(rename = "nonFixedVoip")]
+    NonFixedVoip,
+    /// Toll-free number
+    Tollfree,
+    /// Premium rate number
+    Premium,
+    /// Shared cost number
+    #[serde(rename = "sharedCost")]
+    SharedCost,
+    /// Universal Access Number
+    Uan,
+    /// Voicemail service
+    Voicemail,
+    /// Pager service
+    Pager,
+    /// Unknown or unidentified line type
+    Unknown,
+}
+
+impl LineType {
+    /// Check if this line type is VoIP (including all VoIP variants).
+    pub fn is_voip(&self) -> bool {
+        matches!(self, LineType::Voip | LineType::FixedVoip | LineType::NonFixedVoip)
+    }
+
+    /// Check if this line type should be allowed for verification.
+    /// We allow mobile and landline, but block VoIP and special services.
+    pub fn is_allowed_for_verification(&self) -> bool {
+        matches!(self, LineType::Mobile | LineType::Landline)
+    }
 }
 
 /// Line type information from Lookup v2 API.
@@ -50,9 +147,9 @@ pub struct LineTypeIntelligence {
     pub carrier_name: Option<String>,
     /// Error code if line type lookup failed.
     pub error_code: Option<String>,
-    /// Type of phone line: "mobile", "landline", "voip", or "unknown".
+    /// Type of phone line.
     #[serde(rename = "type")]
-    pub line_type: Option<String>,
+    pub line_type: Option<LineType>,
     /// Mobile country code for the number.
     pub mobile_country_code: Option<String>,
     /// Mobile network code for the number.
@@ -78,11 +175,78 @@ pub struct LookupResponse {
     pub url: String,
 }
 
+/// Known Twilio error codes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TwilioErrorCode {
+    /// Authentication failed (20003)
+    AuthenticationFailed,
+    /// Resource not found (20008)
+    ResourceNotFound,
+    /// Verification expired or already used (20404)
+    VerificationExpired,
+    /// Invalid verification code (60200)
+    InvalidVerificationCode,
+    /// Too many verification attempts (60202)
+    TooManyAttempts,
+    /// Too many verification codes sent (60203)
+    TooManyCodesSent,
+    /// Unknown error code
+    Unknown(u32),
+}
+
+impl TwilioErrorCode {
+    /// Get a user-friendly error message for this error code.
+    pub fn user_message(&self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed => "Authentication failed",
+            Self::ResourceNotFound => "Resource not found",
+            Self::VerificationExpired => "Invalid or expired verification code",
+            Self::InvalidVerificationCode => "Invalid verification code",
+            Self::TooManyAttempts => "Too many verification attempts",
+            Self::TooManyCodesSent => "Too many verification codes sent",
+            Self::Unknown(_) => "Verification failed",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TwilioErrorCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let code = u32::deserialize(deserializer)?;
+        Ok(match code {
+            20003 => Self::AuthenticationFailed,
+            20008 => Self::ResourceNotFound,
+            20404 => Self::VerificationExpired,
+            60200 => Self::InvalidVerificationCode,
+            60202 => Self::TooManyAttempts,
+            60203 => Self::TooManyCodesSent,
+            code => Self::Unknown(code),
+        })
+    }
+}
+
 /// Twilio error response structure.
 #[derive(Debug, Deserialize)]
 struct TwilioError {
-    code: u32,
+    code: TwilioErrorCode,
     message: String,
+}
+
+impl TwilioError {
+    /// Parse error response and return appropriate error.
+    fn parse_error(text: &str) -> Option<String> {
+        if let Ok(twilio_error) = serde_json::from_str::<TwilioError>(text) {
+            // Log the full error details if it's an unknown error
+            if let TwilioErrorCode::Unknown(code) = &twilio_error.code {
+                error!("Unknown Twilio error code {}: {}", code, twilio_error.message);
+            }
+            Some(twilio_error.code.user_message().to_string())
+        } else {
+            None
+        }
+    }
 }
 
 impl TwilioClient {
@@ -91,11 +255,10 @@ impl TwilioClient {
         Self { http_client: Client::new(), account_sid, auth_token, verify_service_sid }
     }
 
-    /// Start a verification by sending a code to a phone number.
+    /// Start a verification by sending an SMS code to a phone number.
     pub async fn start_verification(
         &self,
         phone_number: &str,
-        channel: &str,
     ) -> eyre::Result<VerificationResponse> {
         let url = format!(
             "https://verify.twilio.com/v2/Services/{}/Verifications",
@@ -104,7 +267,7 @@ impl TwilioClient {
 
         let mut params = HashMap::new();
         params.insert("To", phone_number);
-        params.insert("Channel", channel);
+        params.insert("Channel", "sms");
 
         // Enable line type intelligence for filtering
         params.insert("SendDigits", "3"); // Wait 3 seconds before sending code
@@ -121,17 +284,10 @@ impl TwilioClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await?;
-
-            // Try to parse Twilio error
-            if let Ok(twilio_error) = serde_json::from_str::<TwilioError>(&text) {
-                return Err(eyre::eyre!("Phone verification failed: {}", twilio_error.message));
-            }
-
-            // Generic error if we can't parse the Twilio error
-            return Err(eyre::eyre!(
-                "Phone verification service error (status: {})",
-                status.as_u16()
-            ));
+            let error_msg = TwilioError::parse_error(&text).unwrap_or_else(|| {
+                format!("Phone verification service error (status: {})", status.as_u16())
+            });
+            return Err(eyre::eyre!("{}", error_msg));
         }
 
         Ok(response.json().await?)
@@ -163,39 +319,10 @@ impl TwilioClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await?;
-
-            // Try to parse Twilio error
-            if let Ok(twilio_error) = serde_json::from_str::<TwilioError>(&text) {
-                // Handle specific error codes
-                match twilio_error.code {
-                    20404 => {
-                        // Verification expired or already used - treat as invalid code
-                        return Err(eyre::eyre!("Invalid or expired verification code"));
-                    }
-                    20003 => {
-                        return Err(eyre::eyre!("Authentication failed"));
-                    }
-                    20008 => {
-                        return Err(eyre::eyre!("Resource not found"));
-                    }
-                    60200 => {
-                        return Err(eyre::eyre!("Invalid verification code"));
-                    }
-                    60202 => {
-                        return Err(eyre::eyre!("Too many verification attempts"));
-                    }
-                    60203 => {
-                        return Err(eyre::eyre!("Too many verification codes sent"));
-                    }
-                    _ => {
-                        // Generic message for other errors
-                        return Err(eyre::eyre!("Verification failed"));
-                    }
-                }
-            }
-
-            // Generic error if we can't parse the Twilio error
-            return Err(eyre::eyre!("Verification service error (status: {})", status.as_u16()));
+            let error_msg = TwilioError::parse_error(&text).unwrap_or_else(|| {
+                format!("Verification service error (status: {})", status.as_u16())
+            });
+            return Err(eyre::eyre!("{}", error_msg));
         }
 
         Ok(response.json().await?)
@@ -218,14 +345,10 @@ impl TwilioClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await?;
-
-            // Try to parse Twilio error
-            if let Ok(twilio_error) = serde_json::from_str::<TwilioError>(&text) {
-                return Err(eyre::eyre!("Phone lookup failed: {}", twilio_error.message));
-            }
-
-            // Generic error if we can't parse the Twilio error
-            return Err(eyre::eyre!("Phone lookup service error (status: {})", status.as_u16()));
+            let error_msg = TwilioError::parse_error(&text).unwrap_or_else(|| {
+                format!("Phone lookup service error (status: {})", status.as_u16())
+            });
+            return Err(eyre::eyre!("{}", error_msg));
         }
 
         Ok(response.json().await?)
@@ -233,25 +356,36 @@ impl TwilioClient {
 
     /// Check if a phone number is allowed for verification (not VoIP).
     pub async fn is_phone_allowed(&self, phone_number: &str) -> eyre::Result<bool> {
+        info!("Checking if phone is allowed: {phone_number}");
         let lookup = self.lookup_phone(phone_number).await?;
+        info!("Lookup result: {lookup:?}");
 
         // Check if the phone number is valid
         if !lookup.valid {
+            info!("Phone number is invalid");
             return Ok(false);
         }
 
-        // Check line type - deny VoIP, allow everything else
+        // Check line type intelligence
         if let Some(line_type_intel) = lookup.line_type_intelligence {
-            // If line type is explicitly VoIP, deny it
-            if line_type_intel.line_type.as_deref() == Some("voip") {
-                Ok(false)
+            if let Some(line_type) = line_type_intel.line_type {
+                info!(
+                    "Line type: {:?}, is_voip: {}, allowed: {}",
+                    line_type,
+                    line_type.is_voip(),
+                    line_type.is_allowed_for_verification()
+                );
+
+                // Use the enum's method to check if allowed
+                Ok(line_type.is_allowed_for_verification())
             } else {
-                // Allow mobile, landline, and even unknown (since many legitimate numbers show as
-                // unknown)
+                // No line type information available - be conservative and allow
+                info!("No line type information available, allowing");
                 Ok(true)
             }
         } else {
             // If we can't get line type intelligence, allow it (don't block legitimate users)
+            info!("No line type intelligence available, allowing");
             Ok(true)
         }
     }

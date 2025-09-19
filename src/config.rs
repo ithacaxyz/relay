@@ -260,43 +260,6 @@ impl RelayConfig {
         self
     }
 
-    /// Sets the Twilio Account SID.
-    pub fn with_twilio_account_sid(mut self, sid: Option<String>) -> Self {
-        if sid.is_some() {
-            if let Some(phone) = self.phone.as_mut() {
-                phone.twilio_account_sid = sid.or(phone.twilio_account_sid.clone());
-            } else {
-                self.phone = Some(PhoneConfig { twilio_account_sid: sid, ..Default::default() });
-            }
-        }
-        self
-    }
-
-    /// Sets the Twilio Auth Token.
-    pub fn with_twilio_auth_token(mut self, token: Option<String>) -> Self {
-        if token.is_some() {
-            if let Some(phone) = self.phone.as_mut() {
-                phone.twilio_auth_token = token.or(phone.twilio_auth_token.clone());
-            } else {
-                self.phone = Some(PhoneConfig { twilio_auth_token: token, ..Default::default() });
-            }
-        }
-        self
-    }
-
-    /// Sets the Twilio Verify Service SID.
-    pub fn with_twilio_verify_service_sid(mut self, sid: Option<String>) -> Self {
-        if sid.is_some() {
-            if let Some(phone) = self.phone.as_mut() {
-                phone.twilio_verify_service_sid = sid.or(phone.twilio_verify_service_sid.clone());
-            } else {
-                self.phone =
-                    Some(PhoneConfig { twilio_verify_service_sid: sid, ..Default::default() });
-            }
-        }
-        self
-    }
-
     /// Sets the configuration for the transaction service.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
@@ -682,15 +645,15 @@ pub struct EmailConfig {
 }
 
 /// Phone configuration.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhoneConfig {
     /// Twilio Account SID.
-    pub twilio_account_sid: Option<String>,
+    pub twilio_account_sid: String,
     /// Twilio Auth Token.
-    pub twilio_auth_token: Option<String>,
+    pub twilio_auth_token: String,
     /// Twilio Verify Service SID.
-    pub twilio_verify_service_sid: Option<String>,
+    pub twilio_verify_service_sid: String,
     /// Maximum verification attempts.
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
