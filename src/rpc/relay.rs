@@ -2222,30 +2222,12 @@ impl RelayApiServer for Relay {
 
         let provider = self.provider(chain_id)?;
 
-        let keys = &request.capabilities.authorize_keys;
-
-        // We only support up to two authorize keys for newly created accounts.
-        if keys.len() > 2 {
-            return Err(KeysError::TooManyKeys)?;
-        }
-
-        let maybe_other_key = keys.iter().find(|key| !key.key.isSuperAdmin);
-
-        // We only support a single admin key for newly created accounts.
-        if maybe_other_key.is_none() && keys.len() > 1 {
-            return Err(KeysError::TooManyAdminKeys)?;
-        }
-
         // Generate all calls that will authorize keys and set their permissions
         let calls = self.authorize_into_calls(request.capabilities.authorize_keys.clone())?;
 
-        let intent_nonce = if let Some(key) = maybe_other_key {
-            (MULTICHAIN_NONCE_PREFIX << 240)
-                | ((U256::from_be_bytes(key.key.key_hash().into()) >> 80) << 64)
-        } else {
-            // Random sequence key, with a multichain prefix starting at nonce 0.
-            (MULTICHAIN_NONCE_PREFIX << 240) | ((U256::random() >> 80) << 64)
-        };
+        // Random sequence key, with a multichain prefix starting at nonce 0.
+        let intent_nonce = (MULTICHAIN_NONCE_PREFIX << 240)
+            | ((U256::from_be_bytes(B256::random().into()) >> 80) << 64);
 
         let pre_call = SignedCall {
             eoa: request.address,
