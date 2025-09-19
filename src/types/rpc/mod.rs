@@ -21,6 +21,9 @@ pub use capabilities::*;
 mod faucet;
 pub use faucet::*;
 
+mod slots;
+pub use slots::*;
+
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
