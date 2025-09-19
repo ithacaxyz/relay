@@ -7,7 +7,7 @@ use super::{
 };
 use eyre::Result;
 use reqwest::Client;
-use tracing::error;
+use tracing::warn;
 
 /// Twilio client for phone verification.
 #[derive(Debug, Clone)]
@@ -79,6 +79,14 @@ impl TwilioClient {
     }
 
     /// Check if phone is allowed (not VoIP).
+    ///
+    /// This calls the twilio lookup v2 API with line type intelligence:
+    /// * <https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence>
+    ///
+    /// We only return false if:
+    /// * The lookup succeeds,
+    /// * We receive line type intelligence info, and
+    /// * The returned line type is allowed for verification (ie, is not VoIP).
     pub async fn is_phone_allowed(&self, phone_number: &str) -> Result<bool> {
         let encoded_phone = urlencoding::encode(phone_number);
         let url = format!(
@@ -98,12 +106,12 @@ impl TwilioClient {
                 Ok(intel.line_type.is_allowed_for_verification())
             } else {
                 // If no line type info, allow by default
-                error!("No line type intelligence data returned for phone: {}", phone_number);
+                warn!("No line type intelligence data returned for phone: {phone_number}");
                 Ok(true)
             }
         } else {
             // If lookup fails, allow by default (could be canadian number)
-            error!(
+            warn!(
                 "Twilio Lookup API failed with status {} for phone: {}",
                 response.status(),
                 phone_number

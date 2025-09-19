@@ -1,7 +1,9 @@
 //! Phone verification-related errors.
 
-use super::{internal_rpc, invalid_params};
+use jsonrpsee::types::error::ErrorObject;
 use thiserror::Error;
+
+use super::{internal_rpc, invalid_params};
 
 /// Errors that can occur during phone verification.
 #[derive(Debug, Error)]
@@ -26,7 +28,7 @@ pub enum PhoneError {
     InternalError(#[from] eyre::Error),
 }
 
-impl From<PhoneError> for jsonrpsee::types::error::ErrorObject<'static> {
+impl From<PhoneError> for ErrorObject<'static> {
     fn from(err: PhoneError) -> Self {
         match err {
             PhoneError::PhoneAlreadyVerified
