@@ -188,7 +188,7 @@ impl BinanceBridge {
                     deposit_addresses.insert((chain.id(), contract_address), deposit_address);
                 }
 
-                // If withdrawals are supported, fetch neccesary context.
+                // If withdrawals are supported, fetch necessary context.
                 if network.withdraw_enable.is_some_and(|enable| enable) {
                     // This represents amount of decimals accepted by Binance for withdrawal amount.
                     let withdraw_decimals =
