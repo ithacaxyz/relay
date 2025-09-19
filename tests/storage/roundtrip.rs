@@ -47,10 +47,19 @@ async fn write() -> eyre::Result<()> {
     storage.queue_transaction(&queued_tx).await?;
     storage.replace_queued_tx_with_pending(&pending_tx).await?;
 
-    // Create a new queued transaction with different ID
-    let mut queued_tx2 = queued_tx.clone();
-    queued_tx2.id = TxId(B256::with_last_byte(3));
-    storage.queue_transaction(&queued_tx2).await?;
+    // Create a new queued transaction with different ID and NO authorization
+    let mut queued_tx_no_auth = queued_tx.clone();
+    queued_tx_no_auth.id = TxId(B256::with_last_byte(3));
+    if let RelayTransactionKind::Intent { authorization, .. } = &mut queued_tx_no_auth.kind {
+        *authorization = None; // Set authorization to None
+    }
+    storage.queue_transaction(&queued_tx_no_auth).await?;
+
+    // Create another queued transaction with Some authorization (to test both cases)
+    let mut queued_tx_with_auth = queued_tx.clone();
+    queued_tx_with_auth.id = TxId(B256::with_last_byte(4));
+    // This one already has Some(authorization) from the clone
+    storage.queue_transaction(&queued_tx_with_auth).await?;
 
     // Bundle status
     storage.add_bundle_tx(bundle_id, queued_tx.id).await?;
