@@ -6,9 +6,6 @@
 //! - **Quote Generation**: Building complete quotes with all pricing information
 
 pub mod fees;
-pub mod simulator;
-
-pub use simulator::build_simulation_overrides;
 
 pub mod arb;
 pub mod op;
