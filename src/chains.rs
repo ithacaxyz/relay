@@ -163,7 +163,7 @@ impl Chain {
                             .map(|key| key.storage_slots())
                             .unwrap_or_default(),
                     )
-                    // we manually etch the 7702 designator since we do not have a signed auth item
+                    // we manually fetch the 7702 designator since we do not have a signed auth item
                     .with_7702_delegation_designator_opt(context.stored_auth_address()),
             )
             .extend(context.state_overrides.clone());
