@@ -45,21 +45,42 @@ pub trait AccountApi {
 
     /// Set the phone number for an account.
     ///
-    /// Initiates phone verification via Twilio Verify service.
+    /// The phone starts out unverified, and can later be verified with [`verify_phone`].
+    ///
+    /// This initiates phone verification by sending an SMS with a verification code via Twilio
+    /// Verify service.
+    ///
     /// If the phone already exists in the database and is verified, this returns an error.
-    /// If the phone already exists but is not verified, a new verification is initiated.
+    ///
+    /// If the phone already exists in the database but is not verified, a new verification is
+    /// initiated and a new SMS is sent.
+    ///
+    /// VoIP numbers are automatically rejected to prevent abuse.
     #[method(name = "setPhone")]
     async fn set_phone(&self, params: SetPhoneParameters) -> RpcResult<()>;
 
     /// Verify the phone number for an account using the verification code.
     ///
-    /// No signature is required as verification is handled by Twilio.
+    /// The verification code is the 6-digit code sent via SMS to the phone number.
+    ///
+    /// Unlike email verification, no signature is required as the possession of the SMS code
+    /// proves ownership of the phone number.
+    ///
+    /// Returns an error if:
+    /// - The verification code is invalid or expired
+    /// - Too many failed attempts have been made (limit configured in PhoneConfig)
+    /// - The phone number is not pending verification
     #[method(name = "verifyPhone")]
     async fn verify_phone(&self, params: VerifyPhoneParameters) -> RpcResult<()>;
 
     /// Resend the verification code to a phone number.
     ///
-    /// Can be called when the user didn't receive the code or it expired.
+    /// Can be called when the user didn't receive the code or it expired. This will send a new
+    /// SMS with a new verification code.
+    ///
+    /// Returns an error if the phone is already verified.
+    ///
+    /// The previous verification session is invalidated and a new one is created.
     #[method(name = "resendVerifyPhone")]
     async fn resend_verify_phone(&self, params: ResendVerifyPhoneParameters) -> RpcResult<()>;
 }
