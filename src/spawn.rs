@@ -186,7 +186,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let account_rpc = if let Some(resend_api_key) = &config.email.resend_api_key {
         // Check if phone verification is also configured
         let rpc = if let Some(phone_config) = &config.phone {
-            // Phone config exists, so all required Twilio fields are present
             let twilio_client = TwilioClient::new(
                 phone_config.twilio_account_sid.clone(),
                 phone_config.twilio_auth_token.clone(),
@@ -258,10 +257,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     .absolute(1);
 
     if let Some(account_rpc) = account_rpc {
-        info!("Started relay with e-mail provider");
         rpc.merge(account_rpc).expect("could not merge rpc modules");
     } else {
-        info!("Started relay without e-mail provider");
         warn!("No e-mail provider configured.");
     }
 

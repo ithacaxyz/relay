@@ -1,6 +1,7 @@
 //! Twilio error types.
 
 use serde::{Deserialize, Deserializer};
+use tracing::error;
 
 /// Twilio error response.
 #[derive(Debug, Deserialize)]
@@ -40,5 +41,23 @@ impl<'de> Deserialize<'de> for TwilioErrorCode {
             20429 => Self::TooManyRequests,
             other => Self::Unknown(other),
         })
+    }
+}
+
+impl From<TwilioError> for eyre::Report {
+    fn from(error: TwilioError) -> Self {
+        match error.code {
+            TwilioErrorCode::NotFound => {
+                // 20404 can mean verification was "soft deleted" after too many failed attempts
+                eyre::eyre!("Invalid or expired verification code")
+            }
+            TwilioErrorCode::TooManyRequests => {
+                eyre::eyre!("Too many requests, please try again later")
+            }
+            TwilioErrorCode::Unknown(_) => {
+                error!("Unknown Twilio error {error:?}");
+                eyre::eyre!("Phone verification service error")
+            }
+        }
     }
 }
