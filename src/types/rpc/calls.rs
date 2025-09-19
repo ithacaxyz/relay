@@ -286,8 +286,9 @@ impl PrepareCallsParameters {
     /// Retrieves the appropriate nonce for the request, following this order:
     ///
     /// 1. If `capabilities.meta.nonce` is set, return it directly.
-    /// 2. If this is a precall, generate a random sequence key without the multichain prefix and
-    ///    return its 0th nonce.
+    /// 2. If this is a precall configuring a certain key, generate a nonce with sequence key
+    ///    matching first 192 bits of keyHash. Otherwise, generate a random sequence key without the
+    ///    multichain prefix and return its 0th nonce.
     /// 3. If this is a intent and there are any previous precall entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
     /// 4. If this is the intent of a non delegated account (`maybe_stored`), return random.

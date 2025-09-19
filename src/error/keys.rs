@@ -8,15 +8,6 @@ pub enum KeysError {
     /// The key type is not supported.
     #[error("only supports `p256`, `webauthnp256` and `secp256k1` key types")]
     UnsupportedKeyType,
-    /// Missing at least one admin authorization key.
-    #[error("should have at least one admin authorization key")]
-    MissingAdminKey,
-    /// Too many admin authorization keys.
-    #[error("maximum of one admin authorization key allowed")]
-    TooManyAdminKeys,
-    /// Too many keys.
-    #[error("maximum of two authorization keys allowed")]
-    TooManyKeys,
     /// Precalls are only allowed to modify one key to ensure correct ordering.
     #[error("precall can't modify multiple keys")]
     PrecallConflictingKeys,
@@ -35,9 +26,6 @@ impl From<KeysError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: KeysError) -> Self {
         match err {
             KeysError::UnsupportedKeyType
-            | KeysError::MissingAdminKey
-            | KeysError::TooManyAdminKeys
-            | KeysError::TooManyKeys
             | KeysError::PrecallConflictingKeys
             | KeysError::OnlyAdminKeyAllowed
             | KeysError::InvalidSignature
