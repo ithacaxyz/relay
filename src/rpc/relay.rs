@@ -1518,7 +1518,7 @@ impl Relay {
                         RelayError::InternalError(eyre::eyre!("no quote after simulation"))
                     })?;
 
-                    // If we could successfuly simulate the intent without any deficits, then we can
+                    // If we could successfully simulate the intent without any deficits, then we can
                     // just do this single chain instead.
                     if quote.asset_deficits.is_empty() {
                         debug!(
