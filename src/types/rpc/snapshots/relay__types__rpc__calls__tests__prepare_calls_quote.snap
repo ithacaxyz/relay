@@ -18,6 +18,9 @@ expression: response_value
                 "value": "0"
               },
               "name": "Ethereum",
+              "recipients": [
+                "0x0000000000000000000000000000000000000000"
+              ],
               "symbol": "ETH",
               "type": "native",
               "uri": "https://ethereum.org",
@@ -39,6 +42,9 @@ expression: response_value
                 "value": "0"
               },
               "name": "Ethereum",
+              "recipients": [
+                "0x0000000000000000000000000000000000000000"
+              ],
               "symbol": "ETH",
               "type": "native",
               "uri": "https://ethereum.org",
@@ -156,7 +162,7 @@ expression: response_value
     "publicKey": "0x0000000000000000000000000000000000000000",
     "type": "secp256k1"
   },
-  "signature": "0x6428cb0ec2d7da3cbd9aae00a97fdfa9e44913e55824ddcc1eed49bceadcafeb634059ca7de4e805c96352c18f8cecc7d225f82821f5a065af0f84c4698d36181b",
+  "signature": "0x4ee711258c5e0805b8fbd19407397e837aed09bb170152a16ef6dec3547220e161a4cb7d8cddd7a2c8015a46e9f57c8d773000eac477fef5354546253d9585c31b",
   "typedData": {
     "domain": {},
     "message": null,
