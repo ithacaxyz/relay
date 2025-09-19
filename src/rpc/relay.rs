@@ -734,9 +734,7 @@ impl Relay {
         let mut authorization_list = Vec::new();
 
         // if the additional auth exists, push it
-        if let Some(auth) = &quote.additional_authorization {
-            authorization_list.push(auth.clone());
-        }
+        authorization_list.extend(quote.additional_authorization.clone());
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
