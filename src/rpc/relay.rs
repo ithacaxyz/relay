@@ -1146,12 +1146,8 @@ impl Relay {
             let delegation_status = self.delegation_status(&fee_payer, request.chain_id).await?;
 
             if let DelegationStatus::Stored { account, implementation } = delegation_status {
-                // check if the implementation is at least TODO. before ithaca account TODO, the
+                // check if the implementation is at least v0.5.6. before ithaca account v0.5.6, the
                 // contracts had a check which required all precalls to be signed by the eoa
-                //
-                // here we just make sure that thet feePayer delegates to an ithaca account,
-                // otherwise TODO discussion on what could happen
-                // TODO: fill in version, setting to 0.5.6 for now
                 if self.is_ithaca_account(implementation, semver::Version::new(0, 5, 6)) {
                     // put the delegation as the first call
                     pre_calls.insert(0, account.pre_call.clone());
