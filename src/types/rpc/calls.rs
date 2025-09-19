@@ -520,6 +520,14 @@ impl PrepareCallsContext {
         }
     }
 
+    /// Returns precall immutable reference if it exists.
+    pub fn precall(&self) -> Option<&PreCallContext> {
+        match self {
+            PrepareCallsContext::Quote(_) => None,
+            PrepareCallsContext::PreCall(precall) => Some(precall),
+        }
+    }
+
     /// Returns quotes mutable reference if it exists.
     pub fn quote_mut(&mut self) -> Option<&mut SignedQuotes> {
         match self {

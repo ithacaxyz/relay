@@ -1104,6 +1104,7 @@ impl Relay {
             for call in calls {
                 if call.nonce == nonce {
                     stored_precalls.push(call);
+                    nonce += U256::from(1);
                 } else if call.nonce < nonce {
                     // Remove if nonce is already used.
                     self.inner.storage.remove_precall(request.chain_id, eoa, call.nonce).await?;
@@ -1111,7 +1112,6 @@ impl Relay {
                     // If nonce is greater, we have a nonce gap which we should skip.
                     break;
                 }
-                nonce += U256::from(1);
             }
         }
 
