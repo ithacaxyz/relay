@@ -586,7 +586,7 @@ impl Environment {
             // Each ERC20 has the UID derived from the order it was deployed. The native token
             // is given the UID ETH with 18 decimals.
             //
-            // Only ETH and the first ERC20 is relayable across chains.
+            // Only ETH and the first two ERC20s are relayable across chains.
             alloy::contract::Result::<_>::Ok(Assets::new(HashMap::from_iter(
                 std::iter::once((
                     AssetUid::new("eth".to_string()),
@@ -606,7 +606,7 @@ impl Environment {
                                     address: *contract,
                                     decimals: provider.get_token_decimals(*contract).await?,
                                     fee_token: true,
-                                    interop: idx == 0,
+                                    interop: idx < 2,
                                 },
                             ))
                         },

@@ -1525,9 +1525,32 @@ impl Relay {
                         return Ok((asset_diff, quotes));
                     }
 
+                    let mut deficits = quote.asset_deficits.0.clone();
+                    // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
+                    deficits.retain_mut(|deficit| {
+                        if Some(deficit.address.unwrap_or_default())
+                            != request.capabilities.meta.fee_token
+                        {
+                            return true;
+                        }
+
+                        deficit.required = deficit
+                            .required
+                            .saturating_sub(quote.intent.total_payment_max_amount());
+                        deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
+
+                        // If the only deficit is the fee token deficit, we can keep it and handle
+                        // it as an interop intent requiring zero of the feeToken plus the fee.
+                        if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
+                            true
+                        } else {
+                            !deficit.deficit.is_zero()
+                        }
+                    });
+
                     // If we have more than 1 asset deficit it means we will have to source more
                     // than one asset which is not currently supported.
-                    if quote.asset_deficits.0.len() > 1 {
+                    if deficits.len() > 1 {
                         debug!(
                             eoa = %identity.root_eoa,
                             chain_id = %request.chain_id,
@@ -1538,7 +1561,7 @@ impl Relay {
                         return Ok((asset_diff, quotes));
                     }
 
-                    let deficit = quote.asset_deficits.0.first().unwrap();
+                    let deficit = deficits.first().unwrap();
                     let asset = deficit.address.unwrap_or_default();
 
                     // If interop is not enabled or not supported for the requested asset, we can't
@@ -1549,18 +1572,7 @@ impl Relay {
                         return Ok((asset_diff, quotes));
                     }
 
-                    // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
-                    let (required, deficit) = if Some(asset) == request.capabilities.meta.fee_token
-                    {
-                        (
-                            deficit.required.saturating_sub(quote.fee_token_deficit),
-                            deficit.deficit.saturating_sub(quote.fee_token_deficit),
-                        )
-                    } else {
-                        (deficit.required, deficit.deficit)
-                    };
-
-                    (asset, required, deficit)
+                    (asset, deficit.required, deficit.required.saturating_sub(deficit.deficit))
                 }
             };
 
