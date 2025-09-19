@@ -723,26 +723,6 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn verify_phone_with_code(
-        &self,
-        account: Address,
-        phone: &str,
-        code: &str,
-    ) -> Result<bool> {
-        let affected = sqlx::query!(
-            "update phones set verified_at = now() where address = $1 and phone = $2 and verification_sid = $3 and verified_at is null",
-            account.as_slice(),
-            phone,
-            code
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(eyre::Error::from)?;
-
-        Ok(affected.rows_affected() > 0)
-    }
-
-    #[instrument(skip_all)]
     async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32> {
         let record = sqlx::query!(
             "select attempts from phones where address = $1 and phone = $2",

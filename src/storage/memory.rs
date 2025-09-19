@@ -196,23 +196,6 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn verify_phone_with_code(
-        &self,
-        account: Address,
-        phone: &str,
-        code: &str,
-    ) -> Result<bool> {
-        let key = PhoneKey { account, phone: phone.to_string() };
-        if let Some(entry) = self.unverified_phones.get(&key)
-            && entry.verification_sid == code
-        {
-            self.unverified_phones.remove(&key);
-            self.verified_phones.insert(phone.to_string(), account);
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
     async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32> {
         let key = PhoneKey { account, phone: phone.to_string() };
         Ok(self.unverified_phones.get(&key).map(|v| v.attempts).unwrap_or(0))
