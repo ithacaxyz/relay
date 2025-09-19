@@ -134,7 +134,7 @@ impl Chain {
     /// - EOA key storage slots
     /// - EIP-7702 delegation code
     /// - Fee token balance overrides
-    pub async fn build_simulation_overrides<P: Provider>(
+    pub async fn build_simulation_overrides(
         &self,
         intent: &PartialIntent,
         context: &FeeEstimationContext,
