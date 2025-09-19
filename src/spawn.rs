@@ -184,33 +184,21 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     // Setup account RPC module if email is configured
     let account_rpc = if let Some(resend_api_key) = &config.email.resend_api_key {
         // Check if phone verification is also configured
-        let phone_setup = config.phone.as_ref().and_then(|phone_config| {
-            match (
-                &phone_config.twilio_account_sid,
-                &phone_config.twilio_auth_token,
-                &phone_config.twilio_verify_service_sid,
-            ) {
-                (Some(account_sid), Some(auth_token), Some(service_sid)) => Some((
-                    crate::twilio::TwilioClient::new(
-                        account_sid.clone(),
-                        auth_token.clone(),
-                        service_sid.clone(),
-                    ),
-                    phone_config.clone(),
-                )),
-                _ => None,
-            }
-        });
+        let rpc = if let Some(phone_config) = &config.phone {
+            // Phone config exists, so all required Twilio fields are present
+            let twilio_client = crate::twilio::TwilioClient::new(
+                phone_config.twilio_account_sid.clone(),
+                phone_config.twilio_auth_token.clone(),
+                phone_config.twilio_verify_service_sid.clone(),
+            );
 
-        // Create AccountRpc with or without phone support
-        let rpc = if let Some((twilio_client, phone_config)) = phone_setup {
             AccountRpc::with_phone(
                 relay.clone(),
                 Resend::new(resend_api_key),
                 storage.clone(),
                 config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
                 twilio_client,
-                phone_config,
+                phone_config.clone(),
             )
         } else {
             AccountRpc::new(
