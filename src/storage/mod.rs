@@ -127,6 +127,48 @@ impl StorageApi for RelayStorage {
         self.inner.verify_email(account, email, token).await
     }
 
+    async fn verified_phone_exists(&self, phone: &str) -> api::Result<bool> {
+        self.inner.verified_phone_exists(phone).await
+    }
+
+    async fn add_unverified_phone(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> api::Result<()> {
+        self.inner.add_unverified_phone(account, phone, verification_sid).await
+    }
+
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> api::Result<()> {
+        self.inner.mark_phone_verified(account, phone).await
+    }
+
+    async fn get_phone_verification_attempts(
+        &self,
+        account: Address,
+        phone: &str,
+    ) -> api::Result<u32> {
+        self.inner.get_phone_verification_attempts(account, phone).await
+    }
+
+    async fn increment_phone_verification_attempts(
+        &self,
+        account: Address,
+        phone: &str,
+    ) -> api::Result<()> {
+        self.inner.increment_phone_verification_attempts(account, phone).await
+    }
+
+    async fn update_phone_verification_sid(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> api::Result<()> {
+        self.inner.update_phone_verification_sid(account, phone, verification_sid).await
+    }
+
     async fn ping(&self) -> api::Result<()> {
         self.inner.ping().await
     }

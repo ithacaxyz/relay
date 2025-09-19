@@ -25,6 +25,20 @@ use dashmap::DashMap;
 use std::collections::BTreeMap;
 use tokio::sync::RwLock;
 
+/// Key for phone verification storage
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct PhoneKey {
+    account: Address,
+    phone: String,
+}
+
+/// Value for unverified phone storage
+#[derive(Debug, Clone)]
+struct UnverifiedPhone {
+    verification_sid: String,
+    attempts: u32,
+}
+
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
@@ -35,6 +49,8 @@ pub struct InMemoryStorage {
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, Address>,
+    unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
+    verified_phones: DashMap<String, Address>,
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
     pending_refunds: DashMap<BundleId, DateTime<Utc>>,
@@ -155,6 +171,59 @@ impl StorageApi for InMemoryStorage {
         }
 
         Ok(valid)
+    }
+
+    async fn verified_phone_exists(&self, phone: &str) -> Result<bool> {
+        Ok(self.verified_phones.contains_key(phone))
+    }
+
+    async fn add_unverified_phone(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        let value = UnverifiedPhone { verification_sid: verification_sid.to_string(), attempts: 0 };
+        self.unverified_phones.insert(key, value);
+        Ok(())
+    }
+
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        self.unverified_phones.remove(&key);
+        self.verified_phones.insert(phone.to_string(), account);
+        Ok(())
+    }
+
+    async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        Ok(self.unverified_phones.get(&key).map(|v| v.attempts).unwrap_or(0))
+    }
+
+    async fn increment_phone_verification_attempts(
+        &self,
+        account: Address,
+        phone: &str,
+    ) -> Result<()> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        if let Some(mut entry) = self.unverified_phones.get_mut(&key) {
+            entry.attempts += 1;
+        }
+        Ok(())
+    }
+
+    async fn update_phone_verification_sid(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        if let Some(mut entry) = self.unverified_phones.get_mut(&key) {
+            entry.verification_sid = verification_sid.to_string();
+        }
+        Ok(())
     }
 
     async fn ping(&self) -> Result<()> {
