@@ -709,8 +709,8 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn verify_phone(&self, account: Address, phone: &str) -> Result<bool> {
-        let affected = sqlx::query!(
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()> {
+        sqlx::query!(
             "update phones set verified_at = now() where address = $1 and phone = $2 and verified_at is null",
             account.as_slice(),
             phone
@@ -719,7 +719,7 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        Ok(affected.rows_affected() > 0)
+        Ok(())
     }
 
     #[instrument(skip_all)]

@@ -140,8 +140,8 @@ impl StorageApi for RelayStorage {
         self.inner.add_unverified_phone(account, phone, verification_sid).await
     }
 
-    async fn verify_phone(&self, account: Address, phone: &str) -> api::Result<bool> {
-        self.inner.verify_phone(account, phone).await
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> api::Result<()> {
+        self.inner.mark_phone_verified(account, phone).await
     }
 
     async fn verify_phone_with_code(
