@@ -635,7 +635,7 @@ impl Relay {
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
-            additional_authorization: context.additional_authorization,
+            additional_authorization: context.additional_authorization.map(|(_, auth)| auth),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
             asset_deficits,
@@ -730,15 +730,31 @@ impl Relay {
         let payment_amount = quote.intent.pre_payment_max_amount();
         quote.intent.set_payment(payment_amount);
 
+        // we have a list of potential auths
+        let mut authorization_list = Vec::new();
+
+        // if the additional auth exists, push it
+        if let Some(auth) = &quote.additional_authorization {
+            authorization_list.push(auth.clone());
+        }
+
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
         // todo: we should probably fetch this before sending any tx
         let authorization = if authorization_address.is_some() {
-            self.inner
+            let auth = self
+                .inner
                 .storage
                 .read_account(quote.intent.eoa())
                 .await
-                .map(|opt| opt.map(|acc| acc.signed_authorization))?
+                .map(|opt| opt.map(|acc| acc.signed_authorization))?;
+
+            // push auth if exists
+            if let Some(auth) = &auth {
+                authorization_list.push(auth.clone());
+            }
+
+            auth
         } else {
             None
         };
@@ -781,7 +797,7 @@ impl Relay {
         // set our payment recipient
         quote.intent = quote.intent.with_payment_recipient(self.inner.fee_recipient);
 
-        let tx = RelayTransaction::new(quote, authorization.clone(), eip712_digest);
+        let tx = RelayTransaction::new(quote, authorization_list, eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)

@@ -33,7 +33,7 @@ pub enum RelayTransactionKind {
         /// [`Intent`] to send.
         quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
-        authorization: Option<SignedAuthorization>,
+        authorization: Vec<SignedAuthorization>,
         /// The EIP-712 digest of the intent.
         eip712_digest: B256,
     },
@@ -79,11 +79,7 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(
-        quote: Quote,
-        authorization: Option<SignedAuthorization>,
-        eip712_digest: B256,
-    ) -> Self {
+    pub fn new(quote: Quote, authorization: Vec<SignedAuthorization>, eip712_digest: B256) -> Self {
         Self {
             id: TxId(B256::random()),
             kind: RelayTransactionKind::Intent {
@@ -151,9 +147,9 @@ impl RelayTransaction {
 
                 let input = intent.encode_execute();
 
-                if let Some(auth) = &authorization {
+                if !authorization.is_empty() {
                     TxEip7702 {
-                        authorization_list: vec![auth.clone()],
+                        authorization_list: authorization.clone(),
                         chain_id: quote.chain_id,
                         nonce,
                         to: quote.orchestrator,

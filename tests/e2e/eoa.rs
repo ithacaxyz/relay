@@ -226,6 +226,6 @@ impl MockAccount {
             .into(),
         );
 
-        RelayTransaction::new(quote, None, digest)
+        RelayTransaction::new(quote, vec![], digest)
     }
 }

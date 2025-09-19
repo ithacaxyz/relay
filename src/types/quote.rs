@@ -132,7 +132,7 @@ pub struct Quote {
     /// The account in `intent.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
     /// An optional additional authorization address, which would be used to delegate the feepayer
-    pub additional_authorization: Option<(Address, SignedAuthorization)>,
+    pub additional_authorization: Option<SignedAuthorization>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
     /// How much of the fee token the user is missing to pay for this intent.
