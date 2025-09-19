@@ -50,8 +50,8 @@ async fn write() -> eyre::Result<()> {
     // Create a new queued transaction with different ID and NO authorization
     let mut queued_tx_no_auth = queued_tx.clone();
     queued_tx_no_auth.id = TxId(B256::with_last_byte(3));
-    if let RelayTransactionKind::Intent { authorization, .. } = &mut queued_tx_no_auth.kind {
-        *authorization = None; // Set authorization to None
+    if let RelayTransactionKind::Intent { authorization_list, .. } = &mut queued_tx_no_auth.kind {
+        *authorization = vec![]; // Set authorization to empty vec
     }
     storage.queue_transaction(&queued_tx_no_auth).await?;
 

@@ -33,7 +33,6 @@ pub enum RelayTransactionKind {
         /// [`Intent`] to send.
         quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
-        #[serde(rename = "camelCase")]
         authorization_list: Vec<SignedAuthorization>,
         /// The EIP-712 digest of the intent.
         eip712_digest: B256,
