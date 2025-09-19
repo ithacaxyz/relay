@@ -17,9 +17,17 @@ use relay::{
     types::{
         Call, KeyWith712Signer, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::IntentExecuted,
-        rpc::{AuthorizeKey, BundleId, CallStatusCode, RevokeKey, SendPreparedCallsParameters},
+        rpc::{
+            AuthorizeKey, BundleId, CallStatusCode, PrepareCallsContext, RevokeKey,
+            SendPreparedCallsParameters,
+        },
     },
 };
+
+/// Alias type of a boxed async closure capturing [`Environment`] and [`PrepareCallsContext`] for
+/// checking quote of a transaction.
+pub type QuoteCheck =
+    Box<dyn for<'a> Fn(&'a Environment, &'a PrepareCallsContext) -> BoxFuture<'a, ()>>;
 
 /// Alias type of a boxed async closure capturing [`Environment`] and [`TxContext`] for checking the
 /// outcome of a successful transaction.
@@ -143,6 +151,11 @@ pub struct TxContext<'a> {
     /// Optional checks after a successful transaction.
     #[debug(skip)]
     pub post_tx: Vec<PostTxCheck>,
+    /// Optional check for a quote.
+    #[debug(skip)]
+    pub quote: Option<QuoteCheck>,
+    /// Whether this transaction should only be saved as a precall.
+    pub pre_call: bool,
 }
 
 impl TxContext<'_> {
@@ -168,6 +181,11 @@ impl TxContext<'_> {
     ///    - Confirms Intent success by checking nonce invalidation
     pub async fn process(self, tx_num: usize, env: &Environment) -> eyre::Result<()> {
         let signer = self.key.expect("should have key");
+
+        if self.pre_call {
+            build_pre_calls(env, &[self], tx_num).await?;
+            return Ok(());
+        }
 
         let Some((signature, context)) = prepare_calls(tx_num, &self, signer, env, false).await?
         else {

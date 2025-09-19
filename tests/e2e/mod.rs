@@ -174,6 +174,10 @@ pub async fn prepare_calls(
     let PrepareCallsResponse { context, digest, .. } = response?;
     let signature = signer.sign_payload_hash(digest).await.wrap_err("Signing failed")?;
 
+    if let Some(quote_check) = &tx.quote {
+        quote_check(env, &context).await;
+    }
+
     Ok(Some((signature, context)))
 }
 

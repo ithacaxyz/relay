@@ -1,12 +1,12 @@
 //! RPC calls-related request and response types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
-    error::{IntentError, RelayError},
+    error::{IntentError, KeysError, RelayError},
     signers::DynSigner,
-    storage::BundleStatus,
+    storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
         KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
@@ -286,8 +286,9 @@ impl PrepareCallsParameters {
     /// Retrieves the appropriate nonce for the request, following this order:
     ///
     /// 1. If `capabilities.meta.nonce` is set, return it directly.
-    /// 2. If this is a precall, generate a random sequence key without the multichain prefix and
-    ///    return its 0th nonce.
+    /// 2. If this is a precall configuring a certain key, generate a nonce with sequence key
+    ///    matching first 192 bits of keyHash. Otherwise, generate a random sequence key without the
+    ///    multichain prefix and return its 0th nonce.
     /// 3. If this is a intent and there are any previous precall entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
     /// 4. If this is the intent of a non delegated account (`maybe_stored`), return random.
@@ -298,6 +299,7 @@ impl PrepareCallsParameters {
         &self,
         maybe_stored: Option<&CreatableAccount>,
         provider: &DynProvider,
+        storage: &RelayStorage,
     ) -> Result<U256, RelayError> {
         // Create a random sequence key.
         let random_nonce = loop {
@@ -310,7 +312,48 @@ impl PrepareCallsParameters {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
         } else if self.capabilities.pre_call {
-            Ok(random_nonce)
+            // Decode all key hashes involved.
+            let mut key_hashes = self
+                .calls
+                .iter()
+                .filter_map(|call| call.decode_precall_key_hash())
+                .collect::<BTreeSet<_>>();
+
+            // If precall is trying to modify multiple keys, return an error.
+            if key_hashes.len() > 1 {
+                return Err(KeysError::PrecallConflictingKeys.into());
+            }
+
+            let Some(key_hash) = key_hashes.pop_first() else {
+                // If precall doesn't perform any key-related operations, return a random nonce.
+                return Ok(random_nonce);
+            };
+
+            // Convert the key hash to a sequence key and fetch the nonce for it.
+            let seq_key = U256::from(U256::from_be_bytes(key_hash.into()) >> 64);
+
+            if let Some(eoa) = self.from {
+                // If we have stored precalls, derive the highest nonce from them.
+                if let Some(max_stored) = storage
+                    .read_precalls_for_eoa(self.chain_id, eoa)
+                    .await?
+                    .iter()
+                    .map(|precall| precall.nonce)
+                    .filter(|nonce| (*nonce >> 64) == seq_key)
+                    .max()
+                {
+                    Ok(max_stored + uint!(1_U256))
+                } else {
+                    // otherwise, query for the next account nonce onchain
+                    let mut account = Account::new(eoa, &provider);
+                    if let Some(stored) = maybe_stored {
+                        account = account.with_overrides(stored.state_overrides()?);
+                    }
+                    Ok(account.get_nonce_for_sequence(U192::from(seq_key)).await?)
+                }
+            } else {
+                Ok(U256::ZERO)
+            }
         } else if let Some(precall) = self
             .capabilities
             .pre_calls
@@ -475,6 +518,14 @@ impl PrepareCallsContext {
         match self {
             PrepareCallsContext::Quote(signed) => Some(signed),
             PrepareCallsContext::PreCall(_) => None,
+        }
+    }
+
+    /// Returns precall immutable reference if it exists.
+    pub fn precall(&self) -> Option<&PreCallContext> {
+        match self {
+            PrepareCallsContext::Quote(_) => None,
+            PrepareCallsContext::PreCall(precall) => Some(precall),
         }
     }
 
