@@ -169,7 +169,7 @@ impl Fixtures {
             id: TxId(queued_id),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
-                authorization: vec![authorization.clone()],
+                authorization_list: vec![authorization.clone()],
                 eip712_digest: r_b256,
             },
             trace_context: Context::current(),
