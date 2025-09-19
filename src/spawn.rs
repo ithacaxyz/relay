@@ -11,6 +11,7 @@ use crate::{
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
+    twilio::TwilioClient,
     types::VersionedContracts,
     version::RELAY_LONG_VERSION,
 };
@@ -186,7 +187,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         // Check if phone verification is also configured
         let rpc = if let Some(phone_config) = &config.phone {
             // Phone config exists, so all required Twilio fields are present
-            let twilio_client = crate::twilio::TwilioClient::new(
+            let twilio_client = TwilioClient::new(
                 phone_config.twilio_account_sid.clone(),
                 phone_config.twilio_auth_token.clone(),
                 phone_config.twilio_verify_service_sid.clone(),

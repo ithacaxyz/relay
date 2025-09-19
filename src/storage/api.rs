@@ -109,9 +109,8 @@ pub trait StorageApi: Debug + Send + Sync {
         verification_sid: &str,
     ) -> Result<()>;
 
-    /// Marks a phone number as verified for an account.
-    /// Returns true if the phone was verified successfully.
-    async fn verify_phone(&self, account: Address, phone: &str) -> Result<bool>;
+    /// Mark a phone number as verified for an account.
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()>;
 
     /// Verifies a phone with a code. Returns true if code matches.
     async fn verify_phone_with_code(

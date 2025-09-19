@@ -9,6 +9,7 @@ use tracing::info;
 use url::Url;
 
 use crate::{
+    config::PhoneConfig,
     error::{EmailError, PhoneError},
     rpc::{Relay, RelayApiServer},
     storage::{RelayStorage, StorageApi},
@@ -72,7 +73,7 @@ pub struct AccountRpc {
     storage: RelayStorage,
     porto_base_url: String,
     twilio_client: Option<TwilioClient>,
-    phone_config: Option<crate::config::PhoneConfig>,
+    phone_config: Option<PhoneConfig>,
 }
 
 impl AccountRpc {
@@ -93,7 +94,7 @@ impl AccountRpc {
         storage: RelayStorage,
         porto_base_url: String,
         twilio_client: TwilioClient,
-        phone_config: crate::config::PhoneConfig,
+        phone_config: PhoneConfig,
     ) -> Self {
         Self {
             relay,
@@ -187,15 +188,13 @@ impl AccountApiServer for AccountRpc {
 
         info!("checking if phone allowed");
         // Check line type to prevent VoIP numbers
-        if !client.is_phone_allowed(&phone).await.map_err(|err| PhoneError::InternalError(err))? {
+        if !client.is_phone_allowed(&phone).await.map_err(PhoneError::InternalError)? {
             return Err(PhoneError::InvalidPhoneNumber.into());
         }
 
         // Start verification with Twilio Verify API v2
-        let verification = client
-            .start_verification(&phone)
-            .await
-            .map_err(|err| PhoneError::InternalError(err))?;
+        let verification =
+            client.start_verification(&phone).await.map_err(PhoneError::InternalError)?;
 
         // Store verification SID in database
         self.storage.add_unverified_phone(wallet_address, &phone, &verification.sid).await?;
@@ -223,10 +222,8 @@ impl AccountApiServer for AccountRpc {
         }
 
         // Check verification with Twilio
-        let check = client
-            .check_verification(&phone, &code)
-            .await
-            .map_err(|err| PhoneError::InternalError(err))?;
+        let check =
+            client.check_verification(&phone, &code).await.map_err(PhoneError::InternalError)?;
 
         if !check.status.is_approved() {
             // Increment attempts on failed verification
@@ -235,7 +232,7 @@ impl AccountApiServer for AccountRpc {
         }
 
         // Mark as verified in our database
-        self.storage.verify_phone(wallet_address, &phone).await?;
+        self.storage.mark_phone_verified(wallet_address, &phone).await?;
 
         Ok(())
     }
@@ -254,10 +251,8 @@ impl AccountApiServer for AccountRpc {
         }
 
         // Start a new verification with Twilio
-        let verification = client
-            .start_verification(&phone)
-            .await
-            .map_err(|err| PhoneError::InternalError(err))?;
+        let verification =
+            client.start_verification(&phone).await.map_err(PhoneError::InternalError)?;
 
         // Update verification SID in database
         self.storage

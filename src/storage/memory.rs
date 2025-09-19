@@ -189,15 +189,11 @@ impl StorageApi for InMemoryStorage {
         Ok(())
     }
 
-    async fn verify_phone(&self, account: Address, phone: &str) -> Result<bool> {
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()> {
         let key = PhoneKey { account, phone: phone.to_string() };
-        if self.unverified_phones.contains_key(&key) {
-            self.unverified_phones.remove(&key);
-            self.verified_phones.insert(phone.to_string(), account);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        self.unverified_phones.remove(&key);
+        self.verified_phones.insert(phone.to_string(), account);
+        Ok(())
     }
 
     async fn verify_phone_with_code(
@@ -207,12 +203,12 @@ impl StorageApi for InMemoryStorage {
         code: &str,
     ) -> Result<bool> {
         let key = PhoneKey { account, phone: phone.to_string() };
-        if let Some(entry) = self.unverified_phones.get(&key) {
-            if entry.verification_sid == code {
-                self.unverified_phones.remove(&key);
-                self.verified_phones.insert(phone.to_string(), account);
-                return Ok(true);
-            }
+        if let Some(entry) = self.unverified_phones.get(&key)
+            && entry.verification_sid == code
+        {
+            self.unverified_phones.remove(&key);
+            self.verified_phones.insert(phone.to_string(), account);
+            return Ok(true);
         }
         Ok(false)
     }
