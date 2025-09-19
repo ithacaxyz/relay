@@ -16,6 +16,7 @@ use crate::{
 };
 use ::metrics::counter;
 use alloy::{primitives::B256, signers::local::LocalSigner};
+use eyre::WrapErr;
 use http::header;
 use itertools::Itertools;
 use jsonrpsee::server::{
@@ -66,8 +67,12 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
         args.merge_relay_config(RelayConfig::load_from_file(config_path)?)
     } else {
         let mut config = RelayConfig::load_from_file(config_path)?;
-        config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")?.parse()?;
-        config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")?;
+        config.secrets.signers_mnemonic = std::env::var("RELAY_MNEMONIC")
+            .wrap_err("Missing environment variable RELAY_MNEMONIC")?
+            .parse()
+            .wrap_err("Invalid value for RELAY_MNEMONIC")?;
+        config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")
+            .wrap_err("Missing environment variable RELAY_FUNDER_SIGNER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
