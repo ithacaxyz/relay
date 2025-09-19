@@ -740,22 +740,17 @@ impl Relay {
         // from storage.
         // todo: we should probably fetch this before sending any tx
         let authorization = if authorization_address.is_some() {
-            let auth = self
-                .inner
+            self.inner
                 .storage
                 .read_account(quote.intent.eoa())
                 .await
-                .map(|opt| opt.map(|acc| acc.signed_authorization))?;
-
-            // push auth if exists
-            if let Some(auth) = &auth {
-                authorization_list.push(auth.clone());
-            }
-
-            auth
+                .map(|opt| opt.map(|acc| acc.signed_authorization))?
         } else {
             None
         };
+
+        // push auth if exists
+        authorization_list.extend(authorization.clone());
 
         // check that the authorization item matches what's in the quote
         if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
