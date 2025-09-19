@@ -33,7 +33,7 @@ pub enum RelayTransactionKind {
         /// [`Intent`] to send.
         quote: Box<Quote>,
         /// EIP-7702 [`SignedAuthorization`] to attach, if any.
-        authorization: Vec<SignedAuthorization>,
+        authorization_list: Vec<SignedAuthorization>,
         /// The EIP-712 digest of the intent.
         eip712_digest: B256,
     },
@@ -79,12 +79,16 @@ pub struct RelayTransaction {
 
 impl RelayTransaction {
     /// Create a new [`RelayTransaction`].
-    pub fn new(quote: Quote, authorization: Vec<SignedAuthorization>, eip712_digest: B256) -> Self {
+    pub fn new(
+        quote: Quote,
+        authorization_list: Vec<SignedAuthorization>,
+        eip712_digest: B256,
+    ) -> Self {
         Self {
             id: TxId(B256::random()),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
-                authorization,
+                authorization_list,
                 eip712_digest,
             },
             trace_context: Context::current(),
@@ -127,7 +131,7 @@ impl RelayTransaction {
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
         match &self.kind {
-            RelayTransactionKind::Intent { quote, authorization, .. } => {
+            RelayTransactionKind::Intent { quote, authorization_list, .. } => {
                 let gas_limit = quote.tx_gas;
                 let max_fee_per_gas = fees.max_fee_per_gas;
                 let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
@@ -147,9 +151,9 @@ impl RelayTransaction {
 
                 let input = intent.encode_execute();
 
-                if !authorization.is_empty() {
+                if !authorization_list.is_empty() {
                     TxEip7702 {
-                        authorization_list: authorization.clone(),
+                        authorization_list: authorization_list.clone(),
                         chain_id: quote.chain_id,
                         nonce,
                         to: quote.orchestrator,
