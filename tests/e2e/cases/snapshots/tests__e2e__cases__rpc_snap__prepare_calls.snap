@@ -67,6 +67,7 @@ expression: value
       "multiChainRoot": null,
       "quotes": [
         {
+          "additionalAuthorization": null,
           "authorizationAddress": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
           "chainId": "0x7a69",
           "ethPrice": "0xde0b6b3a7640000",

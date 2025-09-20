@@ -50,8 +50,8 @@ async fn write() -> eyre::Result<()> {
     // Create a new queued transaction with different ID and NO authorization
     let mut queued_tx_no_auth = queued_tx.clone();
     queued_tx_no_auth.id = TxId(B256::with_last_byte(3));
-    if let RelayTransactionKind::Intent { authorization, .. } = &mut queued_tx_no_auth.kind {
-        *authorization = None; // Set authorization to None
+    if let RelayTransactionKind::Intent { authorization_list, .. } = &mut queued_tx_no_auth.kind {
+        *authorization_list = vec![]; // Set authorization to empty vec
     }
     storage.queue_transaction(&queued_tx_no_auth).await?;
 
@@ -159,6 +159,7 @@ impl Fixtures {
             tx_gas: r_u64,
             native_fee_estimate: r_fee,
             authorization_address: Some(r_address),
+            additional_authorization: None,
             orchestrator: r_address,
             fee_token_deficit: r_u256,
             asset_deficits: Default::default(),
@@ -168,7 +169,7 @@ impl Fixtures {
             id: TxId(queued_id),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
-                authorization: Some(authorization.clone()),
+                authorization_list: vec![authorization.clone()],
                 eip712_digest: r_b256,
             },
             trace_context: Context::current(),

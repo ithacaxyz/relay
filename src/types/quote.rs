@@ -7,6 +7,7 @@ use crate::{
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
     providers::{DynProvider, utils::Eip1559Estimation},
+    rpc::types::SignedAuthorization,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -130,6 +131,8 @@ pub struct Quote {
     ///
     /// The account in `intent.eoa` will be delegated to this address.
     pub authorization_address: Option<Address>,
+    /// An optional additional authorization address, which would be used to delegate the feepayer
+    pub additional_authorization: Option<SignedAuthorization>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
     /// How much of the fee token the user is missing to pay for this intent.
