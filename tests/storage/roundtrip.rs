@@ -51,7 +51,7 @@ async fn write() -> eyre::Result<()> {
     let mut queued_tx_no_auth = queued_tx.clone();
     queued_tx_no_auth.id = TxId(B256::with_last_byte(3));
     if let RelayTransactionKind::Intent { authorization_list, .. } = &mut queued_tx_no_auth.kind {
-        *authorization = vec![]; // Set authorization to empty vec
+        *authorization_list = vec![]; // Set authorization to empty vec
     }
     storage.queue_transaction(&queued_tx_no_auth).await?;
 
