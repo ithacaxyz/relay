@@ -854,7 +854,7 @@ impl Default for TransactionServiceConfig {
             balance_check_interval: Duration::from_secs(5),
             nonce_check_interval: Duration::from_secs(60),
             transaction_timeout: Duration::from_secs(60),
-            max_queued_per_eoa: 1,
+            max_queued_per_eoa: 2,
             public_node_endpoints: HashMap::default(),
         }
     }

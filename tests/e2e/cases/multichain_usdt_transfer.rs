@@ -203,35 +203,32 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
         .unwrap();
     env.provider_for(0).anvil_set_storage_at(env.fee_token, slot.into(), B256::ZERO).await?;
 
-    // Prepare the calls on chain 3 with required funds
-    let prepare_result = env
-        .relay_endpoint
-        .prepare_calls(PrepareCallsParameters {
-            calls: vec![Call::transfer(
-                env.erc20,
-                Address::random(),
-                balance * U256::from(11) / U256::from(10),
-            )],
-            chain_id: env.chain_id_for(0),
-            from: Some(eoa),
-            capabilities: PrepareCallsCapabilities {
-                authorize_keys: vec![],
-                revoke_keys: vec![],
-                meta: Meta { fee_payer: None, fee_token: Some(env.fee_token), nonce: None },
-                pre_calls: vec![],
-                pre_call: false,
-                required_funds: vec![],
-            },
-            state_overrides: Default::default(),
-            balance_overrides: Default::default(),
-            key: Some(key.to_call_key()),
-        })
-        .await?;
+    let recipient = Address::random();
+    let amount = balance * U256::from(3) / U256::from(2);
 
-    let PrepareCallsResponse { context, digest, .. } = prepare_result;
-    let quotes = context.quote().expect("should always return quotes");
+    let (signature, context) = prepare_calls(
+        0,
+        &TxContext {
+            calls: vec![Call::transfer(env.erc20, recipient, amount)],
+            key: Some(&key),
+            ..Default::default()
+        },
+        &key,
+        &env,
+        false,
+    )
+    .await?
+    .unwrap();
 
-    dbg!(quotes);
+    dbg!(&context);
+
+    let bundle_id = send_prepared_calls(&env, &key, signature, context).await?;
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_confirmed());
+
+    assert!(
+        IERC20::new(env.erc20, env.provider_for(0)).balanceOf(recipient).call().await? == amount,
+    );
 
     Ok(())
 }
