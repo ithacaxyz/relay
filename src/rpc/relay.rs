@@ -15,7 +15,7 @@ use crate::{
         Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
         AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
         FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKey, IntentKind, Intents,
-        Key, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Key, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
