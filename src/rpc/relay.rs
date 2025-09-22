@@ -1012,10 +1012,6 @@ impl Relay {
         account: &CreatableAccount,
         chain_id: ChainId,
     ) -> Result<(), RelayError> {
-        let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
-            .map_err(RelayError::from)
-            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
-
         // Get the delegation implementation from the stored authorization
         let delegation_impl = Account::new(account.address, self.provider(chain_id)?)
             .with_delegation_override(account.signed_authorization.address())
