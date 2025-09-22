@@ -1455,11 +1455,11 @@ impl Relay {
         {
             let mut taken_assets = Vec::new();
 
-            remaining.retain(|requested, remaining| {
+            remaining.retain(|asset, remaining| {
                 let Some(mapped) = self.inner.chains.map_interop_asset(
                     destination_chain_id,
                     chain,
-                    requested.address(),
+                    asset.address(),
                 ) else {
                     return true;
                 };
@@ -1504,7 +1504,7 @@ impl Relay {
 
                 taken_assets.push(SourcedAsset {
                     address_source: mapped.address,
-                    address_destination: requested.address(),
+                    address_destination: asset.address(),
                     amount_source,
                     amount_destination: take,
                 });
@@ -1627,8 +1627,8 @@ impl Relay {
                         }
                     });
 
-                    // If we have more than 1 asset deficit it means we will have to source more
-                    // than one asset which is not currently supported.
+                    // If we have more than 1 asset deficit it means we will have to source multiple
+                    // assets which is not currently supported.
                     if deficits.len() > 1 {
                         debug!(
                             eoa = %identity.root_eoa,
@@ -1711,6 +1711,7 @@ impl Relay {
             .map(|(chain_id, desc)| (chain_id, vec![desc.address]))
             .collect::<HashMap<_, _>>();
 
+        // Include the fee token into the filter if we will need to source the fee as well.
         if !output_quote.fee_token_deficit.is_zero() && fee_token != requested_asset {
             for (chain, asset) in
                 self.inner.chains.map_interop_assets_per_chain(request.chain_id, fee_token)
@@ -1760,7 +1761,7 @@ impl Relay {
 
             if fee_token == requested_asset {
                 requested_funds[0].1 += output_quote.intent.total_payment_max_amount();
-            } else {
+            } else if !output_quote.fee_token_deficit.is_zero() {
                 requested_funds
                     .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
             }
@@ -1808,19 +1809,16 @@ impl Relay {
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
-            let mut fund_transfers: Vec<(Address, U256)> = Vec::new();
-
-            for source in &funding_chains {
-                for asset in &source.assets {
-                    if let Some(entry) =
-                        fund_transfers.iter_mut().find(|entry| entry.0 == asset.address_destination)
-                    {
-                        entry.1 += asset.amount_destination;
-                    } else {
-                        fund_transfers.push((asset.address_destination, asset.amount_destination));
-                    }
-                }
-            }
+            let fund_transfers = funding_chains
+                .iter()
+                .flat_map(|source| source.assets.iter())
+                .fold(HashMap::new(), |mut acc, asset| {
+                    *acc.entry(asset.address_destination).or_insert(U256::ZERO) +=
+                        asset.amount_destination;
+                    acc
+                })
+                .into_iter()
+                .collect();
 
             // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
             // transfer.

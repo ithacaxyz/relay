@@ -217,6 +217,7 @@ impl RefundProcessor {
                     .filter(|(_, status)| status.is_confirmed())
                     .and_then(|_| tx.extract_escrow_details())
             })
+            .flatten()
             .collect())
     }
 

@@ -242,7 +242,7 @@ impl RelayTransaction {
     /// Extracts escrow details from this transaction if it contains an escrow call.
     /// This parses the transaction's last call to find escrow data, as escrow calls
     /// are always placed last in the call sequence.
-    pub fn extract_escrow_details(&self) -> Option<EscrowDetails> {
+    pub fn extract_escrow_details(&self) -> Option<Vec<EscrowDetails>> {
         if let RelayTransactionKind::Intent { quote, .. } = &self.kind {
             // Get the chain ID from the transaction
             let chain_id = self.chain_id();
@@ -252,10 +252,14 @@ impl RelayTransaction {
             if let Ok(calls) = quote.intent.calls() {
                 for call in calls {
                     if let Ok(escrow_call) = IEscrow::escrowCall::abi_decode(&call.data) {
-                        // We found an escrow call! Extract the first escrow
-                        if let Some(escrow) = escrow_call._escrows.into_iter().next() {
-                            return Some(EscrowDetails::new(escrow, chain_id, call.to));
-                        }
+                        // We found an escrow call! Extract escrows
+                        return Some(
+                            escrow_call
+                                ._escrows
+                                .into_iter()
+                                .map(|escrow| EscrowDetails::new(escrow, chain_id, call.to))
+                                .collect(),
+                        );
                     }
                 }
             }
