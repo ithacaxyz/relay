@@ -1044,7 +1044,7 @@ impl Relay {
             FeeEstimationContext {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
-                key: IntentKey::StoredKey(mock_key.key().clone()),
+                key: IntentKey::EoaRootKey,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
