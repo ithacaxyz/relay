@@ -24,8 +24,13 @@ pub use signatures::{SIGNATURES, Signatures};
 
 /// Initialize logging - matches chainwalker/stress pattern
 pub fn init_logging() {
+    init_logging_with_color(true);
+}
+
+/// Initialize logging with color mode control
+pub fn init_logging_with_color(use_color: bool) {
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_ansi(use_color))
         .with(
             EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy(),
         )

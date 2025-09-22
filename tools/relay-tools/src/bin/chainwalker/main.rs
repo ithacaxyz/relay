@@ -6,17 +6,43 @@ mod tester;
 mod utils;
 
 use alloy::primitives::{ChainId, keccak256};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use eyre::{OptionExt, Result};
 use jsonrpsee::http_client::HttpClientBuilder;
 use relay::{
     signers::DynSigner,
     types::{KeyType, KeyWith712Signer},
 };
-use relay_tools::common::init_logging;
+use relay_tools::common::init_logging_with_color;
+use std::fmt::{self, Display};
 use tester::InteropTester;
 use tracing::info;
 use url::Url;
+
+/// The color mode for the cli.
+#[derive(Debug, Copy, Clone, ValueEnum, Eq, PartialEq)]
+pub enum ColorMode {
+    /// Colors on
+    Always,
+    /// Colors off
+    Never,
+}
+
+impl ColorMode {
+    /// Returns true if colors should be enabled
+    pub fn use_color(&self) -> bool {
+        matches!(self, Self::Always)
+    }
+}
+
+impl Display for ColorMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Always => write!(f, "always"),
+            Self::Never => write!(f, "never"),
+        }
+    }
+}
 
 /// Command line arguments for Chainwalker
 #[derive(Debug, Parser)]
@@ -62,13 +88,23 @@ pub struct Args {
     /// Relay URL (defaults to staging)
     #[arg(long = "relay-url", default_value = "https://stg-rpc.ithaca.xyz")]
     relay_url: Url,
+
+    /// Sets whether or not the formatter emits ANSI terminal escape codes for colors and other
+    /// text formatting
+    ///
+    /// Possible values:
+    /// - always: Colors on
+    /// - never:  Colors off
+    #[arg(long = "color", value_enum, default_value = "always")]
+    color: ColorMode,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logging();
-
     let args = Args::parse();
+
+    // Initialize logging with color mode
+    init_logging_with_color(args.color.use_color());
 
     // Create InteropTester
     let test_account = DynSigner::from_signing_key(&args.private_key).await?;
