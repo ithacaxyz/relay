@@ -15,7 +15,7 @@ use crate::{
         Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
         AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
         FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKey, IntentKind, Intents,
-        Key, KeyType, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
+        Key, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
@@ -1012,10 +1012,6 @@ impl Relay {
         account: &CreatableAccount,
         chain_id: ChainId,
     ) -> Result<(), RelayError> {
-        let mock_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)
-            .map_err(RelayError::from)
-            .and_then(|k| k.ok_or_else(|| RelayError::Keys(KeysError::UnsupportedKeyType)))?;
-
         // Get the delegation implementation from the stored authorization
         let delegation_impl = Account::new(account.address, self.provider(chain_id)?)
             .with_delegation_override(account.signed_authorization.address())
@@ -1044,8 +1040,7 @@ impl Relay {
             FeeEstimationContext {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
-                key: IntentKey::StoredKey(mock_key.key().clone()),
-                key_slot_override: true,
+                key: IntentKey::EoaRootKey,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -1166,7 +1161,6 @@ impl Relay {
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
                     key,
-                    key_slot_override: false,
                     intent_kind,
                     state_overrides,
                     balance_overrides,
