@@ -1045,7 +1045,6 @@ impl Relay {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::StoredKey(mock_key.key().clone()),
-                key_slot_override: true,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -1166,7 +1165,6 @@ impl Relay {
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
                     key,
-                    key_slot_override: false,
                     intent_kind,
                     state_overrides,
                     balance_overrides,

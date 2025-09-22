@@ -81,8 +81,6 @@ pub struct FeeEstimationContext {
     pub stored_authorization: Option<SignedAuthorization>,
     /// The key that will sign the intent.
     pub key: IntentKey<Key>,
-    /// Whether to override key slots in state.
-    pub key_slot_override: bool,
     /// The kind of intent being estimated.
     pub intent_kind: IntentKind,
     /// State overrides for simulation.
