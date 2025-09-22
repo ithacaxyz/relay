@@ -13,8 +13,7 @@ use relay::{
         rpc::{
             Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
             PrepareUpgradeAccountParameters, PrepareUpgradeAccountResponse,
-            UpgradeAccountCapabilities, UpgradeAccountContext, UpgradeAccountParameters,
-            UpgradeAccountSignatures,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
         },
     },
 };
@@ -47,47 +46,6 @@ impl MockAccountBuilder {
     pub fn no_erc20_mint(mut self) -> Self {
         self.mint_erc20 = false;
         self
-    }
-
-    /// Create signer for the mock account, preparing the account for upgrade by calling
-    /// `prepare_upgrade_account` and giving it a balance.
-    ///
-    /// This does not upgrade the account.
-    pub async fn build_prepared(
-        self,
-        env: &Environment,
-    ) -> eyre::Result<(MockAccount, UpgradeAccountContext, UpgradeAccountSignatures)> {
-        let eoa = DynSigner::from_signing_key(&B256::random().to_string()).await?;
-        let key = KeyWith712Signer::mock_admin_with_key(
-            KeyType::Secp256k1,
-            self.key.unwrap_or_else(B256::random),
-        )
-        .unwrap()
-        .unwrap();
-
-        let PrepareUpgradeAccountResponse { context, digests, .. } = env
-            .relay_endpoint
-            .prepare_upgrade_account(PrepareUpgradeAccountParameters {
-                capabilities: UpgradeAccountCapabilities {
-                    authorize_keys: vec![key.to_authorized()],
-                },
-                chain_id: Some(env.chain_id()),
-                address: eoa.address(),
-                delegation: env.delegation,
-            })
-            .await
-            .unwrap();
-
-        // Using ETH for payments
-        env.provider().anvil_set_balance(eoa.address(), U256::from(100e18)).await?;
-
-        // create signatures
-        let signatures = UpgradeAccountSignatures {
-            auth: eoa.sign_hash(&digests.auth).await?,
-            exec: eoa.sign_hash(&digests.exec).await?,
-        };
-
-        Ok((MockAccount { address: eoa.address(), key }, context, signatures))
     }
 
     /// Build the [`MockAccount`]
