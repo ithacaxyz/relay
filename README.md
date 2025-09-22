@@ -285,7 +285,7 @@ End-to-end tests use [ithacaxyz/account](https://github.com/ithacaxyz/account) u
 #### Prerequisites
 
 - Make sure [`forge`](https://getfoundry.sh/) is installed and available in your PATH.
-- Make sure [`cargo-nextest`](https://nextest.rs) is installed an available in your PATH.
+- Make sure [`cargo-nextest`](https://nexte.st/) is installed an available in your PATH.
 - Pull `ithacaxyz/account`
 
    ```bash
