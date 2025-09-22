@@ -79,6 +79,12 @@ pub struct FeeEstimationContext {
     pub fee_token: Address,
     /// Optional stored authorization for EIP-7702 delegation.
     pub stored_authorization: Option<SignedAuthorization>,
+    /// Additional authorization made in the intent - this is used when we want to auto delegate
+    /// the paymaster.
+    ///
+    /// The tuple contains the account to be delegated and its authorization. This should be used
+    /// to state override the account code.
+    pub additional_authorization: Option<(Address, SignedAuthorization)>,
     /// The key that will sign the intent.
     pub key: IntentKey<Key>,
     /// The kind of intent being estimated.

@@ -635,6 +635,7 @@ impl Relay {
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
+            additional_authorization: context.additional_authorization.map(|(_, auth)| auth),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
             asset_deficits,
@@ -729,6 +730,12 @@ impl Relay {
         let payment_amount = quote.intent.pre_payment_max_amount();
         quote.intent.set_payment(payment_amount);
 
+        // we have a list of potential auths
+        let mut authorization_list = Vec::new();
+
+        // if the additional auth exists, push it
+        authorization_list.extend(quote.additional_authorization.clone());
+
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
         // todo: we should probably fetch this before sending any tx
@@ -741,6 +748,9 @@ impl Relay {
         } else {
             None
         };
+
+        // push auth if exists
+        authorization_list.extend(authorization.clone());
 
         // check that the authorization item matches what's in the quote
         if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
@@ -780,7 +790,7 @@ impl Relay {
         // set our payment recipient
         quote.intent = quote.intent.with_payment_recipient(self.inner.fee_recipient);
 
-        let tx = RelayTransaction::new(quote, authorization.clone(), eip712_digest);
+        let tx = RelayTransaction::new(quote, authorization_list, eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
@@ -1041,6 +1051,7 @@ impl Relay {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
+                additional_authorization: None,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -1104,7 +1115,7 @@ impl Relay {
             .into_iter()
             .flatten();
 
-        let pre_calls = request
+        let mut pre_calls = request
             .capabilities
             .pre_calls
             .iter()
@@ -1117,6 +1128,25 @@ impl Relay {
         // Check if upgrade is needed (only for delegated accounts)
         if let Some(new_impl) = self.maybe_delegation_upgrade(delegation_implementation)? {
             calls.push(Call::upgrade_proxy_account(new_impl));
+        }
+
+        let mut additional_authorization = None;
+
+        // delegate the fee payer if it is stored, only adding a precall if it's for delegation to
+        // an ithaca account, assuming the configured delegation account is an ithaca account.
+        if let Some(fee_payer) = request.capabilities.meta.fee_payer {
+            // check if delegation is needed
+            let delegation_status = self.delegation_status(&fee_payer, request.chain_id).await?;
+
+            if let DelegationStatus::Stored { account, implementation } = delegation_status {
+                // check if the implementation is at least v0.5.6. before ithaca account v0.5.6, the
+                // contracts had a check which required all precalls to be signed by the eoa
+                if self.is_ithaca_account(implementation, semver::Version::new(0, 5, 6)) {
+                    // put the delegation as the first call
+                    pre_calls.insert(0, account.pre_call.clone());
+                    additional_authorization = Some((fee_payer, account.signed_authorization))
+                }
+            }
         }
 
         // Find the key that authorizes this intent
@@ -1160,6 +1190,7 @@ impl Relay {
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
+                    additional_authorization,
                     key,
                     intent_kind,
                     state_overrides,
@@ -1176,6 +1207,14 @@ impl Relay {
             })?;
 
         Ok((asset_diff, quote))
+    }
+
+    /// Checks if the provided address points to an ithaca account, with the desired version or
+    /// higher.
+    fn is_ithaca_account(&self, implementation: Address, min_version: semver::Version) -> bool {
+        self.get_delegation_implementation_version(implementation)
+            .map(|v| v >= min_version)
+            .unwrap_or(false)
     }
 
     #[instrument(skip_all)]
@@ -2924,10 +2963,7 @@ impl Relay {
             if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
-                return self
-                    .get_delegation_implementation_version(impl_addr)
-                    .map(|v| v >= semver::Version::new(0, 5, 0))
-                    .unwrap_or(false);
+                return self.is_ithaca_account(impl_addr, semver::Version::new(0, 5, 0));
             }
             false
         });

@@ -158,7 +158,15 @@ impl Chain {
                     // we manually fetch the 7702 designator since we do not have a signed auth item
                     .with_7702_delegation_designator_opt(context.stored_auth_address()),
             )
-            .extend(context.state_overrides.clone());
+            .extend(context.state_overrides.clone())
+            .append_opt(|| {
+                context.additional_authorization.clone().map(|(addr, auth)| {
+                    (
+                        addr,
+                        AccountOverride::default().with_7702_delegation_designator(*auth.address()),
+                    )
+                })
+            });
 
         // If the fee token is an ERC20, we do a balance override, merging it with the client
         // supplied balance override if necessary.
