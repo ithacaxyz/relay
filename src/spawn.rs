@@ -4,7 +4,7 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    constants::ESCROW_REFUND_DURATION_SECS,
+    constants::{DEFAULT_PORTO_BASE_URL, ESCROW_REFUND_DURATION_SECS},
     diagnostics::run_diagnostics,
     metrics::{self, HttpTracingService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
@@ -196,7 +196,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
                 relay.clone(),
                 Resend::new(resend_api_key),
                 storage.clone(),
-                config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
+                config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
                 twilio_client,
                 phone_config.clone(),
             )
@@ -205,7 +205,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
                 relay.clone(),
                 Resend::new(resend_api_key),
                 storage.clone(),
-                config.email.porto_base_url.clone().unwrap_or("id.porto.sh".to_string()),
+                config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
             )
         };
 

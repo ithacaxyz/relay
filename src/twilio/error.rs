@@ -1,7 +1,8 @@
 //! Twilio error types.
 
 use serde::{Deserialize, Deserializer};
-use tracing::error;
+
+use std::fmt::{Display, Formatter};
 
 /// Twilio error response.
 #[derive(Debug, Deserialize)]
@@ -14,6 +15,18 @@ pub struct TwilioError {
     pub more_info: String,
     /// HTTP status code.
     pub status: u16,
+}
+
+impl Display for TwilioError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.code.fmt(f)
+    }
+}
+
+impl std::error::Error for TwilioError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
 }
 
 /// Twilio error codes.
@@ -44,20 +57,12 @@ impl<'de> Deserialize<'de> for TwilioErrorCode {
     }
 }
 
-impl From<TwilioError> for eyre::Report {
-    fn from(error: TwilioError) -> Self {
-        match error.code {
-            TwilioErrorCode::NotFound => {
-                // 20404 can mean verification was "soft deleted" after too many failed attempts
-                eyre::eyre!("Invalid or expired verification code")
-            }
-            TwilioErrorCode::TooManyRequests => {
-                eyre::eyre!("Too many requests, please try again later")
-            }
-            TwilioErrorCode::Unknown(_) => {
-                error!("Unknown Twilio error {error:?}");
-                eyre::eyre!("Phone verification service error")
-            }
+impl Display for TwilioErrorCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Self::NotFound => write!(f, "Resource not found"),
+            Self::TooManyRequests => write!(f, "Too many requests"),
+            Self::Unknown(code) => write!(f, "Unknown error code: {}", code),
         }
     }
 }

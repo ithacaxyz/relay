@@ -125,6 +125,13 @@ impl AccountRpc {
             phone_config: Some(phone_config),
         }
     }
+
+    /// Ensures there is a twilio client configured, otherwise returns an error.
+    pub fn ensure_twilio_client(&self) -> Result<&TwilioClient, PhoneError> {
+        self.twilio_client.as_ref().ok_or_else(|| {
+            PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
+        })
+    }
 }
 
 #[async_trait]
@@ -196,9 +203,7 @@ impl AccountApiServer for AccountRpc {
         &self,
         SetPhoneParameters { phone, wallet_address }: SetPhoneParameters,
     ) -> RpcResult<()> {
-        let client = self.twilio_client.as_ref().ok_or_else(|| {
-            PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
-        })?;
+        let client = self.ensure_twilio_client()?;
 
         // Check if phone is already verified
         if self.storage.verified_phone_exists(&phone).await? {
@@ -224,9 +229,7 @@ impl AccountApiServer for AccountRpc {
         &self,
         VerifyPhoneParameters { phone, code, wallet_address }: VerifyPhoneParameters,
     ) -> RpcResult<()> {
-        let client = self.twilio_client.as_ref().ok_or_else(|| {
-            PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
-        })?;
+        let client = self.ensure_twilio_client()?;
 
         let phone_config = self
             .phone_config
@@ -259,9 +262,7 @@ impl AccountApiServer for AccountRpc {
         &self,
         ResendVerifyPhoneParameters { phone, wallet_address }: ResendVerifyPhoneParameters,
     ) -> RpcResult<()> {
-        let client = self.twilio_client.as_ref().ok_or_else(|| {
-            PhoneError::InternalError(eyre::eyre!("Phone verification not configured"))
-        })?;
+        let client = self.ensure_twilio_client()?;
 
         // Check if phone is already verified
         if self.storage.verified_phone_exists(&phone).await? {

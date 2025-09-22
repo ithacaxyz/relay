@@ -662,11 +662,11 @@ pub struct PhoneConfig {
     pub rate_limit_minutes: u32,
 }
 
-fn default_max_attempts() -> u32 {
+const fn default_max_attempts() -> u32 {
     5
 }
 
-fn default_rate_limit_minutes() -> u32 {
+const fn default_rate_limit_minutes() -> u32 {
     10
 }
 
