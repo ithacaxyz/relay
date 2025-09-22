@@ -629,13 +629,12 @@ mod tests {
                 max_priority_fee_per_gas: Default::default(),
             },
             authorization_address: Default::default(),
-            additional_authorization: Default::default(),
             orchestrator: Default::default(),
             intent: Intent::latest().with_eoa(sender).with_nonce(U256::random()),
             fee_token_deficit: Default::default(),
             asset_deficits: Default::default(),
         };
-        RelayTransaction::new(quote, vec![], B256::random())
+        RelayTransaction::new(quote, None, B256::random())
     }
 
     #[test]

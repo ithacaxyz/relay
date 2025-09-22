@@ -353,6 +353,19 @@ pub struct FundingIntentContext {
     pub output_orchestrator: Address,
 }
 
+/// A single sourced asset, part of [`FundSource`].
+#[derive(Debug, Clone)]
+pub struct SourcedAsset {
+    /// The address of the asset on the source chain.
+    pub address_source: Address,
+    /// The address of the asset on the destination chain.
+    pub address_destination: Address,
+    /// The amount of the asset on the source chain.
+    pub amount_source: U256,
+    /// The amount of the asset on the destination chain.
+    pub amount_destination: U256,
+}
+
 /// A funding source.
 ///
 /// A funding source is an amount of assets on a specific chain, and an associated cost with using
@@ -361,16 +374,10 @@ pub struct FundingIntentContext {
 pub struct FundSource {
     /// The chain ID the funds are on.
     pub chain_id: ChainId,
-    /// The amount of funds on that chain.
-    pub amount_source: U256,
-    /// The amount of funds on that chain, denominated in the output chain's asset decimals.
-    pub amount_destination: U256,
-    /// The address of the funds.
-    ///
-    /// # Note
-    ///
-    /// This can (and probably will!) differ from chain to chain.
-    pub address: Address,
+    /// The assets that were sourced.
+    pub assets: Vec<SourcedAsset>,
+    /// The fee token that was used to source the funds.
+    pub fee_token: Address,
     /// The cost of transferring the funds.
     ///
     /// The cost is in base units of the funds we are trying to transfer; in the future, we may

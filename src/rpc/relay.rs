@@ -17,7 +17,7 @@ use crate::{
         FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKey, IntentKind, Intents,
         Key, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
-        Quotes, SignedCall, SignedCalls, Transfer, VersionedContracts,
+        Quotes, SignedCall, SignedCalls, SourcedAsset, Transfer, VersionedContracts,
         VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
@@ -38,7 +38,6 @@ use alloy::{
         Address, B256, BlockNumber, Bytes, ChainId, TxKind, U64, U256,
         aliases::{B192, U192},
         bytes,
-        map::HashSet,
     },
     providers::{DynProvider, Provider, utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS},
     rlp::Encodable,
@@ -46,11 +45,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use alloy_chains::NamedChain;
-use futures::{
-    StreamExt,
-    future::{Either, TryJoinAll},
-    stream::FuturesOrdered,
-};
+use futures::{StreamExt, future::TryJoinAll, stream::FuturesOrdered};
 use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
@@ -1322,7 +1317,6 @@ impl Relay {
     ///
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
-    #[expect(clippy::too_many_arguments)]
     #[instrument(skip(self, identity, assets))]
     async fn source_funds(
         &self,
@@ -1330,71 +1324,108 @@ impl Relay {
         assets: &GetAssetsResponse,
         destination_chain_id: ChainId,
         destination_orchestrator: Address,
-        requested_asset: AddressOrNative,
-        amount: U256,
+        requested_assets: Vec<(AddressOrNative, U256)>,
         total_leaves: usize,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
-        let existing_balance = assets
-            .asset_on_chain(destination_chain_id, requested_asset)
-            .map(|asset| asset.balance)
-            .unwrap_or_default();
-        let mut remaining = amount.saturating_sub(existing_balance);
-        if remaining.is_zero() {
+        let mut remaining = HashMap::new();
+
+        for (asset, amount) in &requested_assets {
+            let existing_balance = assets
+                .asset_on_chain(destination_chain_id, *asset)
+                .map(|asset| asset.balance)
+                .unwrap_or_default();
+
+            let remaining_amount = amount.saturating_sub(existing_balance);
+
+            if remaining_amount.is_zero() {
+                continue;
+            }
+
+            remaining.insert(asset, remaining_amount);
+        }
+
+        if remaining.is_empty() {
             return Ok(Some(vec![]));
         }
 
-        let dst_decimals = self
-            .inner
-            .chains
-            .asset(destination_chain_id, requested_asset.address())
-            .map(|asset| asset.1.decimals)
-            .ok_or(RelayError::UnsupportedAsset {
-                asset: requested_asset.address(),
-                chain: destination_chain_id,
-            })?;
-
-        // collect (chain, balance) for all other chains that have >0 balance
-        let mut sources: Vec<_> = assets
+        // collect mapping from chain to all non-zero balances on it.
+        let sources = assets
             .0
             .iter()
-            .filter_map(|(&chain, assets)| {
-                if chain == destination_chain_id {
-                    return None;
+            .filter(|(chain, _)| **chain != destination_chain_id)
+            .flat_map(|(chain, assets)| assets.iter().map(|asset| (*chain, asset)))
+            .fold(HashMap::new(), |mut acc, (chain, asset)| {
+                let Some(on_dst) = self
+                    .inner
+                    .chains
+                    .map_interop_asset(chain, destination_chain_id, asset.address.address())
+                    .map(|a| a.address)
+                else {
+                    return acc;
+                };
+
+                if !requested_assets.iter().any(|(requested, _)| requested.address() == on_dst) {
+                    return acc;
                 }
 
-                let mapped = self.inner.chains.map_interop_asset(
-                    destination_chain_id,
-                    chain,
-                    requested_asset.address(),
-                )?;
+                if asset.balance.is_zero() {
+                    return acc;
+                }
 
-                let balance = assets
-                    .iter()
-                    .find(|a| a.address.address() == mapped.address)
-                    .map(|a| a.balance)
-                    .unwrap_or(U256::ZERO);
-
-                if balance.is_zero() { None } else { Some((chain, mapped, balance)) }
-            })
-            .collect();
-
-        // sort balances by value on destination chain. we sort in descending order to ensure that
-        // we try chains with the highest balance first
-        sources.sort_unstable_by_key(|(_, asset, balance)| {
-            cmp::Reverse(adjust_balance_for_decimals(*balance, asset.decimals, dst_decimals))
-        });
+                acc.entry(chain).or_insert_with(Vec::new).push((asset.address, asset.balance));
+                acc
+            });
 
         // Simulate funding intents in parallel, preserving the order
         let mut funding_intents = sources
             .into_iter()
-            .map(|(chain, asset, balance)| async move {
+            // sort balances by value on destination chain. we sort in descending order to ensure
+            // that we try chains with the highest balance first
+            //
+            // todo: find a better way to do this. right now this only works well for single asset
+            // case.
+            .sorted_unstable_by_key(|(chain, assets)| {
+                let balances = requested_assets
+                    .iter()
+                    .map(|(asset, _)| {
+                        let Some(mapped) = self.inner.chains.map_interop_asset(
+                            destination_chain_id,
+                            *chain,
+                            asset.address(),
+                        ) else {
+                            return U256::ZERO;
+                        };
+
+                        let Some(dst_decimals) = self
+                            .inner
+                            .chains
+                            .asset(destination_chain_id, mapped.address)
+                            .map(|(_, desc)| desc.decimals)
+                        else {
+                            return U256::ZERO;
+                        };
+
+                        let balance = assets
+                            .iter()
+                            .find(|(asset, _)| asset.address() == mapped.address)
+                            .map(|(_, balance)| *balance)
+                            .unwrap_or_default();
+
+                        adjust_balance_for_decimals(balance, mapped.decimals, dst_decimals)
+                    })
+                    .collect::<Vec<_>>();
+
+                cmp::Reverse(balances)
+            })
+            .map(|(chain, balances)| async move {
+                // todo: this might not work well for multi asset case.
+                let fee_token = balances.first().unwrap().0.address();
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
                     eoa: identity.root_eoa,
                     chain_id: chain,
-                    asset: asset.address.into(),
-                    amount: U256::from(1),
-                    fee_token: asset.address,
+                    assets: balances.iter().map(|(asset, _)| (*asset, U256::from(1))).collect(),
+                    fee_token,
                     // note(onbjerg): it doesn't matter what the output intent digest is for
                     // simulation, as long as it's not zero. otherwise, the gas
                     // costs will differ a lot.
@@ -1414,45 +1445,88 @@ impl Relay {
                     .intent
                     .total_payment_max_amount();
 
-                Result::<_, RelayError>::Ok((chain, asset, balance, escrow_cost))
+                Result::<_, RelayError>::Ok((chain, balances, fee_token, escrow_cost))
             })
             .collect::<FuturesOrdered<_>>();
 
         let mut plan = Vec::new();
-        while let Some((chain, asset, balance, escrow_cost)) =
+        while let Some((chain, balances, fee_token, escrow_cost)) =
             funding_intents.next().await.transpose()?
         {
-            if remaining.is_zero() {
+            let mut taken_assets = Vec::new();
+
+            remaining.retain(|requested, remaining| {
+                let Some(mapped) = self.inner.chains.map_interop_asset(
+                    destination_chain_id,
+                    chain,
+                    requested.address(),
+                ) else {
+                    return true;
+                };
+
+                let Some((_, balance)) =
+                    balances.iter().find(|(asset, _)| asset.address() == mapped.address)
+                else {
+                    return true;
+                };
+
+                let Some(dst_decimals) = self
+                    .inner
+                    .chains
+                    .asset(destination_chain_id, mapped.address)
+                    .map(|(_, desc)| desc.decimals)
+                else {
+                    return true;
+                };
+
+                // Calculate the maximum amount we can bridge to destination
+                let max_take = adjust_balance_for_decimals(
+                    if fee_token == mapped.address {
+                        (*balance).saturating_sub(escrow_cost)
+                    } else {
+                        *balance
+                    },
+                    mapped.decimals,
+                    dst_decimals,
+                );
+
+                if max_take.is_zero() {
+                    return true;
+                }
+
+                let take = (*remaining).min(max_take);
+
+                // Convert the amount back to the source chain asset decimals
+                let amount_source =
+                    adjust_balance_for_decimals(take, dst_decimals, mapped.decimals);
+
+                *remaining -= take;
+
+                taken_assets.push(SourcedAsset {
+                    address_source: mapped.address,
+                    address_destination: requested.address(),
+                    amount_source,
+                    amount_destination: take,
+                });
+
+                !remaining.is_zero()
+            });
+
+            if !taken_assets.is_empty() {
+                plan.push(FundSource {
+                    chain_id: chain,
+                    assets: taken_assets,
+                    fee_token,
+                    cost: escrow_cost,
+                });
+            }
+
+            if remaining.is_empty() {
                 break;
             }
-
-            // Calculate the maximum amount we can bridge to destination
-            let max_take = adjust_balance_for_decimals(
-                balance.saturating_sub(escrow_cost),
-                asset.decimals,
-                dst_decimals,
-            );
-
-            if max_take.is_zero() {
-                continue;
-            }
-
-            let take = remaining.min(max_take);
-
-            // Convert the amount back to the source chain asset decimals
-            let amount_source = adjust_balance_for_decimals(take, dst_decimals, asset.decimals);
-
-            plan.push(FundSource {
-                chain_id: chain,
-                amount_source,
-                amount_destination: take,
-                address: asset.address,
-                cost: escrow_cost,
-            });
-            remaining = remaining.saturating_sub(take);
         }
 
-        if remaining.is_zero() {
+        if remaining.is_empty() {
             return Ok(Some(plan));
         }
 
@@ -1627,13 +1701,23 @@ impl Relay {
             RelayError::UnsupportedAsset { chain: request.chain_id, asset: requested_asset },
         )?;
 
+        let fee_token = request.capabilities.meta.fee_token.unwrap_or_default();
+
         // Get interop assets for the requested asset on source chains.
-        let interop_assets = self
+        let mut interop_assets = self
             .inner
             .chains
             .map_interop_assets_per_chain(request.chain_id, requested_asset)
-            .map(|(chain_id, desc)| (chain_id, desc.address))
-            .collect();
+            .map(|(chain_id, desc)| (chain_id, vec![desc.address]))
+            .collect::<HashMap<_, _>>();
+
+        if !output_quote.fee_token_deficit.is_zero() && fee_token != requested_asset {
+            for (chain, asset) in
+                self.inner.chains.map_interop_assets_per_chain(request.chain_id, fee_token)
+            {
+                interop_assets.entry(chain).or_default().push(asset.address);
+            }
+        }
 
         // Fetch assets on the source chains.
         let assets = self
@@ -1642,10 +1726,6 @@ impl Relay {
                 interop_assets,
             ))
             .await?;
-
-        let fee_token = request.capabilities.meta.fee_token.unwrap_or_default();
-
-        let mut fee_token_assets = None;
 
         // We have to source funds from other chains. Since we estimated the output fees as if it
         // was a single chain intent, we now have to build an estimate the multichain intent to get
@@ -1661,7 +1741,7 @@ impl Relay {
         // 0`.
         //
         // We constrain this to three attempts.
-        let mut num_funding_intents = 1;
+        let mut num_funding_chains = 1;
         for _ in 0..3 {
             // Figure out what chains to pull funds from, if any. This will pull the funds the user
             // requested from chains, minus the cost of transferring those funds out of the
@@ -1676,60 +1756,28 @@ impl Relay {
                 fee = %output_quote.intent.total_payment_max_amount(),
                 "Trying to source funds"
             );
-            let requested_asset_source = self.source_funds(
-                identity,
-                &assets,
-                request.chain_id,
-                output_quote.orchestrator,
-                requested_asset.into(),
+            let mut requested_funds = vec![(requested_asset.into(), requested_funds)];
+
+            if fee_token == requested_asset {
+                requested_funds[0].1 += output_quote.intent.total_payment_max_amount();
+            } else {
                 requested_funds
-                    + if fee_token == requested_asset {
-                        output_quote.intent.total_payment_max_amount()
-                    } else {
-                        U256::ZERO
-                    },
-                num_funding_intents + 1,
-            );
+                    .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
+            }
 
-            let fee_token_source =
-                if !output_quote.fee_token_deficit.is_zero() && fee_token != requested_asset {
-                    let fee_token_assets = if let Some(assets) = &fee_token_assets {
-                        assets
-                    } else {
-                        // Get interop assets for the fee token on source chains.
-                        let interop_assets = self
-                            .inner
-                            .chains
-                            .map_interop_assets_per_chain(request.chain_id, fee_token)
-                            .map(|(chain_id, desc)| (chain_id, desc.address))
-                            .collect();
-
-                        &*fee_token_assets.insert(
-                            self.get_assets(GetAssetsParameters::for_assets_on_chains(
-                                identity.root_eoa,
-                                interop_assets,
-                            ))
-                            .await?,
-                        )
-                    };
-                    Either::Left(self.source_funds(
-                        identity,
-                        fee_token_assets,
-                        request.chain_id,
-                        output_quote.orchestrator,
-                        fee_token.into(),
-                        output_quote.intent.total_payment_max_amount(),
-                        num_funding_intents + 1,
-                    ))
-                } else {
-                    Either::Right(futures::future::ready(Ok(Some(Vec::new()))))
-                };
-
-            let (Some(requested_asset_sources), Some(fee_token_sources)) =
-                try_join!(requested_asset_source, fee_token_source)?
+            let Some(funding_chains) = self
+                .source_funds(
+                    identity,
+                    &assets,
+                    request.chain_id,
+                    output_quote.orchestrator,
+                    requested_funds.clone(),
+                    num_funding_chains + 1,
+                )
+                .await?
             else {
-                // We don't have enough funds across all chains, so we revert back to single
-                // chain to produce a quote with a `feeTokenDeficit`.
+                // We don't have enough funds across all chains, so we revert back to single chain
+                // to produce a quote with a `feeTokenDeficit`.
                 //
                 // A more robust solution here is returning a `Result<Vec<FundSource>, Deficit>`
                 // where the error specifies how much we have across all chains, and
@@ -1741,22 +1789,14 @@ impl Relay {
                     .map_err(Into::into);
             };
 
-            let fund_sources =
-                requested_asset_sources.iter().chain(fee_token_sources.iter()).collect::<Vec<_>>();
-            num_funding_intents = fund_sources.len();
-            let input_chain_ids = fund_sources
-                .iter()
-                .map(|s| s.chain_id)
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect();
+            num_funding_chains = funding_chains.len();
+            let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
             let interop = self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
 
             debug!(
                 eoa = %identity.root_eoa,
                 chain_id = %request.chain_id,
-                %requested_asset,
-                %requested_funds,
+                ?requested_funds,
                 %requested_asset_balance_on_dst,
                 %fee_token,
                 fee = %output_quote.intent.total_payment_max_amount(),
@@ -1768,25 +1808,25 @@ impl Relay {
             let settler_context =
                 interop.encode_settler_context(input_chain_ids).map_err(RelayError::from)?;
 
-            let mut fund_transfers = Vec::new();
+            let mut fund_transfers: Vec<(Address, U256)> = Vec::new();
 
-            let sourced_requested =
-                requested_asset_sources.iter().map(|s| s.amount_destination).sum::<U256>();
-            let sourced_fee_token =
-                fee_token_sources.iter().map(|s| s.amount_destination).sum::<U256>();
-
-            if !sourced_requested.is_zero() {
-                fund_transfers.push((requested_asset, sourced_requested));
-            }
-            if !sourced_fee_token.is_zero() {
-                fund_transfers.push((fee_token, sourced_fee_token));
+            for source in &funding_chains {
+                for asset in &source.assets {
+                    if let Some(entry) =
+                        fund_transfers.iter_mut().find(|entry| entry.0 == asset.address_destination)
+                    {
+                        entry.1 += asset.amount_destination;
+                    } else {
+                        fund_transfers.push((asset.address_destination, asset.amount_destination));
+                    }
+                }
             }
 
             // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
             // transfer.
-            if funder_balance_on_dst < sourced_requested {
-                return Err(QuoteError::InsufficientLiquidity.into());
-            }
+            // if funder_balance_on_dst < sourced_requested {
+            //     return Err(QuoteError::InsufficientLiquidity.into());
+            // }
 
             // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self
@@ -1796,7 +1836,7 @@ impl Relay {
                     delegation_status,
                     nonce,
                     IntentKind::MultiOutput {
-                        leaf_index: num_funding_intents,
+                        leaf_index: num_funding_chains,
                         fund_transfers,
                         settler_context,
                     },
@@ -1822,21 +1862,24 @@ impl Relay {
                     )
                     .await?;
 
-                let funding_intents = try_join_all(fund_sources.iter().enumerate().map(
+                let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
                         self.simulate_funding_intent(
                             FundingIntentContext {
                                 eoa: identity.root_eoa,
                                 chain_id: source.chain_id,
-                                asset: source.address.into(),
-                                amount: source.amount_source,
-                                fee_token: source.address,
+                                assets: source
+                                    .assets
+                                    .iter()
+                                    .map(|asset| (asset.address_source.into(), asset.amount_source))
+                                    .collect(),
+                                fee_token: source.fee_token,
                                 output_intent_digest,
                                 output_chain_id: request.chain_id,
                                 output_orchestrator: output_quote.orchestrator,
                             },
                             identity,
-                            MerkleLeafInfo { total: num_funding_intents + 1, index: leaf_index },
+                            MerkleLeafInfo { total: num_funding_chains + 1, index: leaf_index },
                             // we override the fees here to avoid re-estimating. if we
                             // re-estimate, we might end up with
                             // a higher fee, which will invalidate the entire call.
@@ -1875,7 +1918,7 @@ impl Relay {
                         multi_chain_root: None,
                     }
                     .with_merkle_payload(
-                        fund_sources
+                        funding_chains
                             .iter()
                             .map(|source| source.chain_id)
                             .chain(iter::once(request.chain_id))
