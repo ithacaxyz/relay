@@ -2847,7 +2847,10 @@ impl Relay {
     }
 
     /// Creates an escrow struct for funding intents.
-    fn create_escrow_struct(&self, context: &FundingIntentContext) -> Result<Escrow, RelayError> {
+    fn create_escrow_structs(
+        &self,
+        context: &FundingIntentContext,
+    ) -> Result<Vec<Escrow>, RelayError> {
         self.inner.chains.interop().ok_or(QuoteError::MultichainDisabled)?;
         let salt = B192::random().as_slice()[..ESCROW_SALT_LENGTH].try_into().map_err(|_| {
             RelayError::InternalError(eyre::eyre!("Failed to create salt from B192"))
@@ -2861,19 +2864,25 @@ impl Relay {
         let refund_timestamp =
             U256::from(current_timestamp.saturating_add(self.inner.escrow_refund_threshold));
 
-        Ok(Escrow {
-            salt,
-            depositor: context.eoa,
-            recipient: self.inner.contracts.funder.address,
-            token: context.asset.address(),
-            settler: self.inner.chains.settler_address(context.chain_id)?,
-            sender: context.output_orchestrator,
-            settlementId: context.output_intent_digest,
-            senderChainId: U256::from(context.output_chain_id),
-            escrowAmount: context.amount,
-            refundAmount: context.amount,
-            refundTimestamp: refund_timestamp,
-        })
+        context
+            .assets
+            .iter()
+            .map(|(asset, amount)| {
+                Ok(Escrow {
+                    salt,
+                    depositor: context.eoa,
+                    recipient: self.inner.contracts.funder.address,
+                    token: asset.address(),
+                    settler: self.inner.chains.settler_address(context.chain_id)?,
+                    sender: context.output_orchestrator,
+                    settlementId: context.output_intent_digest,
+                    senderChainId: U256::from(context.output_chain_id),
+                    escrowAmount: *amount,
+                    refundAmount: *amount,
+                    refundTimestamp: refund_timestamp,
+                })
+            })
+            .collect()
     }
 
     /// Builds the escrow calls based on the asset type.
@@ -2881,33 +2890,35 @@ impl Relay {
     /// IMPORTANT: The escrow call is always placed last in the returned vector.
     /// This ordering is critical as it's relied upon by other parts of the system
     /// (e.g., extract_escrow_details) for efficient parsing.
-    fn build_escrow_calls(&self, escrow: Escrow, context: &FundingIntentContext) -> Vec<Call> {
-        let escrow_call = Call {
-            to: self.inner.contracts.escrow.address,
-            value: if context.asset.is_native() { context.amount } else { U256::ZERO },
-            data: IEscrow::escrowCall { _escrows: vec![escrow] }.abi_encode().into(),
-        };
+    fn build_escrow_calls(&self, escrows: Vec<Escrow>) -> Vec<Call> {
+        // ERC20 token: approve then escrow (escrow is last)
+        let mut calls = escrows
+            .iter()
+            .filter(|escrow| !escrow.token.is_zero())
+            .map(|escrow| Call {
+                to: escrow.token,
+                value: U256::ZERO,
+                data: IERC20::approveCall {
+                    spender: self.inner.contracts.escrow.address,
+                    amount: escrow.escrowAmount,
+                }
+                .abi_encode()
+                .into(),
+            })
+            .collect::<Vec<_>>();
 
-        // Build the transaction calls based on token type
-        if context.asset.is_native() {
-            // Native token: escrow call only (which is also the last call)
-            vec![escrow_call]
-        } else {
-            // ERC20 token: approve then escrow (escrow is last)
-            vec![
-                Call {
-                    to: context.asset.address(),
-                    value: U256::ZERO,
-                    data: IERC20::approveCall {
-                        spender: self.inner.contracts.escrow.address,
-                        amount: context.amount,
-                    }
-                    .abi_encode()
-                    .into(),
-                },
-                escrow_call,
-            ]
-        }
+        calls.push(Call {
+            to: self.inner.contracts.escrow.address,
+            // Native token: include value
+            value: escrows
+                .iter()
+                .filter(|escrow| escrow.token.is_zero())
+                .map(|escrow| escrow.escrowAmount)
+                .sum(),
+            data: IEscrow::escrowCall { _escrows: escrows }.abi_encode().into(),
+        });
+
+        calls
     }
 
     /// Builds a funding intent for multichain operations.
@@ -2922,8 +2933,8 @@ impl Relay {
         context: FundingIntentContext,
         intent_key: IntentKey<CallKey>,
     ) -> Result<PrepareCallsParameters, RelayError> {
-        let escrow = self.create_escrow_struct(&context)?;
-        let calls = self.build_escrow_calls(escrow, &context);
+        let escrows = self.create_escrow_structs(&context)?;
+        let calls = self.build_escrow_calls(escrows);
 
         Ok(PrepareCallsParameters {
             calls,

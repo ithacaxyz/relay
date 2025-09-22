@@ -340,10 +340,8 @@ pub struct FundingIntentContext {
     pub eoa: Address,
     /// The chain where funds will be escrowed
     pub chain_id: ChainId,
-    /// The asset to be escrowed (native or ERC20)
-    pub asset: AddressOrNative,
-    /// The amount to escrow
-    pub amount: U256,
+    /// Assets to be escrowed
+    pub assets: Vec<(AddressOrNative, U256)>,
     /// The fee token to use for gas payment
     pub fee_token: Address,
     /// The output intent digest this funding will support
