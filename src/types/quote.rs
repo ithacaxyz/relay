@@ -2,7 +2,7 @@
 
 use crate::{
     error::{QuoteError, RelayError},
-    types::{AssetDeficits, Intent, Intents, Signed},
+    types::{AssetDeficits, Intent, Intents, Signed, VersionedContracts},
 };
 use alloy::{
     primitives::{Address, B256, ChainId, Keccak256, Sealable, Signature, U256},
@@ -40,6 +40,7 @@ impl Quotes {
     pub async fn with_merkle_payload(
         mut self,
         providers: Vec<DynProvider>,
+        contracts: &VersionedContracts,
     ) -> Result<Self, RelayError> {
         if self.quotes.len() != providers.len() {
             return Err(QuoteError::InvalidNumberOfIntents {
@@ -53,8 +54,14 @@ impl Quotes {
             self.quotes
                 .iter()
                 .zip(providers)
-                .map(|(quote, provider)| (quote.intent.clone(), provider, quote.orchestrator))
-                .collect(),
+                .map(|(quote, provider)| {
+                    Ok((
+                        quote.intent.clone(),
+                        provider,
+                        contracts.get_versioned_orchestrator(quote.orchestrator)?.clone(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, RelayError>>()?,
         );
 
         self.multi_chain_root = Some(intents.root().await?);

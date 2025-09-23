@@ -4,7 +4,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        KeyType, Orchestrator, Signature, SignedCall,
+        KeyType, Orchestrator, Signature, SignedCall, VersionedContract,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, CallKey,
             Permission, SpendPermission,
@@ -213,7 +213,7 @@ pub trait SignedCalls {
     /// Computes the EIP-712 digest that the user must sign.
     fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
+        orchestrator: &VersionedContract,
         provider: &DynProvider,
     ) -> impl Future<Output = Result<(B256, TypedData), RelayError>> + Send
     where
@@ -231,14 +231,14 @@ impl SignedCalls for SignedCall {
 
     async fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
+        orchestrator: &VersionedContract,
         provider: &DynProvider,
     ) -> Result<(B256, TypedData), RelayError>
     where
         Self: Sync,
     {
         // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator_address, provider);
+        let orchestrator = Orchestrator::new(orchestrator.clone(), provider);
 
         // Prepare the EIP-712 payload and domain
         let payload = eip712::SignedCall {
@@ -247,7 +247,7 @@ impl SignedCalls for SignedCall {
             calls: self.calls()?,
             nonce: self.nonce,
         };
-        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+        let domain = orchestrator.eip712_domain(self.is_multichain());
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

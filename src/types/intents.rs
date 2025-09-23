@@ -1,14 +1,11 @@
 //! Batch operations for multiple intents with merkle tree support.
 
-use super::{Intent, SignedCalls};
+use super::{Intent, SignedCalls, VersionedContract};
 use crate::{
     error::{IntentError, MerkleError},
     types::LazyMerkleTree,
 };
-use alloy::{
-    primitives::{Address, B256},
-    providers::DynProvider,
-};
+use alloy::{primitives::B256, providers::DynProvider};
 use futures_util::future::try_join_all;
 
 /// A wrapper for multiple intents that provides merkle tree operations.
@@ -19,24 +16,24 @@ use futures_util::future::try_join_all;
 /// The merkle tree is cached after first computation for efficiency.
 #[derive(Debug)]
 pub struct Intents {
-    /// Intents with respective provider and orchestrator address
-    intents: Vec<(Intent, DynProvider, Address)>,
+    /// Intents with respective provider and orchestrator
+    intents: Vec<(Intent, DynProvider, VersionedContract)>,
     cached_tree: Option<LazyMerkleTree>,
 }
 
 impl Intents {
     /// Creates a new `Intents` collection from a vector of intents and matching providers &
-    /// orchestrator addresses.
+    /// orchestrators.
     ///
     /// The order of intents is preserved as provided.
-    pub fn new(intents: Vec<(Intent, DynProvider, Address)>) -> Self {
+    pub fn new(intents: Vec<(Intent, DynProvider, VersionedContract)>) -> Self {
         Self { intents, cached_tree: None }
     }
 
     /// Computes EIP-712 signing hashes for all intents.
     pub async fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
-        Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator_address)| {
-            intent.compute_eip712_data(*orchestrator_address, provider)
+        Ok(try_join_all(self.intents.iter().map(|(intent, provider, orchestrator)| {
+            intent.compute_eip712_data(orchestrator, provider)
         }))
         .await
         .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?

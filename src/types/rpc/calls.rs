@@ -10,6 +10,7 @@ use crate::{
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
         KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        VersionedContracts,
     },
 };
 use alloy::{
@@ -510,7 +511,7 @@ impl PrepareCallsContext {
     pub async fn compute_signing_digest(
         &self,
         maybe_stored: Option<&CreatableAccount>,
-        latest_orchestrator: Address,
+        contracts: &VersionedContracts,
         provider: &DynProvider,
     ) -> Result<(B256, TypedData), RelayError> {
         match self {
@@ -521,26 +522,30 @@ impl PrepareCallsContext {
                 } else {
                     output_quote
                         .intent
-                        .compute_eip712_data(output_quote.orchestrator, provider)
+                        .compute_eip712_data(
+                            contracts.get_versioned_orchestrator(output_quote.orchestrator)?,
+                            provider,
+                        )
                         .await
                 }
             }
             PrepareCallsContext::PreCall(pre_call) => {
-                let orchestrator_address = if pre_call.eoa == Address::ZERO {
+                let orchestrator = if pre_call.eoa == Address::ZERO {
                     // EOA is unknown so we assume that latest orchestrator should be used
-                    latest_orchestrator
+                    &contracts.orchestrator
                 } else {
                     // fetch orchestrator address from the account
-                    Account::new(pre_call.eoa, provider)
+                    let orchestrator = Account::new(pre_call.eoa, provider)
                         .with_delegation_override_opt(
                             maybe_stored.map(|acc| &acc.signed_authorization.address),
                         )
                         .get_orchestrator()
                         .await
-                        .map_err(RelayError::from)?
+                        .map_err(RelayError::from)?;
+                    contracts.get_versioned_orchestrator(orchestrator)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator_address, provider).await
+                pre_call.compute_eip712_data(orchestrator, provider).await
             }
         }
     }

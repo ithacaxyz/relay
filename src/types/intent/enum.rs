@@ -2,7 +2,7 @@ use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
     error::{IntentError, MerkleError, RelayError},
     signers::Eip712PayLoadSigner,
-    types::{IntentKey, IntentKind, Key, LazyMerkleTree, OrchestratorContract},
+    types::{IntentKey, IntentKind, Key, LazyMerkleTree, OrchestratorContract, VersionedContract},
 };
 use alloy::{
     dyn_abi::TypedData,
@@ -560,7 +560,7 @@ impl Intent {
     pub async fn with_mock_merkle_signature<S: Eip712PayLoadSigner>(
         mut self,
         intent_kind: &IntentKind,
-        orchestrator: Address,
+        orchestrator: &VersionedContract,
         provider: &DynProvider,
         signer: &S,
         intent_key: &IntentKey<Key>,
@@ -623,15 +623,15 @@ impl SignedCalls for Intent {
 
     async fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
+        orchestrator: &VersionedContract,
         provider: &DynProvider,
     ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError>
     where
         Self: Sync,
     {
         match self {
-            Intent::V05(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
-            Intent::V04(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
+            Intent::V05(intent) => intent.compute_eip712_data(orchestrator, provider).await,
+            Intent::V04(intent) => intent.compute_eip712_data(orchestrator, provider).await,
         }
     }
 
