@@ -98,6 +98,38 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Returns true if the email was verified successfully.
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool>;
 
+    /// Checks if a phone number is already verified for any account.
+    async fn verified_phone_exists(&self, phone: &str) -> Result<bool>;
+
+    /// Adds an unverified phone number for an account with a Twilio verification SID.
+    async fn add_unverified_phone(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()>;
+
+    /// Mark a phone number as verified for an account.
+    async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()>;
+
+    /// Gets the number of verification attempts for a phone number.
+    async fn get_phone_verification_attempts(&self, account: Address, phone: &str) -> Result<u32>;
+
+    /// Increments the verification attempt count for a phone number.
+    async fn increment_phone_verification_attempts(
+        &self,
+        account: Address,
+        phone: &str,
+    ) -> Result<()>;
+
+    /// Updates the verification SID for a phone number (for resend operations).
+    async fn update_phone_verification_sid(
+        &self,
+        account: Address,
+        phone: &str,
+        verification_sid: &str,
+    ) -> Result<()>;
+
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;
 

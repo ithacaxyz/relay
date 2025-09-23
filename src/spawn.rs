@@ -4,13 +4,14 @@ use crate::{
     chains::Chains,
     cli::Args,
     config::RelayConfig,
-    constants::ESCROW_REFUND_DURATION_SECS,
+    constants::{DEFAULT_PORTO_BASE_URL, ESCROW_REFUND_DURATION_SECS},
     diagnostics::run_diagnostics,
     metrics::{self, HttpTracingService, RpcMetricsService},
     price::{PriceFetcher, PriceOracle, PriceOracleConfig},
     rpc::{AccountApiServer, AccountRpc, Relay, RelayApiServer},
     signers::DynSigner,
     storage::RelayStorage,
+    twilio::TwilioClient,
     types::VersionedContracts,
     version::RELAY_LONG_VERSION,
 };
@@ -181,15 +182,37 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
     );
-    let account_rpc = config.email.resend_api_key.as_ref().map(|resend_api_key| {
-        AccountRpc::new(
-            relay.clone(),
-            Resend::new(resend_api_key),
-            storage.clone(),
-            config.email.porto_base_url.unwrap_or("id.porto.sh".to_string()),
-        )
-        .into_rpc()
-    });
+    // Setup account RPC module if email is configured
+    let account_rpc = if let Some(resend_api_key) = &config.email.resend_api_key {
+        // Check if phone verification is also configured
+        let rpc = if let Some(phone_config) = &config.phone {
+            let twilio_client = TwilioClient::new(
+                phone_config.twilio_account_sid.clone(),
+                phone_config.twilio_auth_token.clone(),
+                phone_config.twilio_verify_service_sid.clone(),
+            );
+
+            AccountRpc::with_phone(
+                relay.clone(),
+                Resend::new(resend_api_key),
+                storage.clone(),
+                config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
+                twilio_client,
+                phone_config.clone(),
+            )
+        } else {
+            AccountRpc::new(
+                relay.clone(),
+                Resend::new(resend_api_key),
+                storage.clone(),
+                config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
+            )
+        };
+
+        Some(rpc.into_rpc())
+    } else {
+        None
+    };
     let mut rpc = relay.into_rpc();
 
     // http layers

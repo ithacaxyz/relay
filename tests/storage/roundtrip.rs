@@ -37,8 +37,16 @@ async fn storage() -> eyre::Result<RelayStorage> {
 #[ignore]
 async fn write() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer: _, chain_id: _, queued_tx, pending_tx, bundle_id, email } =
-        Fixtures::generate().await?;
+    let Fixtures {
+        account,
+        signer: _,
+        chain_id: _,
+        queued_tx,
+        pending_tx,
+        bundle_id,
+        email,
+        phone,
+    } = Fixtures::generate().await?;
 
     // Account & Keys
     storage.write_account(account.clone()).await?;
@@ -67,6 +75,9 @@ async fn write() -> eyre::Result<()> {
     // Email
     storage.add_unverified_email(email.0, &email.1, &email.2).await?;
 
+    // Phone
+    storage.add_unverified_phone(phone.0, &phone.1, &phone.2).await?;
+
     Ok(())
 }
 
@@ -74,8 +85,16 @@ async fn write() -> eyre::Result<()> {
 #[ignore]
 async fn read() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer, chain_id, queued_tx: _, pending_tx: _, bundle_id, email } =
-        Fixtures::generate().await?;
+    let Fixtures {
+        account,
+        signer,
+        chain_id,
+        queued_tx: _,
+        pending_tx: _,
+        bundle_id,
+        email,
+        phone,
+    } = Fixtures::generate().await?;
 
     // Account & Keys
     assert!(storage.read_account(&account.address).await?.is_some());
@@ -91,6 +110,10 @@ async fn read() -> eyre::Result<()> {
     storage.verify_email(email.0, &email.1, &email.2).await?;
     storage.verified_email_exists(&email.2).await?;
 
+    // Phone
+    // For now, just try to mark as verified (will be no-op if no unverified record exists)
+    storage.mark_phone_verified(phone.0, &phone.1).await?;
+
     Ok(())
 }
 
@@ -102,6 +125,7 @@ struct Fixtures {
     pub pending_tx: PendingTransaction,
     pub bundle_id: BundleId,
     pub email: (Address, String, String),
+    pub phone: (Address, String, String), // (address, phone, verification_sid)
 }
 
 impl Fixtures {
@@ -204,6 +228,7 @@ impl Fixtures {
             pending_tx,
             bundle_id: BundleId(r_b256),
             email: (r_address, "hello@there.all".to_string(), "12345678".to_string()),
+            phone: (r_address, "+15551234567".to_string(), "VE1234567890abcdef".to_string()),
         })
     }
 }
