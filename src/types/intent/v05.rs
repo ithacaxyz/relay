@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{B256, Keccak256, U256, keccak256},
+    primitives::{B256, ChainId, Keccak256, U256, keccak256},
     sol,
     sol_types::{SolStruct, SolValue},
 };
@@ -143,10 +143,11 @@ impl SignedCalls for IntentV05 {
     fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
+        chain_id: ChainId,
     ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError> {
         // Prepare the EIP-712 payload and domain
         let payload = self.as_eip712()?;
-        let domain = orchestrator.eip712_domain(self.is_multichain());
+        let domain = orchestrator.eip712_domain((!self.is_multichain()).then_some(chain_id));
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

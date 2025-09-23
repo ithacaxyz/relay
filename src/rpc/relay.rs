@@ -473,6 +473,7 @@ impl Relay {
                 .with_mock_merkle_signature(
                     &context.intent_kind,
                     orchestrator.versioned_contract(),
+                    chain.id(),
                     &mock_key,
                     &context.key,
                     prehash,
@@ -483,7 +484,9 @@ impl Relay {
             // For single chain intents, sign the intent directly
             let signature = mock_key
                 .sign_payload_hash(
-                    intent_to_sign.compute_eip712_data(orchestrator.versioned_contract())?.0,
+                    intent_to_sign
+                        .compute_eip712_data(orchestrator.versioned_contract(), chain.id())?
+                        .0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -707,6 +710,7 @@ impl Relay {
         // Compute EIP-712 digest for the intent
         let (eip712_digest, _) = quote.intent.compute_eip712_data(
             self.contracts().get_versioned_orchestrator(quote.orchestrator)?,
+            chain_id,
         )?;
 
         // Sign fund transfers if any
@@ -1782,6 +1786,7 @@ impl Relay {
                 // Compute EIP-712 digest (settlement_id)
                 let (output_intent_digest, _) = output_quote.intent.compute_eip712_data(
                     self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
+                    output_quote.chain_id,
                 )?;
 
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
@@ -1980,9 +1985,9 @@ impl Relay {
                 .quotes
                 .iter()
                 .map(|quote| {
-                    self.contracts()
-                        .get_versioned_orchestrator(quote.orchestrator)
-                        .map(|orchestrator| (quote.intent.clone(), orchestrator.clone()))
+                    self.contracts().get_versioned_orchestrator(quote.orchestrator).map(
+                        |orchestrator| (quote.intent.clone(), orchestrator.clone(), quote.chain_id),
+                    )
                 })
                 .collect::<Result<_, _>>()?,
         );
@@ -2236,7 +2241,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) =
-            pre_call.compute_eip712_data(&self.contracts().orchestrator)?;
+            pre_call.compute_eip712_data(&self.contracts().orchestrator, chain_id)?;
 
         let digests =
             UpgradeAccountDigests { auth: authorization.signature_hash(), exec: pre_call_digest };
@@ -2332,6 +2337,7 @@ impl RelayApiServer for Relay {
                 let orchestrator = account.get_orchestrator().await.map_err(RelayError::from)?;
                 let (digest, _) = call.compute_eip712_data(
                     self.contracts().get_versioned_orchestrator(orchestrator)?,
+                    chain_id,
                 )?;
 
                 if account.validate_signature(digest, signature.clone()).await? != Some(key_hash) {
@@ -2389,8 +2395,9 @@ impl RelayApiServer for Relay {
         }
 
         // Calculate precall digest.
-        let (pre_call_digest, _) =
-            storage_account.pre_call.compute_eip712_data(&self.contracts().orchestrator)?;
+        let (pre_call_digest, _) = storage_account
+            .pre_call
+            .compute_eip712_data(&self.contracts().orchestrator, context.chain_id)?;
         let (_, expected_nonce) = try_join!(
             // Ensures the initialization precall is successful.
             self.simulate_init(&storage_account, context.chain_id),

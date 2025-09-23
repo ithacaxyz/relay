@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, B256, Bytes, ChainId, U256},
     sol_types::{SolCall, SolValue},
 };
 use serde::{Deserialize, Serialize};
@@ -560,6 +560,7 @@ impl Intent {
         mut self,
         intent_kind: &IntentKind,
         orchestrator: &VersionedContract,
+        chain_id: ChainId,
         signer: &S,
         intent_key: &IntentKey<Key>,
         prehash: bool,
@@ -568,7 +569,7 @@ impl Intent {
 
         // Calculate the leaf hash for the current intent
         let (current_leaf_hash, _) = self
-            .compute_eip712_data(orchestrator)
+            .compute_eip712_data(orchestrator, chain_id)
             .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
 
         // Create mock leaves for the merkle tree
@@ -621,10 +622,11 @@ impl SignedCalls for Intent {
     fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
+        chain_id: ChainId,
     ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError> {
         match self {
-            Intent::V05(intent) => intent.compute_eip712_data(orchestrator),
-            Intent::V04(intent) => intent.compute_eip712_data(orchestrator),
+            Intent::V05(intent) => intent.compute_eip712_data(orchestrator, chain_id),
+            Intent::V04(intent) => intent.compute_eip712_data(orchestrator, chain_id),
         }
     }
 

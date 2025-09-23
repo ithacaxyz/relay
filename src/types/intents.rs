@@ -5,7 +5,7 @@ use crate::{
     error::{IntentError, MerkleError},
     types::LazyMerkleTree,
 };
-use alloy::primitives::B256;
+use alloy::primitives::{B256, ChainId};
 
 /// A wrapper for multiple intents that provides merkle tree operations.
 ///
@@ -15,8 +15,8 @@ use alloy::primitives::B256;
 /// The merkle tree is cached after first computation for efficiency.
 #[derive(Debug)]
 pub struct Intents {
-    /// Intents with their respective orchestrators
-    intents: Vec<(Intent, VersionedContract)>,
+    /// Intents with their respective orchestrators and chain IDs
+    intents: Vec<(Intent, VersionedContract, ChainId)>,
     cached_tree: Option<LazyMerkleTree>,
 }
 
@@ -25,7 +25,7 @@ impl Intents {
     /// orchestrators.
     ///
     /// The order of intents is preserved as provided.
-    pub fn new(intents: Vec<(Intent, VersionedContract)>) -> Self {
+    pub fn new(intents: Vec<(Intent, VersionedContract, ChainId)>) -> Self {
         Self { intents, cached_tree: None }
     }
 
@@ -33,9 +33,9 @@ impl Intents {
     pub fn compute_leaf_hashes(&self) -> Result<Vec<B256>, IntentError> {
         self.intents
             .iter()
-            .map(|(intent, orchestrator)| {
+            .map(|(intent, orchestrator, chain_id)| {
                 intent
-                    .compute_eip712_data(orchestrator)
+                    .compute_eip712_data(orchestrator, *chain_id)
                     .map(|(hash, _)| hash)
                     .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))
             })

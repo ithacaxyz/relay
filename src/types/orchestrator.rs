@@ -1,7 +1,7 @@
 use OrchestratorContract::OrchestratorContractInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, ChainId, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{TransactionReceipt, state::StateOverride},
     sol,
@@ -365,10 +365,8 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Get the [`Eip712Domain`] for this orchestrator.
-    ///
-    /// If `multichain` is `true`, then the chain ID is omitted from the domain.
-    pub fn eip712_domain(&self, multichain: bool) -> Eip712Domain {
-        self.versioned_contract.eip712_domain(multichain)
+    pub fn eip712_domain(&self, chain_id: Option<ChainId>) -> Eip712Domain {
+        self.versioned_contract.eip712_domain(chain_id)
     }
 }
 

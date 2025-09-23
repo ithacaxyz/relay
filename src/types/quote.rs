@@ -48,6 +48,7 @@ impl Quotes {
                     Ok((
                         quote.intent.clone(),
                         contracts.get_versioned_orchestrator(quote.orchestrator)?.clone(),
+                        quote.chain_id,
                     ))
                 })
                 .collect::<Result<Vec<_>, RelayError>>()?,

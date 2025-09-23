@@ -522,6 +522,7 @@ impl PrepareCallsContext {
                 } else {
                     output_quote.intent.compute_eip712_data(
                         contracts.get_versioned_orchestrator(output_quote.orchestrator)?,
+                        output_quote.chain_id,
                     )
                 }
             }
@@ -541,7 +542,7 @@ impl PrepareCallsContext {
                     contracts.get_versioned_orchestrator(orchestrator)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator)
+                pre_call.compute_eip712_data(orchestrator, pre_call.chain_id)
             }
         }
     }

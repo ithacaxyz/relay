@@ -212,6 +212,7 @@ pub trait SignedCalls {
     fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
+        chain_id: ChainId,
     ) -> Result<(B256, TypedData), RelayError>;
 }
 
@@ -227,6 +228,7 @@ impl SignedCalls for SignedCall {
     fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
+        chain_id: ChainId,
     ) -> Result<(B256, TypedData), RelayError> {
         // Prepare the EIP-712 payload and domain
         let payload = eip712::SignedCall {
@@ -235,7 +237,7 @@ impl SignedCalls for SignedCall {
             calls: self.calls()?,
             nonce: self.nonce,
         };
-        let domain = orchestrator.eip712_domain(self.is_multichain());
+        let domain = orchestrator.eip712_domain((!self.is_multichain()).then_some(chain_id));
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

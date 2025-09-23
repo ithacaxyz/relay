@@ -39,11 +39,28 @@ pub async fn test_intents_merkle_root(env: &Environment) -> eyre::Result<()> {
     let orchestrator = VersionedContract::new(env.orchestrator, env.provider().clone()).await?;
 
     // Create a batch of test intents
+    let chain_id = env.chain_id();
     let intents_vec = vec![
-        (create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token), orchestrator.clone()),
-        (create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20), orchestrator.clone()),
-        (create_test_intent(env.eoa.address(), uint!(3_U256), env.fee_token), orchestrator.clone()),
-        (create_test_intent(env.eoa.address(), uint!(4_U256), env.erc20), orchestrator.clone()),
+        (
+            create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token),
+            orchestrator.clone(),
+            chain_id,
+        ),
+        (
+            create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20),
+            orchestrator.clone(),
+            chain_id,
+        ),
+        (
+            create_test_intent(env.eoa.address(), uint!(3_U256), env.fee_token),
+            orchestrator.clone(),
+            chain_id,
+        ),
+        (
+            create_test_intent(env.eoa.address(), uint!(4_U256), env.erc20),
+            orchestrator.clone(),
+            chain_id,
+        ),
     ];
 
     let mut intents = Intents::new(intents_vec.clone());
@@ -63,11 +80,16 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
 
     // Create orchestrator VersionedContract
     let orchestrator = VersionedContract::new(env.orchestrator, env.provider().clone()).await?;
+    let chain_id = env.chain_id();
 
     // Create a mix of single-chain and multi-chain intents
     let intents_vec = vec![
         // Single-chain intent
-        (create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token), orchestrator.clone()),
+        (
+            create_test_intent(env.eoa.address(), uint!(1_U256), env.fee_token),
+            orchestrator.clone(),
+            chain_id,
+        ),
         // Multi-chain intent
         (
             create_test_intent(
@@ -76,9 +98,14 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
                 env.fee_token,
             ),
             orchestrator.clone(),
+            chain_id,
         ),
         // Another single-chain intent
-        (create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20), orchestrator.clone()),
+        (
+            create_test_intent(env.eoa.address(), uint!(2_U256), env.erc20),
+            orchestrator.clone(),
+            chain_id,
+        ),
         // Another multi-chain intent
         (
             create_test_intent(
@@ -87,6 +114,7 @@ pub async fn test_intents_merkle_proofs(env: &Environment) -> eyre::Result<()> {
                 env.erc20,
             ),
             orchestrator.clone(),
+            chain_id,
         ),
     ];
 

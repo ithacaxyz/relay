@@ -2,7 +2,10 @@ use crate::{
     config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
 use alloy::{
-    dyn_abi::Eip712Domain, primitives::Address, providers::Provider, sol,
+    dyn_abi::Eip712Domain,
+    primitives::{Address, ChainId, U256},
+    providers::Provider,
+    sol,
     transports::TransportErrorKind,
 };
 use eyre::eyre;
@@ -82,21 +85,20 @@ impl VersionedContract {
 
     /// Gets the cached EIP712 domain.
     ///
-    /// If `multichain` is `true`, returns the domain without chain ID.
+    /// # Arguments
+    /// * `chain_id` - The chain ID for single-chain intents, or `None` for multichain signatures.
     ///
     /// # Panics
     ///
     /// Panics if the domain was not successfully fetched during construction.
-    pub fn eip712_domain(&self, multichain: bool) -> Eip712Domain {
+    pub fn eip712_domain(&self, chain_id: Option<ChainId>) -> Eip712Domain {
         let d = self
             .domain
             .as_ref()
             .expect("EIP712 domain should have been cached during construction");
 
         let mut domain = d.clone();
-        if multichain {
-            domain.chain_id = None;
-        }
+        domain.chain_id = chain_id.map(U256::from);
         domain
     }
 
