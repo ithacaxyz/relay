@@ -85,9 +85,6 @@ impl VersionedContract {
 
     /// Gets the cached EIP712 domain.
     ///
-    /// # Arguments
-    /// * `chain_id` - The chain ID for single-chain intents, or `None` for multichain signatures.
-    ///
     /// # Panics
     ///
     /// Panics if the domain was not successfully fetched during construction.
