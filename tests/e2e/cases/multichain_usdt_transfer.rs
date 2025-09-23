@@ -225,6 +225,7 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
     let bundle_id = send_prepared_calls(&env, &key, signature, context).await?;
     let status = await_calls_status(&env, bundle_id).await?;
     assert!(status.status.is_confirmed());
+    assert!(status.capabilities.unwrap().interop_status.unwrap().is_done());
 
     assert!(
         IERC20::new(env.erc20, env.provider_for(0)).balanceOf(recipient).call().await? == amount,
