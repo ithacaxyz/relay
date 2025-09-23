@@ -1,8 +1,14 @@
 use crate::{
     config::RelayConfig, error::RelayError, types::DelegationProxy::DelegationProxyInstance,
 };
-use alloy::{primitives::Address, providers::Provider, sol, transports::TransportErrorKind};
-use eyre::Context;
+use alloy::{
+    dyn_abi::Eip712Domain,
+    primitives::Address,
+    providers::Provider,
+    sol,
+    transports::TransportErrorKind,
+};
+use eyre::eyre;
 use futures_util::future::try_join_all;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -31,52 +37,71 @@ sol! {
 }
 
 /// Contract address with optional version.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VersionedContract {
     /// Contract address.
     pub address: Address,
     /// Contract version.
     #[serde(default)]
     pub version: Option<Version>,
+    /// Cached EIP712 Domain.
+    #[serde(skip)]
+    pub domain: Option<Eip712Domain>,
 }
 
 impl VersionedContract {
     /// Creates a [`VersionedContract`].
     ///
-    /// This fetches the contract version by calling `eip712Domain()` on the contract.
-    pub async fn new<P: Provider>(address: Address, provider: P) -> Self {
-        let version = Eip712Contract::new(address, provider)
+    /// This fetches the contract version and domain by calling `eip712Domain()` on the contract.
+    pub async fn new<P: Provider>(address: Address, provider: P) -> Result<Self, RelayError> {
+        let domain_data = Eip712Contract::new(address, provider)
             .eip712Domain()
             .call()
-            .await
-            .map(|domain| {
-                tracing::debug!(
-                    name = %domain.name,
-                    contract = %address,
-                    version = %domain.version,
-                    "Fetched EIP712 domain"
-                );
-                domain.version
-            })
-            .wrap_err("failed to call contract")
-            .and_then(|version| {
-                Version::parse(&version).wrap_err("failed to parse version as semver")
-            });
+            .await?;
 
-        if let Err(err) = &version {
-            tracing::debug!(
-                contract = %address,
-                ?err,
-                "Failed to fetch EIP712 domain"
-            );
+        tracing::debug!(
+            name = %domain_data.name,
+            contract = %address,
+            version = %domain_data.version,
+            chain_id = %domain_data.chainId,
+            "Fetched EIP712 domain"
+        );
+        
+        let version = Version::parse(&domain_data.version)
+            .map_err(|e| RelayError::InternalError(eyre!("Failed to parse version '{}' as semver: {}", domain_data.version, e)))?;
+        
+        let domain = Some(Eip712Domain::new(
+            Some(domain_data.name.into()),
+            Some(domain_data.version.into()),
+            Some(domain_data.chainId),
+            Some(domain_data.verifyingContract),
+            None,
+        ));
+        
+        Ok(Self { address, version: Some(version), domain })
+    }
+
+    /// Gets the cached EIP712 domain.
+    /// 
+    /// If `multichain` is `true`, returns the domain without chain ID.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if the domain was not successfully fetched during construction.
+    pub fn eip712_domain(&self, multichain: bool) -> Eip712Domain {
+        let d = self.domain.as_ref()
+            .expect("EIP712 domain should have been cached during construction");
+        
+        let mut domain = d.clone();
+        if multichain {
+            domain.chain_id = None;
         }
-
-        Self { address, version: version.ok() }
+        domain
     }
 
     /// Creates a [`VersionedContract`] without a version.
     pub fn no_version(address: Address) -> Self {
-        Self { address, version: None }
+        Self { address, version: None, domain: None }
     }
 }
 
@@ -116,12 +141,12 @@ impl VersionedContracts {
                     orchestrator = %legacy.orchestrator,
                     "Creating VersionedContract for legacy orchestrator"
                 );
-                let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await;
+                let orchestrator = VersionedContract::new(legacy.orchestrator, provider).await?;
                 tracing::debug!(
                     simulator = %legacy.simulator,
                     "Creating VersionedContract for legacy simulator"
                 );
-                let simulator = VersionedContract::new(legacy.simulator, provider).await;
+                let simulator = VersionedContract::new(legacy.simulator, provider).await?;
                 Ok::<_, RelayError>(VersionedOrchestratorContracts { orchestrator, simulator })
             }));
 
@@ -133,7 +158,7 @@ impl VersionedContracts {
                     .await
                     .map_err(TransportErrorKind::custom)?;
 
-                Ok(VersionedContract::new(implementation, provider).await)
+                VersionedContract::new(implementation, provider).await
             }));
 
         let orchestrator = async {
@@ -141,7 +166,7 @@ impl VersionedContracts {
                 orchestrator = %config.orchestrator,
                 "Creating VersionedContract for current orchestrator"
             );
-            Ok(VersionedContract::new(config.orchestrator, provider).await)
+            VersionedContract::new(config.orchestrator, provider).await
         };
 
         let delegation_implementation = async {
@@ -152,7 +177,7 @@ impl VersionedContracts {
                     .await
                     .map_err(TransportErrorKind::custom)?;
 
-            Ok(VersionedContract::new(delegation_implementation, provider).await)
+            VersionedContract::new(delegation_implementation, provider).await
         };
 
         let (legacy_orchestrators, legacy_delegations, orchestrator, delegation_implementation) = try_join!(
@@ -176,7 +201,7 @@ impl VersionedContracts {
 }
 
 /// Orchestrator and simulator versioned contracts.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionedOrchestratorContracts {
     /// Orchestrator contract.
     pub orchestrator: VersionedContract,
