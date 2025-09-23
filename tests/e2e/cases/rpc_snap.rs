@@ -51,8 +51,10 @@ async fn test_get_capabilities() -> eyre::Result<()> {
         env.relay_endpoint.get_capabilities(Some(vec![U64::from(env.chain_id())])).await?;
 
     for (_, caps) in response.0.iter_mut() {
-        caps.contracts.legacy_orchestrators.sort();
-        caps.contracts.legacy_delegations.sort();
+        caps.contracts
+            .legacy_orchestrators
+            .sort_by(|a, b| a.orchestrator.address.cmp(&b.orchestrator.address));
+        caps.contracts.legacy_delegations.sort_by(|a, b| a.address.cmp(&b.address));
         caps.fees.tokens.sort_by_key(|token| token.uid.clone());
     }
 

@@ -52,7 +52,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{cmp, collections::HashMap, iter, sync::Arc, time::SystemTime};
+use std::{cmp, collections::HashMap, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
@@ -473,7 +473,6 @@ impl Relay {
                 .with_mock_merkle_signature(
                     &context.intent_kind,
                     orchestrator.versioned_contract(),
-                    &provider,
                     &mock_key,
                     &context.key,
                     prehash,
@@ -484,10 +483,7 @@ impl Relay {
             // For single chain intents, sign the intent directly
             let signature = mock_key
                 .sign_payload_hash(
-                    intent_to_sign
-                        .compute_eip712_data(orchestrator.versioned_contract(), &provider)
-                        .await?
-                        .0,
+                    intent_to_sign.compute_eip712_data(orchestrator.versioned_contract())?.0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -709,13 +705,9 @@ impl Relay {
             .with_signature(signature);
 
         // Compute EIP-712 digest for the intent
-        let (eip712_digest, _) = quote
-            .intent
-            .compute_eip712_data(
-                self.contracts().get_versioned_orchestrator(quote.orchestrator)?,
-                &provider,
-            )
-            .await?;
+        let (eip712_digest, _) = quote.intent.compute_eip712_data(
+            self.contracts().get_versioned_orchestrator(quote.orchestrator)?,
+        )?;
 
         // Sign fund transfers if any
         if !quote.intent.encoded_fund_transfers().is_empty() {
@@ -1788,13 +1780,9 @@ impl Relay {
                 .is_some()
             {
                 // Compute EIP-712 digest (settlement_id)
-                let (output_intent_digest, _) = output_quote
-                    .intent
-                    .compute_eip712_data(
-                        self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
-                        &self.provider(request.chain_id)?,
-                    )
-                    .await?;
+                let (output_intent_digest, _) = output_quote.intent.compute_eip712_data(
+                    self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
+                )?;
 
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
@@ -1848,16 +1836,7 @@ impl Relay {
                         // Quotes::multichain(quotes, ttl, root)
                         multi_chain_root: None,
                     }
-                    .with_merkle_payload(
-                        funding_chains
-                            .iter()
-                            .map(|source| source.chain_id)
-                            .chain(iter::once(request.chain_id))
-                            .map(|chain| self.provider(chain))
-                            .collect::<Result<Vec<_>, _>>()?,
-                        self.contracts(),
-                    )
-                    .await?,
+                    .with_merkle_payload(self.contracts())?,
                 ));
             }
         }
@@ -2001,11 +1980,9 @@ impl Relay {
                 .quotes
                 .iter()
                 .map(|quote| {
-                    self.provider(quote.chain_id).and_then(|provider| {
-                        self.contracts().get_versioned_orchestrator(quote.orchestrator).map(
-                            |orchestrator| (quote.intent.clone(), provider, orchestrator.clone()),
-                        )
-                    })
+                    self.contracts()
+                        .get_versioned_orchestrator(quote.orchestrator)
+                        .map(|orchestrator| (quote.intent.clone(), orchestrator.clone()))
                 })
                 .collect::<Result<_, _>>()?,
         );
@@ -2018,7 +1995,7 @@ impl Relay {
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
 
-        let root = intents.root().await?;
+        let root = intents.root()?;
         let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
             let proof = intents.get_proof_immutable(idx)?;
             let merkle_sig = (proof, root, &signature).abi_encode_params().into();
@@ -2259,7 +2236,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) =
-            pre_call.compute_eip712_data(&self.contracts().orchestrator, &provider).await?;
+            pre_call.compute_eip712_data(&self.contracts().orchestrator)?;
 
         let digests =
             UpgradeAccountDigests { auth: authorization.signature_hash(), exec: pre_call_digest };
@@ -2353,12 +2330,9 @@ impl RelayApiServer for Relay {
 
                 // Verify that signature is valid
                 let orchestrator = account.get_orchestrator().await.map_err(RelayError::from)?;
-                let (digest, _) = call
-                    .compute_eip712_data(
-                        self.contracts().get_versioned_orchestrator(orchestrator)?,
-                        &provider,
-                    )
-                    .await?;
+                let (digest, _) = call.compute_eip712_data(
+                    self.contracts().get_versioned_orchestrator(orchestrator)?,
+                )?;
 
                 if account.validate_signature(digest, signature.clone()).await? != Some(key_hash) {
                     return Err(KeysError::InvalidSignature.into());
@@ -2414,16 +2388,12 @@ impl RelayApiServer for Relay {
             return Err(AuthError::InvalidDelegation(impl_addr).into());
         }
 
-        let (_, (pre_call_digest, _), expected_nonce) = try_join!(
+        // Calculate precall digest.
+        let (pre_call_digest, _) =
+            storage_account.pre_call.compute_eip712_data(&self.contracts().orchestrator)?;
+        let (_, expected_nonce) = try_join!(
             // Ensures the initialization precall is successful.
             self.simulate_init(&storage_account, context.chain_id),
-            // Calculate precall digest.
-            async {
-                storage_account
-                    .pre_call
-                    .compute_eip712_data(&self.contracts().orchestrator, &provider)
-                    .await
-            },
             // Get account nonce.
             async {
                 provider

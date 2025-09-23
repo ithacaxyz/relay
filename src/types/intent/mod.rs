@@ -4,7 +4,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        KeyType, Orchestrator, Signature, SignedCall, VersionedContract,
+        KeyType, Signature, SignedCall, VersionedContract,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, CallKey,
             Permission, SpendPermission,
@@ -15,13 +15,11 @@ use alloy::{
     dyn_abi::TypedData,
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, ChainId, U256, aliases::U192, map::HashMap},
-    providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
     uint,
 };
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 
 mod r#enum;
 mod v04;
@@ -214,10 +212,7 @@ pub trait SignedCalls {
     fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
-        provider: &DynProvider,
-    ) -> impl Future<Output = Result<(B256, TypedData), RelayError>> + Send
-    where
-        Self: Sync;
+    ) -> Result<(B256, TypedData), RelayError>;
 }
 
 impl SignedCalls for SignedCall {
@@ -229,17 +224,10 @@ impl SignedCalls for SignedCall {
         self.nonce
     }
 
-    async fn compute_eip712_data(
+    fn compute_eip712_data(
         &self,
         orchestrator: &VersionedContract,
-        provider: &DynProvider,
-    ) -> Result<(B256, TypedData), RelayError>
-    where
-        Self: Sync,
-    {
-        // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator.clone(), provider);
-
+    ) -> Result<(B256, TypedData), RelayError> {
         // Prepare the EIP-712 payload and domain
         let payload = eip712::SignedCall {
             multichain: self.is_multichain(),

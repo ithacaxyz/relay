@@ -520,13 +520,9 @@ impl PrepareCallsContext {
                 if let Some(root) = context.ty().multi_chain_root {
                     Ok((root, output_quote.intent.typed_data(None)))
                 } else {
-                    output_quote
-                        .intent
-                        .compute_eip712_data(
-                            contracts.get_versioned_orchestrator(output_quote.orchestrator)?,
-                            provider,
-                        )
-                        .await
+                    output_quote.intent.compute_eip712_data(
+                        contracts.get_versioned_orchestrator(output_quote.orchestrator)?,
+                    )
                 }
             }
             PrepareCallsContext::PreCall(pre_call) => {
@@ -545,7 +541,7 @@ impl PrepareCallsContext {
                     contracts.get_versioned_orchestrator(orchestrator)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator, provider).await
+                pre_call.compute_eip712_data(orchestrator)
             }
         }
     }
