@@ -3,7 +3,7 @@
 use crate::e2e::{common_calls as calls, *};
 use alloy::{primitives::U256, sol_types::SolCall};
 use eyre::Result;
-use relay::types::{Call, KeyType, KeyWith712Signer};
+use relay::types::{Call, IthacaAccount::SpendPeriod, KeyType, KeyWith712Signer};
 
 /// porto test: "behavior: delegation"
 #[tokio::test(flavor = "multi_thread")]
@@ -579,6 +579,61 @@ async fn session_key_pre_call_prep_single_tx_failure() -> Result<()> {
             key: Some(&session_key),
             ..Default::default()
         }]
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_key_pre_call_ordering() -> Result<()> {
+    let key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    let session_key = KeyWith712Signer::random_session(KeyType::P256)?.unwrap();
+    run_e2e_erc20(|env| {
+        let key_hash = session_key.key_hash();
+        let seq_key = U256::from_be_bytes(session_key.key_hash().into()) >> 64 << 64;
+        vec![
+            TxContext { authorization_keys: vec![&key], ..Default::default() },
+            // authorize a session key via precall
+            TxContext {
+                authorization_keys: vec![&session_key],
+                pre_call: true,
+                calls: vec![
+                    Call::set_spend_limit(key_hash, env.erc20, SpendPeriod::Day, U256::MAX),
+                    Call::set_can_execute(
+                        key_hash,
+                        env.erc20,
+                        MockErc20::transferCall::SELECTOR.into(),
+                        true,
+                    ),
+                ],
+                key: Some(&key),
+                // ensure that precall is using designated nonce sequence
+                quote: Some(Box::new(move |_, context| {
+                    Box::pin(async move { assert!(context.precall().unwrap().nonce == seq_key) })
+                })),
+                ..Default::default()
+            },
+            // now revoke the session key via precall as well
+            TxContext {
+                revoke_keys: vec![&session_key],
+                pre_call: true,
+                key: Some(&key),
+                quote: Some(Box::new(move |_, context| {
+                    Box::pin(async move {
+                        assert!(context.precall().unwrap().nonce == seq_key + U256::from(1))
+                    })
+                })),
+                ..Default::default()
+            },
+            // ensure that session key cannot be used once the revokation precall is executed
+            TxContext {
+                calls: vec![Call::transfer(env.erc20, Address::ZERO, U256::from(10000000u64))],
+                expected: ExpectedOutcome::FailEstimate,
+                key: Some(&session_key),
+                fee_token: Some(env.erc20),
+                ..Default::default()
+            },
+        ]
     })
     .await?;
     Ok(())

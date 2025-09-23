@@ -45,7 +45,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use alloy_chains::NamedChain;
-use futures::{StreamExt, future::TryJoinAll, stream::FuturesOrdered};
+use futures::{StreamExt, stream::FuturesOrdered};
 use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
@@ -1086,7 +1086,7 @@ impl Relay {
 
         let delegation_implementation = delegation_status.try_implementation()?;
 
-        let stored_precalls = self
+        let seq_to_stored_precalls = self
             .inner
             .storage
             .read_precalls_for_eoa(request.chain_id, eoa)
@@ -1094,26 +1094,32 @@ impl Relay {
             .into_iter()
             // Only retain precalls that are relevant for this intent's signing key.
             .filter(|call| {
-                call.authorized_keys()
-                    .is_ok_and(|keys| keys.iter().any(|key| key.key_hash() == key_hash))
+                call.calls().is_ok_and(|calls| {
+                    calls.iter().any(|call| call.decode_precall_key_hash() == Some(key_hash))
+                })
             })
-            // Check precall nonce
-            .map(async |call| {
-                let seq_key = U192::from(call.nonce >> 64);
-                let nonce = account.get_nonce_for_sequence(seq_key).await?;
+            .sorted_by_key(|call| call.nonce)
+            .fold(HashMap::new(), |mut acc, call| {
+                acc.entry(call.nonce >> 64).or_insert_with(Vec::new).push(call);
+                acc
+            });
+
+        let mut stored_precalls = Vec::new();
+        for (seq_key, calls) in seq_to_stored_precalls {
+            let mut nonce = account.get_nonce_for_sequence(U192::from(seq_key)).await?;
+            for call in calls {
                 if call.nonce == nonce {
-                    return Ok::<_, RelayError>(Some(call));
+                    stored_precalls.push(call);
+                    nonce += U256::from(1);
                 } else if call.nonce < nonce {
                     // Remove if nonce is already used.
                     self.inner.storage.remove_precall(request.chain_id, eoa, call.nonce).await?;
+                } else {
+                    // If nonce is greater, we have a nonce gap which we should skip.
+                    break;
                 }
-
-                Ok(None)
-            })
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .flatten();
+            }
+        }
 
         let mut pre_calls = request
             .capabilities
@@ -1258,7 +1264,11 @@ impl Relay {
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request
-            .get_nonce(delegation_status.as_ref().and_then(|s| s.stored_account()), &provider)
+            .get_nonce(
+                delegation_status.as_ref().and_then(|s| s.stored_account()),
+                &provider,
+                &self.inner.storage,
+            )
             .await?;
 
         // If we're dealing with a PreCall do not estimate
@@ -1894,7 +1904,11 @@ impl Relay {
             self.delegation_status(&identity.root_eoa, request.chain_id).await?;
 
         let nonce = request
-            .get_nonce(delegation_status.stored_account(), &self.provider(request.chain_id)?)
+            .get_nonce(
+                delegation_status.stored_account(),
+                &self.provider(request.chain_id)?,
+                &self.inner.storage,
+            )
             .await?;
 
         self.build_intent(
