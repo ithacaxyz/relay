@@ -1,19 +1,18 @@
 use OrchestratorContract::OrchestratorContractInstance;
 use alloy::{
     dyn_abi::Eip712Domain,
-    primitives::{Address, FixedBytes, U256, fixed_bytes},
+    primitives::{Address, ChainId, FixedBytes, U256, fixed_bytes},
     providers::Provider,
     rpc::types::{TransactionReceipt, state::StateOverride},
     sol,
-    transports::{TransportErrorKind, TransportResult},
+    transports::TransportErrorKind,
 };
 use futures::TryFutureExt;
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::try_join;
 use tracing::debug;
 
-use super::{GasResults, simulator::SimulatorContract};
+use super::{GasResults, contracts::VersionedContract, simulator::SimulatorContract};
 use crate::{
     asset::AssetInfoServiceHandle,
     config::SimMode,
@@ -191,16 +190,17 @@ sol! {
 pub struct Orchestrator<P: Provider> {
     orchestrator: OrchestratorContractInstance<P>,
     overrides: StateOverride,
-    version: Option<semver::Version>,
+    versioned_contract: VersionedContract,
 }
 
 impl<P: Provider> Orchestrator<P> {
-    /// Create a new instance of [`Entry`].
-    pub fn new(address: Address, provider: P) -> Self {
+    /// Create a new instance of [`Orchestrator`].
+    pub fn new(versioned_contract: VersionedContract, provider: P) -> Self {
+        let address = versioned_contract.address;
         Self {
             orchestrator: OrchestratorContractInstance::new(address, provider),
             overrides: StateOverride::default(),
-            version: None,
+            versioned_contract,
         }
     }
 
@@ -211,13 +211,12 @@ impl<P: Provider> Orchestrator<P> {
 
     /// Get the version of the orchestrator.
     pub fn version(&self) -> Option<&semver::Version> {
-        self.version.as_ref()
+        self.versioned_contract.version.as_ref()
     }
 
-    /// Sets the version of the orchestrator.
-    pub fn with_version(mut self, version: Option<Version>) -> Self {
-        self.version = version;
-        self
+    /// Get the versioned contract.
+    pub fn versioned_contract(&self) -> &VersionedContract {
+        &self.versioned_contract
     }
 
     /// Sets overrides for all calls on this orchestrator.
@@ -249,7 +248,7 @@ impl<P: Provider> Orchestrator<P> {
             sim_mode,
             calculate_asset_deficits,
         )
-        .simulate(*self.address(), mock_from, intent, gas_validation_offset, self.version.as_ref())
+        .simulate(*self.address(), mock_from, intent, gas_validation_offset, self.version())
         .await?;
 
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
@@ -366,24 +365,8 @@ impl<P: Provider> Orchestrator<P> {
     }
 
     /// Get the [`Eip712Domain`] for this orchestrator.
-    ///
-    /// If `multichain` is `true`, then the chain ID is omitted from the domain.
-    pub async fn eip712_domain(&self, multichain: bool) -> TransportResult<Eip712Domain> {
-        let domain = self
-            .orchestrator
-            .eip712Domain()
-            .call()
-            .overrides(self.overrides.clone())
-            .await
-            .map_err(TransportErrorKind::custom)?;
-
-        Ok(Eip712Domain::new(
-            Some(domain.name.into()),
-            Some(domain.version.into()),
-            (!multichain).then_some(domain.chainId),
-            Some(domain.verifyingContract),
-            None,
-        ))
+    pub fn eip712_domain(&self, chain_id: Option<ChainId>) -> Eip712Domain {
+        self.versioned_contract.eip712_domain(chain_id)
     }
 }
 
