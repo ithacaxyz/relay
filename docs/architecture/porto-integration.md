@@ -203,7 +203,7 @@ pub struct Quote {
     pub intent: Intent,
     pub ttl: u64,              // Time-to-live prevents stale quotes
     pub signature: Signature,   // Relay commitment to pricing
-    pub eth_price: U256,       // Exchange rate at quote time
+    pub native_price: U256,       // Exchange rate at quote time
     pub native_fee_estimate: FeeEstimate,
 }
 ```
