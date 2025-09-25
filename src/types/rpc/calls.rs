@@ -17,11 +17,16 @@ use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
     primitives::{
-        aliases::{B192, U192}, keccak256, map::B256HashMap, wrap_fixed_bytes, Address, BlockHash, BlockNumber, Bytes, ChainId, TxHash, B256, U256
+        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
+        aliases::{B192, U192},
+        keccak256,
+        map::B256HashMap,
+        wrap_fixed_bytes,
     },
-    providers::{ext::DebugApi, DynProvider, Provider},
+    providers::{DynProvider, Provider, ext::DebugApi},
     rpc::types::{
-        state::{AccountOverride, StateOverride, StateOverridesBuilder}, Log
+        Log,
+        state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::SolEvent,
     uint,
