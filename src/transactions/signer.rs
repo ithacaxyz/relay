@@ -874,7 +874,9 @@ impl Signer {
             })
             .collect::<Vec<_>>();
 
-        self.record_and_check_balance().await?;
+        if let Err(err) = self.record_and_check_balance().await {
+            warn!(%err, signer = %self.address(), chain_id = %self.chain_id, "signer balance check failed on startup");
+        }
 
         if self.is_paused() && (!gapped_nonces.is_empty() || !loaded_transactions.is_empty()) {
             warn!(signer = %self.address(), chain_id = %self.chain_id, "signer is paused, but there are pending transactions loaded on startup");
