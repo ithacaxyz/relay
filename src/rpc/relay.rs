@@ -516,6 +516,7 @@ impl Relay {
                 gas_validation_offset,
                 chain.sim_mode(),
                 context.calculate_asset_deficits,
+                chain.erc20_slots(),
             )
             .await?;
 

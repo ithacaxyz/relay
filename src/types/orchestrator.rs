@@ -18,7 +18,7 @@ use crate::{
     config::SimMode,
     error::{IntentError, RelayError},
     types::{
-        Asset, AssetDeficit, AssetDeficits, AssetDiffs,
+        Asset, AssetDeficit, AssetDeficits, AssetDiffs, Erc20Slots,
         IERC20::{self, balanceOfCall},
         Intent,
         OrchestratorContract::IntentExecuted,
@@ -240,6 +240,7 @@ impl<P: Provider> Orchestrator<P> {
         gas_validation_offset: U256,
         sim_mode: SimMode,
         calculate_asset_deficits: bool,
+        erc20_slots: &Erc20Slots,
     ) -> Result<(AssetDiffs, AssetDeficits, GasResults), RelayError> {
         let result = SimulatorContract::new(
             simulator,
@@ -248,7 +249,14 @@ impl<P: Provider> Orchestrator<P> {
             sim_mode,
             calculate_asset_deficits,
         )
-        .simulate(*self.address(), mock_from, intent, gas_validation_offset, self.version())
+        .simulate(
+            *self.address(),
+            mock_from,
+            intent,
+            gas_validation_offset,
+            self.version(),
+            erc20_slots,
+        )
         .await?;
 
         let chain_id = self.orchestrator.provider().get_chain_id().await?;
