@@ -398,7 +398,7 @@ pub struct PrepareCallsCapabilities {
 }
 
 /// A required asset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredAsset {
     /// The address of the required asset.

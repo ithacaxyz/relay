@@ -182,7 +182,7 @@ async fn test_multichain_usdt_transfer_empty_destination() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
+async fn test_multichain_multi_asset_transfer_source_fee_token() -> Result<()> {
     let env =
         Environment::setup_with_config(EnvironmentConfig { num_chains: 3, ..Default::default() })
             .await?;
@@ -195,6 +195,8 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
     upgrade_account_lazily(&env, &[key.to_authorized()], AuthKind::Auth).await?;
 
     let balance = IERC20::new(env.erc20, env.provider_for(0)).balanceOf(eoa).call().await?;
+    let fee_token_balance =
+        IERC20::new(env.fee_token, env.provider_for(0)).balanceOf(eoa).call().await?;
 
     // Set balance of the fee token to 0
     let slot = StorageSlotFinder::balance_of(env.provider_for(0), env.fee_token, eoa)
@@ -202,6 +204,7 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
         .await?
         .unwrap();
     env.provider_for(0).anvil_set_storage_at(env.fee_token, slot.into(), B256::ZERO).await?;
+    env.provider_for(0).anvil_set_balance(eoa, U256::ZERO).await?;
 
     let recipient = Address::random();
     let amount = balance * U256::from(3) / U256::from(2);
@@ -209,8 +212,12 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
     let (signature, context) = prepare_calls(
         0,
         &TxContext {
-            calls: vec![Call::transfer(env.erc20, recipient, amount)],
+            calls: vec![
+                Call::transfer(env.erc20, recipient, amount),
+                Call::transfer(env.fee_token, recipient, fee_token_balance),
+            ],
             key: Some(&key),
+            fee_token: Some(Address::ZERO),
             ..Default::default()
         },
         &key,
@@ -229,6 +236,10 @@ async fn test_multichain_usdt_transfer_source_fee_token() -> Result<()> {
 
     assert!(
         IERC20::new(env.erc20, env.provider_for(0)).balanceOf(recipient).call().await? == amount,
+    );
+    assert!(
+        IERC20::new(env.fee_token, env.provider_for(0)).balanceOf(recipient).call().await?
+            == fee_token_balance,
     );
 
     Ok(())

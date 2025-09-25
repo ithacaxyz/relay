@@ -594,7 +594,7 @@ impl Environment {
                         address: Address::ZERO,
                         decimals: 18,
                         fee_token: true,
-                        interop: false,
+                        interop: true,
                     },
                 ))
                 .chain(
