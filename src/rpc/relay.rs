@@ -1628,7 +1628,7 @@ impl Relay {
 
         let (requested_with_balance, single_chain_quote) = if requested_with_balances
             .iter()
-            .any(|(requested, balance)| requested.value < *balance)
+            .any(|(requested, balance)| requested.value > *balance)
         {
             // If requested assets are specified explicitly and we know that balance is not
             // enough, we can proceed to multichain estimation.
