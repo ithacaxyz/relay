@@ -1685,7 +1685,12 @@ impl Relay {
                         return Ok(quote_result);
                     }
 
-                    (asset, deficit.required, deficit.required.saturating_sub(deficit.deficit), Some(quote_result))
+                    (
+                        asset,
+                        deficit.required,
+                        deficit.required.saturating_sub(deficit.deficit),
+                        Some(quote_result),
+                    )
                 }
             };
 
