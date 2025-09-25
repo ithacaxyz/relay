@@ -155,7 +155,7 @@ expression: response
           "address": "0x0000000000000000000000000000000000000000",
           "decimals": 18,
           "feeToken": true,
-          "interop": false,
+          "interop": true,
           "symbol": "ETH",
           "nativeRate": "0xde0b6b3a7640000"
         }
