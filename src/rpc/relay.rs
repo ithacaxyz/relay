@@ -1526,23 +1526,23 @@ impl Relay {
                 None
             };
 
-        let (requested_asset, requested_funds, requested_asset_balance_on_dst) =
+        let (requested_asset, requested_funds, requested_asset_balance_on_dst, single_chain_quote) =
             match requested_asset_and_balance {
                 // If requested assets are specified explicitly and we know that balance is not
                 // enough, we can proceed to multichain estimation.
                 Some((requested, balance)) if balance < requested.value => {
-                    (requested.address, requested.value, balance)
+                    (requested.address, requested.value, balance, None)
                 }
                 // Otherwise, we try to simulate intent as single chain first.
                 _ => {
-                    let (asset_diff, quotes) = self
+                    let quote_result = self
                         .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                         .await?;
 
                     // It should never happen that we do not have a quote from this simulation, but
                     // to avoid outright crashing we just throw an internal
                     // error.
-                    let quote = quotes.quotes.first().ok_or_else(|| {
+                    let quote = quote_result.1.quotes.first().ok_or_else(|| {
                         RelayError::InternalError(eyre::eyre!("no quote after simulation"))
                     })?;
 
@@ -1556,7 +1556,7 @@ impl Relay {
                             "Falling back to single chain for intent"
                         );
 
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
                     // If we have more than 1 asset deficit it means we will have to source more
@@ -1569,7 +1569,7 @@ impl Relay {
                             deficits = %quote.asset_deficits.0.len(),
                             "Intent requires multiple assets"
                         );
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
                     let deficit = quote.asset_deficits.0.first().unwrap();
@@ -1580,7 +1580,7 @@ impl Relay {
                     if self.inner.chains.interop().is_none()
                         || self.inner.chains.interop_asset(request.chain_id, asset).is_none()
                     {
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
                     // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
@@ -1594,7 +1594,7 @@ impl Relay {
                         (deficit.required, deficit.deficit)
                     };
 
-                    (asset, required, deficit)
+                    (asset, required, deficit, Some(quote_result))
                 }
             };
 
@@ -1719,17 +1719,20 @@ impl Relay {
                 // destination chain asset
                 (new_chains.iter().map(|source| source.amount_destination).sum(), new_chains)
             } else {
-                // We don't have enough funds across all chains, so we revert back to single chain
-                // to produce a quote with a `feeTokenDeficit`.
+                // We don't have enough funds across all chains, so we revert back to the single
+                // chain quote with a `feeTokenDeficit` if it already exists. Else, we produce it.
                 //
                 // A more robust solution here is returning a `Result<Vec<FundSource>, Deficit>`
                 // where the error specifies how much we have across all chains, and
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
-                return self
-                    .build_single_chain_quote(request, identity, delegation_status, nonce, true)
-                    .await
-                    .map_err(Into::into);
+                let Some(quote) = single_chain_quote else {
+                    return self
+                        .build_single_chain_quote(request, identity, delegation_status, nonce, true)
+                        .await
+                        .map_err(Into::into);
+                };
+                return Ok(quote);
             };
             num_funding_chains = funding_chains.len();
             let input_chain_ids: Vec<ChainId> = funding_chains.iter().map(|s| s.chain_id).collect();
