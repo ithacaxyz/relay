@@ -1,12 +1,11 @@
 use super::{SignedCall, SignedCalls};
 use crate::{
     error::RelayError,
-    types::{Key, Orchestrator},
+    types::{Key, VersionedContract},
 };
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Keccak256, U256, keccak256},
-    providers::DynProvider,
+    primitives::{B256, ChainId, Keccak256, U256, keccak256},
     sol,
     sol_types::{SolStruct, SolValue},
 };
@@ -141,20 +140,14 @@ impl SignedCalls for IntentV05 {
         Ok(all_keys)
     }
 
-    async fn compute_eip712_data(
+    fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError>
-    where
-        Self: Sync,
-    {
-        // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator_address, provider);
-
+        orchestrator: &VersionedContract,
+        chain_id: ChainId,
+    ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError> {
         // Prepare the EIP-712 payload and domain
         let payload = self.as_eip712()?;
-        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+        let domain = orchestrator.eip712_domain((!self.is_multichain()).then_some(chain_id));
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

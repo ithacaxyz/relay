@@ -95,6 +95,7 @@ impl MockAccountBuilder {
                     .into(),
             })
         };
+
         let PrepareCallsResponse { context, digest, .. } = env
             .relay_endpoint
             .prepare_calls(PrepareCallsParameters {
@@ -183,6 +184,6 @@ impl MockAccount {
             .into(),
         );
 
-        RelayTransaction::new(quote, None, digest)
+        RelayTransaction::new(quote, vec![], digest)
     }
 }

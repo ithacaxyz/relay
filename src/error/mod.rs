@@ -13,6 +13,9 @@ pub use contracts::ContractErrors;
 mod email;
 pub use email::EmailError;
 
+mod phone;
+pub use phone::PhoneError;
+
 mod keys;
 pub use keys::KeysError;
 

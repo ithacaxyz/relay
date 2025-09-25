@@ -37,8 +37,16 @@ async fn storage() -> eyre::Result<RelayStorage> {
 #[ignore]
 async fn write() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer: _, chain_id: _, queued_tx, pending_tx, bundle_id, email } =
-        Fixtures::generate().await?;
+    let Fixtures {
+        account,
+        signer: _,
+        chain_id: _,
+        queued_tx,
+        pending_tx,
+        bundle_id,
+        email,
+        phone,
+    } = Fixtures::generate().await?;
 
     // Account & Keys
     storage.write_account(account.clone()).await?;
@@ -50,8 +58,8 @@ async fn write() -> eyre::Result<()> {
     // Create a new queued transaction with different ID and NO authorization
     let mut queued_tx_no_auth = queued_tx.clone();
     queued_tx_no_auth.id = TxId(B256::with_last_byte(3));
-    if let RelayTransactionKind::Intent { authorization, .. } = &mut queued_tx_no_auth.kind {
-        *authorization = None; // Set authorization to None
+    if let RelayTransactionKind::Intent { authorization_list, .. } = &mut queued_tx_no_auth.kind {
+        *authorization_list = vec![]; // Set authorization to empty vec
     }
     storage.queue_transaction(&queued_tx_no_auth).await?;
 
@@ -67,6 +75,9 @@ async fn write() -> eyre::Result<()> {
     // Email
     storage.add_unverified_email(email.0, &email.1, &email.2).await?;
 
+    // Phone
+    storage.add_unverified_phone(phone.0, &phone.1, &phone.2).await?;
+
     Ok(())
 }
 
@@ -74,8 +85,16 @@ async fn write() -> eyre::Result<()> {
 #[ignore]
 async fn read() -> eyre::Result<()> {
     let storage = storage().await?;
-    let Fixtures { account, signer, chain_id, queued_tx: _, pending_tx: _, bundle_id, email } =
-        Fixtures::generate().await?;
+    let Fixtures {
+        account,
+        signer,
+        chain_id,
+        queued_tx: _,
+        pending_tx: _,
+        bundle_id,
+        email,
+        phone,
+    } = Fixtures::generate().await?;
 
     // Account & Keys
     assert!(storage.read_account(&account.address).await?.is_some());
@@ -91,6 +110,10 @@ async fn read() -> eyre::Result<()> {
     storage.verify_email(email.0, &email.1, &email.2).await?;
     storage.verified_email_exists(&email.2).await?;
 
+    // Phone
+    // For now, just try to mark as verified (will be no-op if no unverified record exists)
+    storage.mark_phone_verified(phone.0, &phone.1).await?;
+
     Ok(())
 }
 
@@ -102,6 +125,7 @@ struct Fixtures {
     pub pending_tx: PendingTransaction,
     pub bundle_id: BundleId,
     pub email: (Address, String, String),
+    pub phone: (Address, String, String), // (address, phone, verification_sid)
 }
 
 impl Fixtures {
@@ -159,6 +183,7 @@ impl Fixtures {
             tx_gas: r_u64,
             native_fee_estimate: r_fee,
             authorization_address: Some(r_address),
+            additional_authorization: None,
             orchestrator: r_address,
             fee_token_deficit: r_u256,
             asset_deficits: Default::default(),
@@ -168,7 +193,7 @@ impl Fixtures {
             id: TxId(queued_id),
             kind: RelayTransactionKind::Intent {
                 quote: Box::new(quote),
-                authorization: Some(authorization.clone()),
+                authorization_list: vec![authorization.clone()],
                 eip712_digest: r_b256,
             },
             trace_context: Context::current(),
@@ -203,6 +228,7 @@ impl Fixtures {
             pending_tx,
             bundle_id: BundleId(r_b256),
             email: (r_address, "hello@there.all".to_string(), "12345678".to_string()),
+            phone: (r_address, "+15551234567".to_string(), "VE1234567890abcdef".to_string()),
         })
     }
 }

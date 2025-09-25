@@ -18,7 +18,7 @@ use relay::{
     types::{
         Account, Call, IERC20,
         IthacaAccount::{self, upgradeProxyAccountCall},
-        KeyType, KeyWith712Signer, Signature, SignedCall,
+        KeyType, KeyWith712Signer, Signature, SignedCall, VersionedContracts,
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
@@ -405,14 +405,9 @@ async fn test_delegation_upgrade_with_stored_account_impl(
 
     // Test ERC1271 digest wrapping for v0.4 (should NOT be wrapped)
     // Calculate what the digest should be from the context (without ERC1271 wrapping)
-    let (computed_digest_v4, _) = response
-        .context
-        .compute_signing_digest(
-            None,
-            response.context.quote().unwrap().ty().quotes[0].orchestrator,
-            env.provider(),
-        )
-        .await?;
+    let contracts = VersionedContracts::new(&env.config, env.provider()).await?;
+    let (computed_digest_v4, _) =
+        response.context.compute_signing_digest(None, &contracts, env.provider()).await?;
 
     // For v0.4, the digest should NOT be ERC1271 wrapped
     assert_eq!(
@@ -490,14 +485,8 @@ async fn test_delegation_upgrade_with_stored_account_impl(
     if use_eoa_key {
         // Using EOA's key - the key address matches env.eoa which has delegation,
         // so digest should be ERC1271 wrapped
-        let (computed_digest_v5, _) = response
-            .context
-            .compute_signing_digest(
-                None,
-                response.context.quote().unwrap().ty().quotes[0].orchestrator,
-                env.provider(),
-            )
-            .await?;
+        let (computed_digest_v5, _) =
+            response.context.compute_signing_digest(None, &contracts, env.provider()).await?;
         let expected_wrapped_digest =
             Account::new(env.eoa.address(), env.provider()).digest_erc1271(computed_digest_v5);
 

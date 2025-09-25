@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update phones set verification_sid = $3 where address = $1 and phone = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e7b4c5c58b009c5aea401135c1c74a8fbabf4bfcdd5e9ebc9d32dfcdc50396c5"
+}

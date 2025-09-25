@@ -47,3 +47,6 @@ pub const ESCROW_SALT_LENGTH: usize = 12;
 /// Address used by eth_simulateV1 to identify ETH transfers as ERC20 transfer events.
 pub const SIMULATEV1_NATIVE_ADDRESS: Address =
     address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+/// The default porto base url
+pub const DEFAULT_PORTO_BASE_URL: &str = "id.porto.sh";

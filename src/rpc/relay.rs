@@ -18,7 +18,6 @@ use crate::{
         Key, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
         Quotes, SignedCall, SignedCalls, SourcedAsset, Transfer, VersionedContracts,
-        VersionedOrchestratorContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
@@ -45,7 +44,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use alloy_chains::NamedChain;
-use futures::{StreamExt, future::TryJoinAll, stream::FuturesOrdered};
+use futures::{StreamExt, stream::FuturesOrdered};
 use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
@@ -53,7 +52,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use opentelemetry::trace::SpanKind;
-use std::{cmp, collections::HashMap, iter, sync::Arc, time::SystemTime};
+use std::{cmp, collections::HashMap, sync::Arc, time::SystemTime};
 use tokio::try_join;
 use tracing::{Instrument, Level, debug, error, info, instrument, span, warn};
 
@@ -236,7 +235,7 @@ impl Relay {
                     Ok::<_, QuoteError>((
                         chain_id,
                         ChainCapabilities {
-                            contracts: self.inner.contracts.clone(),
+                            contracts: self.contracts().clone(),
                             fees: ChainFees {
                                 recipient: self.inner.fee_recipient,
                                 quote_config: self.inner.quote_config.clone(),
@@ -281,7 +280,7 @@ impl Relay {
                     gas_limit: gas_estimate.tx,
                     max_fee_per_gas: fees.max_fee_per_gas,
                     max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                    to: self.orchestrator(),
+                    to: self.contracts().orchestrator(),
                     input: intent.encode_execute(),
                     authorization_list: vec![auth],
                     ..Default::default()
@@ -294,7 +293,7 @@ impl Relay {
                     gas_limit: gas_estimate.tx,
                     max_fee_per_gas: fees.max_fee_per_gas,
                     max_priority_fee_per_gas: fees.max_priority_fee_per_gas,
-                    to: self.orchestrator().into(),
+                    to: self.contracts().orchestrator().into(),
                     input: intent.encode_execute(),
                     ..Default::default()
                 }
@@ -308,7 +307,7 @@ impl Relay {
                 .provider()
                 .estimate_l1_arb_fee_gas(
                     chain.id(),
-                    self.orchestrator(),
+                    self.contracts().orchestrator(),
                     gas_estimate.tx,
                     *fees,
                     auth,
@@ -455,7 +454,7 @@ impl Relay {
         }
 
         if !intent_to_sign.encoded_fund_transfers().is_empty() {
-            intent_to_sign = intent_to_sign.with_funder(self.inner.contracts.funder.address);
+            intent_to_sign = intent_to_sign.with_funder(self.contracts().funder());
         }
 
         // For simulation purposes we only simulate with a payment of 1 unit of the fee token. This
@@ -473,8 +472,8 @@ impl Relay {
             intent_to_sign = intent_to_sign
                 .with_mock_merkle_signature(
                     &context.intent_kind,
-                    *orchestrator.address(),
-                    &provider,
+                    orchestrator.versioned_contract(),
+                    chain.id(),
                     &mock_key,
                     &context.key,
                     prehash,
@@ -485,7 +484,9 @@ impl Relay {
             // For single chain intents, sign the intent directly
             let signature = mock_key
                 .sign_payload_hash(
-                    intent_to_sign.compute_eip712_data(*orchestrator.address(), &provider).await?.0,
+                    intent_to_sign
+                        .compute_eip712_data(orchestrator.versioned_contract(), chain.id())?
+                        .0,
                 )
                 .await
                 .map_err(RelayError::from)?;
@@ -509,7 +510,7 @@ impl Relay {
         let (asset_diffs, mut asset_deficits, gas_results) = orchestrator
             .simulate_execute(
                 mock_from,
-                self.get_simulator_for_orchestrator(*orchestrator.address()),
+                self.contracts().get_simulator_for_orchestrator(*orchestrator.address()),
                 &intent_to_sign,
                 self.inner.asset_info.clone(),
                 gas_validation_offset,
@@ -635,6 +636,7 @@ impl Relay {
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
             authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
+            additional_authorization: context.additional_authorization.map(|(_, auth)| auth),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
             asset_deficits,
@@ -706,8 +708,10 @@ impl Relay {
             .with_signature(signature);
 
         // Compute EIP-712 digest for the intent
-        let (eip712_digest, _) =
-            quote.intent.compute_eip712_data(quote.orchestrator, &provider).await?;
+        let (eip712_digest, _) = quote.intent.compute_eip712_data(
+            self.contracts().get_versioned_orchestrator(quote.orchestrator)?,
+            chain_id,
+        )?;
 
         // Sign fund transfers if any
         if !quote.intent.encoded_fund_transfers().is_empty() {
@@ -721,13 +725,19 @@ impl Relay {
                         .await
                         .map_err(RelayError::from)?,
                 )
-                .with_funder(self.inner.contracts.funder.address);
+                .with_funder(self.contracts().funder());
         }
 
         // Set non-eip712 payment fields. Since they are not included into the signature so we
         // need to enforce it here.
         let payment_amount = quote.intent.pre_payment_max_amount();
         quote.intent.set_payment(payment_amount);
+
+        // we have a list of potential auths
+        let mut authorization_list = Vec::new();
+
+        // if the additional auth exists, push it
+        authorization_list.extend(quote.additional_authorization.clone());
 
         // If there's an authorization address in the quote, we need to fetch the signed one
         // from storage.
@@ -741,6 +751,9 @@ impl Relay {
         } else {
             None
         };
+
+        // push auth if exists
+        authorization_list.extend(authorization.clone());
 
         // check that the authorization item matches what's in the quote
         if quote.authorization_address != authorization.as_ref().map(|auth| auth.address) {
@@ -780,7 +793,7 @@ impl Relay {
         // set our payment recipient
         quote.intent = quote.intent.with_payment_recipient(self.inner.fee_recipient);
 
-        let tx = RelayTransaction::new(quote, authorization.clone(), eip712_digest);
+        let tx = RelayTransaction::new(quote, authorization_list, eip712_digest);
         self.inner.storage.add_bundle_tx(bundle_id, tx.id).await?;
 
         Ok(tx)
@@ -959,27 +972,8 @@ impl Relay {
         provider: P,
     ) -> Result<Orchestrator<P>, RelayError> {
         let address = account.get_orchestrator().await?;
-
-        // Get the version for the orchestrator
-        let version = if self.orchestrator() == address {
-            tracing::trace!(
-                orchestrator = %address,
-                version = ?self.inner.contracts.orchestrator.version,
-                "Using current orchestrator"
-            );
-            self.inner.contracts.orchestrator.version.clone()
-        } else if let Some(legacy) = self.get_legacy_orchestrator(address) {
-            tracing::trace!(
-                orchestrator = %address,
-                version = ?legacy.orchestrator.version,
-                "Using legacy orchestrator"
-            );
-            legacy.orchestrator.version.clone()
-        } else {
-            return Err(RelayError::UnsupportedOrchestrator(address));
-        };
-
-        Ok(Orchestrator::new(address, provider).with_version(version))
+        let versioned_contract = self.contracts().get_versioned_orchestrator(address)?;
+        Ok(Orchestrator::new(versioned_contract.clone(), provider))
     }
 
     /// Checks if a delegation implementation needs upgrading.
@@ -990,7 +984,7 @@ impl Relay {
         &self,
         current_implementation: Address,
     ) -> Result<Option<Address>, RelayError> {
-        let current = self.delegation_implementation();
+        let current = self.contracts().delegation_implementation();
 
         // Check if it's the current implementation (up to date)
         if current_implementation == current {
@@ -998,7 +992,7 @@ impl Relay {
         }
 
         // Check if it's a legacy implementation (needs upgrade)
-        if self.legacy_delegations().any(|c| c == current_implementation) {
+        if self.contracts().legacy_delegations().any(|c| c == current_implementation) {
             return Ok(Some(current));
         }
 
@@ -1041,6 +1035,7 @@ impl Relay {
                 fee_token: Address::ZERO,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
+                additional_authorization: None,
                 intent_kind: IntentKind::Single,
                 state_overrides: Default::default(),
                 balance_overrides: Default::default(),
@@ -1075,7 +1070,7 @@ impl Relay {
 
         let delegation_implementation = delegation_status.try_implementation()?;
 
-        let stored_precalls = self
+        let seq_to_stored_precalls = self
             .inner
             .storage
             .read_precalls_for_eoa(request.chain_id, eoa)
@@ -1083,28 +1078,34 @@ impl Relay {
             .into_iter()
             // Only retain precalls that are relevant for this intent's signing key.
             .filter(|call| {
-                call.authorized_keys()
-                    .is_ok_and(|keys| keys.iter().any(|key| key.key_hash() == key_hash))
+                call.calls().is_ok_and(|calls| {
+                    calls.iter().any(|call| call.decode_precall_key_hash() == Some(key_hash))
+                })
             })
-            // Check precall nonce
-            .map(async |call| {
-                let seq_key = U192::from(call.nonce >> 64);
-                let nonce = account.get_nonce_for_sequence(seq_key).await?;
+            .sorted_by_key(|call| call.nonce)
+            .fold(HashMap::new(), |mut acc, call| {
+                acc.entry(call.nonce >> 64).or_insert_with(Vec::new).push(call);
+                acc
+            });
+
+        let mut stored_precalls = Vec::new();
+        for (seq_key, calls) in seq_to_stored_precalls {
+            let mut nonce = account.get_nonce_for_sequence(U192::from(seq_key)).await?;
+            for call in calls {
                 if call.nonce == nonce {
-                    return Ok::<_, RelayError>(Some(call));
+                    stored_precalls.push(call);
+                    nonce += U256::from(1);
                 } else if call.nonce < nonce {
                     // Remove if nonce is already used.
                     self.inner.storage.remove_precall(request.chain_id, eoa, call.nonce).await?;
+                } else {
+                    // If nonce is greater, we have a nonce gap which we should skip.
+                    break;
                 }
+            }
+        }
 
-                Ok(None)
-            })
-            .collect::<TryJoinAll<_>>()
-            .await?
-            .into_iter()
-            .flatten();
-
-        let pre_calls = request
+        let mut pre_calls = request
             .capabilities
             .pre_calls
             .iter()
@@ -1117,6 +1118,25 @@ impl Relay {
         // Check if upgrade is needed (only for delegated accounts)
         if let Some(new_impl) = self.maybe_delegation_upgrade(delegation_implementation)? {
             calls.push(Call::upgrade_proxy_account(new_impl));
+        }
+
+        let mut additional_authorization = None;
+
+        // delegate the fee payer if it is stored, only adding a precall if it's for delegation to
+        // an ithaca account, assuming the configured delegation account is an ithaca account.
+        if let Some(fee_payer) = request.capabilities.meta.fee_payer {
+            // check if delegation is needed
+            let delegation_status = self.delegation_status(&fee_payer, request.chain_id).await?;
+
+            if let DelegationStatus::Stored { account, implementation } = delegation_status {
+                // check if the implementation is at least v0.5.6. before ithaca account v0.5.6, the
+                // contracts had a check which required all precalls to be signed by the eoa
+                if self.is_ithaca_account(implementation, semver::Version::new(0, 5, 6)) {
+                    // put the delegation as the first call
+                    pre_calls.insert(0, account.pre_call.clone());
+                    additional_authorization = Some((fee_payer, account.signed_authorization))
+                }
+            }
         }
 
         // Find the key that authorizes this intent
@@ -1160,6 +1180,7 @@ impl Relay {
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
+                    additional_authorization,
                     key,
                     intent_kind,
                     state_overrides,
@@ -1178,13 +1199,22 @@ impl Relay {
         Ok((asset_diff, quote))
     }
 
+    /// Checks if the provided address points to an ithaca account, with the desired version or
+    /// higher.
+    fn is_ithaca_account(&self, implementation: Address, min_version: semver::Version) -> bool {
+        self.contracts()
+            .get_delegation_implementation_version(implementation)
+            .map(|v| v >= min_version)
+            .unwrap_or(false)
+    }
+
     #[instrument(skip_all)]
     async fn prepare_calls_inner(
         &self,
         mut request: PrepareCallsParameters,
     ) -> RpcResult<PrepareCallsResponse> {
         // Checks calls and precall calls in the request
-        request.check_calls(self.delegation_implementation())?;
+        request.check_calls(self.contracts().delegation_implementation())?;
 
         let provider = self.provider(request.chain_id)?;
 
@@ -1219,7 +1249,11 @@ impl Relay {
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
         let nonce = request
-            .get_nonce(delegation_status.as_ref().and_then(|s| s.stored_account()), &provider)
+            .get_nonce(
+                delegation_status.as_ref().and_then(|s| s.stored_account()),
+                &provider,
+                &self.inner.storage,
+            )
             .await?;
 
         // If we're dealing with a PreCall do not estimate
@@ -1272,7 +1306,7 @@ impl Relay {
                 context
                     .compute_signing_digest(
                         delegation_status.as_ref().and_then(|s| s.stored_account()),
-                        self.orchestrator(),
+                        self.contracts(),
                         &provider,
                     )
                     .await
@@ -1571,23 +1605,23 @@ impl Relay {
                 None
             };
 
-        let (requested_asset, requested_funds, requested_asset_balance_on_dst) =
+        let (requested_asset, requested_funds, requested_asset_balance_on_dst, single_chain_quote) =
             match requested_asset_and_balance {
                 // If requested assets are specified explicitly and we know that balance is not
                 // enough, we can proceed to multichain estimation.
                 Some((requested, balance)) if balance < requested.value => {
-                    (requested.address, requested.value, balance)
+                    (requested.address, requested.value, balance, None)
                 }
                 // Otherwise, we try to simulate intent as single chain first.
                 _ => {
-                    let (asset_diff, quotes) = self
+                    let quote_result = self
                         .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                         .await?;
 
                     // It should never happen that we do not have a quote from this simulation, but
                     // to avoid outright crashing we just throw an internal
                     // error.
-                    let quote = quotes.quotes.first().ok_or_else(|| {
+                    let quote = quote_result.1.quotes.first().ok_or_else(|| {
                         RelayError::InternalError(eyre::eyre!("no quote after simulation"))
                     })?;
 
@@ -1601,7 +1635,7 @@ impl Relay {
                             "Falling back to single chain for intent"
                         );
 
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
                     let mut deficits = quote.asset_deficits.0.clone();
@@ -1637,7 +1671,7 @@ impl Relay {
                             deficits = %quote.asset_deficits.0.len(),
                             "Intent requires multiple assets"
                         );
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
                     let deficit = deficits.first().unwrap();
@@ -1648,17 +1682,17 @@ impl Relay {
                     if self.inner.chains.interop().is_none()
                         || self.inner.chains.interop_asset(request.chain_id, asset).is_none()
                     {
-                        return Ok((asset_diff, quotes));
+                        return Ok(quote_result);
                     }
 
-                    (asset, deficit.required, deficit.required.saturating_sub(deficit.deficit))
+                    (asset, deficit.required, deficit.required.saturating_sub(deficit.deficit), Some(quote_result))
                 }
             };
 
         // Fetch funder's requested asset on destination chain
         let funder_balance_on_dst = self
             .get_assets(GetAssetsParameters::for_asset_on_chain(
-                self.inner.contracts.funder.address,
+                self.contracts().funder(),
                 request.chain_id,
                 requested_asset,
             ))
@@ -1784,10 +1818,13 @@ impl Relay {
                 // where the error specifies how much we have across all chains, and
                 // we use that to produce the deficit, as the single chain
                 // `feeTokenDeficit` is a bit misleading.
-                return self
-                    .build_single_chain_quote(request, identity, delegation_status, nonce, true)
-                    .await
-                    .map_err(Into::into);
+                let Some(quote) = single_chain_quote else {
+                    return self
+                        .build_single_chain_quote(request, identity, delegation_status, nonce, true)
+                        .await
+                        .map_err(Into::into);
+                };
+                return Ok(quote);
             };
 
             num_funding_chains = funding_chains.len();
@@ -1852,13 +1889,10 @@ impl Relay {
             // the worst scenario, but ideally we get as close to 0 as possible.
             if output_quote.fee_token_deficit.is_zero() {
                 // Compute EIP-712 digest (settlement_id)
-                let (output_intent_digest, _) = output_quote
-                    .intent
-                    .compute_eip712_data(
-                        output_quote.orchestrator,
-                        &self.provider(request.chain_id)?,
-                    )
-                    .await?;
+                let (output_intent_digest, _) = output_quote.intent.compute_eip712_data(
+                    self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
+                    output_quote.chain_id,
+                )?;
 
                 let funding_intents = try_join_all(funding_chains.iter().enumerate().map(
                     async |(leaf_index, source)| {
@@ -1915,15 +1949,7 @@ impl Relay {
                         // Quotes::multichain(quotes, ttl, root)
                         multi_chain_root: None,
                     }
-                    .with_merkle_payload(
-                        funding_chains
-                            .iter()
-                            .map(|source| source.chain_id)
-                            .chain(iter::once(request.chain_id))
-                            .map(|chain| self.provider(chain))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )
-                    .await?,
+                    .with_merkle_payload(self.contracts())?,
                 ));
             }
         }
@@ -1950,7 +1976,11 @@ impl Relay {
             self.delegation_status(&identity.root_eoa, request.chain_id).await?;
 
         let nonce = request
-            .get_nonce(delegation_status.stored_account(), &self.provider(request.chain_id)?)
+            .get_nonce(
+                delegation_status.stored_account(),
+                &self.provider(request.chain_id)?,
+                &self.inner.storage,
+            )
             .await?;
 
         self.build_intent(
@@ -2067,8 +2097,9 @@ impl Relay {
                 .quotes
                 .iter()
                 .map(|quote| {
-                    self.provider(quote.chain_id)
-                        .map(|provider| (quote.intent.clone(), provider, quote.orchestrator))
+                    self.contracts().get_versioned_orchestrator(quote.orchestrator).map(
+                        |orchestrator| (quote.intent.clone(), orchestrator.clone(), quote.chain_id),
+                    )
                 })
                 .collect::<Result<_, _>>()?,
         );
@@ -2081,7 +2112,7 @@ impl Relay {
         // last quote is the output intent
         let dst_idx = quotes.ty().quotes.len() - 1;
 
-        let root = intents.root().await?;
+        let root = intents.root()?;
         let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
             let proof = intents.get_proof_immutable(idx)?;
             let merkle_sig = (proof, root, &signature).abi_encode_params().into();
@@ -2322,7 +2353,7 @@ impl RelayApiServer for Relay {
 
         // Calculate the eip712 digest that the user will need to sign.
         let (pre_call_digest, typed_data) =
-            pre_call.compute_eip712_data(self.orchestrator(), &provider).await?;
+            pre_call.compute_eip712_data(&self.contracts().orchestrator, chain_id)?;
 
         let digests =
             UpgradeAccountDigests { auth: authorization.signature_hash(), exec: pre_call_digest };
@@ -2415,12 +2446,11 @@ impl RelayApiServer for Relay {
                 }
 
                 // Verify that signature is valid
-                let (digest, _) = call
-                    .compute_eip712_data(
-                        account.get_orchestrator().await.map_err(RelayError::from)?,
-                        &provider,
-                    )
-                    .await?;
+                let orchestrator = account.get_orchestrator().await.map_err(RelayError::from)?;
+                let (digest, _) = call.compute_eip712_data(
+                    self.contracts().get_versioned_orchestrator(orchestrator)?,
+                    chain_id,
+                )?;
 
                 if account.validate_signature(digest, signature.clone()).await? != Some(key_hash) {
                     return Err(KeysError::InvalidSignature.into());
@@ -2472,17 +2502,17 @@ impl RelayApiServer for Relay {
             .await?
             .ok_or(AuthError::InvalidDelegation(auth_address))?;
 
-        if impl_addr != self.delegation_implementation() {
+        if impl_addr != self.contracts().delegation_implementation() {
             return Err(AuthError::InvalidDelegation(impl_addr).into());
         }
 
-        let (_, (pre_call_digest, _), expected_nonce) = try_join!(
+        // Calculate precall digest.
+        let (pre_call_digest, _) = storage_account
+            .pre_call
+            .compute_eip712_data(&self.contracts().orchestrator, context.chain_id)?;
+        let (_, expected_nonce) = try_join!(
             // Ensures the initialization precall is successful.
             self.simulate_init(&storage_account, context.chain_id),
-            // Calculate precall digest.
-            async {
-                storage_account.pre_call.compute_eip712_data(self.orchestrator(), &provider).await
-            },
             // Get account nonce.
             async {
                 provider
@@ -2539,7 +2569,7 @@ impl RelayApiServer for Relay {
         .abi_encode()
         .into();
 
-        let to = self.orchestrator();
+        let to = self.contracts().orchestrator();
 
         Ok(GetAuthorizationResponse { authorization, data, to })
     }
@@ -2813,78 +2843,9 @@ pub(super) struct RelayInner {
 }
 
 impl Relay {
-    /// The orchestrator address.
-    pub fn orchestrator(&self) -> Address {
-        self.inner.contracts.orchestrator.address
-    }
-
-    /// Get previously deployed orchestrator and simulator by orchestrator address.
-    pub fn get_legacy_orchestrator(
-        &self,
-        address: Address,
-    ) -> Option<&VersionedOrchestratorContracts> {
-        self.inner
-            .contracts
-            .legacy_orchestrators
-            .iter()
-            .find(|contracts| contracts.orchestrator.address == address)
-    }
-
-    /// Get the simulator address for the given orchestrator address.
-    /// Returns the matching simulator for the orchestrator (current or legacy).
-    pub fn get_simulator_for_orchestrator(&self, orchestrator_address: Address) -> Address {
-        if orchestrator_address == self.orchestrator() {
-            // Current orchestrator uses current simulator
-            self.simulator()
-        } else if let Some(legacy) = self.get_legacy_orchestrator(orchestrator_address) {
-            // Legacy orchestrator uses its corresponding simulator
-            legacy.simulator.address
-        } else {
-            // Fallback to current simulator if orchestrator not found
-            self.simulator()
-        }
-    }
-
-    /// Previously deployed delegation implementations.
-    pub fn legacy_delegations(&self) -> impl Iterator<Item = Address> {
-        self.inner.contracts.legacy_delegations.iter().map(|c| c.address)
-    }
-
-    /// The delegation proxy address.
-    pub fn delegation_proxy(&self) -> Address {
-        self.inner.contracts.delegation_proxy.address
-    }
-
-    /// The delegation implementation address.
-    pub fn delegation_implementation(&self) -> Address {
-        self.inner.contracts.delegation_implementation.address
-    }
-
-    /// The simulator address.
-    pub fn simulator(&self) -> Address {
-        self.inner.contracts.simulator.address
-    }
-
-    /// The escrow address.
-    pub fn escrow(&self) -> Address {
-        self.inner.contracts.escrow.address
-    }
-
-    /// Get the version for a given delegation implementation address.
-    ///
-    /// Returns None if the address is not a known delegation implementation.
-    fn get_delegation_implementation_version(&self, impl_addr: Address) -> Option<semver::Version> {
-        if impl_addr == self.inner.contracts.delegation_implementation.address {
-            return self.inner.contracts.delegation_implementation.version.clone();
-        }
-
-        // Check legacy implementations
-        self.inner
-            .contracts
-            .legacy_delegations
-            .iter()
-            .find_map(|c| (c.address == impl_addr).then_some(c.version.clone()))
-            .flatten()
+    /// Returns all the shared contracts.
+    pub fn contracts(&self) -> &VersionedContracts {
+        &self.inner.contracts
     }
 
     /// Creates an escrow struct for funding intents.
@@ -3030,10 +2991,7 @@ impl Relay {
             if (s.is_delegated() || (s.is_stored() && request.from == Some(key_address)))
                 && let Ok(impl_addr) = s.try_implementation()
             {
-                return self
-                    .get_delegation_implementation_version(impl_addr)
-                    .map(|v| v >= semver::Version::new(0, 5, 0))
-                    .unwrap_or(false);
+                return self.is_ithaca_account(impl_addr, semver::Version::new(0, 5, 0));
             }
             false
         });

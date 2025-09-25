@@ -55,6 +55,9 @@ pub struct RelayConfig {
     /// Email configuration.
     #[serde(default)]
     pub email: EmailConfig,
+    /// Phone configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<PhoneConfig>,
     /// Transaction service configuration.
     #[serde(default)]
     pub transactions: TransactionServiceConfig,
@@ -639,6 +642,32 @@ pub struct EmailConfig {
     pub resend_api_key: Option<String>,
     /// Porto base URL.
     pub porto_base_url: Option<String>,
+}
+
+/// Phone configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneConfig {
+    /// Twilio Account SID.
+    pub twilio_account_sid: String,
+    /// Twilio Auth Token.
+    pub twilio_auth_token: String,
+    /// Twilio Verify Service SID.
+    pub twilio_verify_service_sid: String,
+    /// Maximum verification attempts.
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    /// Rate limit in minutes.
+    #[serde(default = "default_rate_limit_minutes")]
+    pub rate_limit_minutes: u32,
+}
+
+const fn default_max_attempts() -> u32 {
+    5
+}
+
+const fn default_rate_limit_minutes() -> u32 {
+    10
 }
 
 /// Secrets (kept out of serialized output).

@@ -1,15 +1,16 @@
 //! RPC calls-related request and response types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::{AuthorizeKey, AuthorizeKeyResponse, Meta, RevokeKey};
 use crate::{
-    error::{IntentError, RelayError},
+    error::{IntentError, KeysError, RelayError},
     signers::DynSigner,
-    storage::BundleStatus,
+    storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
         KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
+        VersionedContracts,
     },
 };
 use alloy::{
@@ -216,7 +217,7 @@ impl BalanceOverride {
 }
 
 /// Request parameters for `wallet_prepareCalls`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsParameters {
     /// Call bundle to prepare.
@@ -286,8 +287,9 @@ impl PrepareCallsParameters {
     /// Retrieves the appropriate nonce for the request, following this order:
     ///
     /// 1. If `capabilities.meta.nonce` is set, return it directly.
-    /// 2. If this is a precall, generate a random sequence key without the multichain prefix and
-    ///    return its 0th nonce.
+    /// 2. If this is a precall configuring a certain key, generate a nonce with sequence key
+    ///    matching first 192 bits of keyHash. Otherwise, generate a random sequence key without the
+    ///    multichain prefix and return its 0th nonce.
     /// 3. If this is a intent and there are any previous precall entries with the
     ///    `DEFAULT_SEQUENCE_KEY`, take the highest nonce and increment it by 1.
     /// 4. If this is the intent of a non delegated account (`maybe_stored`), return random.
@@ -298,6 +300,7 @@ impl PrepareCallsParameters {
         &self,
         maybe_stored: Option<&CreatableAccount>,
         provider: &DynProvider,
+        storage: &RelayStorage,
     ) -> Result<U256, RelayError> {
         // Create a random sequence key.
         let random_nonce = loop {
@@ -310,7 +313,48 @@ impl PrepareCallsParameters {
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
         } else if self.capabilities.pre_call {
-            Ok(random_nonce)
+            // Decode all key hashes involved.
+            let mut key_hashes = self
+                .calls
+                .iter()
+                .filter_map(|call| call.decode_precall_key_hash())
+                .collect::<BTreeSet<_>>();
+
+            // If precall is trying to modify multiple keys, return an error.
+            if key_hashes.len() > 1 {
+                return Err(KeysError::PrecallConflictingKeys.into());
+            }
+
+            let Some(key_hash) = key_hashes.pop_first() else {
+                // If precall doesn't perform any key-related operations, return a random nonce.
+                return Ok(random_nonce);
+            };
+
+            // Convert the key hash to a sequence key and fetch the nonce for it.
+            let seq_key = U256::from(U256::from_be_bytes(key_hash.into()) >> 64);
+
+            if let Some(eoa) = self.from {
+                // If we have stored precalls, derive the highest nonce from them.
+                if let Some(max_stored) = storage
+                    .read_precalls_for_eoa(self.chain_id, eoa)
+                    .await?
+                    .iter()
+                    .map(|precall| precall.nonce)
+                    .filter(|nonce| (*nonce >> 64) == seq_key)
+                    .max()
+                {
+                    Ok(max_stored + uint!(1_U256))
+                } else {
+                    // otherwise, query for the next account nonce onchain
+                    let mut account = Account::new(eoa, &provider);
+                    if let Some(stored) = maybe_stored {
+                        account = account.with_overrides(stored.state_overrides()?);
+                    }
+                    Ok(account.get_nonce_for_sequence(U192::from(seq_key)).await?)
+                }
+            } else {
+                Ok(U256::ZERO)
+            }
         } else if let Some(precall) = self
             .capabilities
             .pre_calls
@@ -329,7 +373,7 @@ impl PrepareCallsParameters {
 }
 
 /// Capabilities for `wallet_prepareCalls` request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareCallsCapabilities {
     /// Keys to authorize on the account.
@@ -478,6 +522,14 @@ impl PrepareCallsContext {
         }
     }
 
+    /// Returns precall immutable reference if it exists.
+    pub fn precall(&self) -> Option<&PreCallContext> {
+        match self {
+            PrepareCallsContext::Quote(_) => None,
+            PrepareCallsContext::PreCall(precall) => Some(precall),
+        }
+    }
+
     /// Returns quotes mutable reference if it exists.
     pub fn quote_mut(&mut self) -> Option<&mut SignedQuotes> {
         match self {
@@ -510,7 +562,7 @@ impl PrepareCallsContext {
     pub async fn compute_signing_digest(
         &self,
         maybe_stored: Option<&CreatableAccount>,
-        latest_orchestrator: Address,
+        contracts: &VersionedContracts,
         provider: &DynProvider,
     ) -> Result<(B256, TypedData), RelayError> {
         match self {
@@ -519,28 +571,29 @@ impl PrepareCallsContext {
                 if let Some(root) = context.ty().multi_chain_root {
                     Ok((root, output_quote.intent.typed_data(None)))
                 } else {
-                    output_quote
-                        .intent
-                        .compute_eip712_data(output_quote.orchestrator, provider)
-                        .await
+                    output_quote.intent.compute_eip712_data(
+                        contracts.get_versioned_orchestrator(output_quote.orchestrator)?,
+                        output_quote.chain_id,
+                    )
                 }
             }
             PrepareCallsContext::PreCall(pre_call) => {
-                let orchestrator_address = if pre_call.eoa == Address::ZERO {
+                let orchestrator = if pre_call.eoa == Address::ZERO {
                     // EOA is unknown so we assume that latest orchestrator should be used
-                    latest_orchestrator
+                    &contracts.orchestrator
                 } else {
                     // fetch orchestrator address from the account
-                    Account::new(pre_call.eoa, provider)
+                    let orchestrator = Account::new(pre_call.eoa, provider)
                         .with_delegation_override_opt(
                             maybe_stored.map(|acc| &acc.signed_authorization.address),
                         )
                         .get_orchestrator()
                         .await
-                        .map_err(RelayError::from)?
+                        .map_err(RelayError::from)?;
+                    contracts.get_versioned_orchestrator(orchestrator)?
                 };
 
-                pre_call.compute_eip712_data(orchestrator_address, provider).await
+                pre_call.compute_eip712_data(orchestrator, pre_call.chain_id)
             }
         }
     }
@@ -805,6 +858,7 @@ mod tests {
                         max_priority_fee_per_gas: 0,
                     },
                     authorization_address: Some(Address::ZERO),
+                    additional_authorization: None,
                     orchestrator: Address::ZERO,
                     fee_token_deficit: U256::ZERO,
                     asset_deficits: AssetDeficits(vec![AssetDeficit {

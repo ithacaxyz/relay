@@ -4,7 +4,7 @@ use crate::{
     types::{
         CallPermission,
         IthacaAccount::{setCanExecuteCall, setSpendLimitCall},
-        KeyType, Orchestrator, Signature, SignedCall,
+        KeyType, Signature, SignedCall, VersionedContract,
         rpc::{
             AddressOrNative, AuthorizeKey, AuthorizeKeyResponse, BalanceOverrides, CallKey,
             Permission, SpendPermission,
@@ -15,13 +15,11 @@ use alloy::{
     dyn_abi::TypedData,
     eips::eip7702::SignedAuthorization,
     primitives::{Address, B256, Bytes, ChainId, U256, aliases::U192, map::HashMap},
-    providers::DynProvider,
     sol,
     sol_types::{SolCall, SolStruct, SolValue},
     uint,
 };
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 
 mod r#enum;
 mod v04;
@@ -79,6 +77,12 @@ pub struct FeeEstimationContext {
     pub fee_token: Address,
     /// Optional stored authorization for EIP-7702 delegation.
     pub stored_authorization: Option<SignedAuthorization>,
+    /// Additional authorization made in the intent - this is used when we want to auto delegate
+    /// the paymaster.
+    ///
+    /// The tuple contains the account to be delegated and its authorization. This should be used
+    /// to state override the account code.
+    pub additional_authorization: Option<(Address, SignedAuthorization)>,
     /// The key that will sign the intent.
     pub key: IntentKey<Key>,
     /// The kind of intent being estimated.
@@ -207,11 +211,9 @@ pub trait SignedCalls {
     /// Computes the EIP-712 digest that the user must sign.
     fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> impl Future<Output = Result<(B256, TypedData), RelayError>> + Send
-    where
-        Self: Sync;
+        orchestrator: &VersionedContract,
+        chain_id: ChainId,
+    ) -> Result<(B256, TypedData), RelayError>;
 }
 
 impl SignedCalls for SignedCall {
@@ -223,17 +225,11 @@ impl SignedCalls for SignedCall {
         self.nonce
     }
 
-    async fn compute_eip712_data(
+    fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> Result<(B256, TypedData), RelayError>
-    where
-        Self: Sync,
-    {
-        // Create the orchestrator instance with the same overrides.
-        let orchestrator = Orchestrator::new(orchestrator_address, provider);
-
+        orchestrator: &VersionedContract,
+        chain_id: ChainId,
+    ) -> Result<(B256, TypedData), RelayError> {
         // Prepare the EIP-712 payload and domain
         let payload = eip712::SignedCall {
             multichain: self.is_multichain(),
@@ -241,7 +237,7 @@ impl SignedCalls for SignedCall {
             calls: self.calls()?,
             nonce: self.nonce,
         };
-        let domain = orchestrator.eip712_domain(self.is_multichain()).await?;
+        let domain = orchestrator.eip712_domain((!self.is_multichain()).then_some(chain_id));
 
         // Return the computed signing hash (digest).
         let digest = payload.eip712_signing_hash(&domain);

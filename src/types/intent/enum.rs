@@ -2,12 +2,11 @@ use super::{IntentV04, IntentV05, SignedCall, SignedCalls, Transfer};
 use crate::{
     error::{IntentError, MerkleError, RelayError},
     signers::Eip712PayLoadSigner,
-    types::{IntentKey, IntentKind, Key, LazyMerkleTree, OrchestratorContract},
+    types::{IntentKey, IntentKind, Key, LazyMerkleTree, OrchestratorContract, VersionedContract},
 };
 use alloy::{
     dyn_abi::TypedData,
-    primitives::{Address, B256, Bytes, U256},
-    providers::DynProvider,
+    primitives::{Address, B256, Bytes, ChainId, U256},
     sol_types::{SolCall, SolValue},
 };
 use serde::{Deserialize, Serialize};
@@ -560,8 +559,8 @@ impl Intent {
     pub async fn with_mock_merkle_signature<S: Eip712PayLoadSigner>(
         mut self,
         intent_kind: &IntentKind,
-        orchestrator: Address,
-        provider: &DynProvider,
+        orchestrator: &VersionedContract,
+        chain_id: ChainId,
         signer: &S,
         intent_key: &IntentKey<Key>,
         prehash: bool,
@@ -570,8 +569,7 @@ impl Intent {
 
         // Calculate the leaf hash for the current intent
         let (current_leaf_hash, _) = self
-            .compute_eip712_data(orchestrator, provider)
-            .await
+            .compute_eip712_data(orchestrator, chain_id)
             .map_err(|e| IntentError::from(MerkleError::LeafHashError(e.to_string())))?;
 
         // Create mock leaves for the merkle tree
@@ -621,17 +619,14 @@ impl SignedCalls for Intent {
         }
     }
 
-    async fn compute_eip712_data(
+    fn compute_eip712_data(
         &self,
-        orchestrator_address: Address,
-        provider: &DynProvider,
-    ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError>
-    where
-        Self: Sync,
-    {
+        orchestrator: &VersionedContract,
+        chain_id: ChainId,
+    ) -> Result<(B256, alloy::dyn_abi::TypedData), RelayError> {
         match self {
-            Intent::V05(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
-            Intent::V04(intent) => intent.compute_eip712_data(orchestrator_address, provider).await,
+            Intent::V05(intent) => intent.compute_eip712_data(orchestrator, chain_id),
+            Intent::V04(intent) => intent.compute_eip712_data(orchestrator, chain_id),
         }
     }
 

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{AuthError, RelayError},
-    types::IERC20,
+    types::{IERC20, KeyHash},
 };
 
 use super::{
@@ -150,9 +150,34 @@ impl Call {
             data: IERC20::transferFromCall { from, to, amount }.abi_encode().into(),
         }
     }
+
+    /// Returns a [`KeyHash`] if the call matches any of the precall key operations.
+    pub fn decode_precall_key_hash(&self) -> Option<KeyHash> {
+        if let Ok(authorizeCall { key }) = authorizeCall::abi_decode(&self.data) {
+            Some(key.key_hash())
+        } else if let Ok(revokeCall { keyHash }) = revokeCall::abi_decode(&self.data) {
+            Some(keyHash)
+        } else if let Ok(setCanExecuteCall { keyHash, .. }) =
+            setCanExecuteCall::abi_decode(&self.data)
+        {
+            Some(keyHash)
+        } else if let Ok(setSpendLimitCall { keyHash, .. }) =
+            setSpendLimitCall::abi_decode(&self.data)
+        {
+            Some(keyHash)
+        } else if let Ok(removeSpendLimitCall { keyHash, .. }) =
+            removeSpendLimitCall::abi_decode(&self.data)
+        {
+            Some(keyHash)
+        } else {
+            None
+        }
+    }
 }
 
 /// All selectors allowed in precalls.
+///
+/// When adding new entries, make sure to update [`Call::decode_precall_key_hash`], if applicable.
 const WHITELISTED_SELECTORS: [[u8; 4]; 6] = [
     authorizeCall::SELECTOR,
     revokeCall::SELECTOR,

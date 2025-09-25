@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0) \n             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, created_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d4d1b14025838832c2ab68368f4789d503e74d6b99c2dc80d119ba5c5120ab1c"
+}

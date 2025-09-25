@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "24.0.8"
+version = "24.1.0"
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
@@ -68,8 +68,9 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
+urlencoding = "2.1"
 schnellru = "0.2.4"
-semver = { version = "1.0.26", features = ["serde"] }
+semver = { version = "1.0.27", features = ["serde"] }
 serde = { version = "1", features = ["rc"] }
 serde_json = "1"
 serde_repr = "0.1"
