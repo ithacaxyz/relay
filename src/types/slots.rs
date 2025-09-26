@@ -26,7 +26,7 @@ pub struct Erc20Slots {
     /// Storage layout for each token address.
     layouts: Arc<DashMap<Address, BalanceLayout>>,
     /// Cache for unknown layout slots: (token, account) -> slot
-    unknown_slots: Arc<DashMap<(Address, Address), B256>>,
+    account_slots: Arc<DashMap<(Address, Address), B256>>,
 }
 
 impl Erc20Slots {
@@ -36,7 +36,7 @@ impl Erc20Slots {
         assets: &Assets,
     ) -> Result<Self, RelayError> {
         let instance =
-            Self { layouts: Arc::new(DashMap::new()), unknown_slots: Arc::new(DashMap::new()) };
+            Self { layouts: Arc::new(DashMap::new()), account_slots: Arc::new(DashMap::new()) };
 
         // This will populate the cache with discovered layouts
         let test_account = Address::random();
@@ -50,7 +50,14 @@ impl Erc20Slots {
         Ok(instance)
     }
 
-    /// Get the storage slot for an ERC20 balance, discovering the layout if needed.
+    /// Get the storage slot for an ERC20 balance.
+    ///
+    /// 1. If layout cached:
+    ///    - Standard or Solady → compute slot
+    ///    - Unknown → check account_slots cache or use StorageSlotFinder (and cache it).
+    /// 2. If layout not cached:
+    ///    - Attempt to discover layout via opcode trace
+    ///    - Go to 1.
     pub async fn compute_balance_slot<P: Provider + DebugApi>(
         &self,
         provider: &P,
@@ -63,7 +70,7 @@ impl Erc20Slots {
                 return Ok(Some(slot));
             }
             // Unknown layout - check cache or discover slot
-            if let Some(slot) = self.unknown_slots.get(&(token, account)) {
+            if let Some(slot) = self.account_slots.get(&(token, account)) {
                 return Ok(Some(*slot));
             }
             return self.discover_unknown_slot(provider, token, account).await;
@@ -118,7 +125,7 @@ impl Erc20Slots {
             return Ok(None);
         };
 
-        self.unknown_slots.insert((token, account), slot);
+        self.account_slots.insert((token, account), slot);
         Ok(Some(slot))
     }
 
