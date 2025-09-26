@@ -98,6 +98,11 @@ impl RelayError {
     pub fn internal(err: impl Error + Send + Sync + 'static) -> Self {
         Self::InternalError(err.into())
     }
+
+    /// Creates an [`RelayError::InternalError`] from a message.
+    pub fn internal_msg(msg: impl Into<String>) -> Self {
+        Self::InternalError(eyre::eyre!(msg.into()))
+    }
 }
 
 impl From<reqwest::Error> for RelayError {

@@ -147,7 +147,7 @@ impl InteropBundle {
         settlement_id: B256,
     ) -> Result<EscrowInfo, SettlementError> {
         let escrow_details: Vec<EscrowDetails> =
-            self.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).collect();
+            self.src_txs.iter().filter_map(|tx| tx.extract_escrow_details()).flatten().collect();
 
         // Filter escrows for this specific settlement and chain
         let escrow_ids: Vec<B256> = escrow_details
