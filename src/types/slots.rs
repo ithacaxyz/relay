@@ -6,11 +6,11 @@ use crate::{
 };
 use alloy::{
     contract::StorageSlotFinder,
-    primitives::{Address, B256, U256, aliases::B96, keccak256, map::B256HashMap},
+    primitives::{Address, B256, U256, aliases::B96, keccak256},
     providers::{Provider, ext::DebugApi},
     rpc::types::{
         BlockId, TransactionRequest,
-        state::{AccountOverride, StateOverride},
+        state::{AccountOverride, StateOverridesBuilder},
         trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
     },
     sol_types::{SolCall, SolValue},
@@ -297,14 +297,6 @@ impl BalanceLayout {
         let eoa = Address::random();
         let test_balance = U256::from(123456789u64);
         let Some(slot) = self.compute_slot(eoa) else { return Ok(Self::Unknown) };
-        let mut storage_overrides = B256HashMap::default();
-        let mut state_override = StateOverride::default();
-
-        storage_overrides.insert(slot, B256::from(test_balance));
-        state_override.insert(
-            token_address,
-            AccountOverride { state_diff: Some(storage_overrides), ..Default::default() },
-        );
 
         let result = provider
             .call(
@@ -312,7 +304,15 @@ impl BalanceLayout {
                     .to(token_address)
                     .input(balanceOfCall { eoa }.abi_encode().into()),
             )
-            .overrides(state_override)
+            .overrides(
+                StateOverridesBuilder::default()
+                    .append(
+                        token_address,
+                        AccountOverride::default()
+                            .with_state_diff([(slot, B256::from(test_balance))]),
+                    )
+                    .build(),
+            )
             .await?;
 
         let returned_balance = U256::from_be_slice(&result);
@@ -336,10 +336,8 @@ mod tests {
     use super::*;
     use crate::types::{AssetDescriptor, AssetUid};
     use alloy::{
-        contract::StorageSlotFinder,
-        primitives::{address, map::B256HashMap},
-        providers::ProviderBuilder,
-        rpc::types::state::{AccountOverride, StateOverride},
+        contract::StorageSlotFinder, primitives::address, providers::ProviderBuilder,
+        rpc::types::state::AccountOverride,
     };
     use std::collections::HashMap;
 
@@ -439,21 +437,20 @@ mod tests {
             let decimals = if name == "USDT" || name == "USDC" { 6 } else { 18 };
             let balance_value = U256::from(1337u64) * U256::from(10u64).pow(U256::from(decimals));
 
-            let mut storage_overrides = B256HashMap::default();
-            storage_overrides.insert(slot, B256::from(balance_value));
-
-            let mut state_override = StateOverride::default();
-            state_override.insert(
-                token_address,
-                AccountOverride { state_diff: Some(storage_overrides), ..Default::default() },
-            );
-
             let call_data = balanceOfCall { eoa: test_account }.abi_encode();
             let tx = TransactionRequest::default().to(token_address).input(call_data.into());
 
             let result = provider
                 .call(tx)
-                .overrides(state_override)
+                .overrides(
+                    StateOverridesBuilder::default()
+                        .append(
+                            token_address,
+                            AccountOverride::default()
+                                .with_state_diff([(slot, B256::from(balance_value))]),
+                        )
+                        .build(),
+                )
                 .await
                 .expect("Call should succeed with state override");
 
