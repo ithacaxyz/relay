@@ -29,6 +29,9 @@ pub use intent::*;
 mod intents;
 pub use intents::*;
 
+mod slots;
+pub use slots::*;
+
 mod interop;
 pub use interop::*;
 

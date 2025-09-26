@@ -5,7 +5,7 @@ use crate::{
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{ContractErrors::ContractErrorsErrors, IntentError, RelayError},
     types::{
-        Asset, AssetType, IERC20, Intent, generate_cast_call_command,
+        Asset, AssetType, Erc20Slots, IERC20, Intent, generate_cast_call_command,
         rpc::{BalanceOverride, BalanceOverrides, RequiredAsset},
     },
 };
@@ -140,6 +140,7 @@ impl<P: Provider> SimulatorContract<P> {
         intent: &Intent,
         gas_validation_offset: U256,
         orchestrator_version: Option<&semver::Version>,
+        erc20_slots: &Erc20Slots,
     ) -> Result<SimulationExecutionResult, RelayError> {
         // whether orchestrator is v4
         let is_v4 =
@@ -195,7 +196,7 @@ impl<P: Provider> SimulatorContract<P> {
         let result = if self.sim_mode.is_simulate_v1() && !self.calculate_asset_deficits {
             self.with_simulate_v1(&tx_request).await
         } else {
-            self.with_debug_trace(&tx_request, intent).await
+            self.with_debug_trace(&tx_request, intent, erc20_slots).await
         };
 
         // log the cast call command for potential debugging
@@ -248,6 +249,7 @@ impl<P: Provider> SimulatorContract<P> {
         &self,
         tx_request: &TransactionRequest,
         intent: &Intent,
+        erc20_slots: &Erc20Slots,
     ) -> Result<SimulationExecutionResult, RelayError> {
         let mut overrides = self.overrides.clone();
         let mut asset_deficits: HashMap<Address, U256> = HashMap::new();
@@ -331,7 +333,7 @@ impl<P: Provider> SimulatorContract<P> {
 
             overrides.extend(
                 BalanceOverrides::new(HashMap::from([(asset.address, balance_override)]))
-                    .into_state_overrides(self.simulator.provider())
+                    .into_state_overrides(self.simulator.provider(), erc20_slots)
                     .await?,
             );
 

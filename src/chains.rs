@@ -34,7 +34,7 @@ use crate::{
         RETRY_LAYER, SequencerLayer, create_transport,
         delegate::{EthSendRawDelegateLayer, MulticastService},
     },
-    types::{AssetDescriptor, AssetUid, Assets, FeeEstimationContext, PartialIntent},
+    types::{AssetDescriptor, AssetUid, Assets, Erc20Slots, FeeEstimationContext, PartialIntent},
 };
 
 /// A single supported chain.
@@ -58,6 +58,8 @@ pub struct Chain {
     signers: Vec<DynSigner>,
     /// The settler address for this chain (if any).
     settler_address: Option<Address>,
+    /// ERC20 balance storage slots
+    erc20_slots: Erc20Slots,
 }
 
 impl Chain {
@@ -126,6 +128,11 @@ impl Chain {
         self.settler_address
     }
 
+    /// Returns the ERC20 slots for this chain.
+    pub fn erc20_slots(&self) -> &Erc20Slots {
+        &self.erc20_slots
+    }
+
     /// Builds state overrides for intent simulation.
     ///
     /// This function constructs the necessary state overrides for simulating an intent,
@@ -178,7 +185,7 @@ impl Chain {
                     .modify_token(context.fee_token, |balance| {
                         balance.add_balance(intent.eoa, new_fee_token_balance);
                     })
-                    .into_state_overrides(self.provider())
+                    .into_state_overrides(self.provider(), self.erc20_slots())
                     .await?,
             );
         }
@@ -238,6 +245,7 @@ impl Chains {
                     desc.eth_send_raw_delegates.clone(),
                 )
                 .await?;
+                let erc20_slots = Erc20Slots::new(provider.clone(), &desc.assets).await?;
                 let (service, handle) = TransactionService::new(
                     provider.clone(),
                     desc.flashblocks.as_ref(),
@@ -262,6 +270,7 @@ impl Chains {
                         fees: desc.fees.clone(),
                         signers: chain_signers,
                         settler_address: desc.settler_address,
+                        erc20_slots,
                     },
                 ))
             }))
