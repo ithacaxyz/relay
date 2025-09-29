@@ -7,6 +7,7 @@ mod cli;
 mod delegation;
 mod errors;
 mod faucet;
+mod fee_payer;
 mod fees;
 mod intents_merkle;
 mod keys;
