@@ -6,14 +6,14 @@ use crate::{
 };
 use alloy::{
     contract::StorageSlotFinder,
-    primitives::{Address, B256, U256, aliases::B96, keccak256},
+    primitives::{Address, B256, U256, keccak256},
     providers::{Provider, ext::DebugApi},
     rpc::types::{
         BlockId, TransactionRequest,
         state::{AccountOverride, StateOverridesBuilder},
         trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
     },
-    sol_types::{SolCall, SolValue},
+    sol_types::SolCall,
 };
 use dashmap::DashMap;
 use futures::future::join_all;
@@ -143,11 +143,8 @@ impl Erc20Slots {
 /// Storage layout schemes for ERC20 balance mappings.
 #[derive(Debug, Clone)]
 enum BalanceLayout {
-    /// Standard ERC20: keccak256(address || slot)
-    Standard(U256),
-    /// Solady ERC20: keccak256(packed(address, seed))
-    /// Uses 32 bytes: [20 bytes address][12 bytes seed]
-    Solady(B96),
+    /// Known layout: keccak256(prefix || address || suffix)
+    Known { prefix: Vec<u8>, suffix: Vec<u8> },
     /// Unknown layout - must use StorageSlotFinder for each account
     Unknown,
 }
@@ -239,26 +236,23 @@ impl BalanceLayout {
                             let slot_loaded = B256::from(stack[stack.len() - 1]);
 
                             if hash_result == slot_loaded {
-                                if input.len() == 64 {
-                                    // Standard layout: extract offset from second 32 bytes
-                                    let offset = U256::from_be_slice(&input[32..64]);
+                                // Find where the address appears in the input
+                                let address_bytes = eoa.as_slice();
+
+                                if let Some(pos) =
+                                    input.windows(20).position(|w| w == address_bytes)
+                                {
+                                    let prefix = input[..pos].to_vec();
+                                    let suffix = input[pos + 20..].to_vec();
+
                                     debug!(
                                         token = %token_address,
-                                        offset = %offset,
-                                        "Found mapping offset via opcode trace (standard)"
+                                        prefix = %alloy::hex::encode(&prefix),
+                                        suffix = %alloy::hex::encode(&suffix),
+                                        "Found mapping layout via opcode trace"
                                     );
-                                    return Self::Standard(offset)
-                                        .ensure(provider, token_address)
-                                        .await;
-                                } else if input.len() == 32 {
-                                    // Solady layout - extract seed from last 12 bytes
-                                    let seed = B96::from_slice(&input[20..32]);
-                                    debug!(
-                                        token = %token_address,
-                                        hex = %alloy::hex::encode(&input[20..32]),
-                                        "Found mapping seed via opcode trace (Solady)"
-                                    );
-                                    return Self::Solady(seed)
+
+                                    return Self::Known { prefix, suffix }
                                         .ensure(provider, token_address)
                                         .await;
                                 }
@@ -278,15 +272,11 @@ impl BalanceLayout {
     /// For unknown layouts, returns None.
     fn compute_slot(&self, account: Address) -> Option<B256> {
         match self {
-            BalanceLayout::Standard(offset) => {
-                // Standard: keccak256(address || offset)
-                Some(keccak256([account.abi_encode(), offset.abi_encode()].concat()))
-            }
-            BalanceLayout::Solady(seed) => {
-                // Solady layout: [20 bytes address][12 bytes seed]
-                let mut data = Vec::with_capacity(32);
+            BalanceLayout::Known { prefix, suffix } => {
+                let mut data = Vec::new();
+                data.extend_from_slice(prefix);
                 data.extend_from_slice(account.as_slice());
-                data.extend_from_slice(seed.as_slice());
+                data.extend_from_slice(suffix);
                 Some(keccak256(&data))
             }
             BalanceLayout::Unknown => None,
