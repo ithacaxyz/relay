@@ -273,7 +273,7 @@ impl BalanceLayout {
     fn compute_slot(&self, account: Address) -> Option<B256> {
         match self {
             BalanceLayout::Known { prefix, suffix } => {
-                let mut data = Vec::new();
+                let mut data = Vec::with_capacity(prefix.len() + 20 + suffix.len());
                 data.extend_from_slice(prefix);
                 data.extend_from_slice(account.as_slice());
                 data.extend_from_slice(suffix);
