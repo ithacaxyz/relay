@@ -6,11 +6,10 @@ use crate::{
 };
 use alloy::{
     contract::StorageSlotFinder,
-    primitives::{Address, B256, U256, keccak256},
+    primitives::{Address, B256, keccak256},
     providers::{Provider, ext::DebugApi},
     rpc::types::{
         BlockId, TransactionRequest,
-        state::{AccountOverride, StateOverridesBuilder},
         trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
     },
     sol_types::SolCall,
@@ -18,7 +17,7 @@ use alloy::{
 use dashmap::DashMap;
 use futures::future::join_all;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// ERC20 balance storage slot tracker for a chain.
 #[derive(Debug, Clone)]
@@ -150,12 +149,26 @@ enum BalanceLayout {
 }
 
 impl BalanceLayout {
-    /// Discover the storage layout for an ERC20 token using opcode trace analysis.
+    /// Discover the storage layout for an ERC20 token.
+    ///
+    /// First uses StorageSlotFinder to find the actual slot, then traces to find the layout
+    /// pattern.
     async fn discover<P: Provider + DebugApi>(
         provider: &P,
         token_address: Address,
     ) -> Result<Self, RelayError> {
         let eoa = Address::random();
+
+        // Use StorageSlotFinder to find the actual storage slot
+        let Some(actual_slot) = StorageSlotFinder::balance_of(provider, token_address, eoa)
+            .with_request(TransactionRequest::default().gas_limit(100_000))
+            .find_slot()
+            .await?
+        else {
+            return Ok(Self::Unknown);
+        };
+
+        // Now trace to find the KECCAK256 operation and extract the layout
         let tx = TransactionRequest::default()
             .to(token_address)
             .input(balanceOfCall { eoa }.abi_encode().into())
@@ -174,97 +187,65 @@ impl BalanceLayout {
             ..Default::default()
         };
 
-        debug!(token = %token_address, "Tracing balanceOf call");
+        debug!(token = %token_address, slot = %actual_slot, "Tracing to find layout pattern");
+
         if let GethTrace::Default(frame) =
             provider.debug_trace_call(tx.clone(), BlockId::latest(), trace_options).await?
         {
-            let mut found_keccak: Option<(B256, Vec<u8>)> = None;
             let struct_logs = frame.struct_logs;
 
             for (i, log) in struct_logs.iter().enumerate() {
-                match log.op.as_ref() {
-                    "KECCAK256" => {
-                        if let Some(stack) = &log.stack
-                            && let Some(memory) = &log.memory
-                            && stack.len() >= 2
-                        {
-                            let offset = stack[stack.len() - 1].to::<usize>();
-                            let length = stack[stack.len() - 2].to::<usize>();
+                let Some(stack) = &log.stack else { continue };
+                let Some(memory) = &log.memory else { continue };
+                let Some(next_log) = struct_logs.get(i + 1) else { continue };
+                let Some(next_stack) = &next_log.stack else { continue };
 
-                            // Convert memory from hex strings to bytes
-                            let mut mem_bytes = Vec::new();
-                            for word in memory {
-                                if let Ok(bytes) = alloy::hex::decode(word) {
-                                    mem_bytes.extend_from_slice(&bytes);
-                                }
-                            }
+                if log.op.as_ref() != "KECCAK256"
+                    || stack.len() < 2
+                    || next_stack.is_empty()
+                    || actual_slot != B256::from(next_stack[next_stack.len() - 1])
+                {
+                    continue;
+                }
 
-                            if offset + length <= mem_bytes.len() {
-                                let input = &mem_bytes[offset..offset + length];
+                // Extract the input that was hashed
+                let offset = stack[stack.len() - 1].to::<usize>();
+                let length = stack[stack.len() - 2].to::<usize>();
 
-                                // Check if this keccak256 is for our test address
-                                let matches_eoa = if input.len() == 64 {
-                                    // Standard layout: check address in first 32 bytes
-                                    let found_address = Address::from_slice(&input[12..32]);
-                                    found_address == eoa
-                                } else if input.len() == 32 {
-                                    // Solady layout: check address in first 20 bytes
-                                    let found_address = Address::from_slice(&input[0..20]);
-                                    found_address == eoa
-                                } else {
-                                    false
-                                };
-
-                                if matches_eoa
-                                    && i + 1 < struct_logs.len()
-                                    && let Some(next_stack) = &struct_logs[i + 1].stack
-                                    && !next_stack.is_empty()
-                                {
-                                    found_keccak = Some((
-                                        B256::from(next_stack[next_stack.len() - 1]),
-                                        input.to_vec(),
-                                    ));
-                                }
-                            }
-                        }
+                // Convert memory from hex strings to bytes
+                let mut mem_bytes = Vec::new();
+                for word in memory {
+                    if let Ok(bytes) = alloy::hex::decode(word) {
+                        mem_bytes.extend_from_slice(&bytes);
                     }
-                    "SLOAD" => {
-                        if let Some((hash_result, ref input)) = found_keccak
-                            && let Some(stack) = &log.stack
-                            && !stack.is_empty()
-                        {
-                            let slot_loaded = B256::from(stack[stack.len() - 1]);
+                }
 
-                            if hash_result == slot_loaded {
-                                // Find where the address appears in the input
-                                let address_bytes = eoa.as_slice();
+                if offset + length > mem_bytes.len() {
+                    continue;
+                }
 
-                                if let Some(pos) =
-                                    input.windows(20).position(|w| w == address_bytes)
-                                {
-                                    let prefix = input[..pos].to_vec();
-                                    let suffix = input[pos + 20..].to_vec();
+                let input = &mem_bytes[offset..offset + length];
 
-                                    debug!(
-                                        token = %token_address,
-                                        prefix = %alloy::hex::encode(&prefix),
-                                        suffix = %alloy::hex::encode(&suffix),
-                                        "Found mapping layout via opcode trace"
-                                    );
+                // Find where the address appears in the input
+                let address_bytes = eoa.as_slice();
 
-                                    return Self::Known { prefix, suffix }
-                                        .ensure(provider, token_address)
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                    _ => {} // Ignore other opcodes
+                if let Some(pos) = input.windows(20).position(|w| w == address_bytes) {
+                    let prefix = input[..pos].to_vec();
+                    let suffix = input[pos + 20..].to_vec();
+
+                    debug!(
+                        token = %token_address,
+                        prefix = %alloy::hex::encode(&prefix),
+                        suffix = %alloy::hex::encode(&suffix),
+                        "Found mapping layout pattern"
+                    );
+
+                    return Ok(Self::Known { prefix, suffix });
                 }
             }
         }
 
-        debug!(token = %token_address, "Could not find mapping offset in opcode trace");
+        debug!(token = %token_address, "Could not find mapping pattern in trace");
         Ok(Self::Unknown)
     }
 
@@ -282,50 +263,6 @@ impl BalanceLayout {
             BalanceLayout::Unknown => None,
         }
     }
-
-    /// Ensures a discovered layout is legitimate by setting a test balance and checking it.
-    ///
-    /// Returns the layout if it succeeds, BalanceLayout::Unknown otherwise.
-    async fn ensure<P: Provider>(
-        self,
-        provider: &P,
-        token_address: Address,
-    ) -> Result<BalanceLayout, RelayError> {
-        let eoa = Address::random();
-        let test_balance = U256::from(123456789u64);
-        let Some(slot) = self.compute_slot(eoa) else { return Ok(Self::Unknown) };
-
-        let result = provider
-            .call(
-                TransactionRequest::default()
-                    .to(token_address)
-                    .input(balanceOfCall { eoa }.abi_encode().into()),
-            )
-            .overrides(
-                StateOverridesBuilder::default()
-                    .append(
-                        token_address,
-                        AccountOverride::default()
-                            .with_state_diff([(slot, B256::from(test_balance))]),
-                    )
-                    .build(),
-            )
-            .await?;
-
-        let returned_balance = U256::from_be_slice(&result);
-        if returned_balance != test_balance {
-            warn!(
-                token = %token_address,
-                expected = %test_balance,
-                got = %returned_balance,
-                "Layout verification failed - balance mismatch"
-            );
-            return Ok(Self::Unknown);
-        }
-
-        debug!(token = %token_address, "Layout verification successful");
-        Ok(self)
-    }
 }
 
 #[cfg(test)]
@@ -333,8 +270,10 @@ mod tests {
     use super::*;
     use crate::types::{AssetDescriptor, AssetUid};
     use alloy::{
-        contract::StorageSlotFinder, primitives::address, providers::ProviderBuilder,
-        rpc::types::state::AccountOverride,
+        contract::StorageSlotFinder,
+        primitives::{U256, address},
+        providers::ProviderBuilder,
+        rpc::types::state::{AccountOverride, StateOverridesBuilder},
     };
     use std::collections::HashMap;
 
