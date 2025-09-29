@@ -18,8 +18,8 @@ use relay::{
     types::{
         Call, IERC20, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters,
-            SendPreparedCallsParameters, SendPreparedCallsCapabilities,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, SendPreparedCallsCapabilities,
+            SendPreparedCallsParameters,
         },
     },
 };
@@ -46,7 +46,8 @@ async fn test_fee_payer_delegation() -> Result<()> {
     let recipient = Address::random();
     let transfer_amount = U256::from(100);
 
-    let response = env.relay_endpoint
+    let response = env
+        .relay_endpoint
         .prepare_calls(PrepareCallsParameters {
             from: Some(env.eoa.address()),
             calls: vec![Call::transfer(env.erc20, recipient, transfer_amount)],
@@ -54,7 +55,7 @@ async fn test_fee_payer_delegation() -> Result<()> {
             capabilities: PrepareCallsCapabilities {
                 meta: Meta {
                     fee_payer: Some(fee_payer.address),
-                    fee_token: Some(env.erc20),  // Use same ERC20 for fees
+                    fee_token: Some(env.erc20), // Use same ERC20 for fees
                     nonce: None,
                 },
                 authorize_keys: vec![],
@@ -83,7 +84,8 @@ async fn test_fee_payer_delegation() -> Result<()> {
     .abi_encode_packed()
     .into();
 
-    let send_response = env.relay_endpoint
+    let send_response = env
+        .relay_endpoint
         .send_prepared_calls(SendPreparedCallsParameters {
             context: response.context,
             signature,
@@ -97,7 +99,10 @@ async fn test_fee_payer_delegation() -> Result<()> {
     assert!(status.status.is_confirmed());
 
     // Verify balances: main account only transferred tokens (no fees), fee payer paid fees
-    assert_eq!(erc20.balanceOf(env.eoa.address()).call().await?, initial_main_balance - transfer_amount);
+    assert_eq!(
+        erc20.balanceOf(env.eoa.address()).call().await?,
+        initial_main_balance - transfer_amount
+    );
     assert_eq!(erc20.balanceOf(recipient).call().await?, transfer_amount);
     assert!(erc20.balanceOf(fee_payer.address).call().await? < initial_fee_payer_balance);
 
