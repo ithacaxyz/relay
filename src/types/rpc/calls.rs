@@ -408,6 +408,9 @@ pub struct PrepareCallsResponseCapabilities {
     /// Keys that were revoked from the account.
     #[serde(default)]
     pub revoke_keys: Vec<RevokeKey>,
+    /// Optional digest for the fee_payer transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_payer_digest: Option<B256>,
     /// The [`AssetDiffResponse`] of the prepared call bundle, flattened.
     #[serde(flatten)]
     pub asset_diff: AssetDiffResponse,
@@ -909,6 +912,7 @@ mod tests {
                         },
                     }],
                     revoke_keys: vec![RevokeKey { hash: B256::ZERO }],
+                    fee_payer_digest: None,
                     asset_diff: AssetDiffResponse {
                         fee_totals: HashMap::from_iter([
                             (0, asset_price_usd.clone()),

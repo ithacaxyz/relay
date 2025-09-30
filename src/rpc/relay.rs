@@ -358,8 +358,9 @@ impl Relay {
         let mock_from = Address::random();
 
         // Prepare futures for concurrent execution
-        let user_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
-            intent.eoa,
+        // Fetch balance for fee_payer (already coalesced to EOA if not specified)
+        let fee_payer_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
+            context.fee_payer,
             chain_id,
             context.fee_token,
         ));
@@ -376,7 +377,7 @@ impl Relay {
 
         // Execute all futures in parallel and handle errors
         let (assets_response, fee_history, eth_price) = try_join!(
-            async { user_balance_fut.await.map_err(RelayError::internal) },
+            async { fee_payer_balance_fut.await.map_err(RelayError::internal) },
             async { fee_history_fut.await.map_err(RelayError::from) },
             async { Ok(native_price_fut.await) }
         )?;
@@ -600,8 +601,9 @@ impl Relay {
             fee_token_balance.saturating_add(fee_token_funding).saturating_sub(fee_token_spending),
         );
 
-        // Record fee token deficit in asset deficits
-        if !fee_token_deficit.is_zero() {
+        // Record fee token deficit in asset deficits only if no fee_payer was specified
+        // If there's a fee_payer, the deficit is their responsibility, not the user's
+        if !fee_token_deficit.is_zero() && intent_to_sign.payer().is_zero() {
             if let Some(existing) = asset_deficits
                 .0
                 .iter_mut()
@@ -681,8 +683,8 @@ impl Relay {
 
         let bundle_id = BundleId(*quotes.hash());
 
-        // single chain workflow
-        if quotes.ty().multi_chain_root.is_none() {
+        // Use multichain workflow if there's a merkle root OR a fee_payer quote
+        if quotes.ty().multi_chain_root.is_none() && quotes.ty().fee_payer.is_none() {
             self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
         } else {
             self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
@@ -1037,6 +1039,7 @@ impl Relay {
             false,
             FeeEstimationContext {
                 fee_token: Address::ZERO,
+                fee_payer: account.address,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
                 additional_authorization: None,
@@ -1187,6 +1190,7 @@ impl Relay {
                     // fee_token should have been set in the beginning of prepare_calls_inner if it
                     // was not provided by the user
                     fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
+                    fee_payer: request.capabilities.meta.fee_payer.unwrap_or(identity.root_eoa),
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1267,7 +1271,7 @@ impl Relay {
             .await?;
 
         // If we're dealing with a PreCall do not estimate
-        let (asset_diff, context, key) = if request.capabilities.pre_call {
+        let (asset_diff, context, key, fee_payer_digest) = if request.capabilities.pre_call {
             let call = SignedCall {
                 eoa: request.from.unwrap_or_default(),
                 executionData: request.calls.abi_encode().into(),
@@ -1282,6 +1286,7 @@ impl Relay {
                     chain_id: request.chain_id,
                 }),
                 request.key.clone(),
+                None,
             )
         } else {
             // Regular flow - sender and delegation status are required
@@ -1296,6 +1301,13 @@ impl Relay {
             let (asset_diffs, quotes) =
                 self.build_quotes(&request, &identity, nonce, delegation_status).await?;
 
+            // Extract fee_payer digest if present
+            // If there's a cross-chain fee_payer (quotes.fee_payer is Some), use its digest
+            // If fee_payer is specified but same-chain (quotes.fee_payer is None), use main digest
+            let fee_payer_digest = request.capabilities.meta.fee_payer.and_then(|_| {
+                quotes.fee_payer.as_ref().map(|fp| fp.intent.digest()).or(Some(quotes.digest()))
+            });
+
             let sig = self
                 .inner
                 .quote_signer
@@ -1307,6 +1319,7 @@ impl Relay {
                 asset_diffs,
                 PrepareCallsContext::with_quotes(quotes.into_signed(sig)),
                 identity.key.into_stored_key(),
+                fee_payer_digest,
             )
         };
 
@@ -1341,6 +1354,7 @@ impl Relay {
                     .map(|key| key.into_response())
                     .collect::<Vec<_>>(),
                 revoke_keys: request.capabilities.revoke_keys,
+                fee_payer_digest,
                 asset_diff,
             },
             key,
@@ -1651,7 +1665,36 @@ impl Relay {
 
             // If we could successfuly simulate the intent without any deficits, then we can
             // just do this single chain instead.
+            // Exception: if fee_payer is set and has a deficit, create interop bundle for
+            // cross-chain fee payment
             if quote.asset_deficits.is_empty() {
+                // Check if this is a cross-chain fee payer case
+                if !quote.fee_token_deficit.is_zero()
+                    && !quote.intent.payer().is_zero()
+                    && let Some((fee_payer_asset_diffs, fee_payer_quote)) = self
+                        .build_fee_payer_quote(
+                            std::slice::from_ref(quote),
+                            quote.intent.payer(),
+                            request.capabilities.meta.fee_token.unwrap_or_default(),
+                        )
+                        .await?
+                {
+                    debug!(
+                        eoa = %identity.root_eoa,
+                        chain_id = %request.chain_id,
+                        fee_payer = %quote.intent.payer(),
+                        fee_deficit = %quote.fee_token_deficit,
+                        "Creating interop bundle for cross-chain fee payer"
+                    );
+
+                    // Return quotes with fee_payer quote attached
+                    let (mut all_asset_diffs, mut quotes) = quote_result;
+                    all_asset_diffs.push(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+                    quotes.fee_payer = Some(fee_payer_quote);
+
+                    return Ok((all_asset_diffs, quotes));
+                }
+
                 debug!(
                     eoa = %identity.root_eoa,
                     chain_id = %request.chain_id,
@@ -2177,17 +2220,23 @@ impl Relay {
         let dst_idx = quotes.ty().quotes.len() - 1;
 
         let root = intents.root()?;
-        let has_fee_payer = quotes.ty().fee_payer.is_some();
+        let is_externally_sponsored = quotes.ty().fee_payer.is_some();
+        let has_many_user_quotes = quotes.ty().quotes.len() > 1;
+
         let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
-            let proof = intents.get_proof_immutable(idx)?;
-            let merkle_sig = (proof, root, &signature).abi_encode_params().into();
+            let signature = if has_many_user_quotes {
+                let proof = intents.get_proof_immutable(idx)?;
+                (proof, root, &signature).abi_encode_params().into()
+            } else {
+                signature.clone()
+            };
 
             self.prepare_tx(
                 bundle_id,
                 quote.clone(),
                 capabilities.clone(),
-                merkle_sig,
-                has_fee_payer,
+                signature,
+                is_externally_sponsored,
             )
             .await
             .map(|tx| (idx, tx))

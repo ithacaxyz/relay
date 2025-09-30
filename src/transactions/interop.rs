@@ -361,6 +361,7 @@ impl BundleStatus {
                 | (DestinationFailures, RefundsScheduled)
                 | (DestinationFailures, Failed)
                 | (DestinationConfirmed, SettlementsQueued)
+                | (DestinationConfirmed, Done)
                 | (SettlementsQueued, SettlementsProcessing)
                 | (SettlementsQueued, Failed)
                 | (SettlementsProcessing, SettlementCompletionQueued)
@@ -675,11 +676,21 @@ impl InteropServiceInner {
 
     /// Handle the DestinationConfirmed status - queue settlement transactions
     ///
-    /// Transitions to: [`BundleStatus::SettlementsQueued`]
+    /// Transitions to: [`BundleStatus::SettlementsQueued`] or [`BundleStatus::Done`]
     async fn on_destination_confirmed(
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
+        // Skip settlement if no source transactions (cross-chain fee payer only bundle)
+        if bundle.bundle.src_txs.is_empty() {
+            tracing::info!(
+                bundle_id = ?bundle.bundle.id,
+                "No source transactions - skipping settlement, marking as done"
+            );
+            self.update_bundle_status(bundle, BundleStatus::Done).await?;
+            return Ok(());
+        }
+
         tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing settlements");
 
         // Build settlements
@@ -1435,6 +1446,7 @@ mod tests {
         assert!(DestinationFailures.can_transition_to(&RefundsScheduled));
         assert!(DestinationFailures.can_transition_to(&Failed));
         assert!(DestinationConfirmed.can_transition_to(&SettlementsQueued));
+        assert!(DestinationConfirmed.can_transition_to(&Done));
         assert!(SettlementsQueued.can_transition_to(&SettlementsProcessing));
         assert!(SettlementsQueued.can_transition_to(&Failed));
         assert!(SettlementsProcessing.can_transition_to(&SettlementCompletionQueued));

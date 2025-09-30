@@ -134,9 +134,10 @@ pub struct Quote {
     pub additional_authorization: Option<SignedAuthorization>,
     /// Orchestrator to use for the transaction.
     pub orchestrator: Address,
-    /// How much of the fee token the user is missing to pay for this intent.
+    /// How much of the fee token the fee payer (or user if no fee payer) is missing to pay for
+    /// this intent.
     ///
-    /// If it is 0, the user has enough balance to execute the call.
+    /// If it is 0, the fee payer has enough balance to execute the call.
     #[serde(default)]
     pub fee_token_deficit: U256,
     /// Assets user is missing for the intent to execute correctly.
