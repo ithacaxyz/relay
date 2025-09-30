@@ -855,6 +855,7 @@ mod tests {
                 }],
                 ttl: SystemTime::UNIX_EPOCH,
                 multi_chain_root: Some(B256::ZERO),
+                fee_payer: None,
             }
             .into_signed(signer.sign_hash(&B256::ZERO).await?),
         ));

@@ -142,6 +142,18 @@ impl Call {
         }
     }
 
+    /// Create a transfer call for either native token or ERC20.
+    ///
+    /// If `token` is `Address::ZERO`, creates a native value transfer.
+    /// Otherwise, creates an ERC20 transfer call.
+    pub fn transfer_fee(token: Address, to: Address, amount: U256) -> Self {
+        if token == Address::ZERO {
+            Self { to, value: amount, data: Bytes::new() }
+        } else {
+            Self::transfer(token, to, amount)
+        }
+    }
+
     /// ERC20 transferFrom call.
     pub fn transfer_from(erc20: Address, from: Address, to: Address, amount: U256) -> Self {
         Self {

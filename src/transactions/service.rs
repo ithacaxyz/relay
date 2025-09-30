@@ -635,7 +635,7 @@ mod tests {
             fee_token_deficit: Default::default(),
             asset_deficits: Default::default(),
         };
-        RelayTransaction::new(quote, vec![], B256::random())
+        RelayTransaction::new(quote, vec![], B256::random(), false)
     }
 
     #[test]

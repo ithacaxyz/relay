@@ -63,6 +63,7 @@ expression: value
   },
   "context": {
     "quote": {
+      "feePayer": null,
       "hash": "[hash]",
       "multiChainRoot": null,
       "quotes": [

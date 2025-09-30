@@ -33,6 +33,8 @@ pub struct Quotes {
     pub ttl: SystemTime,
     /// Merkle root if it's a multichain
     pub multi_chain_root: Option<B256>,
+    /// Optional quote for the fee payer.
+    pub fee_payer: Option<Box<Quote>>,
 }
 
 impl Quotes {

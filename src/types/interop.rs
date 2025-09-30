@@ -13,6 +13,8 @@ pub enum InteropTransactionBatch<'a> {
     ExecuteReceive(&'a [RelayTransaction]),
     /// Refund transactions (when source/destination fails)
     Refund(&'a [RelayTransaction]),
+    /// Fee payer transaction
+    FeePayer(&'a RelayTransaction),
 }
 
 impl<'a> InteropTransactionBatch<'a> {
@@ -24,6 +26,7 @@ impl<'a> InteropTransactionBatch<'a> {
             Self::ExecuteSend(txs) => txs,
             Self::ExecuteReceive(txs) => txs,
             Self::Refund(txs) => txs,
+            Self::FeePayer(tx) => std::slice::from_ref(tx),
         }
     }
 
@@ -35,6 +38,7 @@ impl<'a> InteropTransactionBatch<'a> {
             Self::ExecuteSend(_) => BundleStatus::SettlementsQueued,
             Self::ExecuteReceive(_) => BundleStatus::SettlementCompletionQueued,
             Self::Refund(_) => BundleStatus::RefundsQueued,
+            Self::FeePayer(_) => BundleStatus::FeePayerQueued,
         }
     }
 
