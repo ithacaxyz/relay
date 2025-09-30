@@ -8,14 +8,13 @@ use crate::{
     signers::DynSigner,
     storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
-        Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY, Key,
-        KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls, SignedQuotes,
-        VersionedContracts,
+        Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY,
+        Erc20Slots, Key, KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls,
+        SignedQuotes, VersionedContracts,
     },
 };
 use alloy::{
     consensus::Eip658Value,
-    contract::StorageSlotFinder,
     dyn_abi::TypedData,
     primitives::{
         Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
@@ -24,9 +23,9 @@ use alloy::{
         map::B256HashMap,
         wrap_fixed_bytes,
     },
-    providers::{DynProvider, Provider},
+    providers::{DynProvider, Provider, ext::DebugApi},
     rpc::types::{
-        Log, TransactionRequest,
+        Log,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
     },
     sol_types::SolEvent,
@@ -120,43 +119,27 @@ impl BalanceOverrides {
     pub async fn into_state_overrides<P: Provider + Clone>(
         self,
         provider: P,
+        erc20_slots: &Erc20Slots,
     ) -> Result<StateOverride, RelayError> {
-        async fn account_override_for_token<P: Provider + Clone>(
+        async fn account_override_for_token<P: Provider + Clone + DebugApi>(
             provider: P,
             token_address: Address,
             balances: HashMap<Address, U256>,
+            erc20_slots: &Erc20Slots,
         ) -> Result<AccountOverride, RelayError> {
             let slots: B256HashMap<B256> =
-                try_join_all(balances.into_iter().map(|(account, balance)| {
-                    let provider = provider.clone();
+                try_join_all(balances.into_iter().map(async |(account, balance)| {
+                    let slot = erc20_slots
+                        .compute_balance_slot(&provider, token_address, account)
+                        .await?
+                        .ok_or_else(|| {
+                            eyre::eyre!(format!(
+                                "could not determine balance slot for {} account {}",
+                                token_address, account
+                            ))
+                        })?;
 
-                    async move {
-                        let slot = StorageSlotFinder::balance_of(provider, token_address, account)
-                            // There's an issue with the `eth_createAccesslist` endpoint on at least polygon and BSC
-                            // where a regular request fails with
-                            //
-                            // > failed to apply transaction:
-                            // > 0x87321d84b5a1d6d4edfa02c729ba5784c8ea88a4fd3a0bb7de4441054c9c61c3 err:
-                            // > insufficient funds for gas * price + value: address
-                            // > 0x0000000000000000000000000000000000000000 have 99214501874407965562016 want
-                            // > 922337203685477580700000000
-                            //
-                            // A workaround for this is setting the gas limit field, a `balanceOf` call usually
-                            // consumes ~31k gas, so 100k should always be sufficient
-                            .with_request(TransactionRequest::default().gas_limit(100_000))
-                            .find_slot()
-                            .await?;
-
-                        Ok::<_, RelayError>((
-                            slot.ok_or_else(|| {
-                                eyre::eyre!(format!(
-                                    "could not determine balance slot for {}",
-                                    token_address
-                                ))
-                            })?,
-                            balance.into(),
-                        ))
-                    }
+                    Ok::<_, RelayError>((slot, balance.into()))
                 }))
                 .await?
                 .into_iter()
@@ -175,6 +158,7 @@ impl BalanceOverrides {
                             provider.clone(),
                             token_address,
                             overrides.balances,
+                            erc20_slots,
                         )
                         .await?,
                     ))
