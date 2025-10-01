@@ -36,9 +36,6 @@ pub enum RelayTransactionKind {
         authorization_list: Vec<SignedAuthorization>,
         /// The EIP-712 digest of the intent.
         eip712_digest: B256,
-        /// Whether this intent is externally sponsored (fees paid by fee_payer).
-        #[serde(default)]
-        externally_sponsored: bool,
     },
     /// An arbitrary internal relay transaction for maintenance purposes.
     Internal {
@@ -86,7 +83,6 @@ impl RelayTransaction {
         quote: Quote,
         authorization_list: Vec<SignedAuthorization>,
         eip712_digest: B256,
-        externally_sponsored: bool,
     ) -> Self {
         Self {
             id: TxId(B256::random()),
@@ -94,7 +90,6 @@ impl RelayTransaction {
                 quote: Box::new(quote),
                 authorization_list,
                 eip712_digest,
-                externally_sponsored,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),
@@ -136,29 +131,19 @@ impl RelayTransaction {
     /// Builds a [`TypedTransaction`] for this quote given a nonce.
     pub fn build(&self, nonce: u64, fees: Eip1559Estimation) -> TypedTransaction {
         match &self.kind {
-            RelayTransactionKind::Intent {
-                quote,
-                authorization_list,
-                externally_sponsored,
-                ..
-            } => {
+            RelayTransactionKind::Intent { quote, authorization_list, .. } => {
                 let gas_limit = quote.tx_gas;
                 let max_fee_per_gas = fees.max_fee_per_gas;
                 let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
                 let mut intent = quote.intent.clone();
 
-                // Only calculate payment if not externally sponsored
-                let payment_amount = if *externally_sponsored {
-                    U256::ZERO
-                } else {
-                    (quote.extra_payment
-                        + (U256::from(gas_limit)
-                            * U256::from(fees.max_fee_per_gas)
-                            * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
-                        .div_ceil(quote.eth_price))
-                    .min(intent.total_payment_max_amount())
-                };
+                let payment_amount = (quote.extra_payment
+                    + (U256::from(gas_limit)
+                        * U256::from(fees.max_fee_per_gas)
+                        * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
+                    .div_ceil(quote.eth_price))
+                .min(intent.total_payment_max_amount());
 
                 intent = intent
                     .with_pre_payment_amount(payment_amount)

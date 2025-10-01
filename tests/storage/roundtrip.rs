@@ -195,7 +195,6 @@ impl Fixtures {
                 quote: Box::new(quote),
                 authorization_list: vec![authorization.clone()],
                 eip712_digest: r_b256,
-                externally_sponsored: false,
             },
             trace_context: Context::current(),
             received_at: Utc::now(),
