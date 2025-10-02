@@ -234,6 +234,16 @@ pub struct PrepareCallsParameters {
 }
 
 impl PrepareCallsParameters {
+    /// Returns a clone of this request with the fee_payer field set to None.
+    ///
+    /// This is useful when building multichain intents where the fee_payer should not be
+    /// included in the individual chain intents (they should be externally sponsored).
+    pub fn without_fee_payer(&self) -> Self {
+        let mut modified = self.clone();
+        modified.capabilities.meta.fee_payer = None;
+        modified
+    }
+
     /// Ensures there are only whitelisted calls in precalls and that any upgrade delegation request
     /// contains the latest delegation address.
     pub fn check_calls(&self, latest_delegation: Address) -> Result<(), RelayError> {

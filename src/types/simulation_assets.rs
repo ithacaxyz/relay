@@ -97,6 +97,24 @@ impl AssetDeficits {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Removes the specified amount from the deficit for the given fee token.
+    /// If the deficit becomes zero or negative, removes that asset deficit entirely.
+    pub fn remove_fee_amount(&mut self, fee_token: Address, amount: U256) {
+        self.0.retain_mut(|deficit| {
+            if deficit.address != Some(fee_token) {
+                return true;
+            }
+
+            if deficit.deficit <= amount {
+                return false;
+            }
+
+            deficit.deficit -= amount;
+            deficit.required -= amount;
+            true
+        });
+    }
 }
 
 /// Asset with metadata and deficit value.

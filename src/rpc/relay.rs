@@ -1817,6 +1817,12 @@ impl Relay {
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
+        let request_for_multichain = if request.capabilities.meta.fee_payer.is_some() {
+            request.without_fee_payer()
+        } else {
+            request.clone()
+        };
+
         let (_, mut output_quote) = self
             .build_intent(
                 request,
@@ -1852,8 +1858,10 @@ impl Relay {
             }
         }
 
-        // Include the fee token into the filter if we will need to source the fee as well.
-        if !output_quote.fee_token_deficit.is_zero()
+        // Include the fee token into the filter if we will need to source the fee from the user as
+        // well.
+        if request.capabilities.meta.fee_payer.is_none()
+            && !output_quote.fee_token_deficit.is_zero()
             && !requested_with_balance.iter().any(|(asset, _)| asset.address == fee_token)
         {
             for (chain, asset) in
@@ -1903,13 +1911,17 @@ impl Relay {
                 .map(|(asset, _)| (asset.address.into(), asset.value))
                 .collect::<Vec<_>>();
 
-            if let Some(entry) =
-                requested_funds.iter_mut().find(|(address, _)| address.address() == fee_token)
-            {
-                entry.1 += output_quote.intent.total_payment_max_amount();
-            } else if !output_quote.fee_token_deficit.is_zero() {
-                requested_funds
-                    .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
+            // If the user is the one paying for fees, we need to add that fee cost to the requested
+            // funds request
+            if request.capabilities.meta.fee_payer.is_none() {
+                if let Some(entry) =
+                    requested_funds.iter_mut().find(|(address, _)| address.address() == fee_token)
+                {
+                    entry.1 += output_quote.intent.total_payment_max_amount();
+                } else if !output_quote.fee_token_deficit.is_zero() {
+                    requested_funds
+                        .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
+                }
             }
 
             let Some(funding_chains) = self
@@ -1968,8 +1980,8 @@ impl Relay {
                 .into_iter()
                 .collect::<Vec<_>>();
 
-            // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
-            // transfer.
+            // `sourced_funds` now also potentially includes fees if paid by the user, so make sure
+            // the funder has enough balance to transfer.
             for (token, amount) in &fund_transfers {
                 let funder_balance_on_dst =
                     funder_assets.balance_on_chain(request.chain_id, (*token).into());
@@ -1978,10 +1990,9 @@ impl Relay {
                 }
             }
 
-            // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
-                    request,
+                    &request_for_multichain,
                     identity,
                     delegation_status,
                     nonce,
@@ -2002,7 +2013,9 @@ impl Relay {
             // If `balance + sourced_funds - requested_funds - fee?` is `0`, then we've sourced
             // exactly the amount we need. If it's more, then we're overfunding a bit, which is not
             // the worst scenario, but ideally we get as close to 0 as possible.
-            if output_quote.fee_token_deficit.is_zero() {
+            if output_quote.fee_token_deficit.is_zero()
+                || request.capabilities.meta.fee_payer.is_some()
+            {
                 // Compute EIP-712 digest (settlement_id)
                 let (output_intent_digest, _) = output_quote.intent.compute_eip712_data(
                     self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
@@ -2057,6 +2070,21 @@ impl Relay {
                         self.build_fee_payer_quote(&all_quotes, fee_payer, fee_token).await?
                 {
                     all_asset_diffs.push(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+
+                    // Set all user quotes to have zero payment, since fee_payer will sponsor them
+                    for quote in &mut all_quotes {
+                        quote.intent =
+                            quote.intent.clone().with_total_payment_max_amount(U256::ZERO);
+
+                        // We simulated as if the the user would pay it, so we need to clear any
+                        // deficit here.
+                        quote.asset_deficits.remove_fee_amount(
+                            quote.intent.payment_token(),
+                            quote.fee_token_deficit,
+                        );
+                        quote.fee_token_deficit = U256::ZERO;
+                    }
+
                     Some(fee_payer_quote)
                 } else {
                     None
