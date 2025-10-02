@@ -1,0 +1,8 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response
+---
+{
+  "email": "[email_timestamp]",
+  "phone": "[phone_timestamp]"
+}

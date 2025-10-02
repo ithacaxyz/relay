@@ -1,0 +1,5 @@
+---
+source: tests/e2e/cases/rpc_snap.rs
+expression: response_unverified
+---
+{}

@@ -14,8 +14,9 @@ use crate::{
     storage::{RelayStorage, StorageApi},
     twilio::TwilioClient,
     types::rpc::{
-        ResendVerifyPhoneParameters, SetEmailParameters, SetPhoneParameters, VerifyEmailParameters,
-        VerifyPhoneParameters, VerifySignatureParameters,
+        OnrampStatusParameters, OnrampStatusResponse, ResendVerifyPhoneParameters,
+        SetEmailParameters, SetPhoneParameters, VerifyEmailParameters, VerifyPhoneParameters,
+        VerifySignatureParameters,
     },
 };
 
@@ -83,6 +84,18 @@ pub trait AccountApi {
     /// The previous verification session is invalidated and a new one is created.
     #[method(name = "resendVerifyPhone")]
     async fn resend_verify_phone(&self, params: ResendVerifyPhoneParameters) -> RpcResult<()>;
+
+    /// Get onramp verification status for an account.
+    ///
+    /// Returns Unix timestamps (seconds) for when email and phone were verified.
+    /// Returns null for unverified contact methods.
+    ///
+    /// This method does not return actual email or phone values to prevent enumeration attacks.
+    #[method(name = "onrampStatus")]
+    async fn onramp_status(
+        &self,
+        params: OnrampStatusParameters,
+    ) -> RpcResult<OnrampStatusResponse>;
 }
 
 /// Ithaca `account_` RPC module.
@@ -279,6 +292,15 @@ impl AccountApiServer for AccountRpc {
             .await?;
 
         Ok(())
+    }
+
+    async fn onramp_status(
+        &self,
+        params: OnrampStatusParameters,
+    ) -> RpcResult<OnrampStatusResponse> {
+        let status = self.storage.get_onramp_verification_status(params.address).await?;
+
+        Ok(OnrampStatusResponse { email: status.email, phone: status.phone })
     }
 }
 
