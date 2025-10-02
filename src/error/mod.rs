@@ -209,4 +209,32 @@ mod tests {
         assert!(error_string.contains("Monthly capacity limit exceeded"), "Error string should contain detailed message: {}", error_string);
         assert!(error_string.contains("429"), "Error string should contain error code: {}", error_string);
     }
+
+    #[test]
+    fn test_rpc_error_displays_provider_details() {
+        // Simulate various provider error scenarios
+        
+        // 1. Alchemy rate limit
+        let alchemy_429 = alloy::rpc::json_rpc::ErrorPayload {
+            code: 429,
+            message: "Monthly capacity limit exceeded. Visit https://dashboard.alchemy.com/settings/billing to increase your capacity".into(),
+            data: None,
+        };
+        let error1 = RelayError::RpcError(alloy::transports::RpcError::ErrorResp(alchemy_429));
+        let msg1 = error1.to_string();
+        assert!(msg1.contains("RPC error:"));
+        assert!(msg1.contains("Monthly capacity limit exceeded"));
+        assert!(msg1.contains("code: 429"));
+        
+        // 2. Execution reverted error
+        let execution_error = alloy::rpc::json_rpc::ErrorPayload {
+            code: -32000,
+            message: "execution reverted: insufficient balance for transfer".into(),
+            data: None,
+        };
+        let error2 = RelayError::RpcError(alloy::transports::RpcError::ErrorResp(execution_error));
+        let msg2 = error2.to_string();
+        assert!(msg2.contains("insufficient balance for transfer"));
+        assert!(msg2.contains("-32000"));
+    }
 }
