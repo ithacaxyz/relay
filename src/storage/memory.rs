@@ -2,7 +2,7 @@
 
 use super::{
     StorageApi,
-    api::{OnrampVerificationStatus, Result},
+    api::{OnrampContactInfo, OnrampVerificationStatus, Result},
 };
 use crate::{
     error::StorageError,
@@ -258,6 +258,19 @@ impl StorageApi for InMemoryStorage {
                 (entry.value().account == account)
                     .then(|| entry.value().verified_at.timestamp() as u64)
             }),
+        })
+    }
+
+    async fn get_onramp_contact_info(&self, account: Address) -> Result<OnrampContactInfo> {
+        Ok(OnrampContactInfo {
+            email: self
+                .verified_emails
+                .iter()
+                .find_map(|entry| (entry.value().account == account).then(|| entry.key().clone())),
+            phone: self
+                .verified_phones
+                .iter()
+                .find_map(|entry| (entry.value().account == account).then(|| entry.key().clone())),
         })
     }
 

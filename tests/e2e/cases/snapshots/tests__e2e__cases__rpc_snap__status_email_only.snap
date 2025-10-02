@@ -1,6 +1,6 @@
 ---
 source: tests/e2e/cases/rpc_snap.rs
-expression: response_email_only
+expression: status_email_only
 ---
 {
   "email": "[email_timestamp]"

@@ -17,10 +17,11 @@ use relay::{
         Account, Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddFaucetFundsParameters, BundleId, GetAssetsParameters, GetAuthorizationParameters,
-            GetKeysParameters, Meta, OnrampStatusParameters, Permission, PrepareCallsCapabilities,
-            PrepareCallsParameters, PrepareUpgradeAccountParameters, RequiredAsset,
-            SendPreparedCallsParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
-            UpgradeAccountSignatures, VerifySignatureParameters,
+            GetKeysParameters, GetOnrampContactInfoParameters, Meta, OnrampStatusParameters,
+            Permission, PrepareCallsCapabilities, PrepareCallsParameters,
+            PrepareUpgradeAccountParameters, RequiredAsset, SendPreparedCallsParameters,
+            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
+            VerifySignatureParameters,
         },
     },
 };
@@ -480,7 +481,7 @@ async fn test_add_faucet_funds() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_onramp_status() -> eyre::Result<()> {
+async fn test_onramp() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 
     // Test with verified email and phone
@@ -492,53 +493,100 @@ async fn test_onramp_status() -> eyre::Result<()> {
     env.relay_handle.storage.add_unverified_phone(env.eoa.address(), phone, "sid123").await?;
     env.relay_handle.storage.mark_phone_verified(env.eoa.address(), phone).await?;
 
-    let response = env
+    // Test onramp status
+    let status_response = env
         .relay_endpoint
         .onramp_status(OnrampStatusParameters { address: env.eoa.address() })
         .await?;
 
-    assert!(response.email.is_some(), "Email timestamp should be present");
-    assert!(response.phone.is_some(), "Phone timestamp should be present");
+    assert!(status_response.email.is_some(), "Email timestamp should be present");
+    assert!(status_response.phone.is_some(), "Phone timestamp should be present");
 
-    insta::assert_json_snapshot!("verified", response, {
+    insta::assert_json_snapshot!("status_verified", status_response, {
         ".email" => "[email_timestamp]",
         ".phone" => "[phone_timestamp]",
     });
 
-    // Test with only email verified
-    let email_only_addr = Address::random();
-    env.relay_handle
-        .storage
-        .add_unverified_email(email_only_addr, "emailonly@example.com", "token456")
-        .await?;
-    env.relay_handle
-        .storage
-        .verify_email(email_only_addr, "emailonly@example.com", "token456")
+    // Test get contact info with invalid secret
+    let result_invalid = env
+        .relay_endpoint
+        .get_onramp_contact_info(GetOnrampContactInfoParameters {
+            address: env.eoa.address(),
+            secret: "wrong_secret".to_string(),
+        })
+        .await;
+
+    assert!(result_invalid.is_err(), "Should fail with invalid secret");
+
+    // Test get contact info with valid secret
+    let contact_response = env
+        .relay_endpoint
+        .get_onramp_contact_info(GetOnrampContactInfoParameters {
+            address: env.eoa.address(),
+            secret: "test_onramp_secret".to_string(),
+        })
         .await?;
 
-    let response_email_only = env
+    assert_eq!(contact_response.email.as_deref(), Some(email), "Email should match");
+    assert_eq!(contact_response.phone.as_deref(), Some(phone), "Phone should match");
+
+    insta::assert_json_snapshot!("contact_info_verified", contact_response);
+
+    // Test with only email verified
+    let email_only_addr = Address::random();
+    let email_only = "emailonly@example.com";
+    env.relay_handle.storage.add_unverified_email(email_only_addr, email_only, "token456").await?;
+    env.relay_handle.storage.verify_email(email_only_addr, email_only, "token456").await?;
+
+    let status_email_only = env
         .relay_endpoint
         .onramp_status(OnrampStatusParameters { address: email_only_addr })
         .await?;
 
-    assert!(response_email_only.email.is_some(), "Email timestamp should be present");
-    assert!(response_email_only.phone.is_none(), "Phone should be None");
+    assert!(status_email_only.email.is_some(), "Email timestamp should be present");
+    assert!(status_email_only.phone.is_none(), "Phone should be None");
 
-    insta::assert_json_snapshot!("email_only", response_email_only, {
+    insta::assert_json_snapshot!("status_email_only", status_email_only, {
         ".email" => "[email_timestamp]",
     });
 
+    let contact_email_only = env
+        .relay_endpoint
+        .get_onramp_contact_info(GetOnrampContactInfoParameters {
+            address: email_only_addr,
+            secret: "test_onramp_secret".to_string(),
+        })
+        .await?;
+
+    assert_eq!(contact_email_only.email.as_deref(), Some(email_only));
+    assert!(contact_email_only.phone.is_none());
+
+    insta::assert_json_snapshot!("contact_info_email_only", contact_email_only);
+
     // Test with unverified account (no email/phone data)
     let unverified_addr = Address::random();
-    let response_unverified = env
+    let status_unverified = env
         .relay_endpoint
         .onramp_status(OnrampStatusParameters { address: unverified_addr })
         .await?;
 
-    assert!(response_unverified.email.is_none(), "Email should be None for unverified account");
-    assert!(response_unverified.phone.is_none(), "Phone should be None for unverified account");
+    assert!(status_unverified.email.is_none(), "Email should be None for unverified account");
+    assert!(status_unverified.phone.is_none(), "Phone should be None for unverified account");
 
-    insta::assert_json_snapshot!("unverified", response_unverified);
+    insta::assert_json_snapshot!("status_unverified", status_unverified);
+
+    let contact_unverified = env
+        .relay_endpoint
+        .get_onramp_contact_info(GetOnrampContactInfoParameters {
+            address: unverified_addr,
+            secret: "test_onramp_secret".to_string(),
+        })
+        .await?;
+
+    assert!(contact_unverified.email.is_none());
+    assert!(contact_unverified.phone.is_none());
+
+    insta::assert_json_snapshot!("contact_info_unverified", contact_unverified);
 
     Ok(())
 }
