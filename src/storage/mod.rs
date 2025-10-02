@@ -16,6 +16,7 @@ use crate::{
         ChainAddress,
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
+    storage::api::OnrampVerificationStatus,
     transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
@@ -167,6 +168,13 @@ impl StorageApi for RelayStorage {
         verification_sid: &str,
     ) -> api::Result<()> {
         self.inner.update_phone_verification_sid(account, phone, verification_sid).await
+    }
+
+    async fn get_onramp_verification_status(
+        &self,
+        account: Address,
+    ) -> api::Result<OnrampVerificationStatus> {
+        self.inner.get_onramp_verification_status(account).await
     }
 
     async fn ping(&self) -> api::Result<()> {

@@ -10,16 +10,17 @@ use alloy::{
     uint,
 };
 use relay::{
-    rpc::RelayApiClient,
+    rpc::{AccountApiClient, RelayApiClient},
     signers::Eip712PayLoadSigner,
+    storage::StorageApi,
     types::{
         Account, Call, CallPermission, IERC20, KeyType, KeyWith712Signer,
         rpc::{
             AddFaucetFundsParameters, BundleId, GetAssetsParameters, GetAuthorizationParameters,
-            GetKeysParameters, Meta, Permission, PrepareCallsCapabilities, PrepareCallsParameters,
-            PrepareUpgradeAccountParameters, RequiredAsset, SendPreparedCallsParameters,
-            UpgradeAccountCapabilities, UpgradeAccountParameters, UpgradeAccountSignatures,
-            VerifySignatureParameters,
+            GetKeysParameters, Meta, OnrampStatusParameters, Permission, PrepareCallsCapabilities,
+            PrepareCallsParameters, PrepareUpgradeAccountParameters, RequiredAsset,
+            SendPreparedCallsParameters, UpgradeAccountCapabilities, UpgradeAccountParameters,
+            UpgradeAccountSignatures, VerifySignatureParameters,
         },
     },
 };
@@ -474,6 +475,70 @@ async fn test_add_faucet_funds() -> eyre::Result<()> {
     insta::assert_json_snapshot!(response, {
         ".transactionHash" => reduction_from_str::<B256>("transactionHash")
     });
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_onramp_status() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    // Test with verified email and phone
+    let email = "test@example.com";
+    let phone = "+1234567890";
+
+    env.relay_handle.storage.add_unverified_email(env.eoa.address(), email, "token123").await?;
+    env.relay_handle.storage.verify_email(env.eoa.address(), email, "token123").await?;
+    env.relay_handle.storage.add_unverified_phone(env.eoa.address(), phone, "sid123").await?;
+    env.relay_handle.storage.mark_phone_verified(env.eoa.address(), phone).await?;
+
+    let response = env
+        .relay_endpoint
+        .onramp_status(OnrampStatusParameters { address: env.eoa.address() })
+        .await?;
+
+    assert!(response.email.is_some(), "Email timestamp should be present");
+    assert!(response.phone.is_some(), "Phone timestamp should be present");
+
+    insta::assert_json_snapshot!("verified", response, {
+        ".email" => "[email_timestamp]",
+        ".phone" => "[phone_timestamp]",
+    });
+
+    // Test with only email verified
+    let email_only_addr = Address::random();
+    env.relay_handle
+        .storage
+        .add_unverified_email(email_only_addr, "emailonly@example.com", "token456")
+        .await?;
+    env.relay_handle
+        .storage
+        .verify_email(email_only_addr, "emailonly@example.com", "token456")
+        .await?;
+
+    let response_email_only = env
+        .relay_endpoint
+        .onramp_status(OnrampStatusParameters { address: email_only_addr })
+        .await?;
+
+    assert!(response_email_only.email.is_some(), "Email timestamp should be present");
+    assert!(response_email_only.phone.is_none(), "Phone should be None");
+
+    insta::assert_json_snapshot!("email_only", response_email_only, {
+        ".email" => "[email_timestamp]",
+    });
+
+    // Test with unverified account (no email/phone data)
+    let unverified_addr = Address::random();
+    let response_unverified = env
+        .relay_endpoint
+        .onramp_status(OnrampStatusParameters { address: unverified_addr })
+        .await?;
+
+    assert!(response_unverified.email.is_none(), "Email should be None for unverified account");
+    assert!(response_unverified.phone.is_none(), "Phone should be None for unverified account");
+
+    insta::assert_json_snapshot!("unverified", response_unverified);
 
     Ok(())
 }

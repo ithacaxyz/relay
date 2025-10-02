@@ -727,7 +727,8 @@ impl Environment {
             .with_rebalance_service_config(config.rebalance_service_config)
             .with_database_url(database_url)
             .with_legacy_orchestrators(&[contracts.legacy_orchestrator])
-            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy]);
+            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy])
+            .with_resend_api_key(Some("test_resend_key".to_string()));
 
         let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
 

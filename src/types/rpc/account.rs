@@ -253,3 +253,23 @@ pub struct ResendVerifyPhoneParameters {
     /// The wallet address.
     pub wallet_address: Address,
 }
+
+/// Parameters for `account_onrampStatus`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnrampStatusParameters {
+    /// The wallet address to check.
+    pub address: Address,
+}
+
+/// Response for `account_onrampStatus`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnrampStatusResponse {
+    /// Unix timestamp (seconds) when email was verified, or null if not verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<u64>,
+    /// Unix timestamp (seconds) when phone was verified, or null if not verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<u64>,
+}

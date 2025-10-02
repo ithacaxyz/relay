@@ -25,6 +25,15 @@ use std::fmt::Debug;
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
 
+/// Verification status for onramp contact information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnrampVerificationStatus {
+    /// Unix timestamp (seconds) when email was verified, or None if not verified.
+    pub email: Option<u64>,
+    /// Unix timestamp (seconds) when phone was verified, or None if not verified.
+    pub phone: Option<u64>,
+}
+
 /// Input for [`StorageApi::try_lock_liquidity`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LockLiquidityInput {
@@ -129,6 +138,13 @@ pub trait StorageApi: Debug + Send + Sync {
         phone: &str,
         verification_sid: &str,
     ) -> Result<()>;
+
+    /// Gets the verified_at timestamps for email and phone for an account.
+    /// Returns Unix epoch timestamps in seconds, or None for unverified contact methods.
+    async fn get_onramp_verification_status(
+        &self,
+        account: Address,
+    ) -> Result<OnrampVerificationStatus>;
 
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;

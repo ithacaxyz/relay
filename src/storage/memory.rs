@@ -1,6 +1,9 @@
 //! Relay storage implementation in-memory. For testing only.
 
-use super::{StorageApi, api::Result};
+use super::{
+    StorageApi,
+    api::{OnrampVerificationStatus, Result},
+};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -39,6 +42,20 @@ struct UnverifiedPhone {
     attempts: u32,
 }
 
+/// Value for verified email storage
+#[derive(Debug, Clone)]
+struct VerifiedEmail {
+    account: Address,
+    verified_at: DateTime<Utc>,
+}
+
+/// Value for verified phone storage
+#[derive(Debug, Clone)]
+struct VerifiedPhone {
+    account: Address,
+    verified_at: DateTime<Utc>,
+}
+
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
@@ -48,9 +65,9 @@ pub struct InMemoryStorage {
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
-    verified_emails: DashMap<String, Address>,
+    verified_emails: DashMap<String, VerifiedEmail>,
     unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
-    verified_phones: DashMap<String, Address>,
+    verified_phones: DashMap<String, VerifiedPhone>,
     pending_bundles: DashMap<BundleId, BundleWithStatus>,
     finished_bundles: DashMap<BundleId, BundleWithStatus>,
     pending_refunds: DashMap<BundleId, DateTime<Utc>>,
@@ -167,7 +184,8 @@ impl StorageApi for InMemoryStorage {
 
         if valid {
             self.unverified_emails.remove(&key);
-            self.verified_emails.insert(email.to_string(), account);
+            self.verified_emails
+                .insert(email.to_string(), VerifiedEmail { account, verified_at: Utc::now() });
         }
 
         Ok(valid)
@@ -192,7 +210,8 @@ impl StorageApi for InMemoryStorage {
     async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()> {
         let key = PhoneKey { account, phone: phone.to_string() };
         self.unverified_phones.remove(&key);
-        self.verified_phones.insert(phone.to_string(), account);
+        self.verified_phones
+            .insert(phone.to_string(), VerifiedPhone { account, verified_at: Utc::now() });
         Ok(())
     }
 
@@ -224,6 +243,22 @@ impl StorageApi for InMemoryStorage {
             entry.verification_sid = verification_sid.to_string();
         }
         Ok(())
+    }
+
+    async fn get_onramp_verification_status(
+        &self,
+        account: Address,
+    ) -> Result<OnrampVerificationStatus> {
+        Ok(OnrampVerificationStatus {
+            email: self.verified_emails.iter().find_map(|entry| {
+                (entry.value().account == account)
+                    .then(|| entry.value().verified_at.timestamp() as u64)
+            }),
+            phone: self.verified_phones.iter().find_map(|entry| {
+                (entry.value().account == account)
+                    .then(|| entry.value().verified_at.timestamp() as u64)
+            }),
+        })
     }
 
     async fn ping(&self) -> Result<()> {
