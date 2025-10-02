@@ -806,6 +806,13 @@ impl Environment {
         self.chain_id_for(0)
     }
 
+    /// Get the contracts path from TEST_CONTRACTS env var or default
+    pub fn contracts_path() -> PathBuf {
+        PathBuf::from(
+            std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
+        )
+    }
+
     /// Gets the on-chain EOA authorized keys for a specific chain.
     pub async fn get_eoa_authorized_keys_on_chain(
         &self,
@@ -1020,9 +1027,7 @@ pub async fn mint_erc20s<P: Provider>(
 async fn deploy_all_contracts<P: Provider + WalletProvider>(
     provider: &P,
 ) -> Result<ContractAddresses, eyre::Error> {
-    let contracts_path = PathBuf::from(
-        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-    );
+    let contracts_path = Environment::contracts_path();
 
     // Deploy orchestrator first (or use env var)
     let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {

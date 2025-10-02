@@ -49,6 +49,7 @@ fn compile_contracts(sh: &mut Shell) -> anyhow::Result<()> {
     cmd!(sh, "forge build").run()?;
     cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC20.sol").run()?;
     cmd!(sh, "forge build lib/solady/test/utils/mocks/MockERC721.sol").run()?;
+    cmd!(sh, "forge build lib/solady/src/utils/ERC1967Factory.sol").run()?;
 
     // Drop the dir guard to return to original directory
     drop(_dir);
