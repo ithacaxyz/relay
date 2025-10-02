@@ -376,11 +376,8 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
     // - Recipient on chain 1: received tokens
 
     // Adjust transfer amount from chain 1 decimals to chain 0 decimals
-    let transfer_amount_chain0_decimals = relay::rpc::adjust_balance_for_decimals(
-        transfer_amount,
-        decimals_chain1,
-        decimals_chain0
-    );
+    let transfer_amount_chain0_decimals =
+        relay::rpc::adjust_balance_for_decimals(transfer_amount, decimals_chain1, decimals_chain0);
 
     assert_eq!(
         erc20_chain0.balanceOf(env.eoa.address()).call().await?,
