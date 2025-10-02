@@ -77,7 +77,7 @@ pub enum RelayError {
     #[error(transparent)]
     AbiError(#[from] alloy::sol_types::Error),
     /// An error occurred talking to RPC.
-    #[error(transparent)]
+    #[error("{}", format_rpc_error(.0))]
     RpcError(#[from] alloy::transports::RpcError<TransportErrorKind>),
     /// Contract error.
     #[error(transparent)]
@@ -172,4 +172,41 @@ fn rpc_err(
     data: Option<Bytes>,
 ) -> jsonrpsee::types::error::ErrorObject<'static> {
     jsonrpsee::types::error::ErrorObject::owned(code, msg.into(), data)
+}
+
+/// Formats an RPC error with detailed information from the error response.
+fn format_rpc_error(err: &alloy::transports::RpcError<TransportErrorKind>) -> String {
+    // Check if there's a JSON-RPC error response with detailed message
+    if let Some(error_resp) = err.as_error_resp() {
+        format!("RPC error: {} (code: {})", error_resp.message, error_resp.code)
+    } else {
+        // Fall back to default formatting
+        err.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rpc_error_formatting_with_error_response() {
+        // Create a mock error payload similar to what Alchemy would return
+        let error_payload = alloy::rpc::json_rpc::ErrorPayload {
+            code: 429,
+            message: "Monthly capacity limit exceeded. Visit https://dashboard.alchemy.com/settings/billing...".into(),
+            data: None,
+        };
+
+        // Create an RpcError from the error payload
+        let rpc_error: alloy::transports::RpcError<TransportErrorKind> = alloy::transports::RpcError::ErrorResp(error_payload);
+        
+        // Convert to RelayError
+        let relay_error = RelayError::RpcError(rpc_error);
+        
+        // Check that the error message includes the detailed message
+        let error_string = relay_error.to_string();
+        assert!(error_string.contains("Monthly capacity limit exceeded"), "Error string should contain detailed message: {}", error_string);
+        assert!(error_string.contains("429"), "Error string should contain error code: {}", error_string);
+    }
 }
