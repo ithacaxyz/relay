@@ -254,6 +254,12 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the onramp worker secret.
+    pub fn with_onramp_worker_secret(mut self, secret: Option<String>) -> Self {
+        self.secrets.onramp_worker_secret = secret.or(self.secrets.onramp_worker_secret);
+        self
+    }
+
     /// Sets the Porto base URL.
     pub fn with_porto_base_url(mut self, value: Option<String>) -> Self {
         self.email.porto_base_url = value.or(self.email.porto_base_url);
@@ -681,6 +687,9 @@ pub struct SecretsConfig {
     /// API key for protected RPC endpoints
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_api_key: Option<String>,
+    /// Secret for cf worker to access contact information
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onramp_worker_secret: Option<String>,
 }
 
 impl Default for SecretsConfig {
@@ -693,6 +702,7 @@ impl Default for SecretsConfig {
             funder_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
                 .to_string(),
             service_api_key: None,
+            onramp_worker_secret: None,
         }
     }
 }

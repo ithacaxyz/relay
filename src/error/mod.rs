@@ -16,6 +16,9 @@ pub use email::EmailError;
 mod phone;
 pub use phone::PhoneError;
 
+mod onramp;
+pub use onramp::OnrampError;
+
 mod keys;
 pub use keys::KeysError;
 

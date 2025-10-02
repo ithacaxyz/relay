@@ -6,7 +6,7 @@ use alloy::{
     primitives::{BlockNumber, U256},
     rpc::types::TransactionReceipt,
 };
-pub use api::{LockLiquidityInput, StorageApi};
+pub use api::{LockLiquidityInput, OnrampContactInfo, StorageApi};
 
 mod memory;
 mod pg;
@@ -175,6 +175,10 @@ impl StorageApi for RelayStorage {
         account: Address,
     ) -> api::Result<OnrampVerificationStatus> {
         self.inner.get_onramp_verification_status(account).await
+    }
+
+    async fn get_onramp_contact_info(&self, account: Address) -> api::Result<OnrampContactInfo> {
+        self.inner.get_onramp_contact_info(account).await
     }
 
     async fn ping(&self) -> api::Result<()> {

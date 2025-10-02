@@ -34,6 +34,15 @@ pub struct OnrampVerificationStatus {
     pub phone: Option<u64>,
 }
 
+/// Contact information for onramp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnrampContactInfo {
+    /// Verified email address, or None if not verified.
+    pub email: Option<String>,
+    /// Verified phone number, or None if not verified.
+    pub phone: Option<String>,
+}
+
 /// Input for [`StorageApi::try_lock_liquidity`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LockLiquidityInput {
@@ -145,6 +154,9 @@ pub trait StorageApi: Debug + Send + Sync {
         &self,
         account: Address,
     ) -> Result<OnrampVerificationStatus>;
+
+    /// Get verified contact information for onramp.
+    async fn get_onramp_contact_info(&self, account: Address) -> Result<OnrampContactInfo>;
 
     /// Pings the database, checking if the connection is alive.
     async fn ping(&self) -> Result<()>;

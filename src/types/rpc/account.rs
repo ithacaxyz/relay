@@ -273,3 +273,25 @@ pub struct OnrampStatusResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone: Option<u64>,
 }
+
+/// Request parameters for `account_getOnrampContactInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetOnrampContactInfoParameters {
+    /// The wallet address to get contact info for.
+    pub address: Address,
+    /// Secret for authentication.
+    pub secret: String,
+}
+
+/// Response for `account_getOnrampContactInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetOnrampContactInfoResponse {
+    /// Verified email address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Verified phone number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+}
