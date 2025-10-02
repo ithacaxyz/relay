@@ -8,6 +8,7 @@ use alloy::{
 use futures_util::FutureExt;
 use metrics::histogram;
 use opentelemetry::trace::{SpanKind, Status};
+use reqwest::Url;
 use tower::{Layer, Service};
 use tracing::{Level, field, span};
 use tracing_futures::Instrument;
@@ -23,12 +24,13 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 #[derive(Debug, Clone)]
 pub struct TraceLayer {
     chain_id: ChainId,
+    endpoint: Url,
 }
 
 impl TraceLayer {
-    /// Creates a new `TraceLayer` with the given `chain_id`.
-    pub fn new(chain_id: ChainId) -> Self {
-        Self { chain_id }
+    /// Creates a new `TraceLayer` with the given `chain_id` and `endpoint`.
+    pub fn new(chain_id: ChainId, endpoint: Url) -> Self {
+        Self { chain_id, endpoint }
     }
 }
 
@@ -36,7 +38,7 @@ impl<S> Layer<S> for TraceLayer {
     type Service = TraceTransport<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        TraceTransport { inner, chain_id: self.chain_id }
+        TraceTransport { inner, chain_id: self.chain_id, endpoint: self.endpoint.clone() }
     }
 }
 
@@ -45,6 +47,7 @@ impl<S> Layer<S> for TraceLayer {
 pub struct TraceTransport<S> {
     inner: S,
     chain_id: ChainId,
+    endpoint: Url,
 }
 
 impl<S> Service<RequestPacket> for TraceTransport<S>
@@ -67,6 +70,7 @@ where
 
     fn call(&mut self, request: RequestPacket) -> Self::Future {
         let chain_id = self.chain_id;
+        let endpoint = self.endpoint.clone();
         let span = span!(
             Level::INFO,
             "call",
@@ -77,6 +81,7 @@ where
             rpc.jsonrpc.request_id = field::Empty,
             rpc.method = field::Empty,
             eth.chain_id = chain_id,
+            rpc.endpoint = %endpoint,
         );
 
         let mut method = None;
