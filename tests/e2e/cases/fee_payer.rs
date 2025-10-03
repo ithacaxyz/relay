@@ -112,8 +112,10 @@ async fn test_fee_payer_delegation() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_cross_chain_fee_payer() -> Result<()> {
+async fn test_multichain_fee_payer() -> Result<()> {
     // Setup environment with 2 chains for cross-chain fee payer
+    // - User on chain 0 (no fees paid)
+    // - Fee payer on chain 1: paid fees
     let env = Environment::setup_multi_chain(2).await?;
     let main_key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
