@@ -1683,16 +1683,17 @@ impl Relay {
             // cross-chain fee payment
             if quote.asset_deficits.is_empty() {
                 // Check if this is a cross-chain fee payer case
-                if !quote.fee_token_deficit.is_zero()
-                    && !quote.intent.payer().is_zero()
-                    && let Some((fee_payer_asset_diffs, fee_payer_quote)) = self
+                if !quote.fee_token_deficit.is_zero() && !quote.intent.payer().is_zero() {
+                    let (fee_payer_asset_diffs, fee_payer_quote) = self
                         .build_fee_payer_quote(
                             std::slice::from_ref(quote),
                             quote.intent.payer(),
                             request.capabilities.meta.fee_token.unwrap_or_default(),
                         )
                         .await?
-                {
+                        .ok_or_else(|| {
+                            QuoteError::InsufficientFeePayerBalance(quote.intent.payer())
+                        })?;
                     debug!(
                         eoa = %identity.root_eoa,
                         chain_id = %request.chain_id,
@@ -2065,10 +2066,12 @@ impl Relay {
                 all_asset_diffs.push(request.chain_id, output_asset_diffs);
 
                 // Handle fee_payer if specified
-                let fee_payer_quote = if let Some(fee_payer) = request.capabilities.meta.fee_payer
-                    && let Some((fee_payer_asset_diffs, fee_payer_quote)) =
-                        self.build_fee_payer_quote(&all_quotes, fee_payer, fee_token).await?
-                {
+                let fee_payer_quote = if let Some(fee_payer) = request.capabilities.meta.fee_payer {
+                    let (fee_payer_asset_diffs, fee_payer_quote) = self
+                        .build_fee_payer_quote(&all_quotes, fee_payer, fee_token)
+                        .await?
+                        .ok_or(QuoteError::InsufficientFeePayerBalance(fee_payer))?;
+
                     all_asset_diffs.push(fee_payer_quote.chain_id, fee_payer_asset_diffs);
 
                     // Set all user quotes to have zero payment, since fee_payer will sponsor them

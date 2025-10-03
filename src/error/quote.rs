@@ -51,6 +51,9 @@ pub enum QuoteError {
     /// Insufficient liquidity in the funder.
     #[error("insufficient liquidity")]
     InsufficientLiquidity,
+    /// Fee payer has insufficient balance to sponsor the transaction.
+    #[error("fee payer {0} has insufficient balance to sponsor this transaction")]
+    InsufficientFeePayerBalance(Address),
 }
 
 impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
@@ -64,6 +67,7 @@ impl From<QuoteError> for jsonrpsee::types::error::ErrorObject<'static> {
             | QuoteError::InvalidFeeAmount { .. }
             | QuoteError::MissingRequiredFunds
             | QuoteError::QuoteHasDeficits
+            | QuoteError::InsufficientFeePayerBalance(..)
             | QuoteError::MultichainDisabled => invalid_params(err.to_string()),
             QuoteError::UnavailablePrice(..)
             | QuoteError::UnavailablePriceFeed
