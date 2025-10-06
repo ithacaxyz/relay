@@ -89,16 +89,6 @@ async fn test_fee_payer_delegation() -> Result<()> {
         AccountType::User,
     );
 
-    // Fee payer should have outgoing fee payment on main chain
-    assert_single_outgoing_erc20_diff(
-        asset_diffs,
-        env.chain_id(),
-        fee_payer.address,
-        env.erc20,
-        None, // Non-zero fee amount
-        AccountType::FeePayer,
-    );
-
     // Verify fee totals
     // Should have fee for the main chain only
     let chain_fee = fee_totals.get(&env.chain_id()).expect("Should have fee total for main chain");

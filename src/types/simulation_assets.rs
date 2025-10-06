@@ -98,13 +98,11 @@ impl AssetDiff {
     fn merge(&mut self, other: AssetDiff) {
         if self.direction == other.direction {
             self.value += other.value;
+        } else if other.value > self.value {
+            self.value = other.value - self.value;
+            self.direction = other.direction;
         } else {
-            if other.value > self.value {
-                self.value = other.value - self.value;
-                self.direction = other.direction;
-            } else {
-                self.value -= other.value;
-            }
+            self.value -= other.value;
         }
 
         self.fiat = other.fiat;
