@@ -9,19 +9,15 @@ use crate::{
     storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY,
-        Erc20Slots, Key, KeyType, MULTICHAIN_NONCE_PREFIX_U192, SignedCall, SignedCalls,
-        SignedQuotes, VersionedContracts,
+        Erc20Slots, Key, KeyType, SignedCall, SignedCalls, SignedQuotes, VersionedContracts,
     },
 };
 use alloy::{
     consensus::Eip658Value,
     dyn_abi::TypedData,
     primitives::{
-        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256,
-        aliases::{B192, U192},
-        keccak256,
-        map::B256HashMap,
-        wrap_fixed_bytes,
+        Address, B256, BlockHash, BlockNumber, Bytes, ChainId, TxHash, U256, aliases::U192,
+        keccak256, map::B256HashMap, wrap_fixed_bytes,
     },
     providers::{DynProvider, Provider, ext::DebugApi},
     rpc::types::{
@@ -296,14 +292,6 @@ impl PrepareCallsParameters {
         provider: &DynProvider,
         storage: &RelayStorage,
     ) -> Result<U256, RelayError> {
-        // Create a random sequence key.
-        let random_nonce = loop {
-            let sequence_key = U192::from_be_bytes(B192::random().into());
-            if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
-                break U256::from(sequence_key) << 64;
-            }
-        };
-
         if let Some(nonce) = self.capabilities.meta.nonce {
             Ok(nonce)
         } else if self.capabilities.pre_call {
@@ -321,7 +309,7 @@ impl PrepareCallsParameters {
 
             let Some(key_hash) = key_hashes.pop_first() else {
                 // If precall doesn't perform any key-related operations, return a random nonce.
-                return Ok(random_nonce);
+                return Ok(Account::<DynProvider>::random_nonce());
             };
 
             // Convert the key hash to a sequence key and fetch the nonce for it.
@@ -358,7 +346,7 @@ impl PrepareCallsParameters {
         {
             Ok(precall.nonce + uint!(1_U256))
         } else if maybe_stored.is_some() {
-            Ok(random_nonce)
+            Ok(Account::<DynProvider>::random_nonce())
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)

@@ -1,6 +1,6 @@
 use super::{
-    Key, KeyHash, OrchestratorContract::accountImplementationOfCall, rpc::Permission,
-    storage::CreatableAccount,
+    Key, KeyHash, MULTICHAIN_NONCE_PREFIX_U192, OrchestratorContract::accountImplementationOfCall,
+    rpc::Permission, storage::CreatableAccount,
 };
 use crate::{
     error::{AuthError, RelayError},
@@ -13,7 +13,11 @@ use IthacaAccount::{
 use alloy::{
     dyn_abi::Eip712Domain,
     eips::eip7702::constants::{EIP7702_CLEARED_DELEGATION, EIP7702_DELEGATION_DESIGNATOR},
-    primitives::{Address, B256, Bytes, FixedBytes, U256, aliases::U192, map::HashMap},
+    primitives::{
+        Address, B256, Bytes, FixedBytes, U256,
+        aliases::{B192, U192},
+        map::HashMap,
+    },
     providers::Provider,
     rpc::types::{
         TransactionRequest,
@@ -234,6 +238,23 @@ impl<P: Provider> Account<P> {
         Self {
             delegation: IthacaAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
+        }
+    }
+
+    /// Generates a random nonce with a random sequence key.
+    ///
+    /// This is useful for accounts that may be sponsoring many concurrent intents (e.g.,
+    /// fee_payer), where sequential nonces could cause bottlenecks. The random sequence key
+    /// ensures that each intent gets a unique nonce without coordination.
+    ///
+    /// The function ensures the generated sequence key doesn't conflict with the multichain nonce
+    /// prefix.
+    pub fn random_nonce() -> U256 {
+        loop {
+            let sequence_key = U192::from_be_bytes(B192::random().into());
+            if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
+                break U256::from(sequence_key) << 64;
+            }
         }
     }
 

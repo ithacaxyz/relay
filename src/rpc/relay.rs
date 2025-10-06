@@ -2436,15 +2436,8 @@ impl Relay {
             ..Default::default()
         };
 
-        // Get nonce for fee_payer
-        let fee_payer_provider = self.provider(source_chain)?;
-        let fee_payer_nonce = fee_payer_request
-            .get_nonce(
-                fee_payer_delegation_status.stored_account(),
-                &fee_payer_provider,
-                &self.inner.storage,
-            )
-            .await?;
+        // Use a random nonce for fee_payer to support concurrent sponsorships
+        let fee_payer_nonce = Account::<DynProvider>::random_nonce();
 
         // Build the fee_payer intent as a single-chain intent (not part of the merkle tree)
         let (fee_payer_asset_diffs, fee_payer_quote) = self
