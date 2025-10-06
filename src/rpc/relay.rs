@@ -1737,24 +1737,28 @@ impl Relay {
 
             let mut deficits = quote.asset_deficits.0.clone();
             // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
-            deficits.retain_mut(|deficit| {
-                if Some(deficit.address.unwrap_or_default()) != request.capabilities.meta.fee_token
-                {
-                    return true;
-                }
+            // Only do this if there's no fee_payer, since fee_payer handles fees separately.
+            if request.capabilities.meta.fee_payer.is_none() {
+                deficits.retain_mut(|deficit| {
+                    if Some(deficit.address.unwrap_or_default())
+                        != request.capabilities.meta.fee_token
+                    {
+                        return true;
+                    }
 
-                deficit.required =
-                    deficit.required.saturating_sub(quote.intent.total_payment_max_amount());
-                deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
+                    deficit.required =
+                        deficit.required.saturating_sub(quote.intent.total_payment_max_amount());
+                    deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
 
-                // If the only deficit is the fee token deficit, we can keep it and handle
-                // it as an interop intent requiring zero of the feeToken plus the fee.
-                if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
-                    true
-                } else {
-                    !deficit.deficit.is_zero()
-                }
-            });
+                    // If the only deficit is the fee token deficit, we can keep it and handle
+                    // it as an interop intent requiring zero of the feeToken plus the fee.
+                    if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
+                        true
+                    } else {
+                        !deficit.deficit.is_zero()
+                    }
+                });
+            }
 
             let mut requested_assets = Vec::new();
 
@@ -1833,7 +1837,7 @@ impl Relay {
 
         let (_, mut output_quote) = self
             .build_intent(
-                request,
+                &request_for_multichain,
                 identity,
                 delegation_status,
                 nonce,

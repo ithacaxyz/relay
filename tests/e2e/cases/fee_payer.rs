@@ -19,8 +19,8 @@ use relay::{
     types::{
         AssetDiffResponse, Call, DiffDirection, IERC20, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters, RequiredAsset,
-            SendPreparedCallsCapabilities, SendPreparedCallsParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, SendPreparedCallsCapabilities,
+            SendPreparedCallsParameters,
         },
     },
 };
@@ -391,7 +391,6 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
                     fee_token: Some(env.erc20),
                     nonce: None,
                 },
-                required_funds: vec![RequiredAsset::new(env.erc20, transfer_amount)],
                 ..Default::default()
             },
             ..Default::default()
@@ -470,13 +469,18 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
     assert!(chain2_fee.value > 0.0, "Fee total should be positive on chain 2 (fee payer chain)");
     assert_eq!(chain2_fee.currency, "usd");
 
-    // // Aggregated fee (chain ID 0) should be sum of all chain fees
-    // let aggregated_fee = fee_totals.get(&0).expect("Should have aggregated fee total");
-    // let expected_total = chain0_fee.map(|f| f.value).unwrap_or(0.0)
-    //     + chain1_fee.map(|f| f.value).unwrap_or(0.0)
-    //     + chain2_fee.value;
-    // assert_eq!(aggregated_fee.value, expected_total, "Aggregated fee should equal sum of all
-    // chain fees"); assert_eq!(aggregated_fee.currency, "usd");
+    // Aggregated fee (chain ID 0) should be sum of all chain fees
+    let aggregated_fee = fee_totals.get(&0).expect("Should have aggregated fee total");
+    let expected_total = chain0_fee.map(|f| f.value).unwrap_or(0.0)
+        + chain1_fee.map(|f| f.value).unwrap_or(0.0)
+        + chain2_fee.value;
+    assert!(
+        (aggregated_fee.value - expected_total).abs() < 1e-10,
+        "Aggregated fee should equal sum of all chain fees: {} vs {}",
+        aggregated_fee.value,
+        expected_total
+    );
+    assert_eq!(aggregated_fee.currency, "usd");
 
     // Sign user intent with merkle root
     let user_signature = main_key.sign_payload_hash(response.digest).await?;

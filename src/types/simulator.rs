@@ -331,11 +331,27 @@ impl<P: Provider> SimulatorContract<P> {
             let mut balance_override = BalanceOverride::new(AssetType::ERC20);
             balance_override.add_balance(*intent.eoa(), asset.value);
 
-            overrides.extend(
+            let new_overrides =
                 BalanceOverrides::new(HashMap::from([(asset.address, balance_override)]))
                     .into_state_overrides(self.simulator.provider(), erc20_slots)
-                    .await?,
-            );
+                    .await?;
+
+            // Merge state_diff slots instead of replacing the entire AccountOverride.
+            // This preserves existing balance slots (e.g., fee_payer's balance) while adding new
+            // ones (e.g., user's balance for the transfer).
+            for (address, new_account_override) in new_overrides {
+                overrides
+                    .entry(address)
+                    .and_modify(|existing| {
+                        if let Some(new_diff) = &new_account_override.state_diff {
+                            existing
+                                .state_diff
+                                .get_or_insert_with(Default::default)
+                                .extend(new_diff.clone());
+                        }
+                    })
+                    .or_insert(new_account_override);
+            }
 
             asset_deficits.insert(asset.address, asset.value);
         }
