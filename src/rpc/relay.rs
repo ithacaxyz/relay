@@ -670,12 +670,8 @@ impl Relay {
         }
 
         // If any of the quotes have deficits, return an error
-        // When there's a fee_payer quote, user quotes can have fee_token_deficit (which the
-        // fee_payer covers) but should not have asset_deficits
-        let has_fee_payer = quotes.ty().fee_payer.is_some();
-        if quotes.ty().quotes.iter().any(|q| {
-            !q.asset_deficits.is_empty() || (!has_fee_payer && !q.fee_token_deficit.is_zero())
-        }) || quotes.ty().fee_payer.as_ref().is_some_and(|fp| fp.has_deficits())
+        if quotes.ty().quotes.iter().any(|q| q.has_deficits())
+            || quotes.ty().fee_payer.as_ref().is_some_and(|fp| fp.has_deficits())
         {
             return Err(QuoteError::QuoteHasDeficits.into());
         }
@@ -1724,6 +1720,7 @@ impl Relay {
                         .clone()
                         .with_payer(Address::ZERO)
                         .with_total_payment_max_amount(U256::ZERO);
+                    quotes.quotes[0].fee_token_deficit = U256::ZERO;
 
                     return Ok((all_asset_diffs, quotes));
                 }
