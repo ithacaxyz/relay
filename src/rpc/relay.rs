@@ -388,6 +388,7 @@ impl Relay {
         let fee_token_funding = intent
             .fund_transfers
             .iter()
+            .filter(|_| context.fee_payer == intent.eoa)
             .filter(|(token, _)| *token == context.fee_token)
             .map(|(_, amount)| amount)
             .sum::<U256>();
@@ -575,11 +576,12 @@ impl Relay {
         );
         intent_to_sign.set_payment(payment_amount);
 
-        // Find amount of fee token spent by this intent.
+        // Find amount of fee token spent by this intent if payed by the user.
         let fee_token_spending = asset_diffs
             .0
             .iter()
-            .find(|(address, _)| *address == intent.eoa)
+            .filter(|_| intent_to_sign.payer().is_zero())
+            .find(|(address, _)| *address == context.fee_payer)
             .and_then(|(_, diffs)| {
                 diffs.iter().find(|diff| diff.address.unwrap_or_default() == context.fee_token)
             })
@@ -596,7 +598,7 @@ impl Relay {
             })
             .unwrap_or(fee_token_funding);
 
-        // Calculate fee token deficit accounting for any additional spending
+        // Calculate fee token deficit accounting for any additional spending.
         let fee_token_deficit = intent_to_sign.total_payment_max_amount().saturating_sub(
             fee_token_balance.saturating_add(fee_token_funding).saturating_sub(fee_token_spending),
         );
@@ -1389,6 +1391,7 @@ impl Relay {
     ///
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
+    #[expect(clippy::too_many_arguments)]
     #[instrument(skip(self, identity, assets))]
     async fn source_funds(
         &self,
@@ -1398,6 +1401,7 @@ impl Relay {
         destination_orchestrator: Address,
         requested_assets: Vec<(AddressOrNative, U256)>,
         total_leaves: usize,
+        destination_fee_token: Option<Address>,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
         let mut remaining = HashMap::new();
 
@@ -1490,8 +1494,14 @@ impl Relay {
                 cmp::Reverse(balances)
             })
             .map(|(chain, balances)| async move {
-                // todo: this might not work well for multi asset case.
-                let fee_token = balances.first().unwrap().0.address();
+                let fee_token = destination_fee_token
+                    .and_then(|destination_fee_token| {
+                        self.inner
+                            .chains
+                            .map_interop_asset(destination_chain_id, chain, destination_fee_token)
+                            .map(|mapped| mapped.address)
+                    })
+                    .unwrap_or_else(|| balances.first().unwrap().0.address());
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
                     eoa: identity.root_eoa,
@@ -1704,7 +1714,7 @@ impl Relay {
 
                     // Return quotes with fee_payer quote attached
                     let (mut all_asset_diffs, mut quotes) = quote_result;
-                    all_asset_diffs.push(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+                    all_asset_diffs.merge(fee_payer_quote.chain_id, fee_payer_asset_diffs);
                     quotes.fee_payer = Some(fee_payer_quote);
 
                     // Replace user intent to not include payer and payment amount, since it's payed
@@ -1933,6 +1943,8 @@ impl Relay {
                     output_quote.orchestrator,
                     requested_funds.clone(),
                     num_funding_chains + 1,
+                    // If fee_payer is specified, use the chosen fee_token
+                    request.capabilities.meta.fee_payer.and(Some(fee_token)),
                 )
                 .await?
             else {
@@ -2072,7 +2084,7 @@ impl Relay {
                         .await?
                         .ok_or(QuoteError::InsufficientFeePayerBalance(fee_payer))?;
 
-                    all_asset_diffs.push(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+                    all_asset_diffs.merge(fee_payer_quote.chain_id, fee_payer_asset_diffs);
 
                     // Set all user quotes to have zero payment, since fee_payer will sponsor them
                     for quote in &mut all_quotes {

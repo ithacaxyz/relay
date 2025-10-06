@@ -348,9 +348,7 @@ impl<P: Provider> Orchestrator<P> {
 
         // Remove the fee from the asset diff payer as to not confuse the user.
         let payer = if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() };
-        if payer == *intent.eoa() {
-            asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
-        }
+        asset_diffs.remove_payer_fee(payer, intent.payment_token().into(), U256::from(1));
 
         Ok(asset_diffs)
     }

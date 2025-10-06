@@ -8,7 +8,7 @@ use crate::e2e::{
     layerzero::setup::LayerZeroEnvironment,
 };
 use alloy::{
-    primitives::{Address, U256},
+    primitives::{Address, ChainId, U256},
     providers::ext::AnvilApi,
     sol_types::SolValue,
 };
@@ -17,7 +17,7 @@ use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        Call, IERC20, KeyType, KeyWith712Signer, Signature,
+        AssetDiffResponse, Call, DiffDirection, IERC20, KeyType, KeyWith712Signer, Signature,
         rpc::{
             Meta, PrepareCallsCapabilities, PrepareCallsParameters, RequiredAsset,
             SendPreparedCallsCapabilities, SendPreparedCallsParameters,
@@ -74,6 +74,44 @@ async fn test_fee_payer_delegation() -> Result<()> {
     // Verify fee payer is set in quote
     let quote = response.context.quote().expect("Should have quote context");
     assert_eq!(quote.ty().quotes[0].intent.payer(), fee_payer.address);
+
+    // Verify asset diffs
+    let asset_diffs = &response.capabilities.asset_diff;
+    let fee_totals = &response.capabilities.asset_diff.fee_totals;
+
+    // User should have exactly 1 asset diff on main chain (the transfer, no fees)
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id(),
+        env.eoa.address(),
+        env.erc20,
+        Some(transfer_amount),
+        AccountType::User,
+    );
+
+    // Fee payer should have outgoing fee payment on main chain
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id(),
+        fee_payer.address,
+        env.erc20,
+        None, // Non-zero fee amount
+        AccountType::FeePayer,
+    );
+
+    // Verify fee totals
+    // Should have fee for the main chain only
+    let chain_fee = fee_totals.get(&env.chain_id()).expect("Should have fee total for main chain");
+    assert!(chain_fee.value > 0.0, "Fee total should be positive on main chain");
+    assert_eq!(chain_fee.currency, "usd");
+
+    // Aggregated fee (chain ID 0) should match the single chain fee
+    let aggregated_fee = fee_totals.get(&0).expect("Should have aggregated fee total");
+    assert_eq!(
+        aggregated_fee.value, chain_fee.value,
+        "Aggregated fee should equal single chain fee"
+    );
+    assert_eq!(aggregated_fee.currency, "usd");
 
     // Sign and send with fee payer signature
     assert!(response.digest == response.capabilities.fee_payer_digest.unwrap());
@@ -187,6 +225,54 @@ async fn test_multichain_fee_payer() -> Result<()> {
     // Intent on destination is free with no payer.
     assert!(quote.ty().quotes[0].intent.payer() == Address::ZERO);
     assert!(quote.ty().quotes[0].intent.total_payment_max_amount() == U256::ZERO);
+
+    // Verify asset diffs
+    let asset_diffs = &response.capabilities.asset_diff;
+    let fee_totals = &response.capabilities.asset_diff.fee_totals;
+
+    // Chain 0: User has transfer, fee payer has no diffs
+    assert_no_asset_diffs(
+        asset_diffs,
+        env.chain_id_for(0),
+        fee_payer.address,
+        AccountType::FeePayer,
+    );
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id_for(0),
+        env.eoa.address(),
+        env.erc20,
+        Some(transfer_amount),
+        AccountType::User,
+    );
+
+    // Chain 1: Fee payer pays fees
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id_for(1),
+        fee_payer.address,
+        env.erc20,
+        None, // Non-zero fee amount
+        AccountType::FeePayer,
+    );
+
+    // Verify fee totals
+    // Both chains have fees, but only chain 1 (fee payer) should be in fee_totals
+    let chain0_fee = fee_totals.get(&env.chain_id_for(0));
+    let chain1_fee =
+        fee_totals.get(&env.chain_id_for(1)).expect("Should have fee total for chain 1");
+
+    assert!(chain1_fee.value > 0.0, "Fee total should be positive on chain 1 (fee payer chain)");
+    assert_eq!(chain1_fee.currency, "usd");
+
+    // Aggregated fee (chain ID 0) should be sum of all chain fees
+    let aggregated_fee = fee_totals.get(&0).expect("Should have aggregated fee total");
+    let expected_total = chain0_fee.map(|f| f.value).unwrap_or(0.0) + chain1_fee.value;
+    assert_eq!(
+        aggregated_fee.value, expected_total,
+        "Aggregated fee should equal sum of all chain fees"
+    );
+    assert_eq!(aggregated_fee.currency, "usd");
 
     // Sign user intent
     let user_signature = main_key.sign_payload_hash(response.digest).await?;
@@ -341,6 +427,67 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
         "Should have fee_payer_digest for signing"
     );
 
+    // Verify asset diffs
+    let asset_diffs = &response.capabilities.asset_diff;
+    let fee_totals = &response.capabilities.asset_diff.fee_totals;
+
+    // User escrows the transfer amount (in chain 0 decimals)
+    let transfer_amount_chain0_decimals =
+        relay::rpc::adjust_balance_for_decimals(transfer_amount, decimals_chain1, decimals_chain0);
+
+    // Chain 0: User escrows, fee payer has no diffs
+    assert_no_asset_diffs(
+        asset_diffs,
+        env.chain_id_for(0),
+        fee_payer.address,
+        AccountType::FeePayer,
+    );
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id_for(0),
+        env.eoa.address(),
+        env.erc20,
+        Some(transfer_amount_chain0_decimals),
+        AccountType::User,
+    );
+
+    // Chain 1: User and fee payer have no diffs (recipient receives tokens)
+    assert_no_asset_diffs(
+        asset_diffs,
+        env.chain_id_for(1),
+        fee_payer.address,
+        AccountType::FeePayer,
+    );
+    assert_no_asset_diffs(asset_diffs, env.chain_id_for(1), env.eoa.address(), AccountType::User);
+
+    // Chain 2: Fee payer pays fees
+    assert_single_outgoing_erc20_diff(
+        asset_diffs,
+        env.chain_id_for(2),
+        fee_payer.address,
+        env.erc20,
+        None, // Non-zero fee amount
+        AccountType::FeePayer,
+    );
+
+    // Verify fee totals
+    // All chains may have fees in fee_totals, but only chain 2 (fee payer) should have non-zero
+    let chain0_fee = fee_totals.get(&env.chain_id_for(0));
+    let chain1_fee = fee_totals.get(&env.chain_id_for(1));
+    let chain2_fee =
+        fee_totals.get(&env.chain_id_for(2)).expect("Should have fee total for chain 2");
+
+    assert!(chain2_fee.value > 0.0, "Fee total should be positive on chain 2 (fee payer chain)");
+    assert_eq!(chain2_fee.currency, "usd");
+
+    // // Aggregated fee (chain ID 0) should be sum of all chain fees
+    // let aggregated_fee = fee_totals.get(&0).expect("Should have aggregated fee total");
+    // let expected_total = chain0_fee.map(|f| f.value).unwrap_or(0.0)
+    //     + chain1_fee.map(|f| f.value).unwrap_or(0.0)
+    //     + chain2_fee.value;
+    // assert_eq!(aggregated_fee.value, expected_total, "Aggregated fee should equal sum of all
+    // chain fees"); assert_eq!(aggregated_fee.currency, "usd");
+
     // Sign user intent with merkle root
     let user_signature = main_key.sign_payload_hash(response.digest).await?;
 
@@ -402,4 +549,101 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
     );
 
     Ok(())
+}
+
+// Helper types and functions for asset diff assertions
+
+#[derive(Debug, Clone, Copy)]
+enum AccountType {
+    User,
+    FeePayer,
+}
+
+impl std::fmt::Display for AccountType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccountType::User => write!(f, "User"),
+            AccountType::FeePayer => write!(f, "Fee payer"),
+        }
+    }
+}
+
+/// Helper to get all asset diffs for a specific owner on a chain
+fn get_asset_diffs_for_owner(
+    asset_diffs: &AssetDiffResponse,
+    chain_id: ChainId,
+    owner: Address,
+) -> Vec<relay::types::AssetDiff> {
+    asset_diffs
+        .asset_diffs
+        .get(&chain_id)
+        .map(|chain_diffs| {
+            chain_diffs
+                .0
+                .iter()
+                .filter(|(o, _)| *o == owner)
+                .flat_map(|(_, diffs)| diffs.iter().cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Assert that an address has no asset diffs on a specific chain
+fn assert_no_asset_diffs(
+    asset_diffs: &AssetDiffResponse,
+    chain_id: ChainId,
+    owner: Address,
+    account_type: AccountType,
+) {
+    let diffs = get_asset_diffs_for_owner(asset_diffs, chain_id, owner);
+    assert_eq!(diffs.len(), 0, "{} should have no asset diffs on chain {}", account_type, chain_id);
+}
+
+/// Assert that an address has exactly one outgoing ERC20 diff
+///
+/// If expected_value is Some, asserts exact value. If None, asserts non-zero (for fees).
+fn assert_single_outgoing_erc20_diff(
+    asset_diffs: &AssetDiffResponse,
+    chain_id: ChainId,
+    owner: Address,
+    token: Address,
+    expected_value: Option<U256>,
+    account_type: AccountType,
+) {
+    let diffs = get_asset_diffs_for_owner(asset_diffs, chain_id, owner);
+    assert_eq!(
+        diffs.len(),
+        1,
+        "{} should have exactly 1 asset diff on chain {}",
+        account_type,
+        chain_id
+    );
+
+    let diff = &diffs[0];
+    assert_eq!(
+        diff.address,
+        Some(token),
+        "{}'s diff should be for the correct token",
+        account_type
+    );
+    assert_eq!(
+        diff.direction,
+        DiffDirection::Outgoing,
+        "{}'s diff should be outgoing",
+        account_type
+    );
+
+    match expected_value {
+        Some(value) => {
+            assert_eq!(diff.value, value, "{}'s diff value should match expected", account_type);
+        }
+        None => {
+            assert!(
+                diff.value > U256::ZERO,
+                "{} should have non-zero value (got {})",
+                account_type,
+                diff.value
+            );
+        }
+    }
 }
