@@ -545,6 +545,143 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_multichain_all_user_balance_with_fee_payer() -> Result<()> {
+    // Setup environment with 3 chains using LayerZero:
+    // - Chain 0: User has all their ERC20 tokens (sources entire balance via interop)
+    // - Chain 1: User transfers to recipient (no tokens here)
+    // - Chain 2: Fee payer sponsors all fees
+    let env = Environment::setup_with_config(crate::e2e::EnvironmentConfig {
+        num_chains: 3,
+        use_layerzero: true,
+        ..Default::default()
+    })
+    .await?;
+
+    // Start the LayerZero relayer for automatic message delivery
+    let (_relayer, _handles) = env.start_layerzero_relayer().await?;
+
+    let recipient = Address::random();
+    let user = MockAccountBuilder::new().build(&env).await?;
+    let fee_payer = MockAccountBuilder::new().no_erc20_mint().build(&env).await?;
+
+    let chain_0_provider = env.provider_for(0);
+    let chain_1_provider = env.provider_for(1);
+    let chain_2_provider = env.provider_for(2);
+
+    // User gets default ERC20 mint on chain 0
+    let erc20_chain0 = IERC20::IERC20Instance::new(env.erc20, chain_0_provider);
+    let erc20_chain1 = IERC20::IERC20Instance::new(env.erc20, chain_1_provider);
+    let initial_user_balance = erc20_chain0.balanceOf(user.address).call().await?;
+
+    // Transfer amount should be in destination chain decimals
+    let decimals_chain0 = erc20_chain0.decimals().call().await?;
+    let decimals_chain1 = erc20_chain1.decimals().call().await?;
+    let transfer_amount = relay::rpc::adjust_balance_for_decimals(
+        initial_user_balance,
+        decimals_chain0,
+        decimals_chain1,
+    );
+
+    // Set user's native balance to zero so they can't pay for gas
+    chain_0_provider.anvil_set_balance(user.address, U256::ZERO).await?;
+
+    // Give fee_payer ERC20 tokens ONLY on chain 2
+    mint_erc20s(&[env.erc20], &[fee_payer.address], chain_2_provider).await?;
+
+    let erc20_chain1 = IERC20::IERC20Instance::new(env.erc20, chain_1_provider);
+    let erc20_chain2 = IERC20::IERC20Instance::new(env.erc20, chain_2_provider);
+
+    let initial_fee_payer_balance = erc20_chain2.balanceOf(fee_payer.address).call().await?;
+
+    // Prepare transfer of ALL tokens to chain 1
+    let response = env
+        .relay_endpoint
+        .prepare_calls(PrepareCallsParameters {
+            from: Some(user.address),
+            calls: vec![Call::transfer(env.erc20, recipient, transfer_amount)],
+            chain_id: env.chain_id_for(1),
+            key: Some(user.key.to_call_key()),
+            capabilities: PrepareCallsCapabilities {
+                meta: Meta {
+                    fee_payer: Some(fee_payer.address),
+                    fee_token: Some(env.erc20),
+                    nonce: None,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .await?;
+
+    // Verify this is a multichain intent with cross-chain fee payer
+    let quote = response.context.quote().expect("Should have quote context");
+    assert!(quote.ty().multi_chain_root.is_some(), "Should have multichain root");
+    assert!(quote.ty().fee_payer.is_some(), "Should have cross-chain fee_payer quote");
+
+    let fee_payer_quote = quote.ty().fee_payer.as_ref().unwrap();
+    assert_eq!(
+        fee_payer_quote.chain_id,
+        env.chain_id_for(2),
+        "Fee payer should execute on chain 2"
+    );
+
+    // Sign user intent with merkle root
+    let user_signature = user.key.sign_payload_hash(response.digest).await?;
+
+    // Sign fee_payer intent
+    let fee_payer_digest = response.capabilities.fee_payer_digest.unwrap();
+    let fee_signature = Signature {
+        innerSignature: fee_payer.key.sign_payload_hash(fee_payer_digest).await?,
+        keyHash: fee_payer.key.key_hash(),
+        prehash: false,
+    }
+    .abi_encode_packed()
+    .into();
+
+    // Send prepared calls
+    let send_response = env
+        .relay_endpoint
+        .send_prepared_calls(SendPreparedCallsParameters {
+            context: response.context,
+            signature: user_signature,
+            capabilities: SendPreparedCallsCapabilities { fee_signature },
+            key: Some(user.key.to_call_key()),
+        })
+        .await?;
+
+    // Verify transaction succeeded
+    let status = await_calls_status(&env, send_response.id).await?;
+    assert!(status.status.is_confirmed(), "Transaction should succeed: {:?}", status.status);
+    assert!(status.capabilities.unwrap().interop_status.unwrap().is_done());
+
+    // Verify final balances:
+    // - User on chain 0: should have transferred all tokens (no fees deducted)
+    // - Recipient on chain 1: should receive the full transfer amount
+    // - Fee payer on chain 2: paid all fees
+    assert_eq!(
+        erc20_chain0.balanceOf(user.address).call().await?,
+        U256::ZERO,
+        "User should have transferred all tokens from chain 0"
+    );
+    assert_eq!(
+        erc20_chain1.balanceOf(user.address).call().await?,
+        U256::ZERO,
+        "User should still have zero on chain 1"
+    );
+    assert_eq!(
+        erc20_chain1.balanceOf(recipient).call().await?,
+        transfer_amount,
+        "Recipient should have received the full transfer amount on chain 1"
+    );
+    assert!(
+        erc20_chain2.balanceOf(fee_payer.address).call().await? < initial_fee_payer_balance,
+        "Fee payer should have paid fees on chain 2"
+    );
+
+    Ok(())
+}
+
 // Helper types and functions for asset diff assertions
 
 #[derive(Debug, Clone, Copy)]
