@@ -1398,6 +1398,7 @@ impl Relay {
         requested_assets: Vec<(AddressOrNative, U256)>,
         total_leaves: usize,
         destination_fee_token: Option<Address>,
+        is_sponsored: bool,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
         let mut remaining = HashMap::new();
 
@@ -1425,6 +1426,15 @@ impl Relay {
             .0
             .iter()
             .filter(|(chain, _)| **chain != destination_chain_id)
+            .filter(|(chain, _)| {
+                // If destination_fee_token is specified, only include chains where we can map it
+                destination_fee_token.is_none_or(|fee_token| {
+                    self.inner
+                        .chains
+                        .map_interop_asset(destination_chain_id, **chain, fee_token)
+                        .is_some()
+                })
+            })
             .flat_map(|(chain, assets)| assets.iter().map(|asset| (*chain, asset)))
             .fold(HashMap::new(), |mut acc, (chain, asset)| {
                 let Some(on_dst) = self
@@ -1492,6 +1502,8 @@ impl Relay {
             .map(|(chain, balances)| async move {
                 let fee_token = destination_fee_token
                     .and_then(|destination_fee_token| {
+                        // Safe to unwrap: we filtered out chains where this mapping doesn't exist
+                        // in the sources filter above
                         self.inner
                             .chains
                             .map_interop_asset(destination_chain_id, chain, destination_fee_token)
@@ -1559,8 +1571,9 @@ impl Relay {
                 };
 
                 // Calculate the maximum amount we can bridge to destination
+                // If fees are sponsored by a fee_payer, don't subtract escrow_cost
                 let max_take = adjust_balance_for_decimals(
-                    if fee_token == mapped.address {
+                    if !is_sponsored && fee_token == mapped.address {
                         (*balance).saturating_sub(escrow_cost)
                     } else {
                         *balance
@@ -1947,6 +1960,8 @@ impl Relay {
                     num_funding_chains + 1,
                     // If fee_payer is specified, use the chosen fee_token
                     request.capabilities.meta.fee_payer.and(Some(fee_token)),
+                    // Fees are sponsored if fee_payer is present
+                    request.capabilities.meta.fee_payer.is_some(),
                 )
                 .await?
             else {
