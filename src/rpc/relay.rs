@@ -1497,6 +1497,7 @@ impl Relay {
                             .map_interop_asset(destination_chain_id, chain, destination_fee_token)
                             .map(|mapped| mapped.address)
                     })
+                    // todo: this might not work well for multi asset case.
                     .unwrap_or_else(|| balances.first().unwrap().0.address());
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
