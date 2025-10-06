@@ -18,7 +18,7 @@ use alloy::{
         aliases::{B192, U192},
         map::HashMap,
     },
-    providers::Provider,
+    providers::{DynProvider, Provider},
     rpc::types::{
         TransactionRequest,
         state::{AccountOverride, StateOverride, StateOverridesBuilder},
@@ -238,23 +238,6 @@ impl<P: Provider> Account<P> {
         Self {
             delegation: IthacaAccountInstance::new(address, provider),
             overrides: StateOverride::default(),
-        }
-    }
-
-    /// Generates a random nonce with a random sequence key.
-    ///
-    /// This is useful for accounts that may be sponsoring many concurrent intents (e.g.,
-    /// fee_payer), where sequential nonces could cause bottlenecks. The random sequence key
-    /// ensures that each intent gets a unique nonce without coordination.
-    ///
-    /// The function ensures the generated sequence key doesn't conflict with the multichain nonce
-    /// prefix.
-    pub fn random_nonce() -> U256 {
-        loop {
-            let sequence_key = U192::from_be_bytes(B192::random().into());
-            if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
-                break U256::from(sequence_key) << 64;
-            }
         }
     }
 
@@ -483,6 +466,25 @@ impl<P: Provider> Account<P> {
             .overrides(self.overrides.clone())
             .await
             .map_err(TransportErrorKind::custom)
+    }
+}
+
+impl Account<DynProvider> {
+    /// Generates a random nonce with a random sequence key.
+    ///
+    /// This is useful for accounts that may be sponsoring many concurrent intents (e.g.,
+    /// fee_payer), where sequential nonces could cause bottlenecks. The random sequence key
+    /// ensures that each intent gets a unique nonce without coordination.
+    ///
+    /// The function ensures the generated sequence key doesn't conflict with the multichain nonce
+    /// prefix.
+    pub fn random_nonce() -> U256 {
+        loop {
+            let sequence_key = U192::from_be_bytes(B192::random().into());
+            if sequence_key >> 176 != MULTICHAIN_NONCE_PREFIX_U192 {
+                break U256::from(sequence_key) << 64;
+            }
+        }
     }
 }
 

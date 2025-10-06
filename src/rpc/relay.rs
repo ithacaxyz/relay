@@ -1738,7 +1738,7 @@ impl Relay {
 
             let mut deficits = quote.asset_deficits.0.clone();
             // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
-            // Only do this if there's no fee_payer, since fee_payer handles fees separately.
+            // Only do this if there's no fee_payer, since fee_token_deficit is excluded.
             if request.capabilities.meta.fee_payer.is_none() {
                 deficits.retain_mut(|deficit| {
                     if Some(deficit.address.unwrap_or_default())
@@ -2438,7 +2438,7 @@ impl Relay {
         };
 
         // Use a random nonce for fee_payer to support concurrent sponsorships
-        let fee_payer_nonce = Account::<DynProvider>::random_nonce();
+        let fee_payer_nonce = Account::random_nonce();
 
         // Build the fee_payer intent as a single-chain intent (not part of the merkle tree)
         let (fee_payer_asset_diffs, fee_payer_quote) = self

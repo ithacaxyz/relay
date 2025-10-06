@@ -309,7 +309,7 @@ impl PrepareCallsParameters {
 
             let Some(key_hash) = key_hashes.pop_first() else {
                 // If precall doesn't perform any key-related operations, return a random nonce.
-                return Ok(Account::<DynProvider>::random_nonce());
+                return Ok(Account::random_nonce());
             };
 
             // Convert the key hash to a sequence key and fetch the nonce for it.
@@ -346,7 +346,7 @@ impl PrepareCallsParameters {
         {
             Ok(precall.nonce + uint!(1_U256))
         } else if maybe_stored.is_some() {
-            Ok(Account::<DynProvider>::random_nonce())
+            Ok(Account::random_nonce())
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
             Account::new(eoa, &provider).get_nonce().await.map_err(RelayError::from)
