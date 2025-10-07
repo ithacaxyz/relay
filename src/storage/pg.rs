@@ -1581,6 +1581,8 @@ impl StorageApi for PgStorage {
                 ) tx_bundle ON true
                 WHERE tx_bundle.tx->'kind'->'quote'->'intent'->>'eoa' = $1
                 AND t.tx_hash IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
+                AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
             )
             SELECT * FROM all_bundles
             ORDER BY timestamp {}

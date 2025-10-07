@@ -9,6 +9,7 @@ mod errors;
 mod faucet;
 mod fee_payer;
 mod fees;
+mod history;
 mod intents_merkle;
 mod keys;
 mod liquidity;

@@ -89,6 +89,7 @@ pub struct InMemoryStorage {
     statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
+    transactions_by_address: DashMap<Address, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, VerifiedEmail>,
     unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
@@ -196,6 +197,12 @@ impl StorageApi for InMemoryStorage {
     async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
         self.statuses.insert(tx.id, (tx.chain_id(), TransactionStatus::InFlight));
         self.queued_transactions.entry(tx.chain_id()).or_default().push(tx.clone());
+
+        // Store transaction by address for history lookup
+        if let Some(eoa) = tx.eoa() {
+            self.transactions_by_address.entry(*eoa).or_default().push(tx.clone());
+        }
+
         Ok(())
     }
 
@@ -745,33 +752,43 @@ impl StorageApi for InMemoryStorage {
         }
 
         // Collect single-chain bundles from bundle_transactions
-        for bundle_entry in self.bundles.iter() {
-            let bundle_id = *bundle_entry.key();
-            let tx_ids = bundle_entry.value();
+        // Skip bundles that are already included as interop bundles
+        if let Some(txs_for_address) = self.transactions_by_address.get(&address) {
+            for bundle_entry in self.bundles.iter() {
+                let bundle_id = *bundle_entry.key();
 
-            // Get the first transaction to extract quote and check address
-            if let Some(&tx_id) = tx_ids.first() {
-                // Try to get the transaction from statuses to get chain_id and tx_hash
-                if let Some(status_entry) = self.statuses.get(&tx_id) {
-                    let (chain_id, tx_status) = status_entry.value();
+                // Skip if this bundle is an interop bundle (exists in either pending or finished)
+                if self.pending_bundles.contains_key(&bundle_id)
+                    || self.finished_bundles.contains_key(&bundle_id)
+                {
+                    continue;
+                }
 
-                    // Get tx_hash from status
-                    let Some(tx_hash) = tx_status.tx_hash() else {
-                        continue;
-                    };
+                let tx_ids = bundle_entry.value();
 
-                    // Get the transaction to extract quote
-                    if let Some(relay_tx) = self.find_transaction(tx_id)
-                        && relay_tx.kind.is_intent_for(address)
-                        && let RelayTransactionKind::Intent { quote, .. } = relay_tx.kind
-                    {
-                        filtered.push(BundleHistoryEntry::SingleChain {
-                            bundle_id,
-                            chain_id: *chain_id,
-                            quote: Box::new((*quote).clone()),
-                            tx_hash,
-                            timestamp: relay_tx.received_at.timestamp().try_into().unwrap_or(0),
-                        });
+                // Get the first transaction to extract quote and check address
+                if let Some(&tx_id) = tx_ids.first() {
+                    // Try to get the transaction from statuses to get chain_id and tx_hash
+                    if let Some(status_entry) = self.statuses.get(&tx_id) {
+                        let (chain_id, tx_status) = status_entry.value();
+
+                        // Get tx_hash from status
+                        let Some(tx_hash) = tx_status.tx_hash() else {
+                            continue;
+                        };
+
+                        // Get the transaction from transactions_by_address
+                        if let Some(relay_tx) = txs_for_address.iter().find(|tx| tx.id == tx_id)
+                            && let RelayTransactionKind::Intent { quote, .. } = &relay_tx.kind
+                        {
+                            filtered.push(BundleHistoryEntry::SingleChain {
+                                bundle_id,
+                                chain_id: *chain_id,
+                                quote: quote.clone(),
+                                tx_hash,
+                                timestamp: relay_tx.received_at.timestamp().try_into().unwrap_or(0),
+                            });
+                        }
                     }
                 }
             }
