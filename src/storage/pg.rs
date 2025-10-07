@@ -1613,7 +1613,15 @@ impl StorageApi for PgStorage {
             ORDER BY timestamp {}
             LIMIT $2 OFFSET $3
             "#,
-            order, per_branch_limit, order, per_branch_limit, order, per_branch_limit, order, per_branch_limit, order
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order
         );
 
         let rows = sqlx::query(&query)
