@@ -1,0 +1,234 @@
+---
+source: tests/e2e/cases/history.rs
+expression: history
+---
+[
+  {
+    "id": "[bundle_id]",
+    "index": 0,
+    "status": 200,
+    "timestamp": "[timestamp]",
+    "transactions": [
+      {
+        "chainId": "0x7a69",
+        "transactionHash": "[hash]"
+      }
+    ],
+    "key": "[key]",
+    "capabilities": {
+      "feeTotals": {},
+      "assetDiffs": {},
+      "quotes": [
+        {
+          "chainId": "0x7a69",
+          "intent": {
+            "eoa": "[address]",
+            "executionData": "[execution_data]",
+            "nonce": "[nonce]",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentToken": "0x0000000000000000000000000000000000000000",
+            "paymentMaxAmount": "[amount]",
+            "combinedGas": "0x31a6a",
+            "encodedPreCalls": "[precalls]",
+            "encodedFundTransfers": "[fund_transfers]",
+            "settler": "0x0000000000000000000000000000000000000000",
+            "expiry": "0x0",
+            "isMultichain": false,
+            "funder": "0x0000000000000000000000000000000000000000",
+            "funderSignature": "[signature]",
+            "settlerContext": "0x",
+            "paymentAmount": "[amount]",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "signature": "[signature]",
+            "paymentSignature": "[signature]",
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          },
+          "extraPayment": "[payment]",
+          "ethPrice": "0xde0b6b3a7640000",
+          "paymentTokenDecimals": 18,
+          "txGas": "0x63526",
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "[fee]",
+            "maxPriorityFeePerGas": "0x1"
+          },
+          "authorizationAddress": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
+          "additionalAuthorization": null,
+          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "feeTokenDeficit": "0x0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "[bundle_id]",
+    "index": 1,
+    "status": 200,
+    "timestamp": "[timestamp]",
+    "transactions": [
+      {
+        "chainId": "0x7a69",
+        "transactionHash": "[hash]"
+      }
+    ],
+    "key": "[key]",
+    "capabilities": {
+      "feeTotals": {},
+      "assetDiffs": {},
+      "quotes": [
+        {
+          "chainId": "0x7a69",
+          "intent": {
+            "eoa": "[address]",
+            "executionData": "[execution_data]",
+            "nonce": "[nonce]",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "paymentMaxAmount": "[amount]",
+            "combinedGas": "0x24419",
+            "encodedPreCalls": "[precalls]",
+            "encodedFundTransfers": "[fund_transfers]",
+            "settler": "0x0000000000000000000000000000000000000000",
+            "expiry": "0x0",
+            "isMultichain": false,
+            "funder": "0x0000000000000000000000000000000000000000",
+            "funderSignature": "[signature]",
+            "settlerContext": "0x",
+            "paymentAmount": "[amount]",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "signature": "[signature]",
+            "paymentSignature": "[signature]",
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          },
+          "extraPayment": "[payment]",
+          "ethPrice": "0xde0b6b3a7640000",
+          "paymentTokenDecimals": 18,
+          "txGas": "0x4d3c6",
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "[fee]",
+            "maxPriorityFeePerGas": "0x1"
+          },
+          "authorizationAddress": null,
+          "additionalAuthorization": null,
+          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "feeTokenDeficit": "0x0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "[bundle_id]",
+    "index": 2,
+    "status": 200,
+    "timestamp": "[timestamp]",
+    "transactions": [
+      {
+        "chainId": "0x7a6a",
+        "transactionHash": "[hash]"
+      }
+    ],
+    "key": "[key]",
+    "capabilities": {
+      "feeTotals": {},
+      "assetDiffs": {},
+      "quotes": [
+        {
+          "chainId": "0x7a6a",
+          "intent": {
+            "eoa": "[address]",
+            "executionData": "[execution_data]",
+            "nonce": "[nonce]",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "paymentMaxAmount": "[amount]",
+            "combinedGas": "0x3f254",
+            "encodedPreCalls": "[precalls]",
+            "encodedFundTransfers": "[fund_transfers]",
+            "settler": "0x0000000000000000000000000000000000000000",
+            "expiry": "0x0",
+            "isMultichain": false,
+            "funder": "0x0000000000000000000000000000000000000000",
+            "funderSignature": "[signature]",
+            "settlerContext": "0x",
+            "paymentAmount": "[amount]",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "signature": "[signature]",
+            "paymentSignature": "[signature]",
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          },
+          "extraPayment": "[payment]",
+          "ethPrice": "0xde0b6b3a7640000",
+          "paymentTokenDecimals": 6,
+          "txGas": "0x7207e",
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "[fee]",
+            "maxPriorityFeePerGas": "0x1"
+          },
+          "authorizationAddress": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
+          "additionalAuthorization": null,
+          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "feeTokenDeficit": "0x0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "[bundle_id]",
+    "index": 3,
+    "status": 200,
+    "timestamp": "[timestamp]",
+    "transactions": [
+      {
+        "chainId": "0x7a69",
+        "transactionHash": "[hash]"
+      },
+      {
+        "chainId": "0x7a6a",
+        "transactionHash": "[hash]"
+      }
+    ],
+    "key": "[key]",
+    "capabilities": {
+      "feeTotals": {},
+      "assetDiffs": {},
+      "quotes": [
+        {
+          "chainId": "0x7a6a",
+          "intent": {
+            "eoa": "[address]",
+            "executionData": "[execution_data]",
+            "nonce": "[nonce]",
+            "payer": "0x0000000000000000000000000000000000000000",
+            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "paymentMaxAmount": "[amount]",
+            "combinedGas": "0x378d9",
+            "encodedPreCalls": "[precalls]",
+            "encodedFundTransfers": "[fund_transfers]",
+            "settler": "0x0c8e79f3534b00d9a3d4a856b665bf4ebc22f2ba",
+            "expiry": "0x0",
+            "isMultichain": true,
+            "funder": "0xa15bb66138824a1c7167f5e85b957d04dd34e468",
+            "funderSignature": "[signature]",
+            "settlerContext": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000007a69",
+            "paymentAmount": "[amount]",
+            "paymentRecipient": "0x0000000000000000000000000000000000000000",
+            "signature": "[signature]",
+            "paymentSignature": "[signature]",
+            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          },
+          "extraPayment": "[payment]",
+          "ethPrice": "0xde0b6b3a7640000",
+          "paymentTokenDecimals": 6,
+          "txGas": "0x6276d",
+          "nativeFeeEstimate": {
+            "maxFeePerGas": "[fee]",
+            "maxPriorityFeePerGas": "0x1"
+          },
+          "authorizationAddress": null,
+          "additionalAuthorization": null,
+          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+          "feeTokenDeficit": "0x0"
+        }
+      ]
+    }
+  }
+]

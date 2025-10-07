@@ -784,8 +784,8 @@ impl StorageApi for InMemoryStorage {
                             filtered.push(BundleHistoryEntry::SingleChain {
                                 bundle_id,
                                 chain_id: *chain_id,
-                                quote: quote.clone(),
-                                tx_hash,
+                                quote: Some(quote.clone()),
+                                tx_hash: Some(tx_hash),
                                 timestamp: relay_tx.received_at.timestamp().try_into().unwrap_or(0),
                             });
                         }

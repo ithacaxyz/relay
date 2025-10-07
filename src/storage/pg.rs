@@ -4,6 +4,16 @@ use super::{
     StorageApi,
     api::{BundleHistoryEntry, OnrampContactInfo, OnrampVerificationStatus, Result},
 };
+
+/// Whether to store full transaction data in the txs.tx column
+#[derive(Debug, Clone, Copy)]
+enum StoreTxData {
+    /// Store full transaction data (for single-chain bundles)
+    Yes,
+    /// Don't store transaction data to avoid duplication (for interop bundles where data is in
+    /// bundle_data)
+    No,
+}
 use crate::{
     error::StorageError,
     liquidity::{
@@ -46,13 +56,20 @@ impl PgStorage {
     async fn queue_transaction_with(
         &self,
         relay_tx: &RelayTransaction,
+        store_tx_data: StoreTxData,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
     ) -> Result<()> {
         // Insert transaction into txs table
+        let tx_value = match store_tx_data {
+            StoreTxData::Yes => Some(serde_json::to_value(relay_tx)?),
+            StoreTxData::No => None,
+        };
+
         sqlx::query!(
-            "insert into txs (tx_id, chain_id) values ($1, $2)",
+            "insert into txs (tx_id, chain_id, tx) values ($1, $2, $3)",
             relay_tx.id.as_slice(),
-            relay_tx.chain_id() as i64 // yikes..
+            relay_tx.chain_id() as i64, // yikes..
+            tx_value
         )
         .execute(&mut **tx)
         .await
@@ -608,7 +625,7 @@ impl StorageApi for PgStorage {
     #[instrument(skip(self))]
     async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
         let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
-        self.queue_transaction_with(tx, &mut db_tx).await?;
+        self.queue_transaction_with(tx, StoreTxData::Yes, &mut db_tx).await?;
         db_tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
     }
@@ -922,8 +939,9 @@ impl StorageApi for PgStorage {
         self.store_pending_bundle_with(bundle, status, &mut tx).await?;
 
         // Then queue the specific transactions provided
+        // Don't store tx data since it's already in bundle_data (avoid duplication)
         for relay_tx in transactions {
-            self.queue_transaction_with(relay_tx, &mut tx).await?;
+            self.queue_transaction_with(relay_tx, StoreTxData::No, &mut tx).await?;
         }
 
         tx.commit().await.map_err(eyre::Error::from)?;
@@ -1542,47 +1560,45 @@ impl StorageApi for PgStorage {
             WITH all_bundles AS (
                 SELECT
                     bundle_id,
-                    status::text,
+                    status,
                     bundle_data,
                     COALESCE(finished_at, created_at) as timestamp,
                     'multichain' as bundle_type,
                     NULL::bigint as chain_id,
                     NULL::bytea as tx_hash
                 FROM (
-                    SELECT bundle_id, status, bundle_data, created_at, NULL::timestamp as finished_at
+                    SELECT bundle_id, status, bundle_data, created_at, NULL::timestamptz as finished_at
                     FROM pending_bundles
                     WHERE EXISTS (
                         SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                        WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                        WHERE tx->'quote'->'intent'->>'eoa' = $1
                     )
                     UNION ALL
                     SELECT bundle_id, status, bundle_data, created_at, finished_at
                     FROM finished_bundles
                     WHERE EXISTS (
                         SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                        WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                        WHERE tx->'quote'->'intent'->>'eoa' = $1
                     )
                 ) mc
                 UNION ALL
                 SELECT
                     bt.bundle_id,
                     NULL as status,
-                    tx_bundle.tx as bundle_data,
-                    (tx_bundle.tx->>'received_at')::timestamp as timestamp,
+                    t.tx as bundle_data,
+                    COALESCE((t.tx->>'received_at')::timestamptz, NOW()) as timestamp,
                     'singlechain' as bundle_type,
                     t.chain_id,
                     t.tx_hash
                 FROM bundle_transactions bt
                 JOIN txs t ON bt.tx_id = t.tx_id
-                JOIN LATERAL (
-                    SELECT tx FROM queued_txs WHERE tx_id = bt.tx_id
+                WHERE t.tx IS NOT NULL
+                AND t.tx->'quote'->'intent'->>'eoa' = $1
+                AND NOT EXISTS (
+                    SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id
                     UNION ALL
-                    SELECT tx FROM pending_txs WHERE tx_id = bt.tx_id
-                ) tx_bundle ON true
-                WHERE tx_bundle.tx->'kind'->'quote'->'intent'->>'eoa' = $1
-                AND t.tx_hash IS NOT NULL
-                AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
-                AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
+                    SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id
+                )
             )
             SELECT * FROM all_bundles
             ORDER BY timestamp {}
@@ -1602,19 +1618,17 @@ impl StorageApi for PgStorage {
         let mut entries = Vec::new();
         for row in rows {
             let bundle_type: String = row.get("bundle_type");
-            let timestamp: chrono::NaiveDateTime = row.get("timestamp");
-            let timestamp = timestamp.and_utc().timestamp() as u64;
+            let timestamp: chrono::DateTime<chrono::Utc> = row.get("timestamp");
+            let timestamp = timestamp.timestamp() as u64;
 
             match bundle_type.as_str() {
                 "multichain" => {
                     let bundle_data: serde_json::Value = row.get("bundle_data");
                     let bundle: InteropBundle = serde_json::from_value(bundle_data)
                         .map_err(|e| eyre::eyre!("Failed to deserialize InteropBundle: {}", e))?;
-                    let status_str: String = row.get("status");
-                    let status: BundleStatus = serde_json::from_value(serde_json::Value::String(
-                        status_str,
-                    ))
-                    .map_err(|e| eyre::eyre!("Failed to deserialize BundleStatus: {}", e))?;
+                    let status: BundleStatus = row
+                        .try_get("status")
+                        .map_err(|e| eyre::eyre!("Failed to get BundleStatus: {}", e))?;
 
                     entries.push(BundleHistoryEntry::Interop {
                         bundle: BundleWithStatus { bundle, status },
@@ -1625,24 +1639,32 @@ impl StorageApi for PgStorage {
                     let bundle_id_bytes: Vec<u8> = row.get("bundle_id");
                     let bundle_id = BundleId::from_slice(&bundle_id_bytes);
                     let chain_id: i64 = row.get("chain_id");
-                    let tx_hash: Vec<u8> = row.get("tx_hash");
-                    let tx_hash = TxHash::from_slice(&tx_hash);
+                    let tx_hash: Option<TxHash> =
+                        row.try_get::<Vec<u8>, _>("tx_hash").ok().map(|v| TxHash::from_slice(&v));
 
-                    let tx_data: serde_json::Value = row.get("bundle_data");
-                    let relay_tx: RelayTransaction =
-                        serde_json::from_value(tx_data).map_err(|e| {
-                            eyre::eyre!("Failed to deserialize RelayTransaction: {}", e)
-                        })?;
+                    // bundle_data might be NULL for old transactions (backwards compatibility)
+                    let tx_data: Option<serde_json::Value> = row.try_get("bundle_data").ok();
 
-                    let quote = match relay_tx.kind {
-                        RelayTransactionKind::Intent { quote, .. } => (*quote).clone(),
-                        _ => continue, // Skip non-intent transactions
+                    let quote = if let Some(tx_data) = tx_data {
+                        let relay_tx: RelayTransaction =
+                            serde_json::from_value(tx_data).map_err(|e| {
+                                eyre::eyre!("Failed to deserialize RelayTransaction: {}", e)
+                            })?;
+
+                        match relay_tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => Some((*quote).clone()),
+                            _ => continue, // Skip non-intent transactions
+                        }
+                    } else {
+                        // Old transaction without stored data - still show in history but without
+                        // quote
+                        None
                     };
 
                     entries.push(BundleHistoryEntry::SingleChain {
                         bundle_id,
                         chain_id: chain_id as u64,
-                        quote: Box::new(quote),
+                        quote: quote.map(Box::new),
                         tx_hash,
                         timestamp,
                     });

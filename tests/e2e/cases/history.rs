@@ -65,6 +65,14 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     assert_ne!(history[0].id, bundle2, "Init bundle should not be bundle2");
     assert_ne!(history[0].id, bundle3, "Init bundle should not be bundle3");
 
+    // Verify bundle3 (interop) has quotes from both src and dst transactions
+    let bundle3_entry = history.iter().find(|e| e.id == bundle3).expect("bundle3 should exist");
+    assert_eq!(
+        bundle3_entry.capabilities.quotes.len(),
+        2,
+        "Interop bundle should have 2 quotes (1 from src_txs, 1 from dst_txs)"
+    );
+
     // Test 2: Fetch history in descending order
     let history_desc = get_history(&env, account.address, None, 10, SortDirection::Desc).await?;
     assert_eq!(history_desc.len(), 4);
@@ -86,7 +94,8 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     assert_eq!(history_paginated[1].id, history[3].id);
 
     // Test 5: Index beyond available items
-    let history_beyond = get_history(&env, account.address, Some(10), 10, SortDirection::Asc).await?;
+    let history_beyond =
+        get_history(&env, account.address, Some(10), 10, SortDirection::Asc).await?;
     assert_eq!(history_beyond.len(), 0);
 
     // Test 6: Verify timestamps are increasing (ascending order)
@@ -99,7 +108,6 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
 
     Ok(())
 }
-
 
 async fn send_bundle(
     env: &Environment,

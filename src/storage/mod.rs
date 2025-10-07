@@ -113,10 +113,11 @@ impl RelayStorage {
                         }
                     }
 
-                    // Extract quotes from bundle
+                    // Extract quotes from bundle (both src and dst transactions)
                     let quotes = bundle
-                        .dst_txs
+                        .src_txs
                         .iter()
+                        .chain(bundle.dst_txs.iter())
                         .filter_map(|tx| match &tx.kind {
                             RelayTransactionKind::Intent { quote, .. } => Some((**quote).clone()),
                             _ => None,
@@ -145,16 +146,26 @@ impl RelayStorage {
                     tx_hash,
                     timestamp,
                 } => {
-                    let key_hash = if quote.intent.signature().len() == 65 {
-                        // Signed by root eoa key
-                        B256::ZERO
+                    let (key_hash, quotes) = if let Some(quote) = quote {
+                        let key_hash = if quote.intent.signature().len() == 65 {
+                            // Signed by root eoa key
+                            B256::ZERO
+                        } else {
+                            Signature::decode_key_hash(quote.intent.signature())
+                                .unwrap_or(B256::ZERO)
+                        };
+                        (key_hash, vec![(*quote).clone()])
                     } else {
-                        Signature::decode_key_hash(quote.intent.signature()).unwrap_or(B256::ZERO)
+                        // Old transaction without stored quote data
+                        (B256::ZERO, vec![])
                     };
 
-                    // Build transaction list
-                    let transactions =
-                        vec![CallHistoryTransaction { chain_id, transaction_hash: tx_hash }];
+                    // Build transaction list (only if tx_hash exists)
+                    let transactions = tx_hash
+                        .map(|tx_hash| {
+                            vec![CallHistoryTransaction { chain_id, transaction_hash: tx_hash }]
+                        })
+                        .unwrap_or_default();
 
                     // TODO: Implement asset diff storage and retrieval
                     let asset_diff = AssetDiffResponse::default();
@@ -178,7 +189,7 @@ impl RelayStorage {
                         timestamp,
                         transactions,
                         key: key_hash,
-                        capabilities: CallHistoryCapabilities { asset_diff, quotes: vec![*quote] },
+                        capabilities: CallHistoryCapabilities { asset_diff, quotes },
                     }
                 }
             };

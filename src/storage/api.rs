@@ -41,10 +41,10 @@ pub enum BundleHistoryEntry {
         bundle_id: BundleId,
         /// The chain ID.
         chain_id: ChainId,
-        /// The quote for the bundle.
-        quote: Box<Quote>,
-        /// The transaction hash.
-        tx_hash: TxHash,
+        /// The quote for the bundle (None for old transactions without stored data).
+        quote: Option<Box<Quote>>,
+        /// The transaction hash (None if transaction is in-flight).
+        tx_hash: Option<TxHash>,
         /// The timestamp when the bundle was created (Unix timestamp in seconds).
         timestamp: u64,
     },
