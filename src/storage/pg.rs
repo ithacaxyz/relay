@@ -2,7 +2,7 @@
 
 use super::{
     StorageApi,
-    api::{OnrampContactInfo, OnrampVerificationStatus, Result},
+    api::{BundleHistoryEntry, OnrampContactInfo, OnrampVerificationStatus, Result},
 };
 use crate::{
     error::StorageError,
@@ -12,20 +12,22 @@ use crate::{
     },
     storage::api::LockLiquidityInput,
     transactions::{
-        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, RelayTransactionKind,
+        TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
-    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
+    hex,
+    primitives::{Address, B256, BlockNumber, ChainId, TxHash, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
-use sqlx::{PgPool, Postgres, types::BigDecimal};
+use sqlx::{PgPool, Postgres, Row, types::BigDecimal};
 use tracing::{error, instrument};
 
 /// PostgreSQL storage implementation.
@@ -1521,5 +1523,173 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> Result<Vec<BundleHistoryEntry>> {
+        let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
+        let order = if sort_desc { "DESC" } else { "ASC" };
+
+        // Note: Using format!() here because ORDER BY direction is runtime parameter.
+        // This is safe because order is hardcoded above (not user input).
+        let query = format!(
+            r#"
+            WITH all_bundles AS (
+                SELECT
+                    bundle_id,
+                    status::text,
+                    bundle_data,
+                    COALESCE(finished_at, created_at) as timestamp,
+                    'multichain' as bundle_type,
+                    NULL::bigint as chain_id,
+                    NULL::bytea as tx_hash
+                FROM (
+                    SELECT bundle_id, status, bundle_data, created_at, NULL::timestamp as finished_at
+                    FROM pending_bundles
+                    WHERE EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
+                        WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                    )
+                    UNION ALL
+                    SELECT bundle_id, status, bundle_data, created_at, finished_at
+                    FROM finished_bundles
+                    WHERE EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
+                        WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                    )
+                ) mc
+                UNION ALL
+                SELECT
+                    bt.bundle_id,
+                    NULL as status,
+                    tx_bundle.tx as bundle_data,
+                    (tx_bundle.tx->>'received_at')::timestamp as timestamp,
+                    'singlechain' as bundle_type,
+                    t.chain_id,
+                    t.tx_hash
+                FROM bundle_transactions bt
+                JOIN txs t ON bt.tx_id = t.tx_id
+                JOIN LATERAL (
+                    SELECT tx FROM queued_txs WHERE tx_id = bt.tx_id
+                    UNION ALL
+                    SELECT tx FROM pending_txs WHERE tx_id = bt.tx_id
+                ) tx_bundle ON true
+                WHERE tx_bundle.tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                AND t.tx_hash IS NOT NULL
+            )
+            SELECT * FROM all_bundles
+            ORDER BY timestamp {}
+            LIMIT $2 OFFSET $3
+            "#,
+            order
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(&eoa_hex)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            let bundle_type: String = row.get("bundle_type");
+            let timestamp: chrono::NaiveDateTime = row.get("timestamp");
+            let timestamp = timestamp.and_utc().timestamp() as u64;
+
+            match bundle_type.as_str() {
+                "multichain" => {
+                    let bundle_data: serde_json::Value = row.get("bundle_data");
+                    let bundle: InteropBundle = serde_json::from_value(bundle_data)
+                        .map_err(|e| eyre::eyre!("Failed to deserialize InteropBundle: {}", e))?;
+                    let status_str: String = row.get("status");
+                    let status: BundleStatus = serde_json::from_value(serde_json::Value::String(
+                        status_str,
+                    ))
+                    .map_err(|e| eyre::eyre!("Failed to deserialize BundleStatus: {}", e))?;
+
+                    entries.push(BundleHistoryEntry::Interop {
+                        bundle: BundleWithStatus { bundle, status },
+                        timestamp,
+                    });
+                }
+                "singlechain" => {
+                    let bundle_id_bytes: Vec<u8> = row.get("bundle_id");
+                    let bundle_id = BundleId::from_slice(&bundle_id_bytes);
+                    let chain_id: i64 = row.get("chain_id");
+                    let tx_hash: Vec<u8> = row.get("tx_hash");
+                    let tx_hash = TxHash::from_slice(&tx_hash);
+
+                    let tx_data: serde_json::Value = row.get("bundle_data");
+                    let relay_tx: RelayTransaction =
+                        serde_json::from_value(tx_data).map_err(|e| {
+                            eyre::eyre!("Failed to deserialize RelayTransaction: {}", e)
+                        })?;
+
+                    let quote = match relay_tx.kind {
+                        RelayTransactionKind::Intent { quote, .. } => (*quote).clone(),
+                        _ => continue, // Skip non-intent transactions
+                    };
+
+                    entries.push(BundleHistoryEntry::SingleChain {
+                        bundle_id,
+                        chain_id: chain_id as u64,
+                        quote: Box::new(quote),
+                        tx_hash,
+                        timestamp,
+                    });
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(entries)
+    }
+
+    async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64> {
+        let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
+
+        let query = r#"
+            WITH all_bundles AS (
+                SELECT bundle_id FROM pending_bundles
+                WHERE EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
+                    WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                )
+                UNION ALL
+                SELECT bundle_id FROM finished_bundles
+                WHERE EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
+                    WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                )
+                UNION ALL
+                SELECT bt.bundle_id
+                FROM bundle_transactions bt
+                JOIN txs t ON bt.tx_id = t.tx_id
+                JOIN LATERAL (
+                    SELECT tx FROM queued_txs WHERE tx_id = bt.tx_id
+                    UNION ALL
+                    SELECT tx FROM pending_txs WHERE tx_id = bt.tx_id
+                ) tx_bundle ON true
+                WHERE tx_bundle.tx->'kind'->'quote'->'intent'->>'eoa' = $1
+                AND t.tx_hash IS NOT NULL
+            )
+            SELECT COUNT(*) as total FROM all_bundles
+        "#;
+
+        let row = sqlx::query(query)
+            .bind(&eoa_hex)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        let total: i64 = row.get("total");
+        Ok(total as u64)
     }
 }

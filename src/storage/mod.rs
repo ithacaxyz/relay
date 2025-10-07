@@ -6,7 +6,7 @@ use alloy::{
     primitives::{BlockNumber, U256},
     rpc::types::TransactionReceipt,
 };
-pub use api::{LockLiquidityInput, OnrampContactInfo, StorageApi};
+pub use api::{BundleHistoryEntry, LockLiquidityInput, OnrampContactInfo, StorageApi};
 
 mod memory;
 mod pg;
@@ -17,8 +17,17 @@ use crate::{
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
     storage::api::OnrampVerificationStatus,
-    transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    transactions::{
+        PendingTransaction, PullGasState, RelayTransaction, RelayTransactionKind,
+        TransactionStatus, TxId,
+    },
+    types::{
+        AssetDiffResponse, CreatableAccount, Signature, SignedCall,
+        rpc::{
+            BundleId, CallHistoryCapabilities, CallHistoryEntry, CallHistoryTransaction,
+            CallStatusCode,
+        },
+    },
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -43,6 +52,141 @@ impl RelayStorage {
     /// Create a [`RelayStorage`] with a PostgreSQL backend.
     pub fn pg(pool: PgPool) -> Self {
         Self { inner: Arc::new(pg::PgStorage::new(pool)) }
+    }
+
+    /// Gets call history entries for an address with full RPC response data.
+    /// This method builds complete CallHistoryEntry objects with transactions, key hashes, etc.
+    pub async fn get_calls_history(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> api::Result<Vec<CallHistoryEntry>> {
+        // Fetch bundles from underlying storage
+        let bundles = self.inner.get_bundles_by_address(address, limit, offset, sort_desc).await?;
+
+        // Build response entries
+        let mut entries = Vec::with_capacity(bundles.len());
+
+        for (idx, history_entry) in bundles.into_iter().enumerate() {
+            // Calculate chronological index
+            let index = offset + idx as u64;
+
+            let entry = match history_entry {
+                // Multi-chain bundle path
+                api::BundleHistoryEntry::Interop { bundle: bundle_with_status, timestamp } => {
+                    let bundle = &bundle_with_status.bundle;
+                    let status = bundle_with_status.status;
+                    let bundle_id = bundle.id;
+
+                    // Extract key hash from first destination transaction signature
+                    // For 65-byte EOA signatures, use 0x0 as keyHash
+                    let key_hash = bundle
+                        .dst_txs
+                        .first()
+                        .and_then(|tx| match &tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => {
+                                if quote.intent.signature().len() == 65 {
+                                    Some(B256::ZERO)
+                                } else {
+                                    Signature::decode_key_hash(quote.intent.signature())
+                                }
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(B256::ZERO);
+
+                    // Get transaction statuses and receipts
+                    let tx_ids = self.inner.get_bundle_transactions(bundle_id).await?;
+
+                    let mut transactions = Vec::new();
+                    for tx_id in tx_ids {
+                        if let Some((chain_id, tx_status)) =
+                            self.inner.read_transaction_status(tx_id).await?
+                            && let Some(tx_hash) = tx_status.tx_hash()
+                        {
+                            transactions.push(CallHistoryTransaction {
+                                chain_id,
+                                transaction_hash: tx_hash,
+                            });
+                        }
+                    }
+
+                    // Extract quotes from bundle
+                    let quotes = bundle
+                        .dst_txs
+                        .iter()
+                        .filter_map(|tx| match &tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => Some((**quote).clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+
+                    // TODO: Implement asset diff storage and retrieval
+                    let asset_diff = AssetDiffResponse::default();
+
+                    CallHistoryEntry {
+                        id: bundle_id,
+                        index,
+                        status: status.to_call_status_code(),
+                        timestamp,
+                        transactions,
+                        key: key_hash,
+                        capabilities: CallHistoryCapabilities { asset_diff, quotes },
+                    }
+                }
+
+                // Single-chain bundle path
+                api::BundleHistoryEntry::SingleChain {
+                    bundle_id,
+                    chain_id,
+                    quote,
+                    tx_hash,
+                    timestamp,
+                } => {
+                    let key_hash = if quote.intent.signature().len() == 65 {
+                        // Signed by root eoa key
+                        B256::ZERO
+                    } else {
+                        Signature::decode_key_hash(quote.intent.signature()).unwrap_or(B256::ZERO)
+                    };
+
+                    // Build transaction list
+                    let transactions =
+                        vec![CallHistoryTransaction { chain_id, transaction_hash: tx_hash }];
+
+                    // TODO: Implement asset diff storage and retrieval
+                    let asset_diff = AssetDiffResponse::default();
+
+                    // Get tx_id from bundle_transactions table
+                    let tx_ids = self.inner.get_bundle_transactions(bundle_id).await?;
+                    let call_status = if let Some(&tx_id) = tx_ids.first() {
+                        self.inner
+                            .read_transaction_status(tx_id)
+                            .await?
+                            .map(|(_, tx_status)| tx_status.to_call_status_code())
+                            .unwrap_or(CallStatusCode::Pending)
+                    } else {
+                        CallStatusCode::Pending
+                    };
+
+                    CallHistoryEntry {
+                        id: bundle_id,
+                        index,
+                        status: call_status,
+                        timestamp,
+                        transactions,
+                        key: key_hash,
+                        capabilities: CallHistoryCapabilities { asset_diff, quotes: vec![*quote] },
+                    }
+                }
+            };
+
+            entries.push(entry);
+        }
+
+        Ok(entries)
     }
 }
 
@@ -400,5 +544,19 @@ impl StorageApi for RelayStorage {
         nonce: U256,
     ) -> api::Result<()> {
         self.inner.remove_precall(chain_id, eoa, nonce).await
+    }
+
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> api::Result<Vec<api::BundleHistoryEntry>> {
+        self.inner.get_bundles_by_address(address, limit, offset, sort_desc).await
+    }
+
+    async fn get_bundle_count_by_address(&self, address: Address) -> api::Result<u64> {
+        self.inner.get_bundle_count_by_address(address).await
     }
 }

@@ -10,11 +10,11 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    types::{CreatableAccount, Quote, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
-    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
+    primitives::{Address, B256, BlockNumber, ChainId, TxHash, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
@@ -24,6 +24,41 @@ use std::fmt::Debug;
 
 /// Type alias for `Result<T, StorageError>`
 pub type Result<T> = core::result::Result<T, StorageError>;
+
+/// Unified bundle history entry for both single-chain and multi-chain bundles.
+#[derive(Debug, Clone)]
+pub enum BundleHistoryEntry {
+    /// Multi-chain bundle
+    Interop {
+        /// The bundle with status.
+        bundle: BundleWithStatus,
+        /// The timestamp when the bundle was created (Unix timestamp in seconds).
+        timestamp: u64,
+    },
+    /// Single-chain bundle
+    SingleChain {
+        /// The bundle ID.
+        bundle_id: BundleId,
+        /// The chain ID.
+        chain_id: ChainId,
+        /// The quote for the bundle.
+        quote: Box<Quote>,
+        /// The transaction hash.
+        tx_hash: TxHash,
+        /// The timestamp when the bundle was created (Unix timestamp in seconds).
+        timestamp: u64,
+    },
+}
+
+impl BundleHistoryEntry {
+    /// Returns the timestamp of the bundle entry.
+    pub fn timestamp(&self) -> u64 {
+        match self {
+            Self::Interop { timestamp, .. } => *timestamp,
+            Self::SingleChain { timestamp, .. } => *timestamp,
+        }
+    }
+}
 
 /// Verification status for onramp contact information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,4 +383,18 @@ pub trait StorageApi: Debug + Send + Sync {
 
     /// Removes a precall.
     async fn remove_precall(&self, chain_id: ChainId, eoa: Address, nonce: U256) -> Result<()>;
+
+    /// Fetches bundle history for an address with pagination.
+    /// Returns entries only (no total count for performance).
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> Result<Vec<BundleHistoryEntry>>;
+
+    /// Gets total bundle count for an address (both single-chain and multi-chain).
+    /// Note: This requires a full scan and should only be called when necessary.
+    async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64>;
 }

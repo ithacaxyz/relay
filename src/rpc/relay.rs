@@ -22,9 +22,10 @@ use crate::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
             AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
             ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
-            GetAuthorizationParameters, GetAuthorizationResponse, Meta, PreCallContext,
-            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
-            RelayCapabilities, RequiredAsset, SendPreparedCallsCapabilities, UpgradeAccountContext,
+            GetAuthorizationParameters, GetAuthorizationResponse, GetCallsHistoryParameters,
+            GetCallsHistoryResponse, Meta, PreCallContext, PrepareCallsCapabilities,
+            PrepareCallsContext, PrepareUpgradeAccountResponse, RelayCapabilities, RequiredAsset,
+            SendPreparedCallsCapabilities, SortDirection, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
     },
@@ -137,6 +138,15 @@ pub trait RelayApi {
     /// The identifier of the batch is the value returned from `send_prepared_calls`.
     #[method(name = "getCallsStatus")]
     async fn get_calls_status(&self, parameters: BundleId) -> RpcResult<CallsStatus>;
+
+    /// Get the history of call bundles for a given address.
+    ///
+    /// Returns paginated list of bundles with their status, transactions, and capabilities.
+    #[method(name = "getCallsHistory")]
+    async fn get_calls_history(
+        &self,
+        params: GetCallsHistoryParameters,
+    ) -> RpcResult<GetCallsHistoryResponse>;
 
     /// Get the status of a call batch that was sent via `send_prepared_calls`.
     ///
@@ -2721,6 +2731,48 @@ impl RelayApiServer for Relay {
                 .collect(),
             capabilities,
         })
+    }
+
+    #[instrument(skip(self), fields(address = %params.address))]
+    async fn get_calls_history(
+        &self,
+        params: GetCallsHistoryParameters,
+    ) -> RpcResult<GetCallsHistoryResponse> {
+        if params.limit == 0 || params.limit > 100 {
+            return Err(RelayError::internal_msg("limit must be between 1 and 100").into());
+        }
+
+        // Calculate offset from index
+        // Note: For desc sort with no index, we need total count (slow)
+        let (offset, sort_desc) = match params.sort {
+            SortDirection::Asc => {
+                let offset = params.index.unwrap_or(0);
+                (offset, false)
+            }
+            SortDirection::Desc => {
+                if let Some(index) = params.index {
+                    // User provided index - no count needed
+                    (index, true)
+                } else {
+                    // No index provided - must get total count to default to end (slow)
+                    // Spec: "If not provided, it will default to total bundle count for desc"
+                    let total =
+                        self.inner.storage.get_bundle_count_by_address(params.address).await?;
+
+                    // Start from the end
+                    (total.saturating_sub(params.limit), true)
+                }
+            }
+        };
+
+        // Fetch entries from storage (all logic moved to storage layer)
+        let entries = self
+            .inner
+            .storage
+            .get_calls_history(params.address, params.limit, offset, sort_desc)
+            .await?;
+
+        Ok(entries)
     }
 
     async fn verify_signature(
