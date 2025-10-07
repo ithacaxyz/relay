@@ -14,7 +14,7 @@ use relay::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_calls_history_mixed_bundles() -> Result<()> {
+async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     let env = Environment::setup_multi_chain(2).await?;
 
     // Create fresh account without ERC20 minting (includes initialization bundle)
