@@ -1552,59 +1552,68 @@ impl StorageApi for PgStorage {
     ) -> Result<Vec<BundleHistoryEntry>> {
         let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
         let order = if sort_desc { "DESC" } else { "ASC" };
+        let per_branch_limit = limit + offset;
 
-        // Note: Using format!() here because ORDER BY direction is runtime parameter.
-        // This is safe because order is hardcoded above (not user input).
+        // Note: Using format!() here because ORDER BY direction and LIMIT are runtime parameters.
         let query = format!(
             r#"
             WITH all_bundles AS (
-                SELECT
-                    bundle_id,
-                    status,
-                    bundle_data,
-                    COALESCE(finished_at, created_at) as timestamp,
-                    'multichain' as bundle_type,
-                    NULL::bigint as chain_id,
-                    NULL::bytea as tx_hash
-                FROM (
-                    SELECT bundle_id, status, bundle_data, created_at, NULL::timestamptz as finished_at
-                    FROM pending_bundles
-                    WHERE EXISTS (
-                        SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                        WHERE tx->'quote'->'intent'->>'eoa' = $1
-                    )
-                    UNION ALL
-                    SELECT bundle_id, status, bundle_data, created_at, finished_at
-                    FROM finished_bundles
-                    WHERE EXISTS (
-                        SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                        WHERE tx->'quote'->'intent'->>'eoa' = $1
-                    )
-                ) mc
+                (
+                    SELECT
+                        bundle_id,
+                        status,
+                        bundle_data,
+                        COALESCE(finished_at, created_at) as timestamp,
+                        'multichain' as bundle_type,
+                        NULL::bigint as chain_id,
+                        NULL::bytea as tx_hash
+                    FROM (
+                        (
+                            SELECT bundle_id, status, bundle_data, created_at, NULL::timestamptz as finished_at
+                            FROM pending_bundles
+                            WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                            ORDER BY created_at {}
+                            LIMIT {}
+                        )
+                        UNION ALL
+                        (
+                            SELECT bundle_id, status, bundle_data, created_at, finished_at
+                            FROM finished_bundles
+                            WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                            ORDER BY finished_at {}
+                            LIMIT {}
+                        )
+                    ) mc
+                    ORDER BY COALESCE(finished_at, created_at) {}
+                    LIMIT {}
+                )
                 UNION ALL
-                SELECT
-                    bt.bundle_id,
-                    NULL as status,
-                    t.tx as bundle_data,
-                    COALESCE((t.tx->>'received_at')::timestamptz, NOW()) as timestamp,
-                    'singlechain' as bundle_type,
-                    t.chain_id,
-                    t.tx_hash
-                FROM bundle_transactions bt
-                JOIN txs t ON bt.tx_id = t.tx_id
-                WHERE t.tx IS NOT NULL
-                AND t.tx->'quote'->'intent'->>'eoa' = $1
-                AND NOT EXISTS (
-                    SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id
-                    UNION ALL
-                    SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id
+                (
+                    SELECT
+                        bt.bundle_id,
+                        NULL as status,
+                        t.tx as bundle_data,
+                        COALESCE((t.tx->>'received_at')::timestamptz, NOW()) as timestamp,
+                        'singlechain' as bundle_type,
+                        t.chain_id,
+                        t.tx_hash
+                    FROM bundle_transactions bt
+                    JOIN txs t ON bt.tx_id = t.tx_id
+                    LEFT JOIN pending_bundles pb ON bt.bundle_id = pb.bundle_id
+                    LEFT JOIN finished_bundles fb ON bt.bundle_id = fb.bundle_id
+                    WHERE t.tx IS NOT NULL
+                    AND t.tx->'quote'->'intent'->>'eoa' = $1
+                    AND pb.bundle_id IS NULL
+                    AND fb.bundle_id IS NULL
+                    ORDER BY COALESCE((t.tx->>'received_at')::timestamptz, NOW()) {}
+                    LIMIT {}
                 )
             )
             SELECT * FROM all_bundles
             ORDER BY timestamp {}
             LIMIT $2 OFFSET $3
             "#,
-            order
+            order, per_branch_limit, order, per_branch_limit, order, per_branch_limit, order, per_branch_limit, order
         );
 
         let rows = sqlx::query(&query)
@@ -1682,27 +1691,20 @@ impl StorageApi for PgStorage {
         let query = r#"
             WITH all_bundles AS (
                 SELECT bundle_id FROM pending_bundles
-                WHERE EXISTS (
-                    SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                    WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
-                )
+                WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
                 UNION ALL
                 SELECT bundle_id FROM finished_bundles
-                WHERE EXISTS (
-                    SELECT 1 FROM jsonb_array_elements(bundle_data->'dst_txs') AS tx
-                    WHERE tx->'kind'->'quote'->'intent'->>'eoa' = $1
-                )
+                WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
                 UNION ALL
                 SELECT bt.bundle_id
                 FROM bundle_transactions bt
                 JOIN txs t ON bt.tx_id = t.tx_id
-                JOIN LATERAL (
-                    SELECT tx FROM queued_txs WHERE tx_id = bt.tx_id
-                    UNION ALL
-                    SELECT tx FROM pending_txs WHERE tx_id = bt.tx_id
-                ) tx_bundle ON true
-                WHERE tx_bundle.tx->'kind'->'quote'->'intent'->>'eoa' = $1
-                AND t.tx_hash IS NOT NULL
+                LEFT JOIN pending_bundles pb ON bt.bundle_id = pb.bundle_id
+                LEFT JOIN finished_bundles fb ON bt.bundle_id = fb.bundle_id
+                WHERE t.tx IS NOT NULL
+                AND t.tx->'quote'->'intent'->>'eoa' = $1
+                AND pb.bundle_id IS NULL
+                AND fb.bundle_id IS NULL
             )
             SELECT COUNT(*) as total FROM all_bundles
         "#;
