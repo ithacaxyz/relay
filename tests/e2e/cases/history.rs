@@ -9,10 +9,9 @@ use relay::{
     rpc::{RelayApiClient, adjust_balance_for_decimals},
     types::{
         Call, IERC20,
-        rpc::{BundleId, GetCallsHistoryParameters, SortDirection},
+        rpc::{BundleId, CallHistoryEntry, GetCallsHistoryParameters, SortDirection},
     },
 };
-
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_calls_history_mixed_bundles() -> Result<()> {
@@ -53,25 +52,50 @@ async fn test_calls_history_mixed_bundles() -> Result<()> {
         send_bundle(&env, &account, 1, amount_to_send).await?
     };
 
-    // Fetch history
-    let history = env
-        .relay_endpoint
-        .get_calls_history(GetCallsHistoryParameters {
-            address: account.address,
-            index: None,
-            limit: 10,
-            sort: SortDirection::Asc,
-        })
-        .await?;
-
-    // Assert: 4 bundles total (1 initialization + 3 sent)
+    // Test 1: Fetch all history (ascending order)
+    let history = get_history(&env, account.address, None, 10, SortDirection::Asc).await?;
     assert_eq!(history.len(), 4, "Expected 4 bundles in history");
-
-    // Verify bundle IDs are present
     let bundle_ids: Vec<_> = history.iter().map(|e| e.id).collect();
     assert!(bundle_ids.contains(&bundle1));
     assert!(bundle_ids.contains(&bundle2));
     assert!(bundle_ids.contains(&bundle3));
+
+    // Verify the first entry (initialization) is not one of our sent bundles
+    assert_ne!(history[0].id, bundle1, "Init bundle should not be bundle1");
+    assert_ne!(history[0].id, bundle2, "Init bundle should not be bundle2");
+    assert_ne!(history[0].id, bundle3, "Init bundle should not be bundle3");
+
+    // Test 2: Fetch history in descending order
+    let history_desc = get_history(&env, account.address, None, 10, SortDirection::Desc).await?;
+    assert_eq!(history_desc.len(), 4);
+    // Verify it's in reverse order
+    assert_eq!(history_desc[0].id, bundle3, "Most recent should be bundle3");
+    assert_eq!(history_desc[3].id, history[0].id, "Oldest should match first in asc");
+
+    // Test 3: Limit to 2 bundles
+    let history_limited = get_history(&env, account.address, None, 2, SortDirection::Asc).await?;
+    assert_eq!(history_limited.len(), 2);
+    assert_eq!(history_limited[0].id, history[0].id);
+    assert_eq!(history_limited[1].id, history[1].id);
+
+    // Test 4: Use index to paginate (skip first 2, get next 2)
+    let history_paginated =
+        get_history(&env, account.address, Some(2), 2, SortDirection::Asc).await?;
+    assert_eq!(history_paginated.len(), 2);
+    assert_eq!(history_paginated[0].id, history[2].id);
+    assert_eq!(history_paginated[1].id, history[3].id);
+
+    // Test 5: Index beyond available items
+    let history_beyond = get_history(&env, account.address, Some(10), 10, SortDirection::Asc).await?;
+    assert_eq!(history_beyond.len(), 0);
+
+    // Test 6: Verify timestamps are increasing (ascending order)
+    for i in 0..history.len() - 1 {
+        assert!(
+            history[i].timestamp <= history[i + 1].timestamp,
+            "Timestamps should be in ascending order"
+        );
+    }
 
     Ok(())
 }
@@ -109,4 +133,18 @@ async fn send_bundle(
     }
 
     Ok(bundle_id)
+}
+
+/// Helper to fetch call history with given parameters
+async fn get_history(
+    env: &Environment,
+    address: Address,
+    index: Option<u64>,
+    limit: u64,
+    sort: SortDirection,
+) -> Result<Vec<CallHistoryEntry>> {
+    env.relay_endpoint
+        .get_calls_history(GetCallsHistoryParameters { address, index, limit, sort })
+        .await
+        .map_err(Into::into)
 }
