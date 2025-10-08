@@ -41,6 +41,8 @@ pub struct OnrampContactInfo {
     pub email: Option<String>,
     /// Verified phone number, or None if not verified.
     pub phone: Option<String>,
+    /// Unix timestamp (seconds) when phone was verified, or None if not verified.
+    pub phone_verified_at: Option<u64>,
 }
 
 /// Input for [`StorageApi::try_lock_liquidity`].

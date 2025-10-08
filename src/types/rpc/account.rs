@@ -294,4 +294,7 @@ pub struct GetOnrampContactInfoResponse {
     /// Verified phone number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone: Option<String>,
+    /// Unix timestamp (seconds) when phone was verified, or null if not verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone_verified_at: Option<u64>,
 }
