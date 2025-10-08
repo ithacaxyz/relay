@@ -1846,6 +1846,9 @@ impl Relay {
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
         let request_for_multichain = if request.capabilities.meta.fee_payer.is_some() {
+            // We execute without the interop request without a fee payer, even when specified,
+            // because its payment will be done in its own quote/intent preceding the interop
+            // bundle.
             request.without_fee_payer()
         } else {
             request.clone()
@@ -1961,6 +1964,11 @@ impl Relay {
                     requested_funds.clone(),
                     num_funding_chains + 1,
                     // If fee_payer is specified, use the chosen fee_token
+                    //
+                    // CAREFUL: build_fee_payer_quote depends on the following fee_token being the
+                    // same across chains for now.
+                    // TODO: instead, just use any and then calculate total fee on fee_token
+                    // through the usd sum.
                     request.capabilities.meta.fee_payer.and(Some(fee_token)),
                     // Fees are sponsored if fee_payer is present
                     request.capabilities.meta.fee_payer.is_some(),
@@ -2374,7 +2382,9 @@ impl Relay {
         // Find the maximum decimals across all quotes
         let max_decimals = all_quotes.iter().map(|q| q.payment_token_decimals).max().unwrap_or(18);
 
-        // Calculate total user fees by normalizing all payment amounts to max_decimals and summing
+        // Calculate total user fees by normalizing all payment amounts to max_decimals and summing.
+        //
+        // Assumes that we are dealing with the same UID in all quotes.
         let total_user_fees: U256 = all_quotes
             .iter()
             .map(|q| {
