@@ -727,7 +727,9 @@ impl Environment {
             .with_rebalance_service_config(config.rebalance_service_config)
             .with_database_url(database_url)
             .with_legacy_orchestrators(&[contracts.legacy_orchestrator])
-            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy]);
+            .with_legacy_delegation_proxies(&[contracts.legacy_delegation_proxy])
+            .with_resend_api_key(Some("test_resend_key".to_string()))
+            .with_onramp_worker_secret(Some("test_onramp_secret".to_string()));
 
         let relay_handle = try_spawn(config.clone(), skip_diagnostics).await?;
 
@@ -804,6 +806,13 @@ impl Environment {
     /// Get the first chain's ID
     pub fn chain_id(&self) -> u64 {
         self.chain_id_for(0)
+    }
+
+    /// Get the contracts path from TEST_CONTRACTS env var or default
+    pub fn contracts_path() -> PathBuf {
+        PathBuf::from(
+            std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
+        )
     }
 
     /// Gets the on-chain EOA authorized keys for a specific chain.
@@ -1020,9 +1029,7 @@ pub async fn mint_erc20s<P: Provider>(
 async fn deploy_all_contracts<P: Provider + WalletProvider>(
     provider: &P,
 ) -> Result<ContractAddresses, eyre::Error> {
-    let contracts_path = PathBuf::from(
-        std::env::var("TEST_CONTRACTS").unwrap_or_else(|_| "tests/account/out".to_string()),
-    );
+    let contracts_path = Environment::contracts_path();
 
     // Deploy orchestrator first (or use env var)
     let orchestrator = if let Ok(address) = std::env::var("TEST_ORCHESTRATOR") {

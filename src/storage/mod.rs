@@ -6,7 +6,7 @@ use alloy::{
     primitives::{BlockNumber, U256},
     rpc::types::TransactionReceipt,
 };
-pub use api::{LockLiquidityInput, StorageApi};
+pub use api::{LockLiquidityInput, OnrampContactInfo, StorageApi};
 
 mod memory;
 mod pg;
@@ -16,6 +16,7 @@ use crate::{
         ChainAddress,
         bridge::{BridgeTransfer, BridgeTransferId, BridgeTransferState},
     },
+    storage::api::OnrampVerificationStatus,
     transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
     types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
@@ -167,6 +168,17 @@ impl StorageApi for RelayStorage {
         verification_sid: &str,
     ) -> api::Result<()> {
         self.inner.update_phone_verification_sid(account, phone, verification_sid).await
+    }
+
+    async fn get_onramp_verification_status(
+        &self,
+        account: Address,
+    ) -> api::Result<OnrampVerificationStatus> {
+        self.inner.get_onramp_verification_status(account).await
+    }
+
+    async fn get_onramp_contact_info(&self, account: Address) -> api::Result<OnrampContactInfo> {
+        self.inner.get_onramp_contact_info(account).await
     }
 
     async fn ping(&self) -> api::Result<()> {

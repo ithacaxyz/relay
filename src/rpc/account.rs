@@ -9,13 +9,14 @@ use url::Url;
 
 use crate::{
     config::PhoneConfig,
-    error::{EmailError, PhoneError},
+    error::{EmailError, OnrampError, PhoneError},
     rpc::{Relay, RelayApiServer},
     storage::{RelayStorage, StorageApi},
     twilio::TwilioClient,
     types::rpc::{
-        ResendVerifyPhoneParameters, SetEmailParameters, SetPhoneParameters, VerifyEmailParameters,
-        VerifyPhoneParameters, VerifySignatureParameters,
+        GetOnrampContactInfoParameters, GetOnrampContactInfoResponse, OnrampStatusParameters,
+        OnrampStatusResponse, ResendVerifyPhoneParameters, SetEmailParameters, SetPhoneParameters,
+        VerifyEmailParameters, VerifyPhoneParameters, VerifySignatureParameters,
     },
 };
 
@@ -83,6 +84,26 @@ pub trait AccountApi {
     /// The previous verification session is invalidated and a new one is created.
     #[method(name = "resendVerifyPhone")]
     async fn resend_verify_phone(&self, params: ResendVerifyPhoneParameters) -> RpcResult<()>;
+
+    /// Get onramp verification status for an account.
+    ///
+    /// Returns Unix timestamps (seconds) for when email and phone were verified.
+    /// Returns null for unverified contact methods.
+    ///
+    /// This method does not return actual email or phone values to prevent enumeration attacks.
+    #[method(name = "onrampStatus")]
+    async fn onramp_status(
+        &self,
+        params: OnrampStatusParameters,
+    ) -> RpcResult<OnrampStatusResponse>;
+
+    /// Get verified contact information for onramp.
+    /// Requires authentication via secret.
+    #[method(name = "getOnrampContactInfo")]
+    async fn get_onramp_contact_info(
+        &self,
+        params: GetOnrampContactInfoParameters,
+    ) -> RpcResult<GetOnrampContactInfoResponse>;
 }
 
 /// Ithaca `account_` RPC module.
@@ -94,6 +115,7 @@ pub struct AccountRpc {
     porto_base_url: String,
     twilio_client: Option<TwilioClient>,
     phone_config: Option<PhoneConfig>,
+    onramp_worker_secret: String,
 }
 
 impl AccountRpc {
@@ -103,8 +125,17 @@ impl AccountRpc {
         client: Resend,
         storage: RelayStorage,
         porto_base_url: String,
+        onramp_worker_secret: String,
     ) -> Self {
-        Self { relay, client, storage, porto_base_url, twilio_client: None, phone_config: None }
+        Self {
+            relay,
+            client,
+            storage,
+            porto_base_url,
+            twilio_client: None,
+            phone_config: None,
+            onramp_worker_secret,
+        }
     }
 
     /// Create a new account RPC module with phone verification support.
@@ -115,6 +146,7 @@ impl AccountRpc {
         porto_base_url: String,
         twilio_client: TwilioClient,
         phone_config: PhoneConfig,
+        onramp_worker_secret: String,
     ) -> Self {
         Self {
             relay,
@@ -123,6 +155,7 @@ impl AccountRpc {
             porto_base_url,
             twilio_client: Some(twilio_client),
             phone_config: Some(phone_config),
+            onramp_worker_secret,
         }
     }
 
@@ -279,6 +312,28 @@ impl AccountApiServer for AccountRpc {
             .await?;
 
         Ok(())
+    }
+
+    async fn onramp_status(
+        &self,
+        params: OnrampStatusParameters,
+    ) -> RpcResult<OnrampStatusResponse> {
+        let status = self.storage.get_onramp_verification_status(params.address).await?;
+
+        Ok(OnrampStatusResponse { email: status.email, phone: status.phone })
+    }
+
+    async fn get_onramp_contact_info(
+        &self,
+        params: GetOnrampContactInfoParameters,
+    ) -> RpcResult<GetOnrampContactInfoResponse> {
+        if params.secret != self.onramp_worker_secret {
+            return Err(OnrampError::InvalidSecret.into());
+        }
+
+        let contact_info = self.storage.get_onramp_contact_info(params.address).await?;
+
+        Ok(GetOnrampContactInfoResponse { email: contact_info.email, phone: contact_info.phone })
     }
 }
 

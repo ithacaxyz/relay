@@ -77,6 +77,7 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
         config.database_url = std::env::var("RELAY_DB_URL").ok();
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
+            .with_onramp_worker_secret(std::env::var("ONRAMP_WORKER_SECRET").ok())
             .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
             .with_funder_owner_key(std::env::var("RELAY_FUNDER_OWNER_KEY").ok())
             .with_binance_keys(
@@ -182,8 +183,10 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
             .map(|i| i.escrow_refund_threshold)
             .unwrap_or(ESCROW_REFUND_DURATION_SECS),
     );
-    // Setup account RPC module if email is configured
-    let account_rpc = if let Some(resend_api_key) = &config.email.resend_api_key {
+    // Setup account RPC module if email and onramp worker secret are configured
+    let account_rpc = if let (Some(resend_api_key), Some(onramp_worker_secret)) =
+        (&config.email.resend_api_key, &config.secrets.onramp_worker_secret)
+    {
         // Check if phone verification is also configured
         let rpc = if let Some(phone_config) = &config.phone {
             let twilio_client = TwilioClient::new(
@@ -199,6 +202,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
                 config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
                 twilio_client,
                 phone_config.clone(),
+                onramp_worker_secret.clone(),
             )
         } else {
             AccountRpc::new(
@@ -206,6 +210,7 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
                 Resend::new(resend_api_key),
                 storage.clone(),
                 config.email.porto_base_url.clone().unwrap_or(DEFAULT_PORTO_BASE_URL.to_string()),
+                onramp_worker_secret.clone(),
             )
         };
 

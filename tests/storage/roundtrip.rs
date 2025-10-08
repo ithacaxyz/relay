@@ -18,8 +18,9 @@ use alloy::{
 use chrono::Utc;
 use opentelemetry::Context;
 use relay::{
+    interop::settler::SettlerId,
     signers::DynSigner,
-    storage::{RelayStorage, StorageApi},
+    storage::{BundleStatus, InteropBundle, RelayStorage, StorageApi},
     transactions::{PendingTransaction, RelayTransaction, RelayTransactionKind, TxId},
     types::{CreatableAccount, Intent, Quote, SignedCall, rpc::BundleId},
 };
@@ -72,6 +73,19 @@ async fn write() -> eyre::Result<()> {
     // Bundle status
     storage.add_bundle_tx(bundle_id, queued_tx.id).await?;
 
+    // Store actual bundle data in pending_bundles table
+    let mut pending_bundle = InteropBundle::new(bundle_id, SettlerId::LayerZero);
+    pending_bundle.src_txs.push(queued_tx.clone());
+    pending_bundle.dst_txs.push(queued_tx_with_auth.clone());
+    storage.store_pending_bundle(&pending_bundle, BundleStatus::Init).await?;
+
+    // Store a finished bundle
+    let finished_bundle_id = BundleId(B256::with_last_byte(5));
+    let mut finished_bundle = InteropBundle::new(finished_bundle_id, SettlerId::Simple);
+    finished_bundle.src_txs.push(queued_tx_no_auth.clone());
+    storage.store_pending_bundle(&finished_bundle, BundleStatus::SourceQueued).await?;
+    storage.move_bundle_to_finished(finished_bundle_id).await?;
+
     // Email
     storage.add_unverified_email(email.0, &email.1, &email.2).await?;
 
@@ -105,6 +119,15 @@ async fn read() -> eyre::Result<()> {
 
     // Bundle status
     assert!(storage.get_bundle_transactions(bundle_id).await?.is_empty().not());
+
+    // Read pending bundle data
+    let pending_bundles = storage.get_pending_bundles().await?;
+    assert!(pending_bundles.is_empty().not(), "Should have at least one pending bundle");
+
+    // Read finished bundle data
+    let finished_bundle_id = BundleId(B256::with_last_byte(5));
+    let finished_bundle = storage.get_finished_interop_bundle(finished_bundle_id).await?;
+    assert!(finished_bundle.is_some(), "Should have a finished bundle");
 
     // Email
     storage.verify_email(email.0, &email.1, &email.2).await?;

@@ -12,7 +12,7 @@ use alloy::{
     primitives::{Address, ChainId, Log, U256, map::HashMap},
     providers::{
         MULTICALL3_ADDRESS, Provider,
-        bindings::IMulticall3::{self, Call3, aggregate3Call},
+        bindings::IMulticall3::{self, Call3, Result as Result3, aggregate3Call},
     },
     rpc::types::{TransactionRequest, state::StateOverride},
     sol_types::{SolCall, SolEventInterface},
@@ -94,7 +94,7 @@ impl AssetInfoServiceHandle {
                 .collect());
         }
 
-        let missing_assets = get_info(provider, missing_assets).await?;
+        let missing_assets = get_info(provider, missing_assets, None).await?;
 
         // Push missing assets to cache
         let _ = self
@@ -138,49 +138,18 @@ impl AssetInfoServiceHandle {
             })
             .collect::<Vec<_>>();
 
-        // Extract transaction details
-        let target =
-            tx_request.to.as_ref().and_then(|to| to.to()).copied().unwrap_or(Address::ZERO);
-        let calldata = tx_request.input.input().cloned().unwrap_or_default();
-
-        // Simulation requires tx.origin balance to be u256::max, so we need to set it alongside the
-        // state override below.
-        let from = tx_request.from.unwrap_or(Address::ZERO);
-
-        // Build multicall with three sections:
+        // Execute transaction with tokenURI calls before and after
         // 1. Pre-transaction tokenURI calls (for burned tokens)
         // 2. Main transaction (must succeed)
         // 3. Post-transaction tokenURI calls (for minted tokens)
-        let multicall_tx = TransactionRequest::default().from(from).to(MULTICALL3_ADDRESS).input(
-            aggregate3Call {
-                calls: [
-                    nft_calls.clone(),
-                    vec![Call3 { target, allowFailure: false, callData: calldata }],
-                    nft_calls,
-                ]
-                .concat(),
-            }
-            .abi_encode()
-            .into(),
-        );
-
-        let results = aggregate3Call::abi_decode_returns(
-            &provider.call(multicall_tx).overrides(state_overrides).await?,
-        )?;
-
-        // Verify we got the expected number of results:
-        // - nfts.len() tokenURI calls before the transaction
-        // - Intent simulation call
-        // - nfts.len() tokenURI calls after the transaction
-        let expected_results = nfts.len() * 2 + 1;
-        if results.len() != expected_results {
-            return Err(TransportErrorKind::custom_str(&format!(
-                "Expected {} results in multicall but found {}",
-                expected_results,
-                results.len()
-            ))
-            .into());
-        }
+        let results = simulate_with_multicall(
+            provider,
+            tx_request,
+            &state_overrides,
+            nft_calls.clone(),
+            nft_calls.clone(),
+        )
+        .await?;
 
         let before_simulation = &results[..nfts.len()];
         let after_simulation = &results[nfts.len() + 1..];
@@ -231,15 +200,32 @@ impl AssetInfoServiceHandle {
         }
 
         // fetch assets metadata
-        let (metadata, tokens_uris) = try_join!(
+        let (mut metadata, tokens_uris) = try_join!(
             self.get_asset_info_list(provider, builder.seen_assets().copied().collect()),
             self.get_erc721_uris(
                 provider,
                 tx_request,
-                state_overrides,
+                state_overrides.clone(),
                 builder.seen_nfts().collect()
             )
         )?;
+
+        // if there are transfer logs of tokens with no metadata, then this call bundle is
+        // deploying those tokens, and so, we need to fetch their info after executing it (similar
+        // to get_erc721_uris)
+        let undeployed_tokens: Vec<Address> = metadata
+            .iter()
+            .filter(|(asset, info)| !asset.is_native() && info.metadata.symbol.is_none())
+            .map(|(asset, _)| asset.address())
+            .collect();
+
+        if !undeployed_tokens.is_empty() {
+            for info in
+                get_info(provider, undeployed_tokens, Some((tx_request, state_overrides))).await?
+            {
+                metadata.insert(info.asset, info);
+            }
+        }
 
         Ok(builder.build(metadata, tokens_uris))
     }
@@ -361,44 +347,11 @@ fn decode_token_uri(result: &IMulticall3::Result) -> Option<String> {
     }
 }
 
-/// Gets metadata from many assets on chain.
-async fn get_info<P: Provider>(
-    provider: &P,
+/// Parses asset info results from multicall response.
+fn parse_asset_info_results(
+    call_bundle: &[IMulticall3::Result],
     assets: Vec<Address>,
 ) -> Result<Vec<AssetWithInfo>, RelayError> {
-    let calls = assets
-        .iter()
-        .flat_map(|asset| {
-            [
-                Call3 {
-                    target: *asset,
-                    allowFailure: true,
-                    callData: IERC20::decimalsCall::SELECTOR.into(),
-                },
-                Call3 {
-                    target: *asset,
-                    allowFailure: true,
-                    callData: IERC20::symbolCall::SELECTOR.into(),
-                },
-                Call3 {
-                    target: *asset,
-                    allowFailure: true,
-                    callData: IERC20::nameCall::SELECTOR.into(),
-                },
-            ]
-        })
-        .collect();
-
-    let call_bundle = aggregate3Call::abi_decode_returns(
-        &provider
-            .call(
-                TransactionRequest::default()
-                    .to(MULTICALL3_ADDRESS)
-                    .input(aggregate3Call { calls }.abi_encode().into()),
-            )
-            .await?,
-    )?;
-
     if call_bundle.len() != 3 * assets.len() {
         error!(
             "Expected {} responses in multicall but found {}.",
@@ -409,7 +362,7 @@ async fn get_info<P: Provider>(
     }
 
     let mut assets_with_info = Vec::with_capacity(assets.len());
-    let mut call_bundle_iter = call_bundle.into_iter();
+    let mut call_bundle_iter = call_bundle.iter();
 
     for asset in assets {
         let decimals = call_bundle_iter.next().expect("qed");
@@ -439,4 +392,113 @@ async fn get_info<P: Provider>(
     }
 
     Ok(assets_with_info)
+}
+
+/// Gets metadata from many assets on chain.
+///
+/// When `with_state` is provided, this will:
+/// 1. Execute the transaction first (to deploy potential tokens via prepareCalls) with state
+///    overrides.
+/// 2. Query token info.
+///
+/// This is similar to how [`AssetInfoServiceHandle::get_erc721_uris`] handles NFT mints.
+async fn get_info<P: Provider>(
+    provider: &P,
+    assets: Vec<Address>,
+    with_prestate: Option<(&TransactionRequest, StateOverride)>,
+) -> Result<Vec<AssetWithInfo>, RelayError> {
+    if assets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let token_calls: Vec<Call3> = assets
+        .iter()
+        .flat_map(|asset| {
+            [
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::decimalsCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::symbolCall::SELECTOR.into(),
+                },
+                Call3 {
+                    target: *asset,
+                    allowFailure: true,
+                    callData: IERC20::nameCall::SELECTOR.into(),
+                },
+            ]
+        })
+        .collect();
+
+    let Some((tx_request, state_overrides)) = with_prestate else {
+        let results = aggregate3Call::abi_decode_returns(
+            &provider
+                .call(
+                    TransactionRequest::default()
+                        .to(MULTICALL3_ADDRESS)
+                        .input(aggregate3Call { calls: token_calls }.abi_encode().into()),
+                )
+                .await?,
+        )?;
+        return parse_asset_info_results(&results, assets);
+    };
+
+    // intent is deploying the token(s), so we need to simulate it before we can fetch their asset
+    // info
+    let results =
+        simulate_with_multicall(provider, tx_request, &state_overrides, vec![], token_calls)
+            .await?;
+
+    // first result from multicall is the simulation result, which we don't need.
+    parse_asset_info_results(&results[1..], assets)
+}
+
+/// Combines pre-calls, the main prepareCalls request, and post-calls into a single multicall.
+async fn simulate_with_multicall<P: Provider>(
+    provider: &P,
+    tx_request: &TransactionRequest,
+    state_overrides: &StateOverride,
+    pre_calls: Vec<Call3>,
+    post_calls: Vec<Call3>,
+) -> Result<Vec<Result3>, RelayError> {
+    // Extract transaction details
+    let target = tx_request.to.as_ref().and_then(|to| to.to()).copied().unwrap_or(Address::ZERO);
+    let calldata = tx_request.input.input().cloned().unwrap_or_default();
+
+    // Simulation requires tx.origin balance to be u256::max, so we need to set it alongside the
+    // state override below.
+    let from = tx_request.from.unwrap_or(Address::ZERO);
+
+    let expected_len = pre_calls.len() + post_calls.len() + 1;
+    let multicall_tx = TransactionRequest::default().from(from).to(MULTICALL3_ADDRESS).input(
+        aggregate3Call {
+            calls: [
+                pre_calls,
+                vec![Call3 { target, allowFailure: false, callData: calldata }],
+                post_calls,
+            ]
+            .concat(),
+        }
+        .abi_encode()
+        .into(),
+    );
+
+    let results = aggregate3Call::abi_decode_returns(
+        &provider.call(multicall_tx).overrides(state_overrides.clone()).await?,
+    )?;
+
+    if results.len() != expected_len {
+        return Err(TransportErrorKind::custom_str(&format!(
+            "Expected {} results in multicall but found {}",
+            expected_len,
+            results.len()
+        ))
+        .into());
+    }
+
+    Ok(results)
 }

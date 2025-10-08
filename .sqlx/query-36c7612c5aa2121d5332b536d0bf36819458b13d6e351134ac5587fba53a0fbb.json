@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select extract(epoch from verified_at)::bigint as verified_at from phones where address = $1 and verified_at is not null",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "verified_at",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "36c7612c5aa2121d5332b536d0bf36819458b13d6e351134ac5587fba53a0fbb"
+}

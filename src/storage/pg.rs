@@ -1,6 +1,9 @@
 //! Relay storage implementation using a PostgreSQL database.
 
-use super::{StorageApi, api::Result};
+use super::{
+    StorageApi,
+    api::{OnrampContactInfo, OnrampVerificationStatus, Result},
+};
 use crate::{
     error::StorageError,
     liquidity::{
@@ -772,6 +775,55 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    async fn get_onramp_verification_status(
+        &self,
+        account: Address,
+    ) -> Result<OnrampVerificationStatus> {
+        let email_row = sqlx::query!(
+            "select extract(epoch from verified_at)::bigint as verified_at from emails where address = $1 and verified_at is not null",
+            account.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let phone_row = sqlx::query!(
+            "select extract(epoch from verified_at)::bigint as verified_at from phones where address = $1 and verified_at is not null",
+            account.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(OnrampVerificationStatus {
+            email: email_row.and_then(|r| r.verified_at.map(|v| v as u64)),
+            phone: phone_row.and_then(|r| r.verified_at.map(|v| v as u64)),
+        })
+    }
+
+    async fn get_onramp_contact_info(&self, account: Address) -> Result<OnrampContactInfo> {
+        let email_row = sqlx::query!(
+            "select email from emails where address = $1 and verified_at is not null",
+            account.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let phone_row = sqlx::query!(
+            "select phone from phones where address = $1 and verified_at is not null",
+            account.as_slice()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(OnrampContactInfo {
+            email: email_row.map(|r| r.email),
+            phone: phone_row.map(|r| r.phone),
+        })
     }
 
     #[instrument(skip_all)]

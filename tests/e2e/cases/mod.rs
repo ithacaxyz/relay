@@ -24,5 +24,6 @@ mod signature;
 mod simple;
 mod simple_settlement;
 mod transactions;
+mod undeployed_token;
 mod upgrade;
 pub use upgrade::{upgrade_account_eagerly, upgrade_account_lazily};
