@@ -2385,32 +2385,36 @@ impl Relay {
             .sum();
 
         // Get the AssetUid for the fee_token on the last quote's chain
-        let last_quote = all_quotes.last().ok_or(RelayError::Internal("no quotes".to_string()))?;
-        let (fee_token_uid, _) = self
-            .inner
-            .chains
-            .fee_token(last_quote.chain_id, fee_token)
-            .ok_or(RelayError::UnsupportedAsset { chain: last_quote.chain_id, asset: fee_token })?;
+        let last_quote = all_quotes.last().ok_or_else(|| RelayError::internal_msg("no quotes"))?;
+        let (fee_token_uid, _) =
+            self.inner.chains.fee_token(last_quote.chain_id, fee_token).ok_or(
+                RelayError::UnsupportedAsset { chain: last_quote.chain_id, asset: fee_token },
+            )?;
 
-        // Find all chains where this asset exists as a fee token, and get the correct address for each chain
-        let chains_with_fee_token: HashMap<ChainId, Vec<Address>> = self
+        // Find all chains where this asset exists as a fee token, and cache the addresses
+        let fee_token_addresses: HashMap<ChainId, Address> = self
             .inner
             .chains
             .chains_iter()
             .filter_map(|chain| {
-                // Find the address of this asset on this chain, if it's a fee token there
-                self.inner
-                    .chains
-                    .fee_tokens(chain.id())
-                    .and_then(|tokens| {
-                        tokens.iter().find(|(uid, _)| uid == &fee_token_uid).map(|(_, desc)| desc.address)
-                    })
-                    .map(|address| (chain.id(), vec![address]))
+                let address = self.inner.chains.fee_tokens(chain.id()).and_then(|tokens| {
+                    tokens
+                        .iter()
+                        .find(|(uid, _)| *uid == *fee_token_uid)
+                        .map(|(_, desc)| desc.address)
+                })?;
+                Some((chain.id(), address))
             })
             .collect();
 
         let fee_payer_all_assets = self
-            .get_assets(GetAssetsParameters::for_assets_on_chains(fee_payer, chains_with_fee_token))
+            .get_assets(GetAssetsParameters::for_assets_on_chains(
+                fee_payer,
+                fee_token_addresses
+                    .iter()
+                    .map(|(chain_id, addr)| (*chain_id, vec![*addr]))
+                    .collect(),
+            ))
             .await?;
 
         // Find chain with highest normalized balance that meets the threshold
@@ -2419,8 +2423,11 @@ impl Relay {
             .0
             .iter()
             .filter_map(|(chain_id, assets)| {
-                let asset = assets.iter().find(|a| a.address.address() == fee_token)?;
-                let (_, token_desc) = self.inner.chains.fee_token(*chain_id, fee_token)?;
+                let fee_token_address = *fee_token_addresses.get(chain_id)?;
+
+                // Find the asset balance for this token on this chain
+                let asset = assets.iter().find(|a| a.address.address() == fee_token_address)?;
+                let (_, token_desc) = self.inner.chains.fee_token(*chain_id, fee_token_address)?;
                 let normalized =
                     adjust_balance_for_decimals(asset.balance, token_desc.decimals, max_decimals);
                 (normalized >= required_balance).then_some((*chain_id, normalized))
@@ -2442,24 +2449,33 @@ impl Relay {
         let output_quote = all_quotes.last().expect("all_quotes should contain at least one quote");
         let fee_recipient = output_quote.intent.payment_recipient();
 
-        // Get the chosen chain's decimals and denormalize total_user_fees
-        let (_, token_desc) = self
-            .inner
-            .chains
-            .fee_token(source_chain, fee_token)
+        // Get the correct address for the fee_token on the source chain (we already computed this)
+        let source_fee_token_address = *fee_token_addresses
+            .get(&source_chain)
             .ok_or_else(|| RelayError::Quote(QuoteError::UnsupportedFeeToken(fee_token)))?;
+
+        // Get the chosen chain's decimals and denormalize total_user_fees
+        let (_, token_desc) =
+            self.inner
+                .chains
+                .fee_token(source_chain, source_fee_token_address)
+                .ok_or_else(|| RelayError::Quote(QuoteError::UnsupportedFeeToken(fee_token)))?;
 
         // Create a intent for fee_payer with the transfer call
         let fee_payer_request = PrepareCallsParameters {
             chain_id: source_chain,
             calls: vec![Call::transfer_fee(
-                fee_token,
+                source_fee_token_address,
                 fee_recipient,
                 adjust_balance_for_decimals(total_user_fees, max_decimals, token_desc.decimals),
             )],
             from: Some(fee_payer),
             capabilities: PrepareCallsCapabilities {
-                meta: Meta { fee_token: Some(fee_token), fee_payer: None, nonce: None },
+                meta: Meta {
+                    fee_token: Some(source_fee_token_address),
+                    fee_payer: None,
+                    nonce: None,
+                },
                 ..Default::default()
             },
             ..Default::default()
