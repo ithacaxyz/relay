@@ -819,7 +819,7 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         let phone_row = sqlx::query!(
-            "select phone, verified_at from phones where address = $1 and verified_at is not null",
+            "select phone, extract(epoch from verified_at)::bigint as verified_at from phones where address = $1 and verified_at is not null",
             account.as_slice()
         )
         .fetch_optional(&self.pool)

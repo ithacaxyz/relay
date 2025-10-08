@@ -272,19 +272,14 @@ impl StorageApi for InMemoryStorage {
                 self.unverified_emails
                     .iter()
                     .filter_map(|entry| {
-                        if entry.key().0 == account {
-                            Some(entry.key().1.clone())
-                        } else {
-                            None
-                        }
+                        if entry.key().0 == account { Some(entry.key().1.clone()) } else { None }
                     })
                     .last()
             });
 
         let phone_entry = self.verified_phones.iter().find_map(|entry| {
-            (entry.value().account == account).then(|| {
-                (entry.key().clone(), entry.value().verified_at.timestamp() as u64)
-            })
+            (entry.value().account == account)
+                .then(|| (entry.key().clone(), entry.value().verified_at.timestamp() as u64))
         });
 
         Ok(OnrampContactInfo {
