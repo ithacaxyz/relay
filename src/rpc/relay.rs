@@ -2384,17 +2384,28 @@ impl Relay {
             })
             .sum();
 
-        // Fetch fee_payer's balance of fee_token only on chains where it exists
+        // Get the AssetUid for the fee_token on the last quote's chain
+        let last_quote = all_quotes.last().ok_or(RelayError::Internal("no quotes".to_string()))?;
+        let (fee_token_uid, _) = self
+            .inner
+            .chains
+            .fee_token(last_quote.chain_id, fee_token)
+            .ok_or(RelayError::UnsupportedAsset { chain: last_quote.chain_id, asset: fee_token })?;
+
+        // Find all chains where this asset exists as a fee token, and get the correct address for each chain
         let chains_with_fee_token: HashMap<ChainId, Vec<Address>> = self
             .inner
             .chains
             .chains_iter()
             .filter_map(|chain| {
-                // Only include chains where this fee_token exists and is configured as a fee token
+                // Find the address of this asset on this chain, if it's a fee token there
                 self.inner
                     .chains
-                    .fee_token(chain.id(), fee_token)
-                    .map(|_| (chain.id(), vec![fee_token]))
+                    .fee_tokens(chain.id())
+                    .and_then(|tokens| {
+                        tokens.iter().find(|(uid, _)| uid == &fee_token_uid).map(|(_, desc)| desc.address)
+                    })
+                    .map(|address| (chain.id(), vec![address]))
             })
             .collect();
 
