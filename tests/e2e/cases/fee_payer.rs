@@ -291,7 +291,12 @@ async fn test_multichain_fee_payer() -> Result<()> {
 
     // Verify transaction succeeded
     let status = await_calls_status(&env, send_response.id).await?;
-    assert!(status.status.is_confirmed(), "Transaction should succeed: {:?}", status.status);
+    assert!(
+        status.status.is_confirmed(),
+        "bundle should succeed: {:?}, interop status: {:?}",
+        status.status,
+        status.capabilities.unwrap().interop_status
+    );
     assert!(status.capabilities.unwrap().interop_status.unwrap().is_done());
 
     // Verify balances:
