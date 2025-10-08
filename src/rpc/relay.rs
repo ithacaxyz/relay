@@ -376,14 +376,16 @@ impl Relay {
             self.inner.price_oracle.native_conversion_rate(token_uid.clone(), native_uid.clone());
 
         // Execute all futures in parallel and handle errors
-        let (assets_response, fee_history, eth_price) = try_join!(
-            async { fee_payer_balance_fut.await.map_err(RelayError::internal) },
+        let (fee_token_balance, fee_history, eth_price) = try_join!(
+            async {
+                fee_payer_balance_fut
+                    .await
+                    .map(|r| r.balance_on_chain(chain_id, context.fee_token.into()))
+                    .map_err(RelayError::internal)
+            },
             async { fee_history_fut.await.map_err(RelayError::from) },
             async { Ok(native_price_fut.await) }
         )?;
-
-        let fee_token_balance =
-            assets_response.balance_on_chain(chain_id, context.fee_token.into());
 
         let fee_token_funding = intent
             .fund_transfers
