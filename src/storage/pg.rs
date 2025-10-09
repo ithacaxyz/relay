@@ -1636,19 +1636,17 @@ impl StorageApi for PgStorage {
                         bt.bundle_id,
                         NULL as status,
                         t.tx as bundle_data,
-                        COALESCE((t.tx->>'received_at')::timestamptz, NOW()) as timestamp,
+                        (t.tx->>'received_at')::timestamptz as timestamp,
                         'singlechain' as bundle_type,
                         t.chain_id,
                         t.tx_hash
                     FROM bundle_transactions bt
                     JOIN txs t ON bt.tx_id = t.tx_id
-                    LEFT JOIN pending_bundles pb ON bt.bundle_id = pb.bundle_id
-                    LEFT JOIN finished_bundles fb ON bt.bundle_id = fb.bundle_id
                     WHERE t.tx IS NOT NULL
                     AND t.tx->'quote'->'intent'->>'eoa' = $1
-                    AND pb.bundle_id IS NULL
-                    AND fb.bundle_id IS NULL
-                    ORDER BY COALESCE((t.tx->>'received_at')::timestamptz, NOW()) {}
+                    AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
+                    AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
+                    ORDER BY (t.tx->>'received_at')::timestamptz {}
                     LIMIT {}
                 )
             )
@@ -1740,24 +1738,26 @@ impl StorageApi for PgStorage {
         let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
 
         let query = r#"
-            WITH all_bundles AS (
-                SELECT bundle_id FROM pending_bundles
-                WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
-                UNION ALL
-                SELECT bundle_id FROM finished_bundles
-                WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
-                UNION ALL
-                SELECT bt.bundle_id
-                FROM bundle_transactions bt
-                JOIN txs t ON bt.tx_id = t.tx_id
-                LEFT JOIN pending_bundles pb ON bt.bundle_id = pb.bundle_id
-                LEFT JOIN finished_bundles fb ON bt.bundle_id = fb.bundle_id
-                WHERE t.tx IS NOT NULL
-                AND t.tx->'quote'->'intent'->>'eoa' = $1
-                AND pb.bundle_id IS NULL
-                AND fb.bundle_id IS NULL
-            )
-            SELECT COUNT(*) as total FROM all_bundles
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM pending_bundles
+                    WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                ) +
+                (
+                    SELECT COUNT(*)
+                    FROM finished_bundles
+                    WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                ) +
+                (
+                    SELECT COUNT(*)
+                    FROM bundle_transactions bt
+                    JOIN txs t ON bt.tx_id = t.tx_id
+                    WHERE t.tx IS NOT NULL
+                    AND t.tx->'quote'->'intent'->>'eoa' = $1
+                    AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
+                    AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
+                ) as total
         "#;
 
         let row = sqlx::query(query)
