@@ -142,7 +142,7 @@ impl RelayTransaction {
                     + (U256::from(gas_limit)
                         * U256::from(fees.max_fee_per_gas)
                         * U256::from(10u128.pow(quote.payment_token_decimals as u32)))
-                    .div_ceil(quote.eth_price))
+                    .div_ceil(quote.native_price))
                 .min(intent.total_payment_max_amount());
 
                 intent = intent

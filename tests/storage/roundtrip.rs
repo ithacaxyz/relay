@@ -201,7 +201,7 @@ impl Fixtures {
             chain_id: r_u64,
             intent,
             extra_payment: r_u256,
-            eth_price: r_u256,
+            native_price: r_u256,
             payment_token_decimals: 1,
             tx_gas: r_u64,
             native_fee_estimate: r_fee,
