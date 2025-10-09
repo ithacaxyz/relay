@@ -195,6 +195,13 @@ async fn invalid_precall_signature() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn auth_then_two_authorizes_then_erc20_transfer() -> Result<()> {
+    // This test performs three operations:
+    // 1. Authorize key1 (auth)
+    // 2. Authorize key2 (using key1)
+    // 3. Transfer ERC20 tokens (using key2)
+    // 
+    // For forked environments like base-sepolia, longer timeouts are used
+    // to account for network delays and slower transaction processing.
     let key1 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
     let key2 = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
 
