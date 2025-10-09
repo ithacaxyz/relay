@@ -7,20 +7,7 @@ expression: response_value
     "assetDiffs": "[assetDiffs]",
     "authorizeKeys": [],
     "feePayerDigest": "[feePayerDigest]",
-    "feeTotals": {
-      "0x0": {
-        "currency": "usd",
-        "value": "[feeTotal]"
-      },
-      "0x7a69": {
-        "currency": "usd",
-        "value": "[feeTotal]"
-      },
-      "0x7a6a": {
-        "currency": "usd",
-        "value": "[feeTotal]"
-      }
-    },
+    "feeTotals": "[feeTotals]",
     "revokeKeys": []
   },
   "context": {
@@ -28,9 +15,9 @@ expression: response_value
       "feePayerQuote": {
         "additionalAuthorization": null,
         "authorizationAddress": "[authorizationAddress]",
-        "chainId": "0x7a6a",
+        "chainId": "[chainId]",
         "ethPrice": "0xde0b6b3a7640000",
-        "extraPayment": "0x0",
+        "extraPayment": "[extraPayment]",
         "feeTokenDeficit": "0x0",
         "intent": {
           "combinedGas": "[combinedGas]",
@@ -50,18 +37,18 @@ expression: response_value
           "paymentMaxAmount": "[paymentMaxAmount]",
           "paymentRecipient": "0x0000000000000000000000000000000000000000",
           "paymentSignature": "0x",
-          "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "paymentToken": "[paymentToken]",
           "settler": "0x0000000000000000000000000000000000000000",
           "settlerContext": "0x",
           "signature": "0x",
-          "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+          "supportedAccountImplementation": "[supportedAccountImplementation]"
         },
         "nativeFeeEstimate": {
           "maxFeePerGas": "[maxFeePerGas]",
-          "maxPriorityFeePerGas": "0x1"
+          "maxPriorityFeePerGas": "[maxPriorityFeePerGas]"
         },
-        "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-        "paymentTokenDecimals": 6,
+        "orchestrator": "[orchestrator]",
+        "paymentTokenDecimals": "[paymentTokenDecimals]",
         "txGas": "[txGas]"
       },
       "hash": "[hash]",
@@ -70,9 +57,9 @@ expression: response_value
         {
           "additionalAuthorization": null,
           "authorizationAddress": null,
-          "chainId": "0x7a69",
+          "chainId": "[chainId]",
           "ethPrice": "0xde0b6b3a7640000",
-          "extraPayment": "0x0",
+          "extraPayment": "[extraPayment]",
           "feeTokenDeficit": "0x0",
           "intent": {
             "combinedGas": "[combinedGas]",
@@ -90,18 +77,18 @@ expression: response_value
             "paymentMaxAmount": "[paymentMaxAmount]",
             "paymentRecipient": "0x0000000000000000000000000000000000000000",
             "paymentSignature": "0x",
-            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "paymentToken": "[paymentToken]",
             "settler": "0x0000000000000000000000000000000000000000",
             "settlerContext": "0x",
             "signature": "0x",
-            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+            "supportedAccountImplementation": "[supportedAccountImplementation]"
           },
           "nativeFeeEstimate": {
             "maxFeePerGas": "[maxFeePerGas]",
-            "maxPriorityFeePerGas": "0x1"
+            "maxPriorityFeePerGas": "[maxPriorityFeePerGas]"
           },
-          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-          "paymentTokenDecimals": 18,
+          "orchestrator": "[orchestrator]",
+          "paymentTokenDecimals": "[paymentTokenDecimals]",
           "txGas": "[txGas]"
         }
       ],
@@ -121,16 +108,16 @@ expression: response_value
   "signature": "[signature]",
   "typedData": {
     "domain": {
-      "chainId": "0x7a69",
+      "chainId": "[chainId]",
       "name": "Orchestrator",
-      "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+      "verifyingContract": "[verifyingContract]",
       "version": "0.5.5"
     },
     "message": {
       "calls": [
         {
           "data": "[data]",
-          "to": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "to": "[to]",
           "value": "0x0"
         }
       ],
@@ -143,7 +130,7 @@ expression: response_value
       "nonce": "[nonce]",
       "payer": "[payer]",
       "paymentMaxAmount": "[paymentMaxAmount]",
-      "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+      "paymentToken": "[paymentToken]",
       "settler": "0x0000000000000000000000000000000000000000"
     },
     "primaryType": "Intent",
