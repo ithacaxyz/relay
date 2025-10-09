@@ -673,7 +673,7 @@ impl Relay {
 
         // If any of the quotes have deficits, return an error
         if quotes.ty().quotes.iter().any(|q| q.has_deficits())
-            || quotes.ty().fee_payer.as_ref().is_some_and(|fp| fp.has_deficits())
+            || quotes.ty().fee_payer_quote.as_ref().is_some_and(|fp| fp.has_deficits())
         {
             return Err(QuoteError::QuoteHasDeficits.into());
         }
@@ -690,7 +690,7 @@ impl Relay {
         let bundle_id = BundleId(*quotes.hash());
 
         // Use multichain workflow if there's a merkle root OR a fee_payer quote
-        if quotes.ty().multi_chain_root.is_none() && quotes.ty().fee_payer.is_none() {
+        if quotes.ty().multi_chain_root.is_none() && quotes.ty().fee_payer_quote.is_none() {
             self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
         } else {
             self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
@@ -1307,7 +1307,7 @@ impl Relay {
 
             // Compute EIP-712 digest for fee_payer quote if present
             let fee_payer_digest = quotes
-                .fee_payer
+                .fee_payer_quote
                 .as_ref()
                 .map(|fp_quote| {
                     fp_quote.intent.compute_eip712_data(
@@ -1727,7 +1727,7 @@ impl Relay {
                     // Return quotes with fee_payer quote attached
                     let (mut all_asset_diffs, mut quotes) = quote_result;
                     all_asset_diffs.merge(fee_payer_quote.chain_id, fee_payer_asset_diffs);
-                    quotes.fee_payer = Some(fee_payer_quote);
+                    quotes.fee_payer_quote = Some(fee_payer_quote);
 
                     // Replace user intent to not include payer and payment amount, since it's payed
                     // by the fee_payer in another chain.
@@ -2144,7 +2144,7 @@ impl Relay {
                         // smth like Quotes::new(quotes, ttl).with_merkle_payload(..) or
                         // Quotes::multichain(quotes, ttl, root)
                         multi_chain_root: None,
-                        fee_payer: fee_payer_quote,
+                        fee_payer_quote,
                     }
                     .with_merkle_payload(self.contracts())?,
                 ));
@@ -2220,7 +2220,7 @@ impl Relay {
                     .checked_add(self.inner.quote_config.ttl)
                     .expect("should never overflow"),
                 multi_chain_root: None,
-                fee_payer: None,
+                fee_payer_quote: None,
             },
         ))
     }
@@ -2337,7 +2337,7 @@ impl Relay {
         }
 
         // Extract and build fee_payer transaction if present
-        if let Some(fee_payer_quote) = quotes.ty().fee_payer.as_ref() {
+        if let Some(fee_payer_quote) = quotes.ty().fee_payer_quote.as_ref() {
             bundle.fee_payer_tx = Some(
                 self.prepare_tx(
                     bundle_id,

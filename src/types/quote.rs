@@ -34,7 +34,7 @@ pub struct Quotes {
     /// Merkle root if it's a multichain
     pub multi_chain_root: Option<B256>,
     /// Optional quote for the fee payer.
-    pub fee_payer: Option<Box<Quote>>,
+    pub fee_payer_quote: Option<Box<Quote>>,
 }
 
 impl Quotes {

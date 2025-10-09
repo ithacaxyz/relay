@@ -2,13 +2,13 @@
 
 use crate::e2e::{
     AuthKind, await_calls_status,
-    cases::upgrade_account_eagerly,
+    cases::{rpc_snap::reduction_from_str, upgrade_account_eagerly},
     environment::{Environment, mint_erc20s},
     eoa::{MockAccount, MockAccountBuilder},
     layerzero::setup::LayerZeroEnvironment,
 };
 use alloy::{
-    primitives::{Address, ChainId, U256},
+    primitives::{Address, B256, Bytes, ChainId, U64, U256},
     providers::ext::AnvilApi,
     sol_types::SolValue,
 };
@@ -19,8 +19,8 @@ use relay::{
     types::{
         AssetDiffResponse, Call, DiffDirection, IERC20, KeyType, KeyWith712Signer, Signature,
         rpc::{
-            Meta, PrepareCallsCapabilities, PrepareCallsParameters, SendPreparedCallsCapabilities,
-            SendPreparedCallsParameters,
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, PrepareCallsResponse,
+            SendPreparedCallsCapabilities, SendPreparedCallsParameters,
         },
     },
 };
@@ -70,6 +70,9 @@ async fn test_fee_payer_delegation() -> Result<()> {
             key: Some(main_key.to_call_key()),
         })
         .await?;
+
+    // Snapshot test
+    assert_fee_payer_delegation_snapshot(&response)?;
 
     // Verify fee payer is set in quote
     let quote = response.context.quote().expect("Should have quote context");
@@ -194,12 +197,15 @@ async fn test_multichain_fee_payer() -> Result<()> {
         })
         .await?;
 
+    // Snapshot test
+    assert_multichain_fee_payer_snapshot(&response)?;
+
     // Verify this is a cross-chain fee payer case
     let quote = response.context.quote().expect("Should have quote context");
     assert_eq!(quote.ty().quotes.len(), 1, "Should have 1 user quote");
-    assert!(quote.ty().fee_payer.is_some(), "Should have cross-chain fee_payer quote");
+    assert!(quote.ty().fee_payer_quote.is_some(), "Should have cross-chain fee_payer quote");
 
-    let fee_payer_quote = quote.ty().fee_payer.as_ref().unwrap();
+    let fee_payer_quote = quote.ty().fee_payer_quote.as_ref().unwrap();
     assert_eq!(
         fee_payer_quote.chain_id,
         env.chain_id_for(1),
@@ -402,13 +408,16 @@ async fn test_multichain_user_with_cross_chain_fee_payer() -> Result<()> {
         })
         .await?;
 
+    // Snapshot test
+    assert_multichain_user_with_cross_chain_fee_payer_snapshot(&response)?;
+
     // Verify this is a multichain intent with cross-chain fee payer
     let quote = response.context.quote().expect("Should have quote context");
     assert_eq!(quote.ty().quotes.len(), 2, "Should have 2 user quotes (source + dest)");
     assert!(quote.ty().multi_chain_root.is_some(), "Should have multichain root");
-    assert!(quote.ty().fee_payer.is_some(), "Should have cross-chain fee_payer quote");
+    assert!(quote.ty().fee_payer_quote.is_some(), "Should have cross-chain fee_payer quote");
 
-    let fee_payer_quote = quote.ty().fee_payer.as_ref().unwrap();
+    let fee_payer_quote = quote.ty().fee_payer_quote.as_ref().unwrap();
     assert_eq!(
         fee_payer_quote.chain_id,
         env.chain_id_for(2),
@@ -622,9 +631,9 @@ async fn test_multichain_all_user_balance_with_fee_payer() -> Result<()> {
     // Verify this is a multichain intent with cross-chain fee payer
     let quote = response.context.quote().expect("Should have quote context");
     assert!(quote.ty().multi_chain_root.is_some(), "Should have multichain root");
-    assert!(quote.ty().fee_payer.is_some(), "Should have cross-chain fee_payer quote");
+    assert!(quote.ty().fee_payer_quote.is_some(), "Should have cross-chain fee_payer quote");
 
-    let fee_payer_quote = quote.ty().fee_payer.as_ref().unwrap();
+    let fee_payer_quote = quote.ty().fee_payer_quote.as_ref().unwrap();
     assert_eq!(
         fee_payer_quote.chain_id,
         env.chain_id_for(2),
@@ -782,4 +791,146 @@ fn assert_single_outgoing_erc20_diff(
             );
         }
     }
+}
+
+/// Snapshot assertion for test_fee_payer_delegation
+fn assert_fee_payer_delegation_snapshot(response: &PrepareCallsResponse) -> Result<()> {
+    let response_value = serde_json::to_value(response)?;
+    insta::assert_json_snapshot!(response_value, {
+        ".capabilities.assetDiffs" => insta::dynamic_redaction(|_value, _path| {
+            "[assetDiffs]"
+        }),
+        ".capabilities.feePayerDigest" => reduction_from_str::<B256>("feePayerDigest"),
+        ".capabilities.feeTotals.*.value" => insta::dynamic_redaction(|_value, _path| "[feeTotal]"),
+        ".context.quote.hash" => reduction_from_str::<B256>("hash"),
+        ".context.quote.quotes[].intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".context.quote.quotes[].intent.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".context.quote.quotes[].intent.nonce" => reduction_from_str::<U256>("nonce"),
+        ".context.quote.quotes[].intent.payer" => reduction_from_str::<Address>("payer"),
+        ".context.quote.quotes[].intent.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+        ".context.quote.quotes[].intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.quotes[].nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.quotes[].txGas" => reduction_from_str::<U256>("txGas"),
+        ".context.quote.r" => reduction_from_str::<U256>("r"),
+        ".context.quote.s" => reduction_from_str::<U256>("s"),
+        ".context.quote.ttl" => insta::dynamic_redaction(|value, _path| {
+            assert!(value.as_u64().is_some());
+            "[ttl]"
+        }),
+        ".context.quote.v" => reduction_from_str::<U64>("v"),
+        ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
+        ".digest" => reduction_from_str::<B256>("digest"),
+        ".key.publicKey" => reduction_from_str::<Bytes>("publicKey"),
+        ".signature" => reduction_from_str::<Bytes>("signature"),
+        ".typedData.message.calls[].data" => reduction_from_str::<Bytes>("data"),
+        ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".typedData.message.nonce" => reduction_from_str::<U256>("nonce"),
+        ".typedData.message.payer" => reduction_from_str::<Address>("payer"),
+        ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+    });
+    Ok(())
+}
+
+/// Snapshot assertion for test_multichain_fee_payer
+fn assert_multichain_fee_payer_snapshot(response: &PrepareCallsResponse) -> Result<()> {
+    let response_value = serde_json::to_value(response)?;
+    insta::assert_json_snapshot!(response_value, {
+        ".capabilities.assetDiffs" => insta::dynamic_redaction(|_value, _path| {
+            "[assetDiffs]"
+        }),
+        ".capabilities.feePayerDigest" => reduction_from_str::<B256>("feePayerDigest"),
+        ".capabilities.feeTotals.*.value" => insta::dynamic_redaction(|_value, _path| "[feeTotal]"),
+        ".context.quote.feePayerQuote.authorizationAddress" => reduction_from_str::<Address>("authorizationAddress"),
+        ".context.quote.feePayerQuote.intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".context.quote.feePayerQuote.intent.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
+        ".context.quote.feePayerQuote.intent.eoa" => reduction_from_str::<Address>("eoa"),
+        ".context.quote.feePayerQuote.intent.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".context.quote.feePayerQuote.intent.nonce" => reduction_from_str::<U256>("nonce"),
+        ".context.quote.feePayerQuote.intent.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+        ".context.quote.feePayerQuote.intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.feePayerQuote.nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.feePayerQuote.txGas" => reduction_from_str::<U256>("txGas"),
+        ".context.quote.hash" => reduction_from_str::<B256>("hash"),
+        ".context.quote.quotes[].intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".context.quote.quotes[].intent.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".context.quote.quotes[].intent.nonce" => reduction_from_str::<U256>("nonce"),
+        ".context.quote.quotes[].intent.payer" => reduction_from_str::<Address>("payer"),
+        ".context.quote.quotes[].intent.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+        ".context.quote.quotes[].intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.quotes[].nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.quotes[].txGas" => reduction_from_str::<U256>("txGas"),
+        ".context.quote.r" => reduction_from_str::<U256>("r"),
+        ".context.quote.s" => reduction_from_str::<U256>("s"),
+        ".context.quote.ttl" => insta::dynamic_redaction(|value, _path| {
+            assert!(value.as_u64().is_some());
+            "[ttl]"
+        }),
+        ".context.quote.v" => reduction_from_str::<U64>("v"),
+        ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
+        ".digest" => reduction_from_str::<B256>("digest"),
+        ".key.publicKey" => reduction_from_str::<Bytes>("publicKey"),
+        ".signature" => reduction_from_str::<Bytes>("signature"),
+        ".typedData.message.calls[].data" => reduction_from_str::<Bytes>("data"),
+        ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".typedData.message.nonce" => reduction_from_str::<U256>("nonce"),
+        ".typedData.message.payer" => reduction_from_str::<Address>("payer"),
+        ".typedData.message.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+    });
+    Ok(())
+}
+
+/// Snapshot assertion for test_multichain_user_with_cross_chain_fee_payer
+fn assert_multichain_user_with_cross_chain_fee_payer_snapshot(
+    response: &PrepareCallsResponse,
+) -> Result<()> {
+    let response_value = serde_json::to_value(response)?;
+    insta::assert_json_snapshot!(response_value, {
+        ".capabilities.assetDiffs" => insta::dynamic_redaction(|_value, _path| {
+            "[assetDiffs]"
+        }),
+        ".capabilities.feePayerDigest" => reduction_from_str::<B256>("feePayerDigest"),
+        ".capabilities.feeTotals.*.value" => insta::dynamic_redaction(|_value, _path| "[feeTotal]"),
+        ".context.quote.feePayerQuote.authorizationAddress" => reduction_from_str::<Address>("authorizationAddress"),
+        ".context.quote.feePayerQuote.intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".context.quote.feePayerQuote.intent.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
+        ".context.quote.feePayerQuote.intent.eoa" => reduction_from_str::<Address>("eoa"),
+        ".context.quote.feePayerQuote.intent.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".context.quote.feePayerQuote.intent.nonce" => reduction_from_str::<U256>("nonce"),
+        ".context.quote.feePayerQuote.intent.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+        ".context.quote.feePayerQuote.intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.feePayerQuote.nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.feePayerQuote.txGas" => reduction_from_str::<U256>("txGas"),
+        ".context.quote.hash" => reduction_from_str::<B256>("hash"),
+        ".context.quote.multiChainRoot" => reduction_from_str::<B256>("multiChainRoot"),
+        ".context.quote.quotes[].intent.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".context.quote.quotes[].intent.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
+        ".context.quote.quotes[].intent.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".context.quote.quotes[].intent.funder" => reduction_from_str::<Address>("funder"),
+        ".context.quote.quotes[].intent.nonce" => reduction_from_str::<U256>("nonce"),
+        ".context.quote.quotes[].intent.payer" => reduction_from_str::<Address>("payer"),
+        ".context.quote.quotes[].intent.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+        ".context.quote.quotes[].intent.paymentMaxAmount" => reduction_from_str::<U256>("paymentMaxAmount"),
+        ".context.quote.quotes[].nativeFeeEstimate.maxFeePerGas" => reduction_from_str::<U256>("maxFeePerGas"),
+        ".context.quote.quotes[].txGas" => reduction_from_str::<U256>("txGas"),
+        ".context.quote.r" => reduction_from_str::<U256>("r"),
+        ".context.quote.s" => reduction_from_str::<U256>("s"),
+        ".context.quote.ttl" => insta::dynamic_redaction(|value, _path| {
+            assert!(value.as_u64().is_some());
+            "[ttl]"
+        }),
+        ".context.quote.v" => reduction_from_str::<U64>("v"),
+        ".context.quote.yParity" => reduction_from_str::<U64>("yParity"),
+        ".digest" => reduction_from_str::<B256>("digest"),
+        ".key.publicKey" => reduction_from_str::<Bytes>("publicKey"),
+        ".signature" => reduction_from_str::<Bytes>("signature"),
+        ".typedData.message.calls[].data" => reduction_from_str::<Bytes>("data"),
+        ".typedData.message.combinedGas" => reduction_from_str::<U256>("combinedGas"),
+        ".typedData.message.encodedFundTransfers[]" => reduction_from_str::<Bytes>("encodedFundTransfer"),
+        ".typedData.message.encodedPreCalls[]" => reduction_from_str::<Bytes>("encodedPreCall"),
+        ".typedData.message.executionData" => reduction_from_str::<Bytes>("executionData"),
+        ".typedData.message.funder" => reduction_from_str::<Address>("funder"),
+        ".typedData.message.nonce" => reduction_from_str::<U256>("nonce"),
+        ".typedData.message.paymentAmount" => reduction_from_str::<U256>("paymentAmount"),
+    });
+    Ok(())
 }
