@@ -185,6 +185,13 @@ impl StorageApi for InMemoryStorage {
         Ok(self.statuses.get(&tx).as_deref().cloned())
     }
 
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        Ok(tx_ids.iter().map(|tx_id| self.statuses.get(tx_id).as_deref().cloned()).collect())
+    }
+
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
         self.bundles.entry(bundle).or_default().push(tx);
         Ok(())

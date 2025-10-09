@@ -353,6 +353,32 @@ enum TxStatus {
     Failed,
 }
 
+/// Helper macro to parse transaction status from database row.
+macro_rules! parse_transaction_status {
+    ($row:expr) => {{
+        let tx_hash = $row.tx_hash.as_ref().map(|hash| B256::from_slice(hash));
+        (|| -> Result<_> {
+            Ok((
+                $row.chain_id as u64,
+                match $row.status {
+                    TxStatus::InFlight => TransactionStatus::InFlight,
+                    // SAFETY: it should never be possible to have a pending transaction without a
+                    // hash in the database
+                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
+                    // SAFETY: it should never be possible to have a confirmed transaction without a
+                    // receipt in the database
+                    TxStatus::Confirmed => TransactionStatus::Confirmed(
+                        serde_json::from_value($row.receipt.unwrap()).map_err(eyre::Error::from)?,
+                    ),
+                    TxStatus::Failed => TransactionStatus::failed(
+                        $row.error.unwrap_or_else(|| "transaction failed".to_string()),
+                    ),
+                },
+            ))
+        })()
+    }};
+}
+
 /// This is a wrapper around [`TransferState`] since `sqlx` does not support enums with
 /// associated data.
 #[derive(Debug, sqlx::Type)]
@@ -571,28 +597,38 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        row.map(|row| {
-            let tx_hash = row.tx_hash.as_ref().map(|hash| B256::from_slice(hash));
+        row.map(|row| parse_transaction_status!(row)).transpose()
+    }
 
-            Ok((
-                row.chain_id as u64,
-                match row.status {
-                    TxStatus::InFlight => TransactionStatus::InFlight,
-                    // SAFETY: it should never be possible to have a pending transaction without a
-                    // hash in the database
-                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
-                    // SAFETY: it should never be possible to have a confirmed transaction without a
-                    // receipt in the database
-                    TxStatus::Confirmed => TransactionStatus::Confirmed(
-                        serde_json::from_value(row.receipt.unwrap()).map_err(eyre::Error::from)?,
-                    ),
-                    TxStatus::Failed => TransactionStatus::failed(
-                        row.error.unwrap_or_else(|| "transaction failed".to_string()),
-                    ),
-                },
-            ))
-        })
-        .transpose()
+    #[instrument(skip(self))]
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        if tx_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tx_id_bytes: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
+
+        let rows = sqlx::query!(
+            r#"select tx_id, chain_id, tx_hash, status as "status: TxStatus", error, receipt
+               from txs
+               where tx_id = ANY($1)
+               order by array_position($1, tx_id)"#,
+            &tx_id_bytes
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut map: HashMap<TxId, (ChainId, TransactionStatus)> = HashMap::default();
+        for row in rows {
+            map.insert(TxId::from_slice(&row.tx_id), parse_transaction_status!(row)?);
+        }
+
+        // Return results in the same order as input
+        Ok(tx_ids.iter().map(|tx_id| map.get(tx_id).cloned()).collect())
     }
 
     #[instrument(skip(self))]

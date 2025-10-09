@@ -126,6 +126,12 @@ pub trait StorageApi: Debug + Send + Sync {
         tx: TxId,
     ) -> Result<Option<(ChainId, TransactionStatus)>>;
 
+    /// Reads multiple transaction statuses in batch.
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>>;
+
     /// Adds a transaction to a bundle.
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()>;
 

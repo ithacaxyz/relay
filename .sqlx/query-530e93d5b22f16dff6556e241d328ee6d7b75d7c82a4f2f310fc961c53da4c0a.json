@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select tx_id, chain_id, tx_hash, status as \"status: TxStatus\", error, receipt\n               from txs\n               where tx_id = ANY($1)\n               order by array_position($1, tx_id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tx_id",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "tx_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: TxStatus",
+        "type_info": {
+          "Custom": {
+            "name": "tx_status",
+            "kind": {
+              "Enum": [
+                "inflight",
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "receipt",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "ByteaArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "530e93d5b22f16dff6556e241d328ee6d7b75d7c82a4f2f310fc961c53da4c0a"
+}

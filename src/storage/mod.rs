@@ -7,6 +7,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 pub use api::{BundleHistoryEntry, LockLiquidityInput, OnrampContactInfo, StorageApi};
+use futures::future::try_join_all;
 
 mod memory;
 mod pg;
@@ -66,19 +67,14 @@ impl RelayStorage {
         // Fetch bundles from underlying storage
         let bundles = self.inner.get_bundles_by_address(address, limit, offset, sort_desc).await?;
 
-        // Build response entries
-        let mut entries = Vec::with_capacity(bundles.len());
-
-        for (idx, history_entry) in bundles.into_iter().enumerate() {
-            // Calculate chronological index
-            let index = offset + idx as u64;
+        let entries_futures = bundles.into_iter().enumerate().map(async |(idx, history_entry)| {
+            let index: u64 = offset + idx as u64;
 
             let entry = match history_entry {
                 // Multi-chain bundle path
                 api::BundleHistoryEntry::Interop { bundle: bundle_with_status, timestamp } => {
                     let bundle = &bundle_with_status.bundle;
                     let status = bundle_with_status.status;
-                    let bundle_id = bundle.id;
 
                     // Extract key hash from first destination transaction signature
                     // For 65-byte EOA signatures, use 0x0 as keyHash
@@ -88,6 +84,7 @@ impl RelayStorage {
                         .and_then(|tx| match &tx.kind {
                             RelayTransactionKind::Intent { quote, .. } => {
                                 if quote.intent.signature().len() == 65 {
+                                    // Signed by the root eoa key.
                                     Some(B256::ZERO)
                                 } else {
                                     Signature::decode_key_hash(quote.intent.signature())
@@ -97,13 +94,19 @@ impl RelayStorage {
                         })
                         .unwrap_or(B256::ZERO);
 
-                    // Get transaction statuses and receipts
-                    let tx_ids = self.inner.get_bundle_transactions(bundle_id).await?;
+                    // Get transaction statuses using batch method
+                    let all_tx_ids: Vec<_> = bundle
+                        .src_txs
+                        .iter()
+                        .chain(bundle.dst_txs.iter())
+                        .map(|tx| tx.id)
+                        .collect();
 
-                    let mut transactions = Vec::new();
-                    for tx_id in tx_ids {
-                        if let Some((chain_id, tx_status)) =
-                            self.inner.read_transaction_status(tx_id).await?
+                    let tx_statuses = self.inner.read_transaction_statuses(&all_tx_ids).await?;
+
+                    let mut transactions = Vec::with_capacity(tx_statuses.len());
+                    for tx_status_opt in tx_statuses {
+                        if let Some((chain_id, tx_status)) = tx_status_opt
                             && let Some(tx_hash) = tx_status.tx_hash()
                         {
                             transactions.push(CallHistoryTransaction {
@@ -124,11 +127,11 @@ impl RelayStorage {
                         })
                         .collect::<Vec<_>>();
 
-                    // TODO: Implement asset diff storage and retrieval
+                    // TODO: Implement asset diff
                     let asset_diff = AssetDiffResponse::default();
 
                     CallHistoryEntry {
-                        id: bundle_id,
+                        id: bundle.id,
                         index,
                         status: status.to_call_status_code(),
                         timestamp,
@@ -154,7 +157,7 @@ impl RelayStorage {
                             Signature::decode_key_hash(quote.intent.signature())
                                 .unwrap_or(B256::ZERO)
                         };
-                        (key_hash, vec![(*quote).clone()])
+                        (key_hash, vec![(*quote)])
                     } else {
                         // Old transaction without stored quote data
                         (B256::ZERO, vec![])
@@ -167,7 +170,7 @@ impl RelayStorage {
                         })
                         .unwrap_or_default();
 
-                    // TODO: Implement asset diff storage and retrieval
+                    // TODO: Implement asset diff
                     let asset_diff = AssetDiffResponse::default();
 
                     // Get tx_id from bundle_transactions table
@@ -194,10 +197,10 @@ impl RelayStorage {
                 }
             };
 
-            entries.push(entry);
-        }
+            api::Result::Ok(entry)
+        });
 
-        Ok(entries)
+        try_join_all(entries_futures).await
     }
 }
 
@@ -248,6 +251,13 @@ impl StorageApi for RelayStorage {
         tx: TxId,
     ) -> api::Result<Option<(ChainId, TransactionStatus)>> {
         self.inner.read_transaction_status(tx).await
+    }
+
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> api::Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        self.inner.read_transaction_statuses(tx_ids).await
     }
 
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {
