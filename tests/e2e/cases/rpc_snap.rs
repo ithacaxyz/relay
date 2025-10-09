@@ -530,7 +530,9 @@ async fn test_onramp() -> eyre::Result<()> {
     assert_eq!(contact_response.email.as_deref(), Some(email), "Email should match");
     assert_eq!(contact_response.phone.as_deref(), Some(phone), "Phone should match");
 
-    insta::assert_json_snapshot!("contact_info_verified", contact_response);
+    insta::assert_json_snapshot!("contact_info_verified", contact_response, {
+        ".phoneVerifiedAt" => "[phone_timestamp]",
+    });
 
     // Test with only email verified
     let email_only_addr = Address::random();

@@ -333,7 +333,11 @@ impl AccountApiServer for AccountRpc {
 
         let contact_info = self.storage.get_onramp_contact_info(params.address).await?;
 
-        Ok(GetOnrampContactInfoResponse { email: contact_info.email, phone: contact_info.phone })
+        Ok(GetOnrampContactInfoResponse {
+            email: contact_info.email,
+            phone: contact_info.phone,
+            phone_verified_at: contact_info.phone_verified_at,
+        })
     }
 }
 
