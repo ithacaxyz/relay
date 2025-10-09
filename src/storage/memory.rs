@@ -315,15 +315,30 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn get_onramp_contact_info(&self, account: Address) -> Result<OnrampContactInfo> {
+        // Get verified email if exists, otherwise get the last non-verified email
+        let email = self
+            .verified_emails
+            .iter()
+            .find_map(|entry| (entry.value().account == account).then(|| entry.key().clone()))
+            .or_else(|| {
+                // Get unverified emails for this account
+                self.unverified_emails
+                    .iter()
+                    .filter_map(|entry| {
+                        if entry.key().0 == account { Some(entry.key().1.clone()) } else { None }
+                    })
+                    .last()
+            });
+
+        let phone_entry = self.verified_phones.iter().find_map(|entry| {
+            (entry.value().account == account)
+                .then(|| (entry.key().clone(), entry.value().verified_at.timestamp() as u64))
+        });
+
         Ok(OnrampContactInfo {
-            email: self
-                .verified_emails
-                .iter()
-                .find_map(|entry| (entry.value().account == account).then(|| entry.key().clone())),
-            phone: self
-                .verified_phones
-                .iter()
-                .find_map(|entry| (entry.value().account == account).then(|| entry.key().clone())),
+            email,
+            phone: phone_entry.as_ref().map(|(phone, _)| phone.clone()),
+            phone_verified_at: phone_entry.map(|(_, timestamp)| timestamp),
         })
     }
 

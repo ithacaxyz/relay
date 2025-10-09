@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select email from emails where address = $1 and verified_at is not null",
+  "query": "\n            select email from emails\n            where address = $1\n            order by verified_at is not null desc, created_at desc\n            limit 1\n            ",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "5bfb9c1ab4700310b77f8bf2fd38d5e3c4e20b4f833f212b6c493f439a62483f"
+  "hash": "8507914e3fae7f28166ad44c36ad2663f159d8ba92e0f398c6e0368c1af16007"
 }

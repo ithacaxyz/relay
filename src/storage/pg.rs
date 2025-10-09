@@ -859,8 +859,14 @@ impl StorageApi for PgStorage {
     }
 
     async fn get_onramp_contact_info(&self, account: Address) -> Result<OnrampContactInfo> {
+        // Get verified email if exists, otherwise get the last non-verified email
         let email_row = sqlx::query!(
-            "select email from emails where address = $1 and verified_at is not null",
+            r#"
+            select email from emails
+            where address = $1
+            order by verified_at is not null desc, created_at desc
+            limit 1
+            "#,
             account.as_slice()
         )
         .fetch_optional(&self.pool)
@@ -868,7 +874,7 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         let phone_row = sqlx::query!(
-            "select phone from phones where address = $1 and verified_at is not null",
+            "select phone, extract(epoch from verified_at)::bigint as verified_at from phones where address = $1 and verified_at is not null",
             account.as_slice()
         )
         .fetch_optional(&self.pool)
@@ -877,7 +883,8 @@ impl StorageApi for PgStorage {
 
         Ok(OnrampContactInfo {
             email: email_row.map(|r| r.email),
-            phone: phone_row.map(|r| r.phone),
+            phone: phone_row.as_ref().map(|r| r.phone.clone()),
+            phone_verified_at: phone_row.and_then(|r| r.verified_at.map(|v| v as u64)),
         })
     }
 
