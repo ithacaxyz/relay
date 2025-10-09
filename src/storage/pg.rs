@@ -1636,7 +1636,7 @@ impl StorageApi for PgStorage {
                         bt.bundle_id,
                         NULL as status,
                         t.tx as bundle_data,
-                        (t.tx->>'received_at')::timestamptz as timestamp,
+                        tx_received_at_immutable(t.tx) as timestamp,
                         'singlechain' as bundle_type,
                         t.chain_id,
                         t.tx_hash
@@ -1646,7 +1646,7 @@ impl StorageApi for PgStorage {
                     AND t.tx->'quote'->'intent'->>'eoa' = $1
                     AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
                     AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
-                    ORDER BY (t.tx->>'received_at')::timestamptz {}
+                    ORDER BY tx_received_at_immutable(t.tx) {}
                     LIMIT {}
                 )
             )

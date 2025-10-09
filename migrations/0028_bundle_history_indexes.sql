@@ -4,6 +4,15 @@
 -- NULL for interop bundles (data in bundle_data), populated for single-chain
 alter table txs add column tx jsonb;
 
+-- Create immutable function to extract received_at timestamp from tx JSONB
+-- This is needed for indexing since ::timestamptz cast is not immutable
+create or replace function tx_received_at_immutable(tx jsonb)
+returns timestamptz
+language sql
+immutable
+parallel safe
+return (tx->>'received_at')::timestamptz;
+
 -- Multi-chain bundle composite indexes (EOA + timestamp)
 -- These enable index-only scans and early stop on ORDER BY ... LIMIT
 -- Note: dst_txs is typically a single-element array, so we index the first element's EOA
@@ -17,7 +26,7 @@ create index if not exists idx_finished_bundles_eoa_finished_at
 create index if not exists idx_txs_eoa_received_at
   on txs (
     (tx->'quote'->'intent'->>'eoa'),
-    ((tx->>'received_at')::timestamptz) desc
+    tx_received_at_immutable(tx) desc
   )
   where tx is not null;
 
