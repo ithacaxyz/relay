@@ -80,10 +80,29 @@ pub struct EnvironmentConfig {
 
 impl Default for EnvironmentConfig {
     fn default() -> Self {
+        let is_forking = std::env::var("TEST_FORK_URL").is_ok();
+        
+        // Use longer timeouts for forked environments to account for network delays
+        let wait_verification_timeout = if is_forking {
+            Duration::from_secs(300) // 5 minutes for forked environments
+        } else {
+            Duration::from_secs(10)  // 10 seconds for local environments
+        };
+        
+        // Use longer transaction timeout for forked environments
+        let transaction_timeout = if is_forking {
+            Duration::from_secs(300) // 5 minutes for forked environments
+        } else {
+            Duration::from_secs(60)  // 1 minute for local environments (default)
+        };
+        
+        let mut transaction_service_config = TransactionServiceConfig::default();
+        transaction_service_config.transaction_timeout = transaction_timeout;
+        
         Self {
             num_signers: 1,
             block_time: None,
-            transaction_service_config: TransactionServiceConfig::default(),
+            transaction_service_config,
             rebalance_service_config: None,
             fork_block_number: None,
             fee_recipient: Address::ZERO,
@@ -95,7 +114,7 @@ impl Default for EnvironmentConfig {
                     implementation: SettlerImplementation::Simple(SimpleSettlerConfig {
                         private_key: Some(DEPLOYER_PRIVATE_KEY.to_string()),
                     }),
-                    wait_verification_timeout: Duration::from_secs(10),
+                    wait_verification_timeout,
                 },
             },
             use_layerzero: false,
