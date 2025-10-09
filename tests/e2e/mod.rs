@@ -94,12 +94,21 @@ where
 
 /// Fetch the status of a bundle using `wallet_getCallsStatus`.
 ///
-/// Internally will call `wallet_getCallsStatus` up to 10 times with a 1 second delay
-/// between attempts.
+/// Internally will call `wallet_getCallsStatus` with configurable timeout based on environment.
+/// For forked environments (like base-sepolia), uses longer timeouts to account for network delays.
 async fn await_calls_status(
     env: &Environment,
     bundle_id: BundleId,
 ) -> Result<CallsStatus, eyre::Error> {
+    let is_forking = std::env::var("TEST_FORK_URL").is_ok();
+    
+    // Use longer timeout for forked environments (like base-sepolia) to account for network delays
+    let (max_attempts, sleep_duration) = if is_forking {
+        (120, Duration::from_secs(2)) // 4 minutes total for forked environments
+    } else {
+        (10, Duration::from_secs(1))  // 10 seconds total for local environments
+    };
+    
     let mut attempts = 0;
     loop {
         let status = env.relay_endpoint.get_calls_status(bundle_id).await.ok();
@@ -117,11 +126,26 @@ async fn await_calls_status(
         }
 
         attempts += 1;
-        if attempts > 10 {
-            return Err(eyre::eyre!("bundle status not received within 10 attempts"));
+        if attempts > max_attempts {
+            return Err(eyre::eyre!(
+                "bundle status not received within {} attempts ({} seconds) for bundle_id: {:?}", 
+                max_attempts, 
+                max_attempts * sleep_duration.as_secs(),
+                bundle_id
+            ));
         }
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Log progress for long-running tests to help with debugging
+        if is_forking && attempts % 30 == 0 {
+            tracing::debug!(
+                "Still waiting for bundle status, attempt {}/{} ({} seconds elapsed)",
+                attempts,
+                max_attempts,
+                attempts * sleep_duration.as_secs()
+            );
+        }
+
+        tokio::time::sleep(sleep_duration).await;
     }
 }
 
