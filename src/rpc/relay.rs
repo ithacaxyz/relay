@@ -2417,6 +2417,22 @@ impl Relay {
             })
             .collect();
 
+        // Verify all quotes use the same fee token UID
+        for quote in &all_quotes[..all_quotes.len().saturating_sub(1)] {
+            let expected_address = fee_token_addresses.get(&quote.chain_id).ok_or_else(|| {
+                RelayError::UnsupportedAsset {
+                    chain: quote.chain_id,
+                    asset: quote.intent.payment_token(),
+                }
+            })?;
+            if quote.intent.payment_token() != *expected_address {
+                return Err(RelayError::internal_msg(
+                    "all quotes must use the same fee token asset UID",
+                )
+                .into());
+            }
+        }
+
         let fee_payer_all_assets = self
             .get_assets(GetAssetsParameters::for_assets_on_chains(
                 fee_payer,
