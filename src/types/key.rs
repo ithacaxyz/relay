@@ -105,8 +105,6 @@ impl Signature {
             return None;
         }
 
-        // Extract keyHash: skip to 33 bytes from end, take 32 bytes
-        // (the last byte is the prehash flag)
         let key_hash_start = sig_bytes.len() - 33;
         Some(B256::from_slice(&sig_bytes[key_hash_start..key_hash_start + 32]))
     }

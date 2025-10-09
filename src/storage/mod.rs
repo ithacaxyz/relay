@@ -136,7 +136,7 @@ impl RelayStorage {
                         status: status.to_call_status_code(),
                         timestamp,
                         transactions,
-                        key: key_hash,
+                        key_hash,
                         capabilities: CallHistoryCapabilities { asset_diff, quotes },
                     }
                 }
@@ -191,7 +191,7 @@ impl RelayStorage {
                         status: call_status,
                         timestamp,
                         transactions,
-                        key: key_hash,
+                        key_hash,
                         capabilities: CallHistoryCapabilities { asset_diff, quotes },
                     }
                 }

@@ -765,7 +765,7 @@ pub struct CallHistoryEntry {
     /// Transactions in the bundle.
     pub transactions: Vec<CallHistoryTransaction>,
     /// Hash of the key used to sign the bundle.
-    pub key: B256,
+    pub key_hash: B256,
     /// Bundle capabilities.
     pub capabilities: CallHistoryCapabilities,
 }
