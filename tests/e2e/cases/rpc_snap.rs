@@ -595,7 +595,7 @@ async fn test_onramp() -> eyre::Result<()> {
 
 /// Creates a reduction that asserts value can be parsed using [`FromStr`], and replaces
 /// the value with the provided name.
-fn reduction_from_str<T: FromStr>(name: &str) -> insta::internals::Redaction {
+pub fn reduction_from_str<T: FromStr>(name: &str) -> insta::internals::Redaction {
     let name = name.to_string();
     insta::dynamic_redaction(move |value, _path| {
         assert!(

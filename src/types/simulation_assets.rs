@@ -88,6 +88,33 @@ pub struct AssetDiff {
     pub recipients: Vec<Address>,
 }
 
+impl AssetDiff {
+    /// Checks if this asset diff can be merged with another (same asset).
+    fn can_merge(&self, other: &AssetDiff) -> bool {
+        self.address == other.address
+    }
+
+    /// Merges another asset diff into this one by combining values based on direction.
+    fn merge(&mut self, other: AssetDiff) {
+        if self.direction == other.direction {
+            self.value += other.value;
+        } else if other.value > self.value {
+            self.value = other.value - self.value;
+            self.direction = other.direction;
+        } else {
+            self.value -= other.value;
+        }
+
+        self.fiat = other.fiat;
+
+        for recipient in other.recipients {
+            if !self.recipients.contains(&recipient) {
+                self.recipients.push(recipient);
+            }
+        }
+    }
+}
+
 /// Asset deficits per account based on simulated execution traces.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetDeficits(pub Vec<AssetDeficit>);
@@ -96,6 +123,24 @@ impl AssetDeficits {
     /// Returns true if the asset deficits are empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Removes the specified amount from the deficit for the given fee token.
+    /// If the deficit becomes zero or negative, removes that asset deficit entirely.
+    pub fn remove_fee_amount(&mut self, fee_token: Address, amount: U256) {
+        self.0.retain_mut(|deficit| {
+            if deficit.address != Some(fee_token) {
+                return true;
+            }
+
+            if deficit.deficit <= amount {
+                return false;
+            }
+
+            deficit.deficit -= amount;
+            deficit.required -= amount;
+            true
+        });
     }
 }
 
@@ -522,6 +567,38 @@ impl AssetDiffResponse {
         );
         self.asset_diffs.insert(chain_id, chain_diffs.asset_diffs);
 
+        self.update_aggregated_fee();
+    }
+
+    /// Merges additional asset diffs into this response on the specified chain.
+    pub fn merge(&mut self, chain_id: ChainId, chain_diffs: ChainAssetDiffs) {
+        let existing = self.asset_diffs.entry(chain_id).or_insert_with(|| AssetDiffs(Vec::new()));
+
+        for (address, new_diffs) in chain_diffs.asset_diffs.0 {
+            if let Some((_, existing_diffs)) =
+                existing.0.iter_mut().find(|(addr, _)| *addr == address)
+            {
+                // Merge each new diff with existing diffs for the same address
+                for new_diff in new_diffs {
+                    if let Some(existing_diff) =
+                        existing_diffs.iter_mut().find(|d| d.can_merge(&new_diff))
+                    {
+                        existing_diff.merge(new_diff);
+                    } else {
+                        existing_diffs.push(new_diff);
+                    }
+                }
+                // Remove any diffs that became zero after merging
+                existing_diffs.retain(|d| !d.value.is_zero());
+            } else {
+                existing.0.push((address, new_diffs));
+            }
+        }
+
+        self.fee_totals
+            .entry(chain_id)
+            .and_modify(|fee| fee.value += chain_diffs.fee_usd)
+            .or_insert(AssetPrice { currency: "usd".to_string(), value: chain_diffs.fee_usd });
         self.update_aggregated_fee();
     }
 
