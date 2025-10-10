@@ -266,6 +266,27 @@ impl RelayConfig {
         self
     }
 
+    /// Sets the Twilio credentials.
+    pub fn with_twilio_credentials(
+        mut self,
+        account_sid: Option<String>,
+        auth_token: Option<String>,
+        verify_service_sid: Option<String>,
+    ) -> Self {
+        if let Some(phone) = self.phone.as_mut() {
+            if let Some(sid) = account_sid {
+                phone.twilio_account_sid = sid;
+            }
+            if let Some(token) = auth_token {
+                phone.twilio_auth_token = token;
+            }
+            if let Some(service_sid) = verify_service_sid {
+                phone.twilio_verify_service_sid = service_sid;
+            }
+        }
+        self
+    }
+
     /// Sets the configuration for the transaction service.
     pub fn with_transaction_service_config(mut self, config: TransactionServiceConfig) -> Self {
         self.transactions = config;
