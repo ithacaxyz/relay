@@ -78,6 +78,11 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
             .with_onramp_worker_secret(std::env::var("ONRAMP_WORKER_SECRET").ok())
+            .with_twilio_credentials(
+                std::env::var("TWILIO_ACCOUNT_SID").ok(),
+                std::env::var("TWILIO_AUTH_TOKEN").ok(),
+                std::env::var("TWILIO_VERIFY_SERVICE_SID").ok(),
+            )
             .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
             .with_funder_owner_key(std::env::var("RELAY_FUNDER_OWNER_KEY").ok())
             .with_binance_keys(
